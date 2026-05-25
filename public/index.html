@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VPN 订阅监控后台</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="toolbar">
+        <div>
+          <h1>订阅线路监控</h1>
+          <p>集中查看已售 URL 的剩余流量、到期时间和异常状态。</p>
+        </div>
+        <button id="refreshAll" class="secondary">全部刷新</button>
+      </section>
+
+      <section class="summary" id="summary"></section>
+
+      <section class="workspace">
+        <form id="subscriptionForm" class="panel">
+          <h2>添加订阅</h2>
+          <label>
+            线路名称
+            <input name="name" required placeholder="如：香港 IEPL A">
+          </label>
+          <label>
+            客户
+            <input name="customer" placeholder="如：张先生 / Telegram ID">
+          </label>
+          <label>
+            订阅 URL
+            <input name="url" required type="url" placeholder="https://...">
+          </label>
+          <label>
+            备注
+            <textarea name="note" rows="4" placeholder="套餐、付款记录、交付备注等"></textarea>
+          </label>
+          <button type="submit">添加并立即检查</button>
+          <p class="form-message" id="formMessage"></p>
+        </form>
+
+        <section class="panel list-panel">
+          <div class="list-heading">
+            <h2>已售线路</h2>
+            <input id="search" placeholder="搜索线路、客户或备注">
+          </div>
+          <div id="subscriptionList" class="subscription-list"></div>
+        </section>
+      </section>
+    </main>
+
+    <template id="subscriptionTemplate">
+      <article class="subscription-card">
+        <div class="card-top">
+          <div>
+            <div class="name"></div>
+            <div class="meta"></div>
+          </div>
+          <span class="status"></span>
+        </div>
+        <div class="metrics">
+          <div>
+            <span>剩余流量</span>
+            <strong class="remaining"></strong>
+          </div>
+          <div>
+            <span>到期时间</span>
+            <strong class="expire"></strong>
+          </div>
+          <div>
+            <span>已用 / 总量</span>
+            <strong class="usage"></strong>
+          </div>
+        </div>
+        <div class="progress"><span></span></div>
+        <p class="note"></p>
+        <p class="error"></p>
+        <div class="card-actions">
+          <button class="secondary refresh">刷新</button>
+          <button class="secondary debug">查看返回</button>
+          <button class="danger delete">删除</button>
+        </div>
+      </article>
+    </template>
+
+    <dialog id="debugDialog" class="debug-dialog">
+      <div class="debug-top">
+        <h2>订阅返回信息</h2>
+        <button id="closeDebug" class="secondary">关闭</button>
+      </div>
+      <pre id="debugOutput"></pre>
+    </dialog>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

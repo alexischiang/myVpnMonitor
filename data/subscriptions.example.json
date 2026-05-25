@@ -1,0 +1,24 @@
+[
+  {
+    "id": "example",
+    "name": "示例线路",
+    "customer": "示例客户",
+    "url": "https://example.com/subscription",
+    "note": "这里放套餐或付款备注",
+    "createdAt": "2026-05-20T00:00:00.000Z",
+    "updatedAt": "2026-05-20T00:00:00.000Z",
+    "metrics": {
+      "uploadBytes": 32212255,
+      "downloadBytes": 740881859,
+      "usedBytes": 773094114,
+      "totalBytes": 536870912000,
+      "remainingBytes": 536097817886,
+      "expireAt": "2026-11-20T00:00:00.000Z",
+      "source": "status-field"
+    },
+    "lastCheckedAt": "2026-05-20T00:00:00.000Z",
+    "lastError": null,
+    "httpStatus": 200,
+    "lastClient": "shadowrocket"
+  }
+]

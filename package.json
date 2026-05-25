@@ -1,0 +1,24 @@
+{
+  "name": "vpn-subscription-monitor",
+  "version": "1.0.0",
+  "description": "Local dashboard for monitoring sold VPN subscription URLs, traffic usage, and expiry dates.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "PORT=3000 node server.js",
+    "check": "node --check server.js && node --check public/app.js",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "vpn",
+    "subscription",
+    "monitor",
+    "shadowrocket",
+    "clash"
+  ],
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}
