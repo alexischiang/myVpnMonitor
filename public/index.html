@@ -3,87 +3,179 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>VPN 订阅监控后台</title>
+    <title>VPN 后台管理系统</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="shell">
       <section class="toolbar">
         <div>
-          <h1>订阅线路监控</h1>
-          <p>集中查看已售 URL 的剩余流量、到期时间和异常状态。</p>
+          <h1>后台管理系统</h1>
+          <p>管理订阅 URL、绑定邮箱、实时流量、到期时间和购买用户。</p>
         </div>
         <button id="refreshAll" class="secondary">全部刷新</button>
       </section>
 
       <section class="summary" id="summary"></section>
 
-      <section class="workspace">
-        <form id="subscriptionForm" class="panel">
-          <h2>添加订阅</h2>
-          <label>
-            线路名称
-            <input name="name" required placeholder="如：香港 IEPL A">
-          </label>
-          <label>
-            客户
-            <input name="customer" placeholder="如：张先生 / Telegram ID">
-          </label>
-          <label>
-            订阅 URL
-            <input name="url" required type="url" placeholder="https://...">
-          </label>
-          <label>
-            备注
-            <textarea name="note" rows="4" placeholder="套餐、付款记录、交付备注等"></textarea>
-          </label>
-          <button type="submit">添加并立即检查</button>
-          <p class="form-message" id="formMessage"></p>
-        </form>
+      <nav class="tabs" aria-label="后台页面">
+        <button class="tab active" type="button" data-page="urls">URL 管理</button>
+        <button class="tab" type="button" data-page="users">用户管理</button>
+      </nav>
 
-        <section class="panel list-panel">
-          <div class="list-heading">
-            <h2>已售线路</h2>
-            <input id="search" placeholder="搜索线路、客户或备注">
+      <section class="page active" id="urlsPage">
+        <section class="sheet-panel">
+          <div class="sheet-heading">
+            <h2>URL 表</h2>
+            <div class="sheet-tools">
+              <input id="search" placeholder="搜索 URL、邮箱或备注">
+              <button id="addUrlButton" type="button">添加 URL</button>
+            </div>
           </div>
-          <div id="subscriptionList" class="subscription-list"></div>
+          <div class="table-wrap">
+            <table id="urlTable">
+              <thead>
+                <tr>
+                  <th class="index-col">#</th>
+                  <th>绑定邮箱</th>
+                  <th>订阅 URL</th>
+                  <th>剩余流量</th>
+                  <th><button id="expirySortButton" class="sort-button" type="button">URL 到期 <span id="expirySortIcon">↕</span></button></th>
+                  <th>已用 / 总量</th>
+                  <th>状态</th>
+                  <th>备注</th>
+                  <th>上次检查</th>
+                  <th class="action-col">操作</th>
+                </tr>
+              </thead>
+              <tbody id="subscriptionRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="page" id="usersPage">
+        <section class="sheet-panel">
+          <div class="sheet-heading">
+            <h2>用户表</h2>
+            <div class="sheet-tools">
+              <input id="userSearch" placeholder="搜索用户、邮箱或 URL">
+              <button id="addUserButton" type="button">添加用户</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="userTable">
+              <thead>
+                <tr>
+                  <th class="index-col">#</th>
+                  <th>用户 ID</th>
+                  <th>购买时间</th>
+                  <th>购买时长</th>
+                  <th>实付款</th>
+                  <th>使用 URL</th>
+                  <th>绑定邮箱</th>
+                  <th>用户到期</th>
+                  <th>状态</th>
+                  <th class="action-col">操作</th>
+                </tr>
+              </thead>
+              <tbody id="userRows"></tbody>
+            </table>
+          </div>
         </section>
       </section>
     </main>
 
-    <template id="subscriptionTemplate">
-      <article class="subscription-card">
-        <div class="card-top">
-          <div>
-            <div class="name"></div>
-            <div class="meta"></div>
-          </div>
-          <span class="status"></span>
+    <dialog id="urlDialog" class="form-dialog">
+      <form id="subscriptionForm" method="dialog">
+        <div class="dialog-top">
+          <h2 id="urlDialogTitle">添加 URL</h2>
+          <button class="secondary close-dialog" type="button" data-close="urlDialog">关闭</button>
         </div>
-        <div class="metrics">
-          <div>
-            <span>剩余流量</span>
-            <strong class="remaining"></strong>
-          </div>
-          <div>
-            <span>到期时间</span>
-            <strong class="expire"></strong>
-          </div>
-          <div>
-            <span>已用 / 总量</span>
-            <strong class="usage"></strong>
-          </div>
+        <input type="hidden" name="id">
+        <label>
+          订阅 URL
+          <input name="url" required type="url" placeholder="https://...">
+        </label>
+        <label>
+          绑定邮箱
+          <input name="email" required type="email" placeholder="name@example.com">
+        </label>
+        <label>
+          备注
+          <textarea name="note" rows="4" placeholder="套餐、付款记录、交付备注等"></textarea>
+        </label>
+        <div class="dialog-actions">
+          <p class="form-message" id="formMessage"></p>
+          <button type="submit">保存</button>
         </div>
-        <div class="progress"><span></span></div>
-        <p class="note"></p>
-        <p class="error"></p>
-        <div class="card-actions">
-          <button class="secondary refresh">刷新</button>
-          <button class="secondary debug">查看返回</button>
-          <button class="danger delete">删除</button>
+      </form>
+    </dialog>
+
+    <dialog id="userDialog" class="form-dialog">
+      <form id="userForm" method="dialog">
+        <div class="dialog-top">
+          <h2 id="userDialogTitle">添加用户</h2>
+          <button class="secondary close-dialog" type="button" data-close="userDialog">关闭</button>
         </div>
-      </article>
-    </template>
+        <input type="hidden" name="id">
+        <label>
+          用户 ID
+          <input name="userId" required placeholder="如：Telegram ID / 客户编号">
+        </label>
+        <label>
+          微信名
+          <input name="wechatName" placeholder="选填">
+        </label>
+        <label>
+          iMessage ID
+          <input name="imessageId" placeholder="选填">
+        </label>
+        <label>
+          购买时间
+          <input name="purchasedAt" required type="datetime-local">
+        </label>
+        <label>
+          实付款
+          <input name="actualPaid" required type="number" min="0" step="0.01" placeholder="0.00">
+        </label>
+        <fieldset>
+          <legend>购买时长</legend>
+          <label class="radio-row">
+            <input type="radio" name="duration" value="monthly" checked>
+            月付
+          </label>
+          <label class="radio-row">
+            <input type="radio" name="duration" value="quarterly">
+            季付
+          </label>
+          <label class="radio-row">
+            <input type="radio" name="duration" value="half_yearly">
+            半年付
+          </label>
+          <label class="radio-row">
+            <input type="radio" name="duration" value="yearly">
+            年付
+          </label>
+        </fieldset>
+        <label>
+          使用的 URL
+          <select name="subscriptionId" required id="subscriptionSelect"></select>
+        </label>
+        <div class="dialog-actions">
+          <p class="form-message" id="userFormMessage"></p>
+          <button type="submit">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="userDetailDialog" class="form-dialog">
+      <div class="dialog-top">
+        <h2>用户详情</h2>
+        <button class="secondary close-dialog" type="button" data-close="userDetailDialog">关闭</button>
+      </div>
+      <div id="userDetailContent" class="detail-panel"></div>
+    </dialog>
 
     <dialog id="debugDialog" class="debug-dialog">
       <div class="debug-top">

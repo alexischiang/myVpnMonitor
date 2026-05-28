@@ -6,10 +6,11 @@ const crypto = require("crypto");
 const PORT = Number(process.env.PORT || 3000);
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "subscriptions.json");
 const DATA_DIR = path.dirname(DATA_FILE);
+const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30 * 60 * 1000);
-const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 10 * 1024 * 1024 * 1024);
-const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 7);
+const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 50 * 1024 * 1024 * 1024);
+const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
 const REQUEST_PROFILES = [
   {
     name: "shadowrocket",
@@ -74,6 +75,7 @@ const REQUEST_PROFILES = [
 ];
 
 let subscriptions = [];
+let users = [];
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -92,10 +94,23 @@ async function ensureDataFile() {
     subscriptions = [];
     await saveData();
   }
+
+  try {
+    const raw = await fs.readFile(USERS_FILE, "utf8");
+    users = JSON.parse(raw);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    users = [];
+    await saveUsers();
+  }
 }
 
 async function saveData() {
   await fs.writeFile(DATA_FILE, JSON.stringify(subscriptions, null, 2));
+}
+
+async function saveUsers() {
+  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
 function sendJson(res, status, payload) {
@@ -125,22 +140,97 @@ function readJson(req) {
 }
 
 function normalizeSubscription(input, existing = {}) {
-  const name = String(input.name || existing.name || "").trim();
+  const rawUrl = String(input.url || existing.url || "").trim();
+  const email = String(input.email || existing.email || "").trim();
+  const generatedName = email || safeHostName(rawUrl) || existing.name || "";
+  const name = String(input.name || generatedName).trim();
   const url = String(input.url || existing.url || "").trim();
   const customer = String(input.customer || existing.customer || "").trim();
   const note = String(input.note || existing.note || "").trim();
 
-  if (!name) throw new Error("请填写线路名称。");
   if (!url || !/^https?:\/\//i.test(url)) throw new Error("请填写 http 或 https 开头的订阅 URL。");
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("请填写该 URL 绑定的有效邮箱。");
 
   return {
     ...existing,
     name,
     url,
+    email,
     customer,
     note,
     updatedAt: new Date().toISOString()
   };
+}
+
+function safeHostName(value) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return "";
+  }
+}
+
+function durationMonths(duration) {
+  const values = {
+    monthly: 1,
+    quarterly: 3,
+    half_yearly: 6,
+    yearly: 12
+  };
+  return values[duration] || null;
+}
+
+function calculateExpiry(purchasedAt, duration) {
+  const months = durationMonths(duration);
+  const start = new Date(purchasedAt);
+  if (!months || Number.isNaN(start.getTime())) return null;
+
+  const expiresAt = new Date(start.getTime());
+  const day = expiresAt.getDate();
+  expiresAt.setDate(1);
+  expiresAt.setMonth(expiresAt.getMonth() + months);
+  const lastDay = new Date(expiresAt.getFullYear(), expiresAt.getMonth() + 1, 0).getDate();
+  expiresAt.setDate(Math.min(day, lastDay));
+  return expiresAt.toISOString();
+}
+
+function normalizeUser(input, existing = {}) {
+  const userId = String(input.userId || existing.userId || "").trim();
+  const wechatName = String(input.wechatName || existing.wechatName || "").trim();
+  const imessageId = String(input.imessageId || existing.imessageId || "").trim();
+  const purchasedAt = String(input.purchasedAt || existing.purchasedAt || new Date().toISOString()).trim();
+  const duration = String(input.duration || existing.duration || "monthly").trim();
+  const subscriptionId = String(input.subscriptionId || existing.subscriptionId || "").trim();
+  const actualPaid = normalizePaymentAmount(input.actualPaid ?? existing.actualPaid ?? "");
+  const subscription = subscriptions.find(item => item.id === subscriptionId);
+  const expiresAt = calculateExpiry(purchasedAt, duration);
+
+  if (!userId) throw new Error("请填写用户 ID。");
+  if (!subscription) throw new Error("请选择已添加的 URL。");
+  if (!durationMonths(duration)) throw new Error("请选择购买时长。");
+  if (!expiresAt) throw new Error("购买时间格式不正确。");
+  if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
+
+  return {
+    ...existing,
+    userId,
+    wechatName,
+    imessageId,
+    purchasedAt: new Date(purchasedAt).toISOString(),
+    duration,
+    actualPaid,
+    subscriptionId,
+    expiresAt,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function normalizePaymentAmount(value) {
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  return Math.round(amount * 100) / 100;
 }
 
 function parseSubscriptionUserInfo(value) {
@@ -205,6 +295,30 @@ function parseBodyHints(text) {
   };
 }
 
+function parseAccountUnavailable(text) {
+  for (const variant of decodeBodyVariants(text)) {
+    try {
+      const parsed = JSON.parse(variant);
+      if (String(parsed?.message || "").trim().toLowerCase() === "account unavailable") {
+        return {
+          uploadBytes: null,
+          downloadBytes: null,
+          usedBytes: null,
+          totalBytes: null,
+          remainingBytes: null,
+          expireAt: new Date(0).toISOString(),
+          unavailable: true,
+          source: "account-unavailable"
+        };
+      }
+    } catch {
+      // Ignore non-JSON subscription bodies.
+    }
+  }
+
+  return null;
+}
+
 function normalizeSubscriptionBody(text) {
   const raw = String(text || "");
   const candidates = [raw];
@@ -247,6 +361,7 @@ function toBytes(value, unit) {
 }
 
 function statusFor(item) {
+  if (item.metrics?.unavailable) return "expired";
   if (item.lastError) return "error";
   if (!item.metrics) return "unknown";
 
@@ -258,7 +373,7 @@ function statusFor(item) {
   if (remaining !== null && remaining !== undefined && remaining <= 0) return "depleted";
 
   const daysLeft = expiresAt ? (expiresAt - now) / 86400000 : null;
-  if ((remaining !== null && remaining <= LOW_TRAFFIC_BYTES) || (daysLeft !== null && daysLeft <= EXPIRING_SOON_DAYS)) {
+  if ((remaining !== null && remaining < LOW_TRAFFIC_BYTES) || (daysLeft !== null && daysLeft < EXPIRING_SOON_DAYS)) {
     return "warning";
   }
 
@@ -267,6 +382,7 @@ function statusFor(item) {
 
 function metricScore(metrics) {
   if (!metrics) return 0;
+  if (metrics.unavailable) return 1000;
 
   let score = 0;
   if (metrics.expireAt) score += 40;
@@ -286,6 +402,19 @@ function publicItem(item) {
   return {
     ...item,
     status: statusFor(item)
+  };
+}
+
+function publicUser(user) {
+  const subscription = subscriptions.find(item => item.id === user.subscriptionId);
+  return {
+    ...user,
+    subscription: subscription ? {
+      id: subscription.id,
+      url: subscription.url,
+      email: subscription.email || "",
+      name: subscription.name || ""
+    } : null
   };
 }
 
@@ -470,7 +599,7 @@ async function fetchSubscriptionMetrics(url, profile) {
 
     if (!metrics) {
       const body = await response.text();
-      metrics = parseBodyHints(body);
+      metrics = parseAccountUnavailable(body) || parseBodyHints(body);
     }
 
     return {
@@ -495,6 +624,7 @@ async function handleApi(req, res, pathname) {
     sendJson(res, 200, {
       ok: true,
       subscriptions: subscriptions.length,
+      users: users.length,
       refreshedEveryMs: REFRESH_INTERVAL_MS
     });
     return;
@@ -527,7 +657,61 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/users" && req.method === "GET") {
+    sendJson(res, 200, users.map(publicUser));
+    return;
+  }
+
+  if (pathname === "/api/users" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const item = {
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString()
+      };
+      const normalized = normalizeUser(payload, item);
+      users.unshift(normalized);
+      await saveUsers();
+      sendJson(res, 201, publicUser(normalized));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const match = pathname.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|debug))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)$/);
+  if (userMatch) {
+    const id = userMatch[1];
+    const item = users.find(entry => entry.id === id);
+    if (!item) {
+      sendJson(res, 404, { error: "没有找到这个用户。" });
+      return;
+    }
+
+    if (req.method === "PUT") {
+      try {
+        const payload = await readJson(req);
+        Object.assign(item, normalizeUser(payload, item));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      users = users.filter(entry => entry.id !== id);
+      await saveUsers();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    sendJson(res, 405, { error: "Method not allowed." });
+    return;
+  }
+
   if (!match) {
     sendJson(res, 404, { error: "Not found." });
     return;
@@ -555,7 +739,9 @@ async function handleApi(req, res, pathname) {
   if (req.method === "PUT") {
     try {
       const payload = await readJson(req);
-      normalizeSubscription(payload, item);
+      const previousUrl = item.url;
+      Object.assign(item, normalizeSubscription(payload, item));
+      if (item.url !== previousUrl) await refreshSubscription(item);
       await saveData();
       sendJson(res, 200, publicItem(item));
     } catch (error) {
@@ -566,7 +752,9 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "DELETE") {
     subscriptions = subscriptions.filter(entry => entry.id !== id);
+    users = users.filter(entry => entry.subscriptionId !== id);
     await saveData();
+    await saveUsers();
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -629,6 +817,8 @@ if (require.main === module) {
 module.exports = {
   parseSubscriptionUserInfo,
   parseBodyHints,
+  parseAccountUnavailable,
+  calculateExpiry,
   statusFor,
   toBytes
 };
