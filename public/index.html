@@ -29,6 +29,7 @@
             <h2>URL 表</h2>
             <div class="sheet-tools">
               <input id="search" placeholder="搜索 URL、邮箱或备注">
+              <button id="urlColumnButton" class="secondary" type="button">显示列</button>
               <button id="addUrlButton" type="button">添加 URL</button>
             </div>
           </div>
@@ -36,16 +37,17 @@
             <table id="urlTable">
               <thead>
                 <tr>
-                  <th class="index-col">#</th>
-                  <th>绑定邮箱</th>
-                  <th>订阅 URL</th>
-                  <th>剩余流量</th>
-                  <th><button id="expirySortButton" class="sort-button" type="button">URL 到期 <span id="expirySortIcon">↕</span></button></th>
-                  <th>已用 / 总量</th>
-                  <th>状态</th>
-                  <th>备注</th>
-                  <th>上次检查</th>
-                  <th class="action-col">操作</th>
+                  <th class="index-col" data-column="index">#</th>
+                  <th data-column="email">绑定邮箱</th>
+                  <th data-column="url">订阅 URL</th>
+                  <th data-column="customerCount">客户数</th>
+                  <th data-column="remaining">剩余流量</th>
+                  <th data-column="expire"><button id="expirySortButton" class="sort-button" type="button">URL 到期 <span id="expirySortIcon">↕</span></button></th>
+                  <th data-column="usage">已用 / 总量</th>
+                  <th data-column="status">状态</th>
+                  <th data-column="note">备注</th>
+                  <th data-column="lastChecked">上次检查</th>
+                  <th class="action-col" data-column="actions">操作</th>
                 </tr>
               </thead>
               <tbody id="subscriptionRows"></tbody>
@@ -177,6 +179,26 @@
       <div id="userDetailContent" class="detail-panel"></div>
     </dialog>
 
+    <dialog id="urlDetailDialog" class="form-dialog">
+      <div class="dialog-top">
+        <h2>URL 详情</h2>
+        <button class="secondary close-dialog" type="button" data-close="urlDetailDialog">关闭</button>
+      </div>
+      <div id="urlDetailContent" class="detail-panel"></div>
+    </dialog>
+
+    <dialog id="urlColumnDialog" class="form-dialog">
+      <div class="dialog-top">
+        <h2>URL 表显示列</h2>
+        <button class="secondary close-dialog" type="button" data-close="urlColumnDialog">关闭</button>
+      </div>
+      <div id="urlColumnOptions" class="column-options"></div>
+      <div class="dialog-actions">
+        <p class="form-message">勾选要显示的列，设置会保存在当前浏览器。</p>
+        <button id="resetUrlColumns" class="secondary" type="button">恢复默认</button>
+      </div>
+    </dialog>
+
     <dialog id="debugDialog" class="debug-dialog">
       <div class="debug-top">
         <h2>订阅返回信息</h2>
@@ -184,6 +206,19 @@
       </div>
       <pre id="debugOutput"></pre>
     </dialog>
+
+    <div id="refreshOverlay" class="refresh-overlay" hidden>
+      <section class="refresh-card">
+        <div class="refresh-spinner" aria-hidden="true"></div>
+        <div>
+          <h2>正在刷新全部 URL</h2>
+          <p id="refreshProgressText">准备开始...</p>
+        </div>
+        <div class="refresh-progress">
+          <span id="refreshProgressBar"></span>
+        </div>
+      </section>
+    </div>
 
     <script src="/app.js"></script>
   </body>

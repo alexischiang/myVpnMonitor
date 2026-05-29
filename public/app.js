@@ -24,16 +24,39 @@ const expirySortButton = document.querySelector("#expirySortButton");
 const expirySortIcon = document.querySelector("#expirySortIcon");
 const userDetailDialog = document.querySelector("#userDetailDialog");
 const userDetailContent = document.querySelector("#userDetailContent");
+const urlDetailDialog = document.querySelector("#urlDetailDialog");
+const urlDetailContent = document.querySelector("#urlDetailContent");
+const urlColumnButton = document.querySelector("#urlColumnButton");
+const urlColumnDialog = document.querySelector("#urlColumnDialog");
+const urlColumnOptions = document.querySelector("#urlColumnOptions");
+const resetUrlColumns = document.querySelector("#resetUrlColumns");
+const refreshOverlay = document.querySelector("#refreshOverlay");
+const refreshProgressText = document.querySelector("#refreshProgressText");
+const refreshProgressBar = document.querySelector("#refreshProgressBar");
 
 let subscriptions = [];
 let users = [];
 let expirySortDirection = "desc";
 
-const COLUMN_WIDTH_VERSION = "2026-05-29-balanced-v1";
+const COLUMN_WIDTH_VERSION = "2026-05-29-compact-table-v1";
 const DEFAULT_COLUMN_WIDTHS = {
-  urlTable: [56, 210, 430, 120, 130, 190, 110, 160, 190, 280],
-  userTable: [56, 150, 130, 110, 110, 430, 210, 130, 110, 220]
+  urlTable: [56, 190, 360, 86, 110, 118, 170, 96, 140, 168, 258],
+  userTable: [56, 150, 122, 104, 108, 360, 190, 118, 96, 210]
 };
+
+const URL_COLUMNS = [
+  { key: "index", label: "#", defaultVisible: true, locked: true },
+  { key: "email", label: "绑定邮箱", defaultVisible: true },
+  { key: "url", label: "订阅 URL", defaultVisible: true },
+  { key: "customerCount", label: "客户数", defaultVisible: true },
+  { key: "remaining", label: "剩余流量", defaultVisible: true },
+  { key: "expire", label: "URL 到期", defaultVisible: true },
+  { key: "usage", label: "已用 / 总量", defaultVisible: true },
+  { key: "status", label: "状态", defaultVisible: true },
+  { key: "note", label: "备注", defaultVisible: false },
+  { key: "lastChecked", label: "上次检查", defaultVisible: true },
+  { key: "actions", label: "操作", defaultVisible: true, locked: true }
+];
 
 const statusLabels = {
   ok: "正常",
@@ -134,16 +157,18 @@ function statusBadge(statusName) {
   return badge;
 }
 
-function textCell(row, value, className = "") {
+function textCell(row, value, className = "", columnKey = "") {
   const cell = row.insertCell();
   cell.className = ["text-cell", className].filter(Boolean).join(" ");
+  if (columnKey) cell.dataset.column = columnKey;
   cell.textContent = value;
   return cell;
 }
 
-function renderUrlCell(row, url) {
+function renderUrlCell(row, url, columnKey = "url") {
   const cell = row.insertCell();
   cell.className = "url-cell";
+  if (columnKey) cell.dataset.column = columnKey;
   const content = document.createElement("div");
   content.className = "url-content";
   const text = document.createElement("span");
@@ -171,8 +196,9 @@ function usagePercent(metrics) {
   return Math.min(Math.max((metrics.usedBytes || 0) / metrics.totalBytes * 100, 0), 100);
 }
 
-function renderUsageCell(row, metrics, isExpired) {
+function renderUsageCell(row, metrics, isExpired, columnKey = "usage") {
   const cell = row.insertCell();
+  if (columnKey) cell.dataset.column = columnKey;
   if (isExpired) {
     cell.className = "muted-cell";
     cell.textContent = "—";
@@ -229,9 +255,17 @@ function actionButton(label, className, onClick) {
   return button;
 }
 
-function actionCell(row, buttons) {
+function urlActionButton(label, action, id, className) {
+  const button = actionButton(label, className, () => {});
+  button.dataset.urlAction = action;
+  button.dataset.urlId = id;
+  return button;
+}
+
+function actionCell(row, buttons, columnKey = "actions") {
   const cell = row.insertCell();
   cell.className = "action-cell";
+  if (columnKey) cell.dataset.column = columnKey;
   const group = document.createElement("div");
   group.className = "row-actions";
   group.append(...buttons);
@@ -246,6 +280,10 @@ function emptyRows(target, colspan, message) {
   cell.colSpan = colspan;
   cell.className = "empty-cell";
   cell.textContent = message;
+}
+
+function customerCountForSubscription(subscriptionId) {
+  return users.filter(user => user.subscriptionId === subscriptionId).length;
 }
 
 function setupResizableTables() {
@@ -266,7 +304,8 @@ function setupResizableTables() {
     headers.forEach((header, index) => {
       const col = document.createElement("col");
       colgroup.appendChild(col);
-      const initialWidth = Number(savedWidths[index]) || defaultWidths[index] || Math.max(header.offsetWidth || 120, 80);
+      const minWidth = minimumColumnWidth(tableId, index);
+      const initialWidth = Math.max(Number(savedWidths[index]) || defaultWidths[index] || Math.max(header.offsetWidth || 120, 80), minWidth);
       col.style.width = `${initialWidth}px`;
       header.style.width = `${initialWidth}px`;
 
@@ -279,7 +318,7 @@ function setupResizableTables() {
         const startWidth = col.getBoundingClientRect().width || initialWidth;
 
         const onMove = moveEvent => {
-          const width = Math.max(startWidth + moveEvent.clientX - startX, 72);
+          const width = Math.max(startWidth + moveEvent.clientX - startX, minWidth);
           col.style.width = `${width}px`;
           header.style.width = `${width}px`;
           updateTableWidth(table);
@@ -289,7 +328,10 @@ function setupResizableTables() {
           document.body.classList.remove("is-resizing-column");
           document.removeEventListener("mousemove", onMove);
           document.removeEventListener("mouseup", onUp);
-          const widths = Array.from(colgroup.children).map(item => Math.round(item.getBoundingClientRect().width));
+          const widths = Array.from(colgroup.children).map((item, itemIndex) => {
+            const width = parseFloat(item.style.width) || item.getBoundingClientRect().width;
+            return Math.round(Math.max(width, minimumColumnWidth(tableId, itemIndex)));
+          });
           localStorage.setItem(`column-widths:${tableId}`, JSON.stringify(widths));
         };
 
@@ -304,10 +346,78 @@ function setupResizableTables() {
   });
 }
 
+function minimumColumnWidth(tableId, index) {
+  const defaultWidth = DEFAULT_COLUMN_WIDTHS[tableId]?.[index] || 96;
+  return Math.max(Math.round(defaultWidth * 0.55), 56);
+}
+
 function updateTableWidth(table) {
+  if (!table) return;
   const cols = Array.from(table.querySelectorAll("col"));
-  const total = cols.reduce((sum, col) => sum + (col.getBoundingClientRect().width || 0), 0);
+  const total = cols.reduce((sum, col) => {
+    if (col.classList.contains("hidden-column")) return sum;
+    const width = parseFloat(col.style.width) || col.getBoundingClientRect().width || 0;
+    return sum + width;
+  }, 0);
   if (total > 0) table.style.width = `${Math.ceil(total)}px`;
+}
+
+function defaultUrlColumnState() {
+  return Object.fromEntries(URL_COLUMNS.map(column => [column.key, column.defaultVisible]));
+}
+
+function getUrlColumnState() {
+  try {
+    return { ...defaultUrlColumnState(), ...JSON.parse(localStorage.getItem("url-column-visibility") || "{}") };
+  } catch {
+    return defaultUrlColumnState();
+  }
+}
+
+function saveUrlColumnState(state) {
+  localStorage.setItem("url-column-visibility", JSON.stringify(state));
+}
+
+function initUrlColumnControls() {
+  urlColumnOptions.replaceChildren();
+  const state = getUrlColumnState();
+  URL_COLUMNS.forEach(column => {
+    const label = document.createElement("label");
+    label.className = "column-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = Boolean(state[column.key]);
+    checkbox.disabled = Boolean(column.locked);
+    checkbox.addEventListener("change", () => {
+      const nextState = getUrlColumnState();
+      nextState[column.key] = checkbox.checked;
+      saveUrlColumnState(nextState);
+      applyUrlColumnVisibility();
+    });
+    const text = document.createElement("span");
+    text.textContent = column.label;
+    label.append(checkbox, text);
+    urlColumnOptions.appendChild(label);
+  });
+}
+
+function applyUrlColumnVisibility() {
+  const state = getUrlColumnState();
+  URL_COLUMNS.forEach((column, index) => {
+    const visible = column.locked || Boolean(state[column.key]);
+    document.querySelectorAll(`#urlTable [data-column="${column.key}"]`).forEach(node => {
+      node.hidden = false;
+      node.classList.toggle("hidden-table-cell", !visible);
+      if (visible) {
+        node.removeAttribute("aria-hidden");
+      } else {
+        node.setAttribute("aria-hidden", "true");
+      }
+    });
+    const col = document.querySelector(`#urlTable col:nth-child(${index + 1})`);
+    if (col) col.classList.toggle("hidden-column", !visible);
+  });
+  updateTableWidth(document.querySelector("#urlTable"));
 }
 
 function formatDebugPayload(payload) {
@@ -418,6 +528,118 @@ function showUserDetail(user) {
   userDetailDialog.showModal();
 }
 
+function renderDetailSections(target, heroConfig, statsItems, groups) {
+  target.replaceChildren();
+
+  const hero = document.createElement("section");
+  hero.className = "detail-hero";
+  const avatar = document.createElement("div");
+  avatar.className = "detail-avatar";
+  avatar.textContent = heroConfig.avatar;
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "detail-title";
+  const title = document.createElement("strong");
+  title.textContent = heroConfig.title;
+  const subtitle = document.createElement("span");
+  subtitle.textContent = heroConfig.subtitle;
+  titleWrap.append(title, subtitle);
+  hero.append(avatar, titleWrap, statusBadge(heroConfig.status));
+  target.appendChild(hero);
+
+  const stats = document.createElement("section");
+  stats.className = "detail-stats";
+  statsItems.forEach(([label, value]) => {
+    const card = document.createElement("div");
+    const labelNode = document.createElement("span");
+    const valueNode = document.createElement("strong");
+    labelNode.textContent = label;
+    valueNode.textContent = value;
+    card.append(labelNode, valueNode);
+    stats.appendChild(card);
+  });
+  target.appendChild(stats);
+
+  groups.forEach(group => {
+    const section = document.createElement("section");
+    section.className = "detail-card";
+    const heading = document.createElement("h3");
+    heading.textContent = group.title;
+    const grid = document.createElement("div");
+    grid.className = "detail-card-grid";
+    group.items.forEach(([label, value]) => {
+      const labelNode = document.createElement("div");
+      const valueNode = document.createElement("div");
+      labelNode.className = "detail-label";
+      valueNode.className = "detail-value";
+      labelNode.textContent = label;
+      valueNode.textContent = value || "未知";
+      grid.append(labelNode, valueNode);
+    });
+    section.append(heading, grid);
+    target.appendChild(section);
+  });
+}
+
+function showUrlDetail(item) {
+  const metrics = item.metrics || {};
+  const isExpired = item.status === "expired";
+  const boundUsers = users.filter(user => user.subscriptionId === item.id);
+  const statusName = item.status || "unknown";
+
+  renderDetailSections(
+    urlDetailContent,
+    {
+      avatar: String(boundUsers.length),
+      title: item.email || item.name || "未填写邮箱",
+      subtitle: item.url,
+      status: statusName
+    },
+    [
+      ["绑定客户", `${boundUsers.length}`],
+      ["剩余流量", isExpired ? "—" : formatBytes(metrics.remainingBytes)],
+      ["到期日期", isExpired ? "—" : formatDate(metrics.expireAt)]
+    ],
+    [
+      {
+        title: "订阅信息",
+        items: [
+          ["绑定邮箱", item.email || "未填写"],
+          ["订阅 URL", item.url],
+          ["客户数", `${boundUsers.length}`],
+          ["备注", item.note || "未填写"]
+        ]
+      },
+      {
+        title: "监控信息",
+        items: [
+          ["状态", statusLabels[statusName] || "未知"],
+          ["剩余流量", isExpired ? "—" : formatBytes(metrics.remainingBytes)],
+          ["URL 到期", isExpired ? "—" : formatDate(metrics.expireAt)],
+          ["已用 / 总量", isExpired ? "—" : `${formatBytes(metrics.usedBytes)} / ${formatBytes(metrics.totalBytes)}`],
+          ["上次检查", formatDateTime(item.lastCheckedAt)],
+          ["客户端", item.lastClient || "未知"],
+          ["HTTP 状态", item.httpStatus || "未知"],
+          ["错误信息", item.lastError || "无"]
+        ]
+      },
+      {
+        title: "绑定客户",
+        items: boundUsers.length
+          ? boundUsers.map(user => [user.userId, `${durationLabels[user.duration] || "未知"} · 到期 ${formatDate(user.expiresAt)} · 实付款 ${formatMoney(user.actualPaid)}`])
+          : [["客户", "暂无绑定客户"]]
+      },
+      {
+        title: "系统信息",
+        items: [
+          ["创建时间", formatDateTime(item.createdAt)],
+          ["更新时间", formatDateTime(item.updatedAt)]
+        ]
+      }
+    ]
+  );
+  urlDetailDialog.showModal();
+}
+
 async function showDebug(id) {
   debugOutput.textContent = "正在读取订阅返回...";
   debugDialog.showModal();
@@ -432,11 +654,6 @@ function renderSummary() {
     return acc;
   }, {});
 
-  const totalRemaining = subscriptions.reduce((sum, item) => {
-    const remaining = item.metrics?.remainingBytes;
-    return sum + (Number.isFinite(remaining) ? remaining : 0);
-  }, 0);
-
   const paidTotal = users.reduce((sum, user) => {
     const amount = Number(user.actualPaid);
     return sum + (Number.isFinite(amount) ? amount : 0);
@@ -450,10 +667,9 @@ function renderSummary() {
     ["URL 总数", subscriptions.length],
     ["用户总数", users.length],
     ["本月总收入", formatMoney(monthlyPaidTotal)],
-    ["需处理 URL", (counts.warning || 0) + (counts.error || 0) + (counts.expired || 0) + (counts.depleted || 0)],
+    ["需处理 URL", counts.error || 0],
     ["即将到期用户", expiringUsers],
-    ["实付款合计", formatMoney(paidTotal)],
-    ["可见剩余流量", formatBytes(totalRemaining)]
+    ["实付款合计", formatMoney(paidTotal)]
   ];
 
   summary.innerHTML = cards.map(([label, value]) => `
@@ -499,7 +715,7 @@ function renderList() {
 
   subscriptionRows.innerHTML = "";
   if (!visible.length) {
-    emptyRows(subscriptionRows, 10, "还没有匹配的 URL。");
+    emptyRows(subscriptionRows, URL_COLUMNS.length, "还没有匹配的 URL。");
     return;
   }
 
@@ -507,24 +723,30 @@ function renderList() {
     const row = subscriptionRows.insertRow();
     const metrics = item.metrics || {};
     const isExpired = item.status === "expired";
+    const customerCount = customerCountForSubscription(item.id);
 
-    textCell(row, String(index + 1), "index-cell");
-    textCell(row, item.email || item.name || "未填写邮箱");
+    textCell(row, String(index + 1), "index-cell", "index");
+    textCell(row, item.email || item.name || "未填写邮箱", "", "email");
     renderUrlCell(row, item.url);
-    textCell(row, isExpired ? "—" : formatBytes(metrics.remainingBytes), isExpired ? "muted-cell" : "");
-    textCell(row, isExpired ? "—" : formatDate(metrics.expireAt), isExpired ? "muted-cell" : "");
+    textCell(row, String(customerCount), "count-cell", "customerCount");
+    textCell(row, isExpired ? "—" : formatBytes(metrics.remainingBytes), isExpired ? "muted-cell" : "", "remaining");
+    textCell(row, isExpired ? "—" : formatDate(metrics.expireAt), isExpired ? "muted-cell" : "", "expire");
     renderUsageCell(row, metrics, isExpired);
-    row.insertCell().appendChild(statusBadge(item.status));
-    textCell(row, item.note || "");
-    textCell(row, `${formatDateTime(item.lastCheckedAt)} · ${item.lastClient || "未知"}`);
+    const statusCell = row.insertCell();
+    statusCell.dataset.column = "status";
+    statusCell.appendChild(statusBadge(item.status));
+    textCell(row, item.note || "", "", "note");
+    textCell(row, `${formatDateTime(item.lastCheckedAt)} · ${item.lastClient || "未知"}`, "", "lastChecked");
 
     actionCell(row, [
-      actionButton("编辑", "secondary compact", () => openUrlDialog(item)),
-      actionButton("刷新", "secondary compact", () => refreshOne(item.id)),
-      actionButton("查看返回", "secondary compact", () => showDebug(item.id)),
-      actionButton("删除", "danger compact", () => deleteOne(item.id))
+      urlActionButton("详情", "detail", item.id, "secondary compact"),
+      urlActionButton("编辑", "edit", item.id, "secondary compact"),
+      urlActionButton("刷新", "refresh", item.id, "secondary compact"),
+      urlActionButton("查看返回", "debug", item.id, "secondary compact"),
+      urlActionButton("删除", "delete", item.id, "danger compact")
     ]);
   });
+  applyUrlColumnVisibility();
 }
 
 function renderUsers() {
@@ -615,6 +837,14 @@ async function refreshOne(id) {
   render();
 }
 
+function setRefreshPending(isPending, completed = 0, total = 0) {
+  document.body.classList.toggle("is-refreshing", isPending);
+  refreshOverlay.hidden = !isPending;
+  const percent = total ? Math.round(completed / total * 100) : 0;
+  refreshProgressBar.style.width = `${percent}%`;
+  refreshProgressText.textContent = total ? `已完成 ${completed} / ${total}` : "准备开始...";
+}
+
 async function deleteOne(id) {
   if (!confirm("确定删除这个 URL 吗？关联用户也会一起删除。")) return;
   await fetch(`/api/subscriptions/${id}`, { method: "DELETE" });
@@ -688,17 +918,41 @@ userForm.addEventListener("submit", async event => {
 });
 
 refreshAllButton.addEventListener("click", async () => {
+  const items = [...subscriptions];
+  if (!items.length) return;
   refreshAllButton.disabled = true;
   refreshAllButton.textContent = "刷新中...";
-  for (const item of [...subscriptions]) {
-    await refreshOne(item.id);
+  setRefreshPending(true, 0, items.length);
+  try {
+    for (const [index, item] of items.entries()) {
+      await refreshOne(item.id);
+      setRefreshPending(true, index + 1, items.length);
+    }
+  } finally {
+    setRefreshPending(false);
+    refreshAllButton.disabled = false;
+    refreshAllButton.textContent = "全部刷新";
   }
-  refreshAllButton.disabled = false;
-  refreshAllButton.textContent = "全部刷新";
 });
 
 tabs.forEach(tab => {
   tab.addEventListener("click", () => switchPage(tab.dataset.page));
+});
+
+subscriptionRows.addEventListener("click", event => {
+  const button = event.target.closest("[data-url-action]");
+  if (!button) return;
+  const item = subscriptions.find(entry => entry.id === button.dataset.urlId);
+  if (!item) return;
+
+  const actions = {
+    detail: () => showUrlDetail(item),
+    edit: () => openUrlDialog(item),
+    refresh: () => refreshOne(item.id),
+    debug: () => showDebug(item.id),
+    delete: () => deleteOne(item.id)
+  };
+  actions[button.dataset.urlAction]?.();
 });
 
 document.querySelectorAll(".close-dialog").forEach(button => {
@@ -707,6 +961,15 @@ document.querySelectorAll(".close-dialog").forEach(button => {
 
 addUrlButton.addEventListener("click", () => openUrlDialog());
 addUserButton.addEventListener("click", () => openUserDialog());
+urlColumnButton.addEventListener("click", () => {
+  initUrlColumnControls();
+  urlColumnDialog.showModal();
+});
+resetUrlColumns.addEventListener("click", () => {
+  saveUrlColumnState(defaultUrlColumnState());
+  initUrlColumnControls();
+  applyUrlColumnVisibility();
+});
 closeDebug.addEventListener("click", () => debugDialog.close());
 searchInput.addEventListener("input", renderList);
 userSearchInput.addEventListener("input", renderUsers);
@@ -718,4 +981,6 @@ expirySortButton.addEventListener("click", () => {
 Promise.all([loadSubscriptions(), loadUsers()]).then(() => {
   render();
   setupResizableTables();
+  initUrlColumnControls();
+  applyUrlColumnVisibility();
 });

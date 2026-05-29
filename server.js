@@ -401,6 +401,7 @@ function metricScore(metrics) {
 function publicItem(item) {
   return {
     ...item,
+    customerCount: users.filter(user => user.subscriptionId === item.id).length,
     status: statusFor(item)
   };
 }
