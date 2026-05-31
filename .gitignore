@@ -4,3 +4,4 @@ node_modules/
 *.log
 data/subscriptions.json
 data/users.json
+data/bills.json

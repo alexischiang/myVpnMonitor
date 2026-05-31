@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>VPN 后台管理系统</title>
+    <title>XELA monitor</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="shell">
       <section class="toolbar">
         <div>
-          <h1>后台管理系统</h1>
+          <h1>XELA monitor</h1>
           <p>管理订阅 URL、绑定邮箱、实时流量、到期时间和购买用户。</p>
         </div>
         <button id="refreshAll" class="secondary">全部刷新</button>
@@ -21,6 +21,7 @@
       <nav class="tabs" aria-label="后台页面">
         <button class="tab active" type="button" data-page="urls">URL 管理</button>
         <button class="tab" type="button" data-page="users">用户管理</button>
+        <button class="tab" type="button" data-page="bills">账单管理</button>
       </nav>
 
       <section class="page active" id="urlsPage">
@@ -40,7 +41,7 @@
                   <th class="index-col" data-column="index">#</th>
                   <th data-column="email">绑定邮箱</th>
                   <th data-column="url">订阅 URL</th>
-                  <th data-column="customerCount">客户数</th>
+                  <th data-column="customerCount"><button id="customerSortButton" class="sort-button" type="button">客户数 <span id="customerSortIcon">↕</span></button></th>
                   <th data-column="remaining">剩余流量</th>
                   <th data-column="expire"><button id="expirySortButton" class="sort-button" type="button">URL 到期 <span id="expirySortIcon">↕</span></button></th>
                   <th data-column="usage">已用 / 总量</th>
@@ -71,17 +72,54 @@
                 <tr>
                   <th class="index-col">#</th>
                   <th>用户 ID</th>
-                  <th>购买时间</th>
+                  <th>用户类型</th>
+                  <th><button id="userExpirySortButton" class="sort-button" type="button">用户到期 <span id="userExpirySortIcon">↕</span></button></th>
                   <th>购买时长</th>
-                  <th>实付款</th>
+                  <th><button id="userPaidSortButton" class="sort-button" type="button">总付款 <span id="userPaidSortIcon">↕</span></button></th>
                   <th>使用 URL</th>
                   <th>绑定邮箱</th>
-                  <th>用户到期</th>
-                  <th>状态</th>
+                  <th><button id="userPurchaseSortButton" class="sort-button" type="button">购买时间 <span id="userPurchaseSortIcon">↓</span></button></th>
                   <th class="action-col">操作</th>
                 </tr>
               </thead>
               <tbody id="userRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="page" id="billsPage">
+        <section class="sheet-panel">
+          <div class="sheet-heading">
+            <h2>账单表</h2>
+            <div class="sheet-tools">
+              <input id="billMonthFilter" class="month-input" type="month" aria-label="筛选月份">
+              <input id="billSearch" placeholder="搜索用户、类型或备注">
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="billTable">
+              <thead>
+                <tr>
+                  <th class="index-col">#</th>
+                  <th><button id="billTimeSortButton" class="sort-button" type="button">账单时间 <span id="billTimeSortIcon">↓</span></button></th>
+                  <th>用户</th>
+                  <th>类型</th>
+                  <th><button id="billAmountSortButton" class="sort-button" type="button">金额 <span id="billAmountSortIcon">↕</span></button></th>
+                  <th>时长</th>
+                  <th>到期变化</th>
+                  <th>状态</th>
+                  <th class="bill-action-col">操作</th>
+                </tr>
+              </thead>
+              <tbody id="billRows"></tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="4">筛选合计</td>
+                  <td id="billTotalAmount">0.00</td>
+                  <td colspan="4" id="billTotalMeta">0 笔有效账单</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </section>
@@ -177,6 +215,55 @@
         <button class="secondary close-dialog" type="button" data-close="userDetailDialog">关闭</button>
       </div>
       <div id="userDetailContent" class="detail-panel"></div>
+    </dialog>
+
+    <dialog id="purchaseSuccessDialog" class="form-dialog">
+      <div class="dialog-top">
+        <h2>添加成功</h2>
+        <button class="secondary close-dialog" type="button" data-close="purchaseSuccessDialog">关闭</button>
+      </div>
+      <div id="purchaseSuccessContent" class="detail-panel"></div>
+    </dialog>
+
+    <dialog id="renewDialog" class="form-dialog">
+      <form id="renewForm" method="dialog">
+        <div class="dialog-top">
+          <h2 id="renewDialogTitle">用户续费</h2>
+          <button class="secondary close-dialog" type="button" data-close="renewDialog">关闭</button>
+        </div>
+        <input type="hidden" name="id">
+        <label>
+          续费时间
+          <input name="purchasedAt" required type="datetime-local">
+        </label>
+        <label>
+          实付款
+          <input name="actualPaid" required type="number" min="0" step="0.01" placeholder="0.00">
+        </label>
+        <fieldset>
+          <legend>续费时长</legend>
+          <label class="radio-row">
+            <input type="radio" name="duration" value="monthly" checked>
+            月付
+          </label>
+          <label class="radio-row">
+            <input type="radio" name="duration" value="quarterly">
+            季付
+          </label>
+          <label class="radio-row">
+            <input type="radio" name="duration" value="half_yearly">
+            半年付
+          </label>
+          <label class="radio-row">
+            <input type="radio" name="duration" value="yearly">
+            年付
+          </label>
+        </fieldset>
+        <div class="dialog-actions">
+          <p class="form-message" id="renewFormMessage"></p>
+          <button type="submit">确认续费</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog id="urlDetailDialog" class="form-dialog">

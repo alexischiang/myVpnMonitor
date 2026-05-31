@@ -12,18 +12,41 @@ const pages = document.querySelectorAll(".page");
 const userForm = document.querySelector("#userForm");
 const userFormMessage = document.querySelector("#userFormMessage");
 const userRows = document.querySelector("#userRows");
+const billRows = document.querySelector("#billRows");
 const userSearchInput = document.querySelector("#userSearch");
+const billSearchInput = document.querySelector("#billSearch");
+const billMonthFilter = document.querySelector("#billMonthFilter");
+const billTotalAmount = document.querySelector("#billTotalAmount");
+const billTotalMeta = document.querySelector("#billTotalMeta");
 const subscriptionSelect = document.querySelector("#subscriptionSelect");
 const urlDialog = document.querySelector("#urlDialog");
 const userDialog = document.querySelector("#userDialog");
+const renewDialog = document.querySelector("#renewDialog");
 const urlDialogTitle = document.querySelector("#urlDialogTitle");
 const userDialogTitle = document.querySelector("#userDialogTitle");
+const renewDialogTitle = document.querySelector("#renewDialogTitle");
 const addUrlButton = document.querySelector("#addUrlButton");
 const addUserButton = document.querySelector("#addUserButton");
+const renewForm = document.querySelector("#renewForm");
+const renewFormMessage = document.querySelector("#renewFormMessage");
 const expirySortButton = document.querySelector("#expirySortButton");
 const expirySortIcon = document.querySelector("#expirySortIcon");
+const customerSortButton = document.querySelector("#customerSortButton");
+const customerSortIcon = document.querySelector("#customerSortIcon");
+const userExpirySortButton = document.querySelector("#userExpirySortButton");
+const userExpirySortIcon = document.querySelector("#userExpirySortIcon");
+const userPurchaseSortButton = document.querySelector("#userPurchaseSortButton");
+const userPurchaseSortIcon = document.querySelector("#userPurchaseSortIcon");
+const userPaidSortButton = document.querySelector("#userPaidSortButton");
+const userPaidSortIcon = document.querySelector("#userPaidSortIcon");
+const billTimeSortButton = document.querySelector("#billTimeSortButton");
+const billTimeSortIcon = document.querySelector("#billTimeSortIcon");
+const billAmountSortButton = document.querySelector("#billAmountSortButton");
+const billAmountSortIcon = document.querySelector("#billAmountSortIcon");
 const userDetailDialog = document.querySelector("#userDetailDialog");
 const userDetailContent = document.querySelector("#userDetailContent");
+const purchaseSuccessDialog = document.querySelector("#purchaseSuccessDialog");
+const purchaseSuccessContent = document.querySelector("#purchaseSuccessContent");
 const urlDetailDialog = document.querySelector("#urlDetailDialog");
 const urlDetailContent = document.querySelector("#urlDetailContent");
 const urlColumnButton = document.querySelector("#urlColumnButton");
@@ -36,12 +59,22 @@ const refreshProgressBar = document.querySelector("#refreshProgressBar");
 
 let subscriptions = [];
 let users = [];
-let expirySortDirection = "desc";
+let bills = [];
+let urlSortKey = "expire";
+let urlSortDirection = "desc";
+let userSortKey = "purchasedAt";
+let userSortDirection = "desc";
+let billSortKey = "occurredAt";
+let billSortDirection = "desc";
+let userManuallySelectedSubscription = false;
+const dialogFormSnapshots = new WeakMap();
+let pageRefreshToken = 0;
 
-const COLUMN_WIDTH_VERSION = "2026-05-29-compact-table-v1";
+const COLUMN_WIDTH_VERSION = "2026-05-31-user-sort-v1";
 const DEFAULT_COLUMN_WIDTHS = {
   urlTable: [56, 190, 360, 86, 110, 118, 170, 96, 140, 168, 258],
-  userTable: [56, 150, 122, 104, 108, 360, 190, 118, 96, 210]
+  userTable: [56, 150, 110, 122, 104, 118, 360, 190, 130, 300],
+  billTable: [56, 150, 150, 90, 100, 90, 220, 150, 92]
 };
 
 const URL_COLUMNS = [
@@ -61,7 +94,7 @@ const URL_COLUMNS = [
 const statusLabels = {
   ok: "正常",
   warning: "需关注",
-  error: "异常",
+  error: "需关注",
   expired: "已到期",
   depleted: "流量耗尽",
   unknown: "未检查"
@@ -73,6 +106,53 @@ const durationLabels = {
   half_yearly: "半年付",
   yearly: "年付"
 };
+
+const billTypeLabels = {
+  initial: "新购",
+  renewal: "续费",
+  adjustment: "调整"
+};
+
+function formatBillExpiryChange(bill) {
+  if (bill.type === "initial") return `新购至 ${formatDate(bill.afterExpiresAt)}`;
+  if (bill.type === "renewal") return `${formatDate(bill.beforeExpiresAt)} 延至 ${formatDate(bill.afterExpiresAt)}`;
+  if (bill.type === "adjustment") return "未改变到期日";
+  if (bill.beforeExpiresAt || bill.afterExpiresAt) return `${formatDate(bill.beforeExpiresAt)} → ${formatDate(bill.afterExpiresAt)}`;
+  return "—";
+}
+
+function activeUserBills(userId) {
+  return bills.filter(bill => bill.userId === userId && !bill.reversedAt);
+}
+
+function userTotalPaid(user) {
+  const total = billAmountTotal(activeUserBills(user.id));
+  if (total !== 0) return total;
+  return Number(user.actualPaid) || 0;
+}
+
+function billMonthValue(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function compareBills(a, b) {
+  if (billSortKey === "amount") {
+    const diff = (Number(a.amount) || 0) - (Number(b.amount) || 0);
+    if (diff !== 0) return billSortDirection === "asc" ? diff : -diff;
+  } else {
+    const diff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+    if (diff !== 0) return billSortDirection === "asc" ? diff : -diff;
+  }
+
+  return new Date(b.createdAt || b.occurredAt).getTime() - new Date(a.createdAt || a.occurredAt).getTime();
+}
+
+function updateBillSortIcons() {
+  billTimeSortIcon.textContent = billSortKey === "occurredAt" ? (billSortDirection === "asc" ? "↑" : "↓") : "↕";
+  billAmountSortIcon.textContent = billSortKey === "amount" ? (billSortDirection === "asc" ? "↑" : "↓") : "↕";
+}
 
 function formatBytes(bytes) {
   if (bytes === null || bytes === undefined) return "未知";
@@ -116,9 +196,75 @@ function formatMoney(value) {
   return amount.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function activeBills() {
+  return bills.filter(bill => !bill.reversedAt);
+}
+
+function billAmountTotal(list) {
+  return list.reduce((sum, bill) => {
+    const amount = Number(bill.amount);
+    return sum + (Number.isFinite(amount) ? amount : 0);
+  }, 0);
+}
+
+function serializeForm(formElement) {
+  return JSON.stringify(Array.from(new FormData(formElement).entries()));
+}
+
+function rememberDialogForm(dialog) {
+  const formElement = dialog.querySelector("form");
+  if (formElement) dialogFormSnapshots.set(dialog, serializeForm(formElement));
+}
+
+function hasUnsavedDialogForm(dialog) {
+  const formElement = dialog.querySelector("form");
+  if (!formElement || !dialogFormSnapshots.has(dialog)) return false;
+  return dialogFormSnapshots.get(dialog) !== serializeForm(formElement);
+}
+
+function closeDialogSafely(dialog) {
+  if (!dialog?.open) return;
+  if (hasUnsavedDialogForm(dialog) && !confirm("该信息还未保存是否关闭")) return;
+  dialog.close();
+}
+
 function toDatetimeLocalValue(date = new Date()) {
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function durationMonths(duration) {
+  const values = {
+    monthly: 1,
+    quarterly: 3,
+    half_yearly: 6,
+    yearly: 12
+  };
+  return values[duration] || null;
+}
+
+function calculateUserExpiry(purchasedAt, duration) {
+  const months = durationMonths(duration);
+  const start = new Date(purchasedAt);
+  if (!months || Number.isNaN(start.getTime())) return null;
+
+  const expiresAt = new Date(start.getTime());
+  const day = expiresAt.getDate();
+  expiresAt.setDate(1);
+  expiresAt.setMonth(expiresAt.getMonth() + months);
+  const lastDay = new Date(expiresAt.getFullYear(), expiresAt.getMonth() + 1, 0).getDate();
+  expiresAt.setDate(Math.min(day, lastDay));
+  return expiresAt;
+}
+
+function calculateRecommendationExpiry(purchasedAt, duration) {
+  const months = durationMonths(duration);
+  const start = new Date(purchasedAt);
+  if (!months || Number.isNaN(start.getTime())) return null;
+
+  const expiresAt = new Date(start.getTime());
+  expiresAt.setMonth(expiresAt.getMonth() + months);
+  return expiresAt;
 }
 
 function userStatus(user) {
@@ -127,6 +273,10 @@ function userStatus(user) {
   if (expiresAt < Date.now()) return "expired";
   if ((expiresAt - Date.now()) / 86400000 <= 7) return "warning";
   return "ok";
+}
+
+function userType(user) {
+  return userStatus(user) === "expired" ? "expired" : "active";
 }
 
 function isCurrentNaturalMonth(value) {
@@ -141,19 +291,83 @@ function expiryTime(item) {
   return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY;
 }
 
-function compareExpiry(a, b) {
+function compareExpiry(a, b, direction = urlSortDirection) {
   const aTime = expiryTime(a);
   const bTime = expiryTime(b);
-  const aValue = Number.isFinite(aTime) ? aTime : (expirySortDirection === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY);
-  const bValue = Number.isFinite(bTime) ? bTime : (expirySortDirection === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY);
+  const aValue = Number.isFinite(aTime) ? aTime : (direction === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY);
+  const bValue = Number.isFinite(bTime) ? bTime : (direction === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY);
   const diff = aValue - bValue;
-  return expirySortDirection === "asc" ? diff : -diff;
+  return direction === "asc" ? diff : -diff;
+}
+
+function subscriptionsByLatestExpiry(list = subscriptions) {
+  return [...list].sort((a, b) => compareExpiry(a, b, "desc"));
+}
+
+function userExpiryTime(user) {
+  const time = user.expiresAt ? new Date(user.expiresAt).getTime() : null;
+  return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY;
+}
+
+function compareUserExpiry(a, b) {
+  const aTime = userExpiryTime(a);
+  const bTime = userExpiryTime(b);
+  const fallback = userSortDirection === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+  const aValue = Number.isFinite(aTime) ? aTime : fallback;
+  const bValue = Number.isFinite(bTime) ? bTime : fallback;
+  const diff = aValue - bValue;
+  return userSortDirection === "asc" ? diff : -diff;
+}
+
+function userPurchaseTime(user) {
+  const time = user.purchasedAt ? new Date(user.purchasedAt).getTime() : null;
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
+}
+
+function compareUserPurchase(a, b) {
+  const diff = userPurchaseTime(a) - userPurchaseTime(b);
+  if (diff !== 0) return userSortDirection === "asc" ? diff : -diff;
+  return compareUserExpiry(a, b);
+}
+
+function compareUserPaid(a, b) {
+  const diff = userTotalPaid(a) - userTotalPaid(b);
+  if (diff !== 0) return userSortDirection === "asc" ? diff : -diff;
+  return compareUserPurchase(a, b);
+}
+
+function compareUsers(a, b) {
+  if (userSortKey === "expiresAt") return compareUserExpiry(a, b);
+  if (userSortKey === "totalPaid") return compareUserPaid(a, b);
+  return compareUserPurchase(a, b);
+}
+
+function compareCustomerCount(a, b) {
+  const diff = customerCountForSubscription(a.id) - customerCountForSubscription(b.id);
+  if (diff === 0) return compareExpiry(a, b, "desc");
+  return urlSortDirection === "asc" ? diff : -diff;
+}
+
+function updateSortIcons() {
+  expirySortIcon.textContent = urlSortKey === "expire" ? (urlSortDirection === "asc" ? "↑" : "↓") : "↕";
+  customerSortIcon.textContent = urlSortKey === "customerCount" ? (urlSortDirection === "asc" ? "↑" : "↓") : "↕";
+  userExpirySortIcon.textContent = userSortKey === "expiresAt" ? (userSortDirection === "asc" ? "↑" : "↓") : "↕";
+  userPurchaseSortIcon.textContent = userSortKey === "purchasedAt" ? (userSortDirection === "asc" ? "↑" : "↓") : "↕";
+  userPaidSortIcon.textContent = userSortKey === "totalPaid" ? (userSortDirection === "asc" ? "↑" : "↓") : "↕";
 }
 
 function statusBadge(statusName) {
   const badge = document.createElement("span");
   badge.className = `status ${statusName || "unknown"}`;
   badge.textContent = statusLabels[statusName] || "未知";
+  return badge;
+}
+
+function userTypeBadge(user) {
+  const type = userType(user);
+  const badge = document.createElement("span");
+  badge.className = `status ${type === "active" ? "ok" : "expired"}`;
+  badge.textContent = type === "active" ? "活跃用户" : "已过期用户";
   return badge;
 }
 
@@ -171,12 +385,12 @@ function renderUrlCell(row, url, columnKey = "url") {
   if (columnKey) cell.dataset.column = columnKey;
   const content = document.createElement("div");
   content.className = "url-content";
+  const badge = document.createElement("mark");
+  badge.className = "url-prefix-badge";
+  badge.textContent = url.slice(-4);
   const text = document.createElement("span");
   text.className = "url-text";
-  const prefix = document.createTextNode(url.slice(0, -4));
-  const suffix = document.createElement("mark");
-  suffix.className = "url-suffix";
-  suffix.textContent = url.slice(-4);
+  const fullUrl = document.createTextNode(url);
   const copy = actionButton("复制", "secondary compact copy-button", async () => {
     await copyText(url);
     copy.textContent = "已复制";
@@ -185,8 +399,8 @@ function renderUrlCell(row, url, columnKey = "url") {
     }, 1200);
   });
 
-  text.append(prefix, suffix);
-  content.append(text, copy);
+  text.append(fullUrl);
+  content.append(badge, text, copy);
   cell.appendChild(content);
   return cell;
 }
@@ -225,6 +439,151 @@ function renderUsageCell(row, metrics, isExpired, columnKey = "usage") {
   meta.append(text, percentText);
   track.appendChild(fill);
   wrap.append(meta, track);
+  cell.appendChild(wrap);
+  return cell;
+}
+
+function duplicateUserNumber(user) {
+  if (!user?.userId) return null;
+  const sameNameUsers = users
+    .filter(item => item.userId === user.userId)
+    .sort((a, b) => {
+      const timeDiff = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return String(a.id).localeCompare(String(b.id));
+    });
+  if (sameNameUsers.length <= 1) return null;
+  const index = sameNameUsers.findIndex(item => item.id === user.id);
+  return index >= 0 ? index + 1 : null;
+}
+
+function appendUserIdentity(target, user, fallbackLabel = "未知用户") {
+  const wrap = document.createElement("div");
+  wrap.className = "user-identity";
+  const label = document.createElement("span");
+  label.className = "user-identity-label";
+  label.textContent = user?.userId || fallbackLabel;
+  wrap.appendChild(label);
+
+  const duplicateNumber = duplicateUserNumber(user);
+  if (duplicateNumber) {
+    const badge = document.createElement("span");
+    badge.className = "duplicate-user-badge";
+    badge.textContent = `同名 #${duplicateNumber}`;
+    wrap.appendChild(badge);
+  }
+
+  target.appendChild(wrap);
+  return target;
+}
+
+function renderUserIdentityCell(row, user) {
+  const cell = row.insertCell();
+  appendUserIdentity(cell, user);
+  return cell;
+}
+
+function copyButton(value) {
+  const button = actionButton("复制", "secondary compact", async () => {
+    await copyText(value);
+    button.textContent = "已复制";
+    setTimeout(() => {
+      button.textContent = "复制";
+    }, 1200);
+  });
+  return button;
+}
+
+function showPurchaseSuccess(user) {
+  const subscription = user.subscription || {};
+  const userBills = activeUserBills(user.id);
+  const purchaseCount = userBills.length;
+  const totalPaid = billAmountTotal(userBills);
+  const url = subscription.url || "关联 URL 已不存在";
+
+  purchaseSuccessContent.replaceChildren();
+
+  const hero = document.createElement("section");
+  hero.className = "detail-hero success-hero";
+  const avatar = document.createElement("div");
+  avatar.className = "detail-avatar";
+  avatar.textContent = "✓";
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "detail-title";
+  const title = document.createElement("strong");
+  title.textContent = user.userId || "未知用户";
+  const subtitle = document.createElement("span");
+  subtitle.textContent = `${durationLabels[user.duration] || "未知"} · ${formatMoney(user.actualPaid)}`;
+  titleWrap.append(title, subtitle);
+  hero.append(avatar, titleWrap, statusBadge(userStatus(user)));
+  purchaseSuccessContent.appendChild(hero);
+
+  const stats = document.createElement("section");
+  stats.className = "detail-stats";
+  [
+    ["购买次数", `${purchaseCount} 次`],
+    ["购买总付款", formatMoney(totalPaid)],
+    ["本次金额", formatMoney(user.actualPaid)]
+  ].forEach(([label, value]) => {
+    const card = document.createElement("div");
+    const labelNode = document.createElement("span");
+    const valueNode = document.createElement("strong");
+    labelNode.textContent = label;
+    valueNode.textContent = value;
+    card.append(labelNode, valueNode);
+    stats.appendChild(card);
+  });
+  purchaseSuccessContent.appendChild(stats);
+
+  const section = document.createElement("section");
+  section.className = "detail-card";
+  const heading = document.createElement("h3");
+  heading.textContent = "本次购买";
+  const grid = document.createElement("div");
+  grid.className = "detail-card-grid";
+  [
+    ["起始日期", formatDate(user.purchasedAt)],
+    ["到期日期", formatDate(user.expiresAt)],
+    ["绑定 URL", url]
+  ].forEach(([label, value]) => {
+    const labelNode = document.createElement("div");
+    const valueNode = document.createElement("div");
+    labelNode.className = "detail-label";
+    valueNode.className = "detail-value";
+    labelNode.textContent = label;
+    if (label.includes("URL")) {
+      valueNode.dataset.kind = "url";
+      const wrap = document.createElement("div");
+      wrap.className = "success-url-row";
+      const text = document.createElement("span");
+      text.textContent = value;
+      wrap.append(text, copyButton(value));
+      valueNode.appendChild(wrap);
+    } else {
+      valueNode.textContent = value;
+    }
+    grid.append(labelNode, valueNode);
+  });
+  section.append(heading, grid);
+  purchaseSuccessContent.appendChild(section);
+  purchaseSuccessDialog.showModal();
+}
+
+function renderBillUserCell(row, bill) {
+  const cell = row.insertCell();
+  cell.className = "bill-user-cell";
+  const wrap = document.createElement("div");
+  wrap.className = "bill-user-wrap";
+  const linkedUser = bill.user ? users.find(user => user.id === bill.user.id) || bill.user : null;
+  appendUserIdentity(wrap, linkedUser, bill.userLabel || "未知用户");
+
+  if (!bill.user) {
+    const badge = document.createElement("span");
+    badge.className = "bill-deleted-badge";
+    badge.textContent = "已删除用户";
+    wrap.appendChild(badge);
+  }
+
   cell.appendChild(wrap);
   return cell;
 }
@@ -286,6 +645,70 @@ function customerCountForSubscription(subscriptionId) {
   return users.filter(user => user.subscriptionId === subscriptionId).length;
 }
 
+function customerCountClass(count) {
+  if (count <= 4) return "count-low";
+  if (count <= 8) return "count-medium";
+  return "count-high";
+}
+
+function startOfLocalDate(value) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+}
+
+function findRecommendedSubscription(userExpiryDate) {
+  if (!userExpiryDate) return null;
+  const userExpiryTime = startOfLocalDate(userExpiryDate);
+  const dayMs = 86400000;
+  const candidates = subscriptions
+    .map(item => {
+      const expireAt = item.metrics?.expireAt ? new Date(item.metrics.expireAt) : null;
+      const expireTime = expireAt && !Number.isNaN(expireAt.getTime()) ? startOfLocalDate(expireAt) : null;
+      if (!Number.isFinite(expireTime)) return null;
+      const customerCount = customerCountForSubscription(item.id);
+      const diffDays = (expireTime - userExpiryTime) / dayMs;
+      if (customerCount > 8 || diffDays < -2 || diffDays > 10) return null;
+      return { item, diffDays };
+    })
+    .filter(Boolean);
+
+  const afterCandidates = candidates
+    .filter(candidate => candidate.diffDays >= 0)
+    .sort((a, b) => a.diffDays - b.diffDays);
+  if (afterCandidates.length) return afterCandidates[0].item;
+
+  const beforeCandidates = candidates
+    .filter(candidate => candidate.diffDays < 0)
+    .sort((a, b) => Math.abs(a.diffDays) - Math.abs(b.diffDays));
+  return beforeCandidates[0]?.item || null;
+}
+
+function isRecommendationMessage(value) {
+  return value.startsWith("已推荐") || value.startsWith("暂无符合");
+}
+
+function updateRecommendedSubscription() {
+  const isEditing = Boolean(userForm.elements.id.value);
+  if (isEditing || userManuallySelectedSubscription) return;
+
+  const duration = userForm.elements.duration.value;
+  const canRecommend = duration === "monthly" || duration === "quarterly";
+  if (!canRecommend) {
+    if (isRecommendationMessage(userFormMessage.textContent)) userFormMessage.textContent = "";
+    return;
+  }
+
+  const userExpiryDate = calculateRecommendationExpiry(userForm.elements.purchasedAt.value, duration);
+  const recommended = findRecommendedSubscription(userExpiryDate);
+  if (!recommended) {
+    subscriptionSelect.value = subscriptionsByLatestExpiry()[0]?.id || "";
+    userFormMessage.textContent = `暂无符合 ${formatDate(userExpiryDate)} 到期窗口的 URL，请手动选择。`;
+    return;
+  }
+
+  subscriptionSelect.value = recommended.id;
+  userFormMessage.textContent = `已推荐 ${formatDate(recommended.metrics?.expireAt)} 到期的 URL。`;
+}
+
 function setupResizableTables() {
   if (localStorage.getItem("column-width-version") !== COLUMN_WIDTH_VERSION) {
     Object.keys(DEFAULT_COLUMN_WIDTHS).forEach(tableId => localStorage.removeItem(`column-widths:${tableId}`));
@@ -306,6 +729,7 @@ function setupResizableTables() {
       colgroup.appendChild(col);
       const minWidth = minimumColumnWidth(tableId, index);
       const initialWidth = Math.max(Number(savedWidths[index]) || defaultWidths[index] || Math.max(header.offsetWidth || 120, 80), minWidth);
+      col.dataset.userWidth = String(initialWidth);
       col.style.width = `${initialWidth}px`;
       header.style.width = `${initialWidth}px`;
 
@@ -319,6 +743,7 @@ function setupResizableTables() {
 
         const onMove = moveEvent => {
           const width = Math.max(startWidth + moveEvent.clientX - startX, minWidth);
+          col.dataset.userWidth = String(width);
           col.style.width = `${width}px`;
           header.style.width = `${width}px`;
           updateTableWidth(table);
@@ -329,7 +754,7 @@ function setupResizableTables() {
           document.removeEventListener("mousemove", onMove);
           document.removeEventListener("mouseup", onUp);
           const widths = Array.from(colgroup.children).map((item, itemIndex) => {
-            const width = parseFloat(item.style.width) || item.getBoundingClientRect().width;
+            const width = parseFloat(item.dataset.userWidth) || parseFloat(item.style.width) || item.getBoundingClientRect().width;
             return Math.round(Math.max(width, minimumColumnWidth(tableId, itemIndex)));
           });
           localStorage.setItem(`column-widths:${tableId}`, JSON.stringify(widths));
@@ -354,11 +779,31 @@ function minimumColumnWidth(tableId, index) {
 function updateTableWidth(table) {
   if (!table) return;
   const cols = Array.from(table.querySelectorAll("col"));
-  const total = cols.reduce((sum, col) => {
+  let total = cols.reduce((sum, col, index) => {
     if (col.classList.contains("hidden-column")) return sum;
-    const width = parseFloat(col.style.width) || col.getBoundingClientRect().width || 0;
+    const width = parseFloat(col.dataset.userWidth) || parseFloat(col.style.width) || col.getBoundingClientRect().width || 0;
+    col.style.width = `${width}px`;
+    const header = table.querySelector(`thead th:nth-child(${index + 1})`);
+    if (header) header.style.width = `${width}px`;
     return sum + width;
   }, 0);
+  const wrapWidth = table.id === "billTable" ? table.closest(".table-wrap")?.clientWidth || 0 : 0;
+
+  if (table.id === "billTable" && wrapWidth > total) {
+    const fillIndexes = [6, 7];
+    const fillCols = fillIndexes.map(index => cols[index]).filter(Boolean);
+    const extra = wrapWidth - total;
+    fillCols.forEach((col, fillIndex) => {
+      const index = cols.indexOf(col);
+      const baseWidth = parseFloat(col.dataset.userWidth) || parseFloat(col.style.width) || 0;
+      const width = baseWidth + extra / fillCols.length;
+      col.style.width = `${width}px`;
+      const header = table.querySelector(`thead th:nth-child(${index + 1})`);
+      if (header) header.style.width = `${width}px`;
+    });
+    total = wrapWidth;
+  }
+
   if (total > 0) table.style.width = `${Math.ceil(total)}px`;
 }
 
@@ -445,6 +890,9 @@ function formatDebugPayload(payload) {
 function showUserDetail(user) {
   const subscription = user.subscription || {};
   const statusName = userStatus(user);
+  const userBills = bills
+    .filter(bill => bill.userId === user.id)
+    .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt));
   const groups = [
     {
       title: "联系信息",
@@ -456,12 +904,19 @@ function showUserDetail(user) {
     {
       title: "订阅信息",
       items: [
-        ["购买时间", formatDate(user.purchasedAt)],
-        ["购买时长", durationLabels[user.duration] || "未知"],
-        ["用户到期", formatDate(user.expiresAt)],
-        ["绑定邮箱", subscription.email || "未填写"],
+        ["最近购买日", formatDate(user.purchasedAt)],
+        ["当前到期日", formatDate(user.expiresAt)],
         ["使用 URL", subscription.url || "关联 URL 已不存在"]
       ]
+    },
+    {
+      title: "购买记录",
+      items: userBills.length
+        ? userBills.map(bill => [
+          `${formatDate(bill.occurredAt)} · ${billTypeLabels[bill.type] || bill.type || "账单"}`,
+          `${bill.reversedAt ? "已撤销 · " : ""}${formatMoney(bill.amount)} · ${durationLabels[bill.duration] || bill.duration || "—"} · ${formatBillExpiryChange(bill)}`
+        ])
+        : [["记录", "暂无购买记录"]]
     },
     {
       title: "系统信息",
@@ -518,6 +973,9 @@ function showUserDetail(user) {
       const valueNode = document.createElement("div");
       labelNode.className = "detail-label";
       valueNode.className = "detail-value";
+      const lowerLabel = String(label).toLowerCase();
+      if (lowerLabel.includes("url")) valueNode.dataset.kind = "url";
+      if (lowerLabel.includes("邮箱") || lowerLabel.includes("email")) valueNode.dataset.kind = "email";
       labelNode.textContent = label;
       valueNode.textContent = value || "未知";
       grid.append(labelNode, valueNode);
@@ -571,6 +1029,9 @@ function renderDetailSections(target, heroConfig, statsItems, groups) {
       const valueNode = document.createElement("div");
       labelNode.className = "detail-label";
       valueNode.className = "detail-value";
+      const lowerLabel = String(label).toLowerCase();
+      if (lowerLabel.includes("url")) valueNode.dataset.kind = "url";
+      if (lowerLabel.includes("邮箱") || lowerLabel.includes("email")) valueNode.dataset.kind = "email";
       labelNode.textContent = label;
       valueNode.textContent = value || "未知";
       grid.append(labelNode, valueNode);
@@ -654,20 +1115,14 @@ function renderSummary() {
     return acc;
   }, {});
 
-  const paidTotal = users.reduce((sum, user) => {
-    const amount = Number(user.actualPaid);
-    return sum + (Number.isFinite(amount) ? amount : 0);
-  }, 0);
-  const monthlyPaidTotal = users.reduce((sum, user) => {
-    const amount = Number(user.actualPaid);
-    return sum + (isCurrentNaturalMonth(user.purchasedAt) && Number.isFinite(amount) ? amount : 0);
-  }, 0);
+  const paidTotal = billAmountTotal(activeBills());
+  const monthlyPaidTotal = billAmountTotal(activeBills().filter(bill => isCurrentNaturalMonth(bill.occurredAt)));
   const expiringUsers = users.filter(user => userStatus(user) === "warning").length;
   const cards = [
     ["URL 总数", subscriptions.length],
     ["用户总数", users.length],
     ["本月总收入", formatMoney(monthlyPaidTotal)],
-    ["需处理 URL", counts.error || 0],
+    ["需关注 URL", counts.warning || 0],
     ["即将到期用户", expiringUsers],
     ["实付款合计", formatMoney(paidTotal)]
   ];
@@ -682,8 +1137,9 @@ function renderSummary() {
 
 function renderSubscriptionSelect() {
   const currentValue = subscriptionSelect.value;
+  const sortedSubscriptions = subscriptionsByLatestExpiry();
   subscriptionSelect.replaceChildren();
-  if (!subscriptions.length) {
+  if (!sortedSubscriptions.length) {
     const option = document.createElement("option");
     option.value = "";
     option.textContent = "请先添加 URL";
@@ -693,10 +1149,10 @@ function renderSubscriptionSelect() {
   }
 
   subscriptionSelect.disabled = false;
-  subscriptions.forEach((item, index) => {
+  sortedSubscriptions.forEach((item, index) => {
     const option = document.createElement("option");
     option.value = item.id;
-    option.textContent = `#${index + 1} ${item.email || item.name} - ${item.url}`;
+    option.textContent = `#${index + 1} ${item.url.slice(-4)} · ${formatDate(item.metrics?.expireAt)}`;
     subscriptionSelect.appendChild(option);
   });
   if (subscriptions.some(item => item.id === currentValue)) subscriptionSelect.value = currentValue;
@@ -708,10 +1164,12 @@ function renderList() {
     const haystack = `${item.name} ${item.email} ${item.note} ${item.url}`.toLowerCase();
     return haystack.includes(keyword);
   });
-  if (expirySortDirection) {
+  if (urlSortKey === "customerCount") {
+    visible.sort(compareCustomerCount);
+  } else {
     visible.sort(compareExpiry);
   }
-  expirySortIcon.textContent = expirySortDirection === "asc" ? "↑" : expirySortDirection === "desc" ? "↓" : "↕";
+  updateSortIcons();
 
   subscriptionRows.innerHTML = "";
   if (!visible.length) {
@@ -724,11 +1182,12 @@ function renderList() {
     const metrics = item.metrics || {};
     const isExpired = item.status === "expired";
     const customerCount = customerCountForSubscription(item.id);
+    const customerCountTextClass = customerCountClass(customerCount);
 
     textCell(row, String(index + 1), "index-cell", "index");
     textCell(row, item.email || item.name || "未填写邮箱", "", "email");
     renderUrlCell(row, item.url);
-    textCell(row, String(customerCount), "count-cell", "customerCount");
+    textCell(row, String(customerCount), `count-cell ${customerCountTextClass}`, "customerCount");
     textCell(row, isExpired ? "—" : formatBytes(metrics.remainingBytes), isExpired ? "muted-cell" : "", "remaining");
     textCell(row, isExpired ? "—" : formatDate(metrics.expireAt), isExpired ? "muted-cell" : "", "expire");
     renderUsageCell(row, metrics, isExpired);
@@ -756,6 +1215,8 @@ function renderUsers() {
     const haystack = `${user.userId} ${subscription.email || ""} ${subscription.url || ""}`.toLowerCase();
     return haystack.includes(keyword);
   });
+  visible.sort(compareUsers);
+  updateSortIcons();
 
   userRows.innerHTML = "";
   if (!visible.length) {
@@ -765,24 +1226,70 @@ function renderUsers() {
 
   visible.forEach((user, index) => {
     const row = userRows.insertRow();
-    const statusName = userStatus(user);
     const subscription = user.subscription || {};
 
     textCell(row, String(index + 1), "index-cell");
-    textCell(row, user.userId);
-    textCell(row, formatDate(user.purchasedAt));
+    renderUserIdentityCell(row, user);
+    row.insertCell().appendChild(userTypeBadge(user));
+    textCell(row, formatDate(user.expiresAt));
     textCell(row, durationLabels[user.duration] || "未知");
-    textCell(row, formatMoney(user.actualPaid));
+    textCell(row, formatMoney(userTotalPaid(user)), "money-cell positive");
     renderUrlCell(row, subscription.url || "关联 URL 已不存在");
     textCell(row, subscription.email || "");
-    textCell(row, formatDate(user.expiresAt));
-    row.insertCell().appendChild(statusBadge(statusName));
+    textCell(row, formatDate(user.purchasedAt));
 
     actionCell(row, [
       actionButton("详情", "secondary compact", () => showUserDetail(user)),
+      actionButton("续费", "secondary compact", () => openRenewDialog(user)),
       actionButton("编辑", "secondary compact", () => openUserDialog(user)),
       actionButton("删除", "danger compact", () => deleteUser(user.id))
     ]);
+  });
+}
+
+function renderBills() {
+  const keyword = billSearchInput.value.trim().toLowerCase();
+  const month = billMonthFilter.value;
+  const visible = bills.filter(bill => {
+    const linkedUser = bill.user ? users.find(user => user.id === bill.user.id) || bill.user : null;
+    const userLabel = linkedUser?.userId || bill.userLabel || "";
+    const haystack = `${userLabel} ${billTypeLabels[bill.type] || bill.type || ""} ${bill.description || ""}`.toLowerCase();
+    const matchesKeyword = haystack.includes(keyword);
+    const matchesMonth = !month || billMonthValue(bill.occurredAt) === month;
+    return matchesKeyword && matchesMonth;
+  }).sort(compareBills);
+  const activeVisible = visible.filter(bill => !bill.reversedAt);
+  const total = billAmountTotal(activeVisible);
+
+  updateBillSortIcons();
+  billTotalAmount.textContent = formatMoney(total);
+  billTotalAmount.className = ["money-cell", total < 0 ? "negative" : "positive"].join(" ");
+  billTotalMeta.textContent = `${activeVisible.length} 笔有效账单`;
+
+  billRows.innerHTML = "";
+  if (!visible.length) {
+    emptyRows(billRows, 9, "还没有匹配的账单。");
+    return;
+  }
+
+  visible.forEach((bill, index) => {
+    const row = billRows.insertRow();
+    const amount = Number(bill.amount) || 0;
+    const changeText = formatBillExpiryChange(bill);
+
+    textCell(row, String(index + 1), "index-cell");
+    textCell(row, formatDateTime(bill.occurredAt));
+    renderBillUserCell(row, bill);
+    textCell(row, billTypeLabels[bill.type] || bill.type || "未知");
+    textCell(row, `${amount < 0 ? "-" : ""}${formatMoney(Math.abs(amount))}`, `money-cell ${amount < 0 ? "negative" : "positive"}`);
+    textCell(row, durationLabels[bill.duration] || bill.duration || "—");
+    textCell(row, changeText);
+    textCell(row, bill.reversedAt ? `已撤销 · ${formatDateTime(bill.reversedAt)}` : "有效", bill.reversedAt ? "muted-cell" : "");
+    const button = bill.reversedAt
+      ? actionButton("已撤销", "secondary compact", () => {})
+      : actionButton("撤销", "danger compact", () => reverseBill(bill.id));
+    if (bill.reversedAt) button.disabled = true;
+    actionCell(row, [button]);
   });
 }
 
@@ -791,6 +1298,7 @@ function render() {
   renderSubscriptionSelect();
   renderList();
   renderUsers();
+  renderBills();
 }
 
 async function loadSubscriptions() {
@@ -803,6 +1311,15 @@ async function loadUsers() {
   users = await response.json();
 }
 
+async function loadBills() {
+  const response = await fetch("/api/bills");
+  bills = await response.json();
+}
+
+async function reloadAllData() {
+  await Promise.all([loadSubscriptions(), loadUsers(), loadBills()]);
+}
+
 function openUrlDialog(item = null) {
   form.reset();
   formMessage.textContent = "";
@@ -811,12 +1328,14 @@ function openUrlDialog(item = null) {
   form.elements.url.value = item?.url || "";
   form.elements.email.value = item?.email || "";
   form.elements.note.value = item?.note || "";
+  rememberDialogForm(urlDialog);
   urlDialog.showModal();
 }
 
 function openUserDialog(user = null) {
   userForm.reset();
   userFormMessage.textContent = "";
+  userManuallySelectedSubscription = false;
   userDialogTitle.textContent = user ? "编辑用户" : "添加用户";
   renderSubscriptionSelect();
   userForm.elements.id.value = user?.id || "";
@@ -826,8 +1345,22 @@ function openUserDialog(user = null) {
   userForm.elements.purchasedAt.value = user?.purchasedAt ? toDatetimeLocalValue(new Date(user.purchasedAt)) : toDatetimeLocalValue();
   userForm.elements.actualPaid.value = user?.actualPaid ?? "";
   userForm.elements.duration.value = user?.duration || "monthly";
-  userForm.elements.subscriptionId.value = user?.subscriptionId || subscriptions[0]?.id || "";
+  userForm.elements.subscriptionId.value = user?.subscriptionId || subscriptionsByLatestExpiry()[0]?.id || "";
+  if (!user) updateRecommendedSubscription();
+  rememberDialogForm(userDialog);
   userDialog.showModal();
+}
+
+function openRenewDialog(user) {
+  renewForm.reset();
+  renewFormMessage.textContent = "";
+  renewDialogTitle.textContent = `${user.userId || "用户"} 续费`;
+  renewForm.elements.id.value = user.id;
+  renewForm.elements.purchasedAt.value = toDatetimeLocalValue();
+  renewForm.elements.actualPaid.value = "";
+  renewForm.elements.duration.value = user.duration || "monthly";
+  rememberDialogForm(renewDialog);
+  renewDialog.showModal();
 }
 
 async function refreshOne(id) {
@@ -846,10 +1379,9 @@ function setRefreshPending(isPending, completed = 0, total = 0) {
 }
 
 async function deleteOne(id) {
-  if (!confirm("确定删除这个 URL 吗？关联用户也会一起删除。")) return;
+  if (!confirm("确定删除这个 URL 吗？已关联的用户会保留。")) return;
   await fetch(`/api/subscriptions/${id}`, { method: "DELETE" });
   subscriptions = subscriptions.filter(item => item.id !== id);
-  users = users.filter(user => user.subscriptionId !== id);
   render();
 }
 
@@ -860,9 +1392,34 @@ async function deleteUser(id) {
   render();
 }
 
-function switchPage(pageName) {
+async function reverseBill(id) {
+  if (!confirm("确定撤销这笔账单吗？收入统计会同步扣回。")) return;
+  const response = await fetch(`/api/bills/${id}/reverse`, { method: "POST" });
+  const data = await response.json();
+  if (!response.ok) {
+    alert(data.error || "撤销账单失败。");
+    return;
+  }
+  bills = bills.map(bill => bill.id === id ? data : bill);
+  await loadUsers();
+  render();
+}
+
+async function switchPage(pageName, shouldReload = true) {
+  const refreshToken = ++pageRefreshToken;
   tabs.forEach(tab => tab.classList.toggle("active", tab.dataset.page === pageName));
   pages.forEach(page => page.classList.toggle("active", page.id === `${pageName}Page`));
+  if (shouldReload) {
+    try {
+      await reloadAllData();
+      if (refreshToken !== pageRefreshToken) return;
+      render();
+    } catch (error) {
+      console.error(error);
+      alert("刷新最新数据失败，请稍后再试。");
+    }
+  }
+  document.querySelectorAll(".table-wrap table").forEach(updateTableWidth);
 }
 
 form.addEventListener("submit", async event => {
@@ -913,7 +1470,32 @@ userForm.addEventListener("submit", async event => {
   } else {
     users.unshift(data);
   }
+  await loadBills();
   userDialog.close();
+  render();
+  if (!id) showPurchaseSuccess(data);
+});
+
+renewForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const id = renewForm.elements.id.value;
+  renewFormMessage.textContent = "正在续费...";
+  const payload = Object.fromEntries(new FormData(renewForm).entries());
+  delete payload.id;
+  const response = await fetch(`/api/users/${id}/renew`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    renewFormMessage.textContent = data.error || "续费失败。";
+    return;
+  }
+
+  users = users.map(user => user.id === id ? data : user);
+  await loadBills();
+  renewDialog.close();
   render();
 });
 
@@ -956,7 +1538,23 @@ subscriptionRows.addEventListener("click", event => {
 });
 
 document.querySelectorAll(".close-dialog").forEach(button => {
-  button.addEventListener("click", () => document.querySelector(`#${button.dataset.close}`).close());
+  button.addEventListener("click", () => closeDialogSafely(document.querySelector(`#${button.dataset.close}`)));
+});
+
+document.querySelectorAll("dialog").forEach(dialog => {
+  dialog.addEventListener("click", event => {
+    if (event.target === dialog) closeDialogSafely(dialog);
+  });
+  dialog.addEventListener("cancel", event => {
+    event.preventDefault();
+    closeDialogSafely(dialog);
+  });
+});
+
+document.querySelectorAll('input[type="number"]').forEach(input => {
+  input.addEventListener("wheel", event => {
+    event.preventDefault();
+  }, { passive: false });
 });
 
 addUrlButton.addEventListener("click", () => openUrlDialog());
@@ -970,15 +1568,62 @@ resetUrlColumns.addEventListener("click", () => {
   initUrlColumnControls();
   applyUrlColumnVisibility();
 });
-closeDebug.addEventListener("click", () => debugDialog.close());
+closeDebug.addEventListener("click", () => closeDialogSafely(debugDialog));
 searchInput.addEventListener("input", renderList);
 userSearchInput.addEventListener("input", renderUsers);
+billSearchInput.addEventListener("input", renderBills);
+billMonthFilter.addEventListener("input", renderBills);
+subscriptionSelect.addEventListener("change", () => {
+  userManuallySelectedSubscription = true;
+});
+userForm.elements.purchasedAt.addEventListener("change", () => {
+  updateRecommendedSubscription();
+});
+userForm.querySelectorAll('input[name="duration"]').forEach(input => {
+  input.addEventListener("change", () => {
+    updateRecommendedSubscription();
+  });
+});
 expirySortButton.addEventListener("click", () => {
-  expirySortDirection = expirySortDirection === "asc" ? "desc" : expirySortDirection === "desc" ? null : "asc";
+  urlSortDirection = urlSortKey === "expire" && urlSortDirection === "desc" ? "asc" : "desc";
+  urlSortKey = "expire";
   renderList();
 });
+customerSortButton.addEventListener("click", () => {
+  urlSortDirection = urlSortKey === "customerCount" && urlSortDirection === "desc" ? "asc" : "desc";
+  urlSortKey = "customerCount";
+  renderList();
+});
+userExpirySortButton.addEventListener("click", () => {
+  userSortDirection = userSortKey === "expiresAt" && userSortDirection === "asc" ? "desc" : "asc";
+  userSortKey = "expiresAt";
+  renderUsers();
+});
+userPurchaseSortButton.addEventListener("click", () => {
+  userSortDirection = userSortKey === "purchasedAt" && userSortDirection === "desc" ? "asc" : "desc";
+  userSortKey = "purchasedAt";
+  renderUsers();
+});
+userPaidSortButton.addEventListener("click", () => {
+  userSortDirection = userSortKey === "totalPaid" && userSortDirection === "desc" ? "asc" : "desc";
+  userSortKey = "totalPaid";
+  renderUsers();
+});
+billTimeSortButton.addEventListener("click", () => {
+  billSortDirection = billSortKey === "occurredAt" && billSortDirection === "desc" ? "asc" : "desc";
+  billSortKey = "occurredAt";
+  renderBills();
+});
+billAmountSortButton.addEventListener("click", () => {
+  billSortDirection = billSortKey === "amount" && billSortDirection === "desc" ? "asc" : "desc";
+  billSortKey = "amount";
+  renderBills();
+});
+window.addEventListener("resize", () => {
+  document.querySelectorAll(".table-wrap table").forEach(updateTableWidth);
+});
 
-Promise.all([loadSubscriptions(), loadUsers()]).then(() => {
+reloadAllData().then(() => {
   render();
   setupResizableTables();
   initUrlColumnControls();

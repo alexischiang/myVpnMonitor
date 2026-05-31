@@ -7,6 +7,7 @@ const PORT = Number(process.env.PORT || 3000);
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "subscriptions.json");
 const DATA_DIR = path.dirname(DATA_FILE);
 const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
+const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 50 * 1024 * 1024 * 1024);
@@ -76,6 +77,7 @@ const REQUEST_PROFILES = [
 
 let subscriptions = [];
 let users = [];
+let bills = [];
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -103,6 +105,15 @@ async function ensureDataFile() {
     users = [];
     await saveUsers();
   }
+
+  try {
+    const raw = await fs.readFile(BILLS_FILE, "utf8");
+    bills = JSON.parse(raw);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    bills = initialBillsFromUsers();
+    await saveBills();
+  }
 }
 
 async function saveData() {
@@ -111,6 +122,10 @@ async function saveData() {
 
 async function saveUsers() {
   await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
+}
+
+async function saveBills() {
+  await fs.writeFile(BILLS_FILE, JSON.stringify(bills, null, 2));
 }
 
 function sendJson(res, status, payload) {
@@ -231,6 +246,94 @@ function normalizePaymentAmount(value) {
   const amount = Number(raw);
   if (!Number.isFinite(amount) || amount < 0) return null;
   return Math.round(amount * 100) / 100;
+}
+
+function billUserLabel(user) {
+  return user.userId || user.wechatName || user.imessageId || "未知用户";
+}
+
+function makeBill({ user, type, amount, occurredAt, duration, beforeExpiresAt = null, afterExpiresAt = null, description = "" }) {
+  return {
+    id: crypto.randomUUID(),
+    type,
+    userId: user.id,
+    userLabel: billUserLabel(user),
+    userSnapshot: {
+      id: user.id,
+      userId: user.userId || "",
+      wechatName: user.wechatName || "",
+      imessageId: user.imessageId || ""
+    },
+    amount: Math.round(Number(amount || 0) * 100) / 100,
+    occurredAt,
+    duration: duration || user.duration || "",
+    beforeExpiresAt,
+    afterExpiresAt,
+    description,
+    createdAt: new Date().toISOString(),
+    reversedAt: null
+  };
+}
+
+function initialBillsFromUsers() {
+  return users
+    .map(user => {
+      const amount = Number(user.actualPaid);
+      if (!Number.isFinite(amount) || amount === 0) return null;
+      return makeBill({
+        user,
+        type: "initial",
+        amount,
+        occurredAt: user.purchasedAt || user.createdAt || new Date().toISOString(),
+        duration: user.duration,
+        afterExpiresAt: user.expiresAt || null,
+        description: "用户初始购买"
+      });
+    })
+    .filter(Boolean);
+}
+
+function reverseBill(bill) {
+  if (bill.reversedAt) return bill;
+  bill.reversedAt = new Date().toISOString();
+
+  const user = users.find(entry => entry.id === bill.userId);
+  if (user) {
+    const currentPaid = Number(user.actualPaid) || 0;
+    user.actualPaid = Math.max(Math.round((currentPaid - (Number(bill.amount) || 0)) * 100) / 100, 0);
+    if (bill.type === "renewal" && bill.beforeExpiresAt && user.expiresAt === bill.afterExpiresAt) {
+      user.expiresAt = bill.beforeExpiresAt;
+    }
+    user.updatedAt = new Date().toISOString();
+  }
+
+  return bill;
+}
+
+function renewUser(user, input) {
+  const duration = String(input.duration || "monthly").trim();
+  const actualPaid = normalizePaymentAmount(input.actualPaid ?? "");
+  const renewedAt = new Date(input.purchasedAt || new Date().toISOString());
+  const currentExpiry = user.expiresAt ? new Date(user.expiresAt) : null;
+  const previousPaid = Number(user.actualPaid) || 0;
+
+  if (!durationMonths(duration)) throw new Error("请选择续费时长。");
+  if (Number.isNaN(renewedAt.getTime())) throw new Error("续费时间格式不正确。");
+  if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
+
+  const baseTime = currentExpiry && currentExpiry.getTime() > renewedAt.getTime() ? currentExpiry : renewedAt;
+  const expiresAt = calculateExpiry(baseTime.toISOString(), duration);
+  if (!expiresAt) throw new Error("续费时间格式不正确。");
+
+  Object.assign(user, {
+    purchasedAt: renewedAt.toISOString(),
+    duration,
+    actualPaid: Math.round((previousPaid + actualPaid) * 100) / 100,
+    expiresAt,
+    updatedAt: new Date().toISOString()
+  });
+
+  return { user, amount: actualPaid, renewedAt: renewedAt.toISOString(), beforeExpiresAt: currentExpiry?.toISOString() || null, afterExpiresAt: expiresAt };
 }
 
 function parseSubscriptionUserInfo(value) {
@@ -360,9 +463,9 @@ function toBytes(value, unit) {
   return Math.round(value * (units[String(unit).toLowerCase()] || 1));
 }
 
-function statusFor(item) {
+function statusFor(item, customerCount = 0) {
   if (item.metrics?.unavailable) return "expired";
-  if (item.lastError) return "error";
+  if (item.lastError) return "warning";
   if (!item.metrics) return "unknown";
 
   const now = Date.now();
@@ -376,6 +479,7 @@ function statusFor(item) {
   if ((remaining !== null && remaining < LOW_TRAFFIC_BYTES) || (daysLeft !== null && daysLeft < EXPIRING_SOON_DAYS)) {
     return "warning";
   }
+  if (customerCount >= 8) return "warning";
 
   return "ok";
 }
@@ -399,10 +503,11 @@ function metricScore(metrics) {
 }
 
 function publicItem(item) {
+  const customerCount = users.filter(user => user.subscriptionId === item.id).length;
   return {
     ...item,
-    customerCount: users.filter(user => user.subscriptionId === item.id).length,
-    status: statusFor(item)
+    customerCount,
+    status: statusFor(item, customerCount)
   };
 }
 
@@ -416,6 +521,24 @@ function publicUser(user) {
       email: subscription.email || "",
       name: subscription.name || ""
     } : null
+  };
+}
+
+function publicBill(bill) {
+  const user = users.find(item => item.id === bill.userId);
+  return {
+    ...bill,
+    originalUserLabel: bill.userLabel || bill.userSnapshot?.userId || "",
+    userLabel: user ? billUserLabel(user) : (bill.userLabel || bill.userSnapshot?.userId || "未知用户"),
+    user: user ? {
+      id: user.id,
+      userId: user.userId,
+      wechatName: user.wechatName || "",
+      imessageId: user.imessageId || "",
+      createdAt: user.createdAt || "",
+      expiresAt: user.expiresAt
+    } : null,
+    isReversed: Boolean(bill.reversedAt)
   };
 }
 
@@ -663,6 +786,11 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/bills" && req.method === "GET") {
+    sendJson(res, 200, bills.map(publicBill).sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)));
+    return;
+  }
+
   if (pathname === "/api/users" && req.method === "POST") {
     try {
       const payload = await readJson(req);
@@ -672,7 +800,17 @@ async function handleApi(req, res, pathname) {
       };
       const normalized = normalizeUser(payload, item);
       users.unshift(normalized);
+      bills.unshift(makeBill({
+        user: normalized,
+        type: "initial",
+        amount: normalized.actualPaid,
+        occurredAt: normalized.purchasedAt,
+        duration: normalized.duration,
+        afterExpiresAt: normalized.expiresAt,
+        description: "用户初始购买"
+      }));
       await saveUsers();
+      await saveBills();
       sendJson(res, 201, publicUser(normalized));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -680,20 +818,84 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  const billMatch = pathname.match(/^\/api\/bills\/([^/]+)\/reverse$/);
+  if (billMatch) {
+    const bill = bills.find(entry => entry.id === billMatch[1]);
+    if (!bill) {
+      sendJson(res, 404, { error: "没有找到这笔账单。" });
+      return;
+    }
+
+    if (req.method === "POST") {
+      reverseBill(bill);
+      await saveBills();
+      await saveUsers();
+      sendJson(res, 200, publicBill(bill));
+      return;
+    }
+
+    sendJson(res, 405, { error: "Method not allowed." });
+    return;
+  }
+
   const match = pathname.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|debug))?$/);
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew))?$/);
   if (userMatch) {
     const id = userMatch[1];
+    const action = userMatch[2];
     const item = users.find(entry => entry.id === id);
     if (!item) {
       sendJson(res, 404, { error: "没有找到这个用户。" });
       return;
     }
 
+    if (action === "renew" && req.method === "POST") {
+      try {
+        const payload = await readJson(req);
+        const renewal = renewUser(item, payload);
+        bills.unshift(makeBill({
+          user: item,
+          type: "renewal",
+          amount: renewal.amount,
+          occurredAt: renewal.renewedAt,
+          duration: item.duration,
+          beforeExpiresAt: renewal.beforeExpiresAt,
+          afterExpiresAt: renewal.afterExpiresAt,
+          description: "用户续费"
+        }));
+        await saveUsers();
+        await saveBills();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action) {
+      sendJson(res, 405, { error: "Method not allowed." });
+      return;
+    }
+
     if (req.method === "PUT") {
       try {
         const payload = await readJson(req);
+        const previousPaid = Number(item.actualPaid) || 0;
         Object.assign(item, normalizeUser(payload, item));
+        const nextPaid = Number(item.actualPaid) || 0;
+        const diff = Math.round((nextPaid - previousPaid) * 100) / 100;
+        if (diff !== 0) {
+          bills.unshift(makeBill({
+            user: item,
+            type: "adjustment",
+            amount: diff,
+            occurredAt: new Date().toISOString(),
+            duration: item.duration,
+            afterExpiresAt: item.expiresAt,
+            description: "用户实付款调整"
+          }));
+          await saveBills();
+        }
         await saveUsers();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
@@ -753,9 +955,7 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "DELETE") {
     subscriptions = subscriptions.filter(entry => entry.id !== id);
-    users = users.filter(entry => entry.subscriptionId !== id);
     await saveData();
-    await saveUsers();
     sendJson(res, 200, { ok: true });
     return;
   }
