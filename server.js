@@ -2,12 +2,14 @@ const http = require("http");
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
+const { createDataStore } = require("./database");
 
 const PORT = Number(process.env.PORT || 3000);
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "subscriptions.json");
 const DATA_DIR = path.dirname(DATA_FILE);
 const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
 const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
+const DATABASE_URL = process.env.DATABASE_URL || "";
 const PUBLIC_DIR = path.join(__dirname, "public");
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 50 * 1024 * 1024 * 1024);
@@ -78,6 +80,15 @@ const REQUEST_PROFILES = [
 let subscriptions = [];
 let users = [];
 let bills = [];
+const dataStore = createDataStore({
+  dataDir: DATA_DIR,
+  databaseUrl: DATABASE_URL,
+  files: {
+    subscriptions: DATA_FILE,
+    users: USERS_FILE,
+    bills: BILLS_FILE
+  }
+});
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -87,45 +98,30 @@ const mimeTypes = {
 };
 
 async function ensureDataFile() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  try {
-    const raw = await fs.readFile(DATA_FILE, "utf8");
-    subscriptions = JSON.parse(raw);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    subscriptions = [];
-    await saveData();
-  }
+  await dataStore.init();
+  const state = await dataStore.loadAll();
+  subscriptions = state.subscriptions;
+  users = state.users;
+  bills = state.bills;
 
-  try {
-    const raw = await fs.readFile(USERS_FILE, "utf8");
-    users = JSON.parse(raw);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    users = [];
-    await saveUsers();
-  }
-
-  try {
-    const raw = await fs.readFile(BILLS_FILE, "utf8");
-    bills = JSON.parse(raw);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+  if (state.missing.subscriptions) await saveData();
+  if (state.missing.users) await saveUsers();
+  if (state.missing.bills) {
     bills = initialBillsFromUsers();
     await saveBills();
   }
 }
 
 async function saveData() {
-  await fs.writeFile(DATA_FILE, JSON.stringify(subscriptions, null, 2));
+  await dataStore.saveCollection("subscriptions", subscriptions);
 }
 
 async function saveUsers() {
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
+  await dataStore.saveCollection("users", users);
 }
 
 async function saveBills() {
-  await fs.writeFile(BILLS_FILE, JSON.stringify(bills, null, 2));
+  await dataStore.saveCollection("bills", bills);
 }
 
 function sendJson(res, status, payload) {
@@ -747,10 +743,24 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/health" && req.method === "GET") {
     sendJson(res, 200, {
       ok: true,
+      dataStore: dataStore.kind,
       subscriptions: subscriptions.length,
       users: users.length,
       refreshedEveryMs: REFRESH_INTERVAL_MS
     });
+    return;
+  }
+
+  if (pathname === "/api/cron/refresh" && (req.method === "GET" || req.method === "POST")) {
+    const expectedSecret = process.env.CRON_SECRET || "";
+    const authorization = req.headers.authorization || "";
+    if (expectedSecret && authorization !== `Bearer ${expectedSecret}`) {
+      sendJson(res, 401, { error: "Unauthorized." });
+      return;
+    }
+
+    await refreshAll();
+    sendJson(res, 200, { ok: true, refreshed: subscriptions.length });
     return;
   }
 
@@ -1016,6 +1026,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  ensureDataFile,
+  handleApi,
+  sendJson,
   parseSubscriptionUserInfo,
   parseBodyHints,
   parseAccountUnavailable,
