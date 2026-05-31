@@ -12,6 +12,9 @@ class JsonDataStore {
 
   async init() {
     await fs.mkdir(this.dataDir, { recursive: true });
+    if (process.env.VERCEL === "1") {
+      throw new Error("Vercel 部署必须配置 DATABASE_URL，不能使用本地 JSON 文件存储。");
+    }
   }
 
   async loadCollection(collection) {
@@ -42,7 +45,7 @@ class JsonDataStore {
 class PostgresDataStore {
   constructor({ connectionString }) {
     this.kind = "postgres";
-    this.connectionString = connectionString;
+    this.connectionString = normalizePostgresUrl(connectionString);
     this.pool = null;
   }
 
@@ -116,6 +119,16 @@ class PostgresDataStore {
 function createDataStore({ dataDir, files, databaseUrl }) {
   if (databaseUrl) return new PostgresDataStore({ connectionString: databaseUrl });
   return new JsonDataStore({ dataDir, files });
+}
+
+function normalizePostgresUrl(value) {
+  try {
+    const url = new URL(value);
+    url.searchParams.delete("channel_binding");
+    return url.toString();
+  } catch {
+    return value;
+  }
 }
 
 module.exports = {
