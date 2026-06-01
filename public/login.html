@@ -4,55 +4,72 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>登录 - XELA monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
+            fontFamily: {
+              sans: ["DM Sans", "ui-sans-serif", "system-ui", "sans-serif"],
+              display: ["Outfit", "DM Sans", "ui-sans-serif", "system-ui", "sans-serif"]
+            },
             colors: {
-              brand: {
-                400: "#818cf8",
-                500: "#6366f1",
-                600: "#5558f7"
+              nova: {
+                bg: "#0F1319",
+                bg2: "#141920",
+                bg3: "#1A2130",
+                border: "#1E3050",
+                sky: "#4A9EE8",
+                sky2: "#7EC8F0",
+                text: "#E4EEF8",
+                text2: "#8AAEC8",
+                green: "#3DCC8E"
               }
             },
             boxShadow: {
-              glow: "0 18px 48px rgba(99, 102, 241, 0.24)"
+              nova: "0 28px 80px rgba(0, 0, 0, 0.35)"
             }
           }
         }
       };
     </script>
   </head>
-  <body class="min-h-screen bg-[#111827] text-white antialiased">
-    <main class="flex min-h-screen items-start justify-center px-6 py-14 sm:py-20">
-      <section class="w-full max-w-[620px]">
-        <div class="mb-14 flex justify-center sm:mb-16">
-          <svg class="h-12 w-12 text-brand-500" viewBox="0 0 64 64" fill="none" aria-label="XELA monitor">
-            <path d="M6 27c8-14 19-12 28-4 8 7 15 8 24 1-8 14-20 13-29 5-8-7-15-8-23-2Z" fill="currentColor"/>
-            <path d="M6 42c8-14 19-12 28-4 8 7 15 8 24 1-8 14-20 13-29 5-8-7-15-8-23-2Z" fill="currentColor" opacity=".9"/>
-          </svg>
+  <body class="min-h-screen overflow-x-hidden bg-nova-bg font-sans text-nova-text antialiased">
+    <main class="relative flex min-h-screen items-center justify-center px-5 py-10 sm:px-8">
+      <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(74,158,232,.28),transparent_28rem),radial-gradient(circle_at_80%_70%,rgba(136,136,248,.16),transparent_30rem)]"></div>
+      <div class="pointer-events-none absolute inset-0 opacity-40 [background-image:repeating-linear-gradient(45deg,transparent_0,transparent_119px,rgba(74,158,232,.18)_119px,rgba(74,158,232,.18)_120px),repeating-linear-gradient(-45deg,transparent_0,transparent_119px,rgba(74,158,232,.18)_119px,rgba(74,158,232,.18)_120px)]"></div>
+
+      <section class="relative w-full max-w-[430px] rounded-3xl border border-nova-border bg-nova-bg2/90 p-6 shadow-nova backdrop-blur sm:p-8">
+        <div class="mb-9 flex items-center justify-center gap-3">
+          <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-nova-sky text-[#0A1A2C]">
+            <svg class="h-5 w-5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+              <polyline points="2,12 6,7 10,9 14,4"></polyline>
+              <circle cx="14" cy="4" r="1.5" fill="currentColor" stroke="none"></circle>
+            </svg>
+          </span>
+          <span class="font-display text-2xl font-extrabold tracking-[-0.02em]">XELA monitor</span>
         </div>
 
-        <h1 class="text-center text-4xl font-black leading-tight tracking-normal text-white sm:text-[42px]">
-          Sign in to your account
-        </h1>
+        <h1 class="font-display text-4xl font-extrabold leading-tight tracking-[-0.04em] text-nova-text">Sign in to your account</h1>
 
-        <form id="loginForm" class="mt-14 grid gap-8">
-          <label class="grid gap-4 text-2xl font-bold tracking-normal text-slate-100">
+        <form id="loginForm" class="mt-8 grid gap-5">
+          <label class="grid gap-2 text-sm font-medium text-nova-text2">
             Account
             <input
-              class="h-[58px] rounded-lg border border-slate-600 bg-slate-800/80 px-4 text-lg font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/20"
+              class="h-12 rounded-xl border border-nova-border bg-nova-bg3 px-4 text-base font-medium text-nova-text outline-none transition placeholder:text-[#506070] focus:border-nova-sky focus:ring-4 focus:ring-nova-sky/15"
               name="account"
               autocomplete="username"
               required
             >
           </label>
 
-          <label class="grid gap-4 text-2xl font-bold tracking-normal text-slate-100">
+          <label class="grid gap-2 text-sm font-medium text-nova-text2">
             Password
             <input
-              class="h-[58px] rounded-lg border border-slate-600 bg-slate-800/80 px-4 text-lg font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/20"
+              class="h-12 rounded-xl border border-nova-border bg-nova-bg3 px-4 text-base font-medium text-nova-text outline-none transition placeholder:text-[#506070] focus:border-nova-sky focus:ring-4 focus:ring-nova-sky/15"
               name="password"
               type="password"
               autocomplete="current-password"
@@ -60,9 +77,9 @@
             >
           </label>
 
-          <p id="loginMessage" class="min-h-6 text-center text-base font-semibold text-slate-400" aria-live="polite"></p>
+          <p id="loginMessage" class="min-h-5 text-sm font-medium text-nova-text2" aria-live="polite"></p>
 
-          <button class="inline-flex h-[58px] items-center justify-center rounded-lg bg-brand-600 px-5 text-xl font-black text-white shadow-glow transition hover:bg-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/30" type="submit">
+          <button class="mt-1 inline-flex h-12 items-center justify-center rounded-xl border border-nova-sky bg-nova-sky px-5 text-base font-bold text-[#0A1A2C] transition hover:bg-nova-sky2 focus:outline-none focus:ring-4 focus:ring-nova-sky/20" type="submit">
             Sign in
           </button>
         </form>
@@ -82,19 +99,27 @@
         window.location.href = dashboardUrl();
       }
 
+      function setMessage(text, state = "muted") {
+        const colors = {
+          muted: "text-nova-text2",
+          error: "text-red-400",
+          success: "text-nova-green"
+        };
+        message.textContent = text;
+        message.className = `min-h-5 text-sm font-medium ${colors[state] || colors.muted}`;
+      }
+
       form.addEventListener("submit", async event => {
         event.preventDefault();
         const payload = Object.fromEntries(new FormData(form).entries());
         if (!payload.account || !payload.password) {
-          message.textContent = "请填写账号和密码。";
-          message.className = "min-h-6 text-center text-base font-semibold text-rose-400";
+          setMessage("请填写账号和密码。", "error");
           return;
         }
 
         if (window.location.protocol === "file:") {
           if (payload.account !== "admin" || payload.password !== "admin") {
-            message.textContent = "账号或密码不正确。";
-            message.className = "min-h-6 text-center text-base font-semibold text-rose-400";
+            setMessage("账号或密码不正确。", "error");
             return;
           }
 
@@ -104,14 +129,12 @@
             remember: false,
             loggedInAt: new Date().toISOString()
           }));
-          message.textContent = "登录成功，正在进入控制台...";
-          message.className = "min-h-6 text-center text-base font-semibold text-emerald-400";
+          setMessage("登录成功，正在进入控制台...", "success");
           window.setTimeout(goDashboard, 450);
           return;
         }
 
-        message.textContent = "正在登录...";
-        message.className = "min-h-6 text-center text-base font-semibold text-slate-400";
+        setMessage("正在登录...");
 
         try {
           const response = await fetch("/api/auth/login", {
@@ -126,17 +149,14 @@
           });
           const data = await response.json();
           if (!response.ok) {
-            message.textContent = data.error || "登录失败。";
-            message.className = "min-h-6 text-center text-base font-semibold text-rose-400";
+            setMessage(data.error || "登录失败。", "error");
             return;
           }
 
-          message.textContent = "登录成功，正在进入控制台...";
-          message.className = "min-h-6 text-center text-base font-semibold text-emerald-400";
+          setMessage("登录成功，正在进入控制台...", "success");
           window.setTimeout(goDashboard, 450);
         } catch {
-          message.textContent = "无法连接登录服务，请稍后再试。";
-          message.className = "min-h-6 text-center text-base font-semibold text-rose-400";
+          setMessage("无法连接登录服务，请稍后再试。", "error");
         }
       });
     </script>
