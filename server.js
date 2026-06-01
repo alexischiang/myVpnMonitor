@@ -1012,20 +1012,30 @@ async function serveStatic(res, pathname) {
   }
 }
 
+let initialized = false;
+
+async function requestHandler(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  try {
+    if (!initialized) {
+      await ensureDataFile();
+      initialized = true;
+    }
+
+    if (url.pathname.startsWith("/api/")) {
+      await handleApi(req, res, url.pathname);
+    } else {
+      await serveStatic(res, url.pathname);
+    }
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
 async function main() {
   await ensureDataFile();
-  const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    try {
-      if (url.pathname.startsWith("/api/")) {
-        await handleApi(req, res, url.pathname);
-      } else {
-        await serveStatic(res, url.pathname);
-      }
-    } catch (error) {
-      sendJson(res, 500, { error: error.message });
-    }
-  });
+  initialized = true;
+  const server = http.createServer(requestHandler);
 
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`VPN subscription monitor is running at http://localhost:${PORT}`);
@@ -1043,7 +1053,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = {
+module.exports = Object.assign(requestHandler, {
   ensureDataFile,
   handleApi,
   sendJson,
@@ -1053,4 +1063,4 @@ module.exports = {
   calculateExpiry,
   statusFor,
   toBytes
-};
+});
