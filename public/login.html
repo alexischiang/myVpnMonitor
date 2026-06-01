@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>登录 - XELA monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                400: "#818cf8",
+                500: "#6366f1",
+                600: "#5558f7"
+              }
+            },
+            boxShadow: {
+              glow: "0 18px 48px rgba(99, 102, 241, 0.24)"
+            }
+          }
+        }
+      };
+    </script>
+  </head>
+  <body class="min-h-screen bg-[#111827] text-white antialiased">
+    <main class="flex min-h-screen items-start justify-center px-6 py-14 sm:py-20">
+      <section class="w-full max-w-[620px]">
+        <div class="mb-14 flex justify-center sm:mb-16">
+          <svg class="h-12 w-12 text-brand-500" viewBox="0 0 64 64" fill="none" aria-label="XELA monitor">
+            <path d="M6 27c8-14 19-12 28-4 8 7 15 8 24 1-8 14-20 13-29 5-8-7-15-8-23-2Z" fill="currentColor"/>
+            <path d="M6 42c8-14 19-12 28-4 8 7 15 8 24 1-8 14-20 13-29 5-8-7-15-8-23-2Z" fill="currentColor" opacity=".9"/>
+          </svg>
+        </div>
+
+        <h1 class="text-center text-4xl font-black leading-tight tracking-normal text-white sm:text-[42px]">
+          Sign in to your account
+        </h1>
+
+        <form id="loginForm" class="mt-14 grid gap-8">
+          <label class="grid gap-4 text-2xl font-bold tracking-normal text-slate-100">
+            Account
+            <input
+              class="h-[58px] rounded-lg border border-slate-600 bg-slate-800/80 px-4 text-lg font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/20"
+              name="account"
+              autocomplete="username"
+              required
+            >
+          </label>
+
+          <label class="grid gap-4 text-2xl font-bold tracking-normal text-slate-100">
+            Password
+            <input
+              class="h-[58px] rounded-lg border border-slate-600 bg-slate-800/80 px-4 text-lg font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/20"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+            >
+          </label>
+
+          <p id="loginMessage" class="min-h-6 text-center text-base font-semibold text-slate-400" aria-live="polite"></p>
+
+          <button class="inline-flex h-[58px] items-center justify-center rounded-lg bg-brand-600 px-5 text-xl font-black text-white shadow-glow transition hover:bg-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/30" type="submit">
+            Sign in
+          </button>
+        </form>
+      </section>
+    </main>
+
+    <script>
+      const form = document.querySelector("#loginForm");
+      const message = document.querySelector("#loginMessage");
+
+      function dashboardUrl() {
+        if (window.location.protocol === "file:") return new URL("index.html", window.location.href).href;
+        return "/";
+      }
+
+      function goDashboard() {
+        window.location.href = dashboardUrl();
+      }
+
+      form.addEventListener("submit", async event => {
+        event.preventDefault();
+        const payload = Object.fromEntries(new FormData(form).entries());
+        if (!payload.account || !payload.password) {
+          message.textContent = "请填写账号和密码。";
+          message.className = "min-h-6 text-center text-base font-semibold text-rose-400";
+          return;
+        }
+
+        if (window.location.protocol === "file:") {
+          if (payload.account !== "admin" || payload.password !== "admin") {
+            message.textContent = "账号或密码不正确。";
+            message.className = "min-h-6 text-center text-base font-semibold text-rose-400";
+            return;
+          }
+
+          localStorage.setItem("xela-login", JSON.stringify({
+            account: payload.account,
+            authenticated: true,
+            remember: false,
+            loggedInAt: new Date().toISOString()
+          }));
+          message.textContent = "登录成功，正在进入控制台...";
+          message.className = "min-h-6 text-center text-base font-semibold text-emerald-400";
+          window.setTimeout(goDashboard, 450);
+          return;
+        }
+
+        message.textContent = "正在登录...";
+        message.className = "min-h-6 text-center text-base font-semibold text-slate-400";
+
+        try {
+          const response = await fetch("/api/auth/login", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              account: payload.account,
+              password: payload.password,
+              remember: false
+            })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            message.textContent = data.error || "登录失败。";
+            message.className = "min-h-6 text-center text-base font-semibold text-rose-400";
+            return;
+          }
+
+          message.textContent = "登录成功，正在进入控制台...";
+          message.className = "min-h-6 text-center text-base font-semibold text-emerald-400";
+          window.setTimeout(goDashboard, 450);
+        } catch {
+          message.textContent = "无法连接登录服务，请稍后再试。";
+          message.className = "min-h-6 text-center text-base font-semibold text-rose-400";
+        }
+      });
+    </script>
+  </body>
+</html>

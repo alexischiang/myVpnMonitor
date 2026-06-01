@@ -145,6 +145,14 @@ button.compact {
   padding: 18px 20px;
 }
 
+.toolbar-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 h1,
 h2,
 p {

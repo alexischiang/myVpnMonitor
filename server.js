@@ -32,6 +32,15 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 50 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
+const AUTH_COOKIE_NAME = "xela_session";
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto
+  .createHash("sha256")
+  .update(`${ADMIN_USERNAME}:${ADMIN_PASSWORD}:${DATA_FILE}`)
+  .digest("hex");
+const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+const REMEMBER_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 const REQUEST_PROFILES = [
   {
     name: "shadowrocket",
@@ -149,14 +158,88 @@ async function saveBills() {
   await dataStore.saveCollection("bills", bills);
 }
 
-function sendJson(res, status, payload) {
+function sendJson(res, status, payload, headers = {}) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store, max-age=0",
     "pragma": "no-cache",
-    "expires": "0"
+    "expires": "0",
+    ...headers
   });
   res.end(JSON.stringify(payload));
+}
+
+function parseCookies(req) {
+  return Object.fromEntries(String(req.headers.cookie || "")
+    .split(";")
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const index = part.indexOf("=");
+      if (index === -1) return [part, ""];
+      return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
+    }));
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function signSession(payload) {
+  return crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+}
+
+function makeSessionToken(account, maxAgeSeconds) {
+  const payload = Buffer.from(JSON.stringify({
+    account,
+    exp: Date.now() + maxAgeSeconds * 1000
+  })).toString("base64url");
+  return `${payload}.${signSession(payload)}`;
+}
+
+function verifySessionToken(token) {
+  const [payload, signature] = String(token || "").split(".");
+  if (!payload || !signature || !safeEqual(signature, signSession(payload))) return null;
+
+  try {
+    const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (session.account !== ADMIN_USERNAME || Date.now() > Number(session.exp)) return null;
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+function isSecureRequest(req) {
+  return req.headers["x-forwarded-proto"] === "https" || req.socket?.encrypted;
+}
+
+function authCookie(req, token, maxAgeSeconds = null) {
+  const parts = [
+    `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax"
+  ];
+  if (isSecureRequest(req)) parts.push("Secure");
+  if (maxAgeSeconds !== null) parts.push(`Max-Age=${maxAgeSeconds}`);
+  return parts.join("; ");
+}
+
+function clearAuthCookie(req) {
+  return authCookie(req, "", 0);
+}
+
+function currentSession(req) {
+  return verifySessionToken(parseCookies(req)[AUTH_COOKIE_NAME]);
+}
+
+function requireAuth(req, res) {
+  if (currentSession(req)) return true;
+  sendJson(res, 401, { error: "请先登录。", loginUrl: "/login.html" });
+  return false;
 }
 
 function readJson(req) {
@@ -770,9 +853,44 @@ async function refreshAll() {
 }
 
 async function handleApi(req, res, pathname) {
-  await loadLatestData();
+  if (pathname === "/api/auth/login" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const account = String(payload.account || "").trim();
+      const password = String(payload.password || "");
+      if (!safeEqual(account, ADMIN_USERNAME) || !safeEqual(password, ADMIN_PASSWORD)) {
+        sendJson(res, 401, { error: "账号或密码不正确。" });
+        return;
+      }
+
+      const remember = Boolean(payload.remember);
+      const maxAgeSeconds = remember ? REMEMBER_MAX_AGE_SECONDS : SESSION_MAX_AGE_SECONDS;
+      const cookieMaxAge = remember ? maxAgeSeconds : null;
+      const token = makeSessionToken(account, maxAgeSeconds);
+      sendJson(res, 200, { ok: true, account }, { "set-cookie": authCookie(req, token, cookieMaxAge) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/auth/logout" && req.method === "POST") {
+    sendJson(res, 200, { ok: true }, { "set-cookie": clearAuthCookie(req) });
+    return;
+  }
+
+  if (pathname === "/api/auth/me" && req.method === "GET") {
+    const session = currentSession(req);
+    if (!session) {
+      sendJson(res, 401, { error: "请先登录。", loginUrl: "/login.html" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, account: session.account });
+    return;
+  }
 
   if (pathname === "/api/health" && req.method === "GET") {
+    await loadLatestData();
     sendJson(res, 200, {
       ok: true,
       dataStore: dataStore.kind,
@@ -791,10 +909,14 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
+    await loadLatestData();
     await refreshAll();
     sendJson(res, 200, { ok: true, refreshed: subscriptions.length });
     return;
   }
+
+  if (!requireAuth(req, res)) return;
+  await loadLatestData();
 
   if (pathname === "/api/subscriptions" && req.method === "GET") {
     sendJson(res, 200, subscriptions.map(publicItem));
@@ -1005,8 +1127,17 @@ async function handleApi(req, res, pathname) {
   sendJson(res, 405, { error: "Method not allowed." });
 }
 
-async function serveStatic(res, pathname) {
+async function serveStatic(req, res, pathname) {
   const requestedPath = pathname === "/" ? "/index.html" : pathname;
+  if (requestedPath === "/index.html" && !currentSession(req)) {
+    res.writeHead(302, {
+      "location": "/login.html",
+      "cache-control": "no-store, max-age=0"
+    });
+    res.end();
+    return;
+  }
+
   const filePath = path.normalize(path.join(PUBLIC_DIR, requestedPath));
 
   if (!filePath.startsWith(PUBLIC_DIR)) {
@@ -1039,7 +1170,7 @@ async function requestHandler(req, res) {
     if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url.pathname);
     } else {
-      await serveStatic(res, url.pathname);
+      await serveStatic(req, res, url.pathname);
     }
   } catch (error) {
     sendJson(res, 500, { error: error.message });

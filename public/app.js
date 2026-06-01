@@ -4,6 +4,7 @@ const formMessage = document.querySelector("#formMessage");
 const searchInput = document.querySelector("#search");
 const summary = document.querySelector("#summary");
 const refreshAllButton = document.querySelector("#refreshAll");
+const logoutButton = document.querySelector("#logoutButton");
 const debugDialog = document.querySelector("#debugDialog");
 const debugOutput = document.querySelector("#debugOutput");
 const closeDebug = document.querySelector("#closeDebug");
@@ -73,6 +74,11 @@ const dialogFormSnapshots = new WeakMap();
 let pageRefreshToken = 0;
 let dataLoadingCount = 0;
 let isInitialLoading = true;
+
+function loginPageUrl() {
+  if (window.location.protocol === "file:") return new URL("login.html", window.location.href).href;
+  return "/login.html";
+}
 
 const COLUMN_WIDTH_VERSION = "2026-05-31-user-sort-v1";
 const DEFAULT_COLUMN_WIDTHS = {
@@ -1363,13 +1369,18 @@ async function apiFetch(url, options = {}, pendingMessage = "请稍候，正在�
   const shouldShowPending = !isInitialLoading;
   if (shouldShowPending) setDataLoading(true, pendingMessage);
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       cache: "no-store",
+      credentials: "same-origin",
       ...options,
       headers: {
         ...(options.headers || {})
       }
     });
+    if (response.status === 401 && window.location.protocol !== "file:") {
+      window.location.href = loginPageUrl();
+    }
+    return response;
   } finally {
     if (shouldShowPending) setDataLoading(false);
   }
@@ -1597,6 +1608,20 @@ refreshAllButton.addEventListener("click", async () => {
     refreshAllButton.disabled = false;
     refreshAllButton.textContent = "全部刷新";
   }
+});
+
+logoutButton.addEventListener("click", async () => {
+  localStorage.removeItem("xela-login");
+  if (window.location.protocol !== "file:") {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+    } catch {}
+  }
+  window.location.href = loginPageUrl();
 });
 
 tabs.forEach(tab => {

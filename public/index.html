@@ -4,6 +4,24 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>XELA monitor</title>
+    <script>
+      (() => {
+        if (window.location.protocol === "file:") {
+          try {
+            const session = JSON.parse(localStorage.getItem("xela-login") || "null");
+            if (session?.account === "admin" && session?.authenticated === true) return;
+          } catch {}
+          window.location.replace(new URL("login.html", window.location.href).href);
+          return;
+        }
+
+        fetch("/api/auth/me", { cache: "no-store", credentials: "same-origin" })
+          .then(response => {
+            if (!response.ok) window.location.replace("/login.html");
+          })
+          .catch(() => window.location.replace("/login.html"));
+      })();
+    </script>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -13,7 +31,10 @@
           <h1>XELA monitor</h1>
           <p>管理订阅 URL、绑定邮箱、实时流量、到期时间和购买用户。</p>
         </div>
-        <button id="refreshAll" class="secondary">全部刷新</button>
+        <div class="toolbar-actions">
+          <button id="refreshAll" class="secondary">全部刷新</button>
+          <button id="logoutButton" class="secondary" type="button">退出登录</button>
+        </div>
       </section>
 
       <section class="summary" id="summary"></section>
