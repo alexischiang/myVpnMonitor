@@ -130,6 +130,13 @@ async function ensureDataFile() {
   }
 }
 
+async function loadLatestData() {
+  const state = await dataStore.loadAll();
+  subscriptions = state.subscriptions;
+  users = state.users;
+  bills = state.bills;
+}
+
 async function saveData() {
   await dataStore.saveCollection("subscriptions", subscriptions);
 }
@@ -143,7 +150,12 @@ async function saveBills() {
 }
 
 function sendJson(res, status, payload) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0"
+  });
   res.end(JSON.stringify(payload));
 }
 
@@ -758,6 +770,8 @@ async function refreshAll() {
 }
 
 async function handleApi(req, res, pathname) {
+  await loadLatestData();
+
   if (pathname === "/api/health" && req.method === "GET") {
     sendJson(res, 200, {
       ok: true,

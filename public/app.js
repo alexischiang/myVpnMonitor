@@ -56,6 +56,8 @@ const resetUrlColumns = document.querySelector("#resetUrlColumns");
 const refreshOverlay = document.querySelector("#refreshOverlay");
 const refreshProgressText = document.querySelector("#refreshProgressText");
 const refreshProgressBar = document.querySelector("#refreshProgressBar");
+const dataLoadingOverlay = document.querySelector("#dataLoadingOverlay");
+const dataLoadingText = document.querySelector("#dataLoadingText");
 
 let subscriptions = [];
 let users = [];
@@ -69,6 +71,8 @@ let billSortDirection = "desc";
 let userManuallySelectedSubscription = false;
 const dialogFormSnapshots = new WeakMap();
 let pageRefreshToken = 0;
+let dataLoadingCount = 0;
+let isInitialLoading = true;
 
 const COLUMN_WIDTH_VERSION = "2026-05-31-user-sort-v1";
 const DEFAULT_COLUMN_WIDTHS = {
@@ -1104,7 +1108,7 @@ function showUrlDetail(item) {
 async function showDebug(id) {
   debugOutput.textContent = "正在读取订阅返回...";
   debugDialog.showModal();
-  const response = await fetch(`/api/subscriptions/${id}/debug`);
+  const response = await apiFetch(`/api/subscriptions/${id}/debug`, {}, "正在读取订阅返回...");
   const payload = await response.json();
   debugOutput.textContent = formatDebugPayload(payload);
 }
@@ -1301,23 +1305,91 @@ function render() {
   renderBills();
 }
 
-async function loadSubscriptions() {
-  const response = await fetch("/api/subscriptions");
-  subscriptions = await response.json();
+function skeletonBlock(className = "") {
+  const element = document.createElement("span");
+  element.className = ["skeleton-block", className].filter(Boolean).join(" ");
+  return element;
 }
 
-async function loadUsers() {
-  const response = await fetch("/api/users");
-  users = await response.json();
+function renderSkeletonRows(target, columns, rows = 6) {
+  target.replaceChildren();
+  for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
+    const row = target.insertRow();
+    row.className = "skeleton-row";
+    for (let columnIndex = 0; columnIndex < columns; columnIndex += 1) {
+      const cell = row.insertCell();
+      cell.appendChild(skeletonBlock(columnIndex === 0 ? "short" : ""));
+    }
+  }
 }
 
-async function loadBills() {
-  const response = await fetch("/api/bills");
-  bills = await response.json();
+function renderInitialSkeleton() {
+  document.body.classList.add("is-initial-loading");
+  summary.innerHTML = Array.from({ length: 6 }, () => `
+    <div class="summary-item skeleton-summary">
+      <span class="skeleton-block label"></span>
+      <strong class="skeleton-block value"></strong>
+    </div>
+  `).join("");
+  renderSkeletonRows(subscriptionRows, URL_COLUMNS.length, 6);
+  renderSkeletonRows(userRows, 10, 6);
+  renderSkeletonRows(billRows, 9, 6);
 }
 
-async function reloadAllData() {
-  await Promise.all([loadSubscriptions(), loadUsers(), loadBills()]);
+function clearInitialSkeleton() {
+  isInitialLoading = false;
+  document.body.classList.remove("is-initial-loading");
+}
+
+function setDataLoading(isLoading, message = "请稍候，正在处理请求...") {
+  dataLoadingCount = Math.max(0, dataLoadingCount + (isLoading ? 1 : -1));
+  const active = dataLoadingCount > 0;
+  document.body.classList.toggle("is-loading-data", active);
+  if (dataLoadingOverlay) dataLoadingOverlay.hidden = !active;
+  if (dataLoadingText && message) dataLoadingText.textContent = message;
+}
+
+async function apiFetch(url, options = {}, pendingMessage = "请稍候，正在处理请求...") {
+  const shouldShowPending = !isInitialLoading;
+  if (shouldShowPending) setDataLoading(true, pendingMessage);
+  try {
+    return await fetch(url, {
+      cache: "no-store",
+      ...options,
+      headers: {
+        ...(options.headers || {})
+      }
+    });
+  } finally {
+    if (shouldShowPending) setDataLoading(false);
+  }
+}
+
+async function fetchJson(url, pendingMessage = "请稍候，正在从数据库拉取...") {
+  const response = await apiFetch(url, {}, pendingMessage);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `Request failed: ${response.status}`);
+  return payload;
+}
+
+async function loadSubscriptions(message) {
+  subscriptions = await fetchJson("/api/subscriptions", message);
+}
+
+async function loadUsers(message) {
+  users = await fetchJson("/api/users", message);
+}
+
+async function loadBills(message) {
+  bills = await fetchJson("/api/bills", message);
+}
+
+async function reloadAllData(message = "请稍候，正在从数据库拉取...") {
+  await Promise.all([
+    loadSubscriptions(message),
+    loadUsers(message),
+    loadBills(message)
+  ]);
 }
 
 function openUrlDialog(item = null) {
@@ -1364,7 +1436,7 @@ function openRenewDialog(user) {
 }
 
 async function refreshOne(id) {
-  const response = await fetch(`/api/subscriptions/${id}/refresh`, { method: "POST" });
+  const response = await apiFetch(`/api/subscriptions/${id}/refresh`, { method: "POST" }, "正在刷新 URL...");
   const updated = await response.json();
   subscriptions = subscriptions.map(item => item.id === id ? updated : item);
   render();
@@ -1380,21 +1452,21 @@ function setRefreshPending(isPending, completed = 0, total = 0) {
 
 async function deleteOne(id) {
   if (!confirm("确定删除这个 URL 吗？已关联的用户会保留。")) return;
-  await fetch(`/api/subscriptions/${id}`, { method: "DELETE" });
+  await apiFetch(`/api/subscriptions/${id}`, { method: "DELETE" }, "正在删除 URL...");
   subscriptions = subscriptions.filter(item => item.id !== id);
   render();
 }
 
 async function deleteUser(id) {
   if (!confirm("确定删除这个用户吗？")) return;
-  await fetch(`/api/users/${id}`, { method: "DELETE" });
+  await apiFetch(`/api/users/${id}`, { method: "DELETE" }, "正在删除用户...");
   users = users.filter(user => user.id !== id);
   render();
 }
 
 async function reverseBill(id) {
   if (!confirm("确定撤销这笔账单吗？收入统计会同步扣回。")) return;
-  const response = await fetch(`/api/bills/${id}/reverse`, { method: "POST" });
+  const response = await apiFetch(`/api/bills/${id}/reverse`, { method: "POST" }, "正在撤销账单...");
   const data = await response.json();
   if (!response.ok) {
     alert(data.error || "撤销账单失败。");
@@ -1411,7 +1483,7 @@ async function switchPage(pageName, shouldReload = true) {
   pages.forEach(page => page.classList.toggle("active", page.id === `${pageName}Page`));
   if (shouldReload) {
     try {
-      await reloadAllData();
+      await reloadAllData("正在加载最新表格数据...");
       if (refreshToken !== pageRefreshToken) return;
       render();
     } catch (error) {
@@ -1428,11 +1500,11 @@ form.addEventListener("submit", async event => {
   formMessage.textContent = id ? "正在保存 URL..." : "正在检查订阅 URL...";
   const payload = Object.fromEntries(new FormData(form).entries());
   delete payload.id;
-  const response = await fetch(id ? `/api/subscriptions/${id}` : "/api/subscriptions", {
+  const response = await apiFetch(id ? `/api/subscriptions/${id}` : "/api/subscriptions", {
     method: id ? "PUT" : "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload)
-  });
+  }, id ? "正在保存 URL..." : "正在检查并添加 URL...");
   const data = await response.json();
   if (!response.ok) {
     formMessage.textContent = data.error || "保存失败。";
@@ -1454,11 +1526,11 @@ userForm.addEventListener("submit", async event => {
   userFormMessage.textContent = "正在保存用户...";
   const payload = Object.fromEntries(new FormData(userForm).entries());
   delete payload.id;
-  const response = await fetch(id ? `/api/users/${id}` : "/api/users", {
+  const response = await apiFetch(id ? `/api/users/${id}` : "/api/users", {
     method: id ? "PUT" : "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload)
-  });
+  }, id ? "正在保存用户..." : "正在添加用户...");
   const data = await response.json();
   if (!response.ok) {
     userFormMessage.textContent = data.error || "保存失败。";
@@ -1482,11 +1554,11 @@ renewForm.addEventListener("submit", async event => {
   renewFormMessage.textContent = "正在续费...";
   const payload = Object.fromEntries(new FormData(renewForm).entries());
   delete payload.id;
-  const response = await fetch(`/api/users/${id}/renew`, {
+  const response = await apiFetch(`/api/users/${id}/renew`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload)
-  });
+  }, "正在续费用户...");
   const data = await response.json();
   if (!response.ok) {
     renewFormMessage.textContent = data.error || "续费失败。";
@@ -1623,9 +1695,16 @@ window.addEventListener("resize", () => {
   document.querySelectorAll(".table-wrap table").forEach(updateTableWidth);
 });
 
-reloadAllData().then(() => {
+renderInitialSkeleton();
+
+reloadAllData("正在加载最新数据...").then(() => {
+  clearInitialSkeleton();
   render();
   setupResizableTables();
   initUrlColumnControls();
   applyUrlColumnVisibility();
+}).catch(error => {
+  clearInitialSkeleton();
+  console.error(error);
+  alert("加载最新数据失败，请稍后再试。");
 });
