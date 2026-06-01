@@ -232,6 +232,16 @@ function closeDialogSafely(dialog) {
   dialog.close();
 }
 
+function updateDialogScrollLock() {
+  const hasOpenDialog = Array.from(document.querySelectorAll("dialog")).some(dialog => dialog.open);
+  document.body.classList.toggle("has-open-dialog", hasOpenDialog);
+}
+
+function showDialog(dialog) {
+  dialog.showModal();
+  updateDialogScrollLock();
+}
+
 function toDatetimeLocalValue(date = new Date()) {
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
@@ -570,7 +580,7 @@ function showPurchaseSuccess(user) {
   });
   section.append(heading, grid);
   purchaseSuccessContent.appendChild(section);
-  purchaseSuccessDialog.showModal();
+  showDialog(purchaseSuccessDialog);
 }
 
 function renderBillUserCell(row, bill) {
@@ -987,7 +997,7 @@ function showUserDetail(user) {
     section.append(heading, grid);
     userDetailContent.appendChild(section);
   });
-  userDetailDialog.showModal();
+  showDialog(userDetailDialog);
 }
 
 function renderDetailSections(target, heroConfig, statsItems, groups) {
@@ -1102,12 +1112,12 @@ function showUrlDetail(item) {
       }
     ]
   );
-  urlDetailDialog.showModal();
+  showDialog(urlDetailDialog);
 }
 
 async function showDebug(id) {
   debugOutput.textContent = "正在读取订阅返回...";
-  debugDialog.showModal();
+  showDialog(debugDialog);
   const response = await apiFetch(`/api/subscriptions/${id}/debug`, {}, "正在读取订阅返回...");
   const payload = await response.json();
   debugOutput.textContent = formatDebugPayload(payload);
@@ -1401,7 +1411,7 @@ function openUrlDialog(item = null) {
   form.elements.email.value = item?.email || "";
   form.elements.note.value = item?.note || "";
   rememberDialogForm(urlDialog);
-  urlDialog.showModal();
+  showDialog(urlDialog);
 }
 
 function openUserDialog(user = null) {
@@ -1420,7 +1430,7 @@ function openUserDialog(user = null) {
   userForm.elements.subscriptionId.value = user?.subscriptionId || subscriptionsByLatestExpiry()[0]?.id || "";
   if (!user) updateRecommendedSubscription();
   rememberDialogForm(userDialog);
-  userDialog.showModal();
+  showDialog(userDialog);
 }
 
 function openRenewDialog(user) {
@@ -1432,7 +1442,7 @@ function openRenewDialog(user) {
   renewForm.elements.actualPaid.value = "";
   renewForm.elements.duration.value = user.duration || "monthly";
   rememberDialogForm(renewDialog);
-  renewDialog.showModal();
+  showDialog(renewDialog);
 }
 
 async function refreshOne(id) {
@@ -1621,6 +1631,7 @@ document.querySelectorAll("dialog").forEach(dialog => {
     event.preventDefault();
     closeDialogSafely(dialog);
   });
+  dialog.addEventListener("close", updateDialogScrollLock);
 });
 
 document.querySelectorAll('input[type="number"]').forEach(input => {
@@ -1633,7 +1644,7 @@ addUrlButton.addEventListener("click", () => openUrlDialog());
 addUserButton.addEventListener("click", () => openUserDialog());
 urlColumnButton.addEventListener("click", () => {
   initUrlColumnControls();
-  urlColumnDialog.showModal();
+  showDialog(urlColumnDialog);
 });
 resetUrlColumns.addEventListener("click", () => {
   saveUrlColumnState(defaultUrlColumnState());

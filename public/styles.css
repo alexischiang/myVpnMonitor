@@ -47,8 +47,10 @@ body {
 }
 
 body.is-refreshing,
-body.is-loading-data {
+body.is-loading-data,
+body.has-open-dialog {
   overflow: hidden;
+  touch-action: none;
 }
 
 button,
@@ -248,6 +250,23 @@ h2 {
   border-radius: 8px;
   box-shadow: var(--shadow-md);
   overflow: hidden;
+}
+
+.app-footer {
+  align-items: center;
+  color: var(--slate-500);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 8px 16px;
+  justify-content: center;
+  padding: 18px 0 2px;
+}
+
+.app-footer span + span {
+  border-left: 1px solid var(--slate-200);
+  padding-left: 16px;
 }
 
 .sheet-heading {
@@ -733,8 +752,13 @@ legend {
   border: 1px solid var(--slate-200);
   border-radius: 8px;
   box-shadow: var(--shadow-lg);
+  max-height: calc(100dvh - 32px);
   max-width: 640px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
   width: calc(100vw - 36px);
 }
 
@@ -746,6 +770,7 @@ legend {
 .form-dialog form {
   display: grid;
   gap: 14px;
+  min-height: 0;
   padding: 18px;
 }
 
@@ -997,7 +1022,7 @@ legend {
 }
 
 .debug-dialog {
-  max-height: 82vh;
+  max-height: min(82vh, calc(100dvh - 32px));
   max-width: 980px;
 }
 
@@ -1013,7 +1038,7 @@ legend {
   font-size: 12px;
   line-height: 1.6;
   margin: 0;
-  max-height: calc(82vh - 72px);
+  max-height: calc(min(82vh, 100dvh - 32px) - 72px);
   overflow: auto;
   padding: 18px;
   white-space: pre-wrap;
@@ -1212,8 +1237,38 @@ body.is-initial-loading .table-wrap {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .app-footer {
+    align-items: center;
+    flex-direction: column;
+  }
+
+  .app-footer span + span {
+    border-left: 0;
+    padding-left: 0;
+  }
+
   .sheet-tools input {
     min-width: 0;
+  }
+
+  .form-dialog,
+  .debug-dialog {
+    max-height: calc(100dvh - 16px);
+    width: calc(100vw - 20px);
+  }
+
+  .dialog-top,
+  .debug-top {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  .dialog-actions {
+    background: var(--white);
+    bottom: 0;
+    position: sticky;
+    z-index: 2;
   }
 
   fieldset,
