@@ -19,7 +19,11 @@ const billSearchInput = document.querySelector("#billSearch");
 const billMonthFilter = document.querySelector("#billMonthFilter");
 const billTotalAmount = document.querySelector("#billTotalAmount");
 const billTotalMeta = document.querySelector("#billTotalMeta");
+const billSelectAll = document.querySelector("#billSelectAll");
+const bulkReverseBillsButton = document.querySelector("#bulkReverseBills");
+const bulkDeleteBillsButton = document.querySelector("#bulkDeleteBills");
 const subscriptionSelect = document.querySelector("#subscriptionSelect");
+const renewSubscriptionSelect = document.querySelector("#renewSubscriptionSelect");
 const urlDialog = document.querySelector("#urlDialog");
 const userDialog = document.querySelector("#userDialog");
 const renewDialog = document.querySelector("#renewDialog");
@@ -72,6 +76,9 @@ let userSortDirection = "desc";
 let billSortKey = "occurredAt";
 let billSortDirection = "desc";
 let userManuallySelectedSubscription = false;
+let renewManuallySelectedSubscription = false;
+let renewingUser = null;
+const selectedBillIds = new Set();
 const dialogFormSnapshots = new WeakMap();
 let dataLoadingCount = 0;
 let isInitialLoading = true;
@@ -90,7 +97,7 @@ const COLUMN_WIDTH_VERSION = "2026-05-31-user-sort-v1";
 const DEFAULT_COLUMN_WIDTHS = {
   urlTable: [56, 190, 360, 86, 110, 118, 170, 96, 140, 168, 258],
   userTable: [56, 150, 110, 122, 104, 118, 360, 190, 130, 300],
-  billTable: [56, 150, 150, 90, 100, 90, 220, 150, 92]
+  billTable: [48, 56, 150, 150, 90, 100, 90, 220, 150, 152]
 };
 
 const URL_COLUMNS = [
@@ -211,6 +218,19 @@ function formatDateTime(value) {
   return formatDate(value);
 }
 
+function formatDateMinute(value) {
+  if (!value) return "未知";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未知";
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
 function formatMoney(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return "未知";
@@ -219,6 +239,17 @@ function formatMoney(value) {
 
 function activeBills() {
   return bills.filter(bill => !bill.reversedAt);
+}
+
+function activeBillIds() {
+  return new Set(bills.map(bill => bill.id));
+}
+
+function pruneSelectedBills() {
+  const knownIds = activeBillIds();
+  for (const id of selectedBillIds) {
+    if (!knownIds.has(id)) selectedBillIds.delete(id);
+  }
 }
 
 function billAmountTotal(list) {
@@ -274,38 +305,42 @@ function toDateInputValue(date = new Date()) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
-function durationMonths(duration) {
+function durationDays(duration) {
   const values = {
-    monthly: 1,
-    quarterly: 3,
-    half_yearly: 6,
-    yearly: 12
+    monthly: 30,
+    quarterly: 90,
+    half_yearly: 180,
+    yearly: 360
   };
   return values[duration] || null;
 }
 
 function calculateUserExpiry(purchasedAt, duration) {
-  const months = durationMonths(duration);
+  const days = durationDays(duration);
   const start = new Date(purchasedAt);
-  if (!months || Number.isNaN(start.getTime())) return null;
+  if (!days || Number.isNaN(start.getTime())) return null;
 
   const expiresAt = new Date(start.getTime());
-  const day = expiresAt.getDate();
-  expiresAt.setDate(1);
-  expiresAt.setMonth(expiresAt.getMonth() + months);
-  const lastDay = new Date(expiresAt.getFullYear(), expiresAt.getMonth() + 1, 0).getDate();
-  expiresAt.setDate(Math.min(day, lastDay));
+  expiresAt.setUTCDate(expiresAt.getUTCDate() + days);
   return expiresAt;
 }
 
 function calculateRecommendationExpiry(purchasedAt, duration) {
-  const months = durationMonths(duration);
+  const days = durationDays(duration);
   const start = new Date(purchasedAt);
-  if (!months || Number.isNaN(start.getTime())) return null;
+  if (!days || Number.isNaN(start.getTime())) return null;
 
   const expiresAt = new Date(start.getTime());
-  expiresAt.setMonth(expiresAt.getMonth() + months);
+  expiresAt.setUTCDate(expiresAt.getUTCDate() + days);
   return expiresAt;
+}
+
+function calculateRenewalExpiry(user, renewedAt, duration) {
+  const renewDate = new Date(renewedAt);
+  if (Number.isNaN(renewDate.getTime())) return null;
+  const currentExpiry = user?.expiresAt ? new Date(user.expiresAt) : null;
+  const baseDate = currentExpiry && currentExpiry.getTime() > renewDate.getTime() ? currentExpiry : renewDate;
+  return calculateRecommendationExpiry(baseDate.toISOString(), duration);
 }
 
 function userStatus(user) {
@@ -330,6 +365,22 @@ function isCurrentNaturalMonth(value) {
   if (Number.isNaN(date.getTime())) return false;
   const now = new Date();
   return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+}
+
+function isCurrentNaturalDay(value) {
+  const parts = dateParts(value);
+  if (parts) {
+    const now = new Date();
+    return parts.year === now.getFullYear()
+      && parts.month === now.getMonth() + 1
+      && parts.day === now.getDate();
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
 }
 
 function expiryTime(item) {
@@ -732,17 +783,32 @@ function isRecommendationMessage(value) {
   return value.startsWith("已推荐") || value.startsWith("暂无符合");
 }
 
+function updateDurationExpiryLabels(formElement, getExpiryDate) {
+  formElement.querySelectorAll("[data-duration-expiry]").forEach(label => {
+    const duration = label.dataset.durationExpiry;
+    const expiryDate = getExpiryDate(duration);
+    label.textContent = expiryDate ? `至 ${formatDate(expiryDate)}` : "到期未知";
+  });
+}
+
+function updatePurchaseDurationExpiries() {
+  updateDurationExpiryLabels(userForm, duration => (
+    calculateRecommendationExpiry(userForm.elements.purchasedAt.value, duration)
+  ));
+}
+
+function updateRenewDurationExpiries() {
+  updateDurationExpiryLabels(renewForm, duration => (
+    calculateRenewalExpiry(renewingUser, renewForm.elements.purchasedAt.value, duration)
+  ));
+}
+
 function updateRecommendedSubscription() {
   const isEditing = Boolean(userForm.elements.id.value);
+  updatePurchaseDurationExpiries();
   if (isEditing || userManuallySelectedSubscription) return;
 
   const duration = userForm.elements.duration.value;
-  const canRecommend = duration === "monthly" || duration === "quarterly";
-  if (!canRecommend) {
-    if (isRecommendationMessage(userFormMessage.textContent)) userFormMessage.textContent = "";
-    return;
-  }
-
   const userExpiryDate = calculateRecommendationExpiry(userForm.elements.purchasedAt.value, duration);
   const recommended = findRecommendedSubscription(userExpiryDate);
   if (!recommended) {
@@ -753,6 +819,23 @@ function updateRecommendedSubscription() {
 
   subscriptionSelect.value = recommended.id;
   userFormMessage.textContent = `已推荐 ${formatDate(recommended.metrics?.expireAt)} 到期的 URL。`;
+}
+
+function updateRecommendedRenewSubscription() {
+  updateRenewDurationExpiries();
+  if (renewManuallySelectedSubscription || !renewingUser) return;
+
+  const duration = renewForm.elements.duration.value;
+  const userExpiryDate = calculateRenewalExpiry(renewingUser, renewForm.elements.purchasedAt.value, duration);
+  const recommended = findRecommendedSubscription(userExpiryDate);
+  if (!recommended) {
+    renewSubscriptionSelect.value = subscriptionsByLatestExpiry()[0]?.id || "";
+    renewFormMessage.textContent = `暂无符合 ${formatDate(userExpiryDate)} 到期窗口的 URL，请手动选择。`;
+    return;
+  }
+
+  renewSubscriptionSelect.value = recommended.id;
+  renewFormMessage.textContent = `已推荐 ${formatDate(recommended.metrics?.expireAt)} 到期的 URL。`;
 }
 
 function setupResizableTables() {
@@ -839,7 +922,7 @@ function updateTableWidth(table) {
     const fillIndexMap = {
       urlTable: [2, 8],
       userTable: [6, 9],
-      billTable: [6, 7]
+      billTable: [7, 8]
     };
     const fillIndexes = fillIndexMap[table.id] || [cols.length - 1];
     const fillCols = fillIndexes.map(index => cols[index]).filter(Boolean);
@@ -1167,11 +1250,14 @@ function renderSummary() {
   }, {});
 
   const paidTotal = billAmountTotal(activeBills());
-  const monthlyPaidTotal = billAmountTotal(activeBills().filter(bill => isCurrentNaturalMonth(bill.occurredAt)));
+  const activeBillList = activeBills();
+  const dailyPaidTotal = billAmountTotal(activeBillList.filter(bill => isCurrentNaturalDay(bill.occurredAt)));
+  const monthlyPaidTotal = billAmountTotal(activeBillList.filter(bill => isCurrentNaturalMonth(bill.occurredAt)));
   const expiringUsers = users.filter(user => userStatus(user) === "warning").length;
   const cards = [
     ["URL 总数", subscriptions.length],
     ["用户总数", users.length],
+    ["本日收入", formatMoney(dailyPaidTotal)],
     ["本月总收入", formatMoney(monthlyPaidTotal)],
     ["需关注 URL", counts.warning || 0],
     ["即将到期用户", expiringUsers],
@@ -1186,27 +1272,27 @@ function renderSummary() {
   `).join("");
 }
 
-function renderSubscriptionSelect() {
-  const currentValue = subscriptionSelect.value;
+function renderSubscriptionSelect(targetSelect = subscriptionSelect) {
+  const currentValue = targetSelect.value;
   const sortedSubscriptions = subscriptionsByLatestExpiry();
-  subscriptionSelect.replaceChildren();
+  targetSelect.replaceChildren();
   if (!sortedSubscriptions.length) {
     const option = document.createElement("option");
     option.value = "";
     option.textContent = "请先添加 URL";
-    subscriptionSelect.appendChild(option);
-    subscriptionSelect.disabled = true;
+    targetSelect.appendChild(option);
+    targetSelect.disabled = true;
     return;
   }
 
-  subscriptionSelect.disabled = false;
+  targetSelect.disabled = false;
   sortedSubscriptions.forEach((item, index) => {
     const option = document.createElement("option");
     option.value = item.id;
     option.textContent = `#${index + 1} ${item.url.slice(-4)} · ${formatDate(item.metrics?.expireAt)}`;
-    subscriptionSelect.appendChild(option);
+    targetSelect.appendChild(option);
   });
-  if (subscriptions.some(item => item.id === currentValue)) subscriptionSelect.value = currentValue;
+  if (subscriptions.some(item => item.id === currentValue)) targetSelect.value = currentValue;
 }
 
 function renderList() {
@@ -1299,6 +1385,7 @@ function renderUsers() {
 }
 
 function renderBills() {
+  pruneSelectedBills();
   const keyword = billSearchInput.value.trim().toLowerCase();
   const month = billMonthFilter.value;
   const visible = bills.filter(bill => {
@@ -1311,15 +1398,21 @@ function renderBills() {
   }).sort(compareBills);
   const activeVisible = visible.filter(bill => !bill.reversedAt);
   const total = billAmountTotal(activeVisible);
+  const selectedVisibleCount = visible.filter(bill => selectedBillIds.has(bill.id)).length;
 
   updateBillSortIcons();
   billTotalAmount.textContent = formatMoney(total);
   billTotalAmount.className = ["money-cell", total < 0 ? "negative" : "positive"].join(" ");
-  billTotalMeta.textContent = `${activeVisible.length} 笔有效账单`;
+  billTotalMeta.textContent = `${activeVisible.length} 笔有效账单 · 已选 ${selectedVisibleCount} 笔`;
+  billSelectAll.checked = visible.length > 0 && visible.every(bill => selectedBillIds.has(bill.id));
+  billSelectAll.indeterminate = selectedVisibleCount > 0 && !billSelectAll.checked;
+  billSelectAll.disabled = visible.length === 0;
+  bulkReverseBillsButton.disabled = selectedBillIds.size === 0;
+  bulkDeleteBillsButton.disabled = selectedBillIds.size === 0;
 
   billRows.innerHTML = "";
   if (!visible.length) {
-    emptyRows(billRows, 9, "还没有匹配的账单。");
+    emptyRows(billRows, 10, "还没有匹配的账单。");
     return;
   }
 
@@ -1328,6 +1421,15 @@ function renderBills() {
     const amount = Number(bill.amount) || 0;
     const changeText = formatBillExpiryChange(bill);
 
+    const selectCell = row.insertCell();
+    selectCell.className = "select-cell";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "row-checkbox";
+    checkbox.checked = selectedBillIds.has(bill.id);
+    checkbox.dataset.billId = bill.id;
+    checkbox.setAttribute("aria-label", `选择账单 ${index + 1}`);
+    selectCell.appendChild(checkbox);
     textCell(row, String(index + 1), "index-cell");
     textCell(row, formatDateTime(bill.occurredAt));
     renderBillUserCell(row, bill);
@@ -1340,7 +1442,10 @@ function renderBills() {
       ? actionButton("已撤销", "secondary compact", () => {})
       : actionButton("撤销", "danger compact", () => reverseBill(bill.id));
     if (bill.reversedAt) button.disabled = true;
-    actionCell(row, [button]);
+    actionCell(row, [
+      button,
+      actionButton("删除", "danger compact", () => deleteBill(bill.id))
+    ]);
   });
 }
 
@@ -1372,7 +1477,7 @@ function renderSkeletonRows(target, columns, rows = 6) {
 
 function renderInitialSkeleton() {
   document.body.classList.add("is-initial-loading");
-  summary.innerHTML = Array.from({ length: 6 }, () => `
+  summary.innerHTML = Array.from({ length: 7 }, () => `
     <div class="summary-item skeleton-summary">
       <span class="skeleton-block label"></span>
       <strong class="skeleton-block value"></strong>
@@ -1380,7 +1485,7 @@ function renderInitialSkeleton() {
   `).join("");
   renderSkeletonRows(subscriptionRows, URL_COLUMNS.length, 6);
   renderSkeletonRows(userRows, 10, 6);
-  renderSkeletonRows(billRows, 9, 6);
+  renderSkeletonRows(billRows, 10, 6);
 }
 
 function clearInitialSkeleton() {
@@ -1454,7 +1559,7 @@ async function loadAppMeta() {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || `Request failed: ${response.status}`);
   if (appVersion) appVersion.textContent = `Version ${payload.version || "--"}`;
-  if (appUpdatedAt) appUpdatedAt.textContent = `Latest updated: ${formatDateTime(payload.updatedAt)}`;
+  if (appUpdatedAt) appUpdatedAt.textContent = `Latest updated: ${formatDateMinute(payload.updatedAt)}`;
 }
 
 function openUrlDialog(item = null) {
@@ -1483,6 +1588,7 @@ function openUserDialog(user = null) {
   userForm.elements.actualPaid.value = user?.actualPaid ?? "";
   userForm.elements.duration.value = user?.duration || "monthly";
   userForm.elements.subscriptionId.value = user?.subscriptionId || subscriptionsByLatestExpiry()[0]?.id || "";
+  updatePurchaseDurationExpiries();
   if (!user) updateRecommendedSubscription();
   rememberDialogForm(userDialog);
   showDialog(userDialog);
@@ -1491,11 +1597,16 @@ function openUserDialog(user = null) {
 function openRenewDialog(user) {
   renewForm.reset();
   renewFormMessage.textContent = "";
+  renewingUser = user;
+  renewManuallySelectedSubscription = false;
+  renderSubscriptionSelect(renewSubscriptionSelect);
   renewDialogTitle.textContent = `${user.userId || "用户"} 续费`;
   renewForm.elements.id.value = user.id;
   renewForm.elements.purchasedAt.value = toDateInputValue();
   renewForm.elements.actualPaid.value = "";
   renewForm.elements.duration.value = user.duration || "monthly";
+  renewForm.elements.subscriptionId.value = user.subscriptionId || subscriptionsByLatestExpiry()[0]?.id || "";
+  updateRecommendedRenewSubscription();
   rememberDialogForm(renewDialog);
   showDialog(renewDialog);
 }
@@ -1538,6 +1649,41 @@ async function reverseBill(id) {
     alert(data.error || "撤销账单失败。");
     return;
   }
+  await reloadAfterMutation("正在同步最新数据...");
+}
+
+async function deleteBill(id) {
+  if (!confirm("确定删除这笔账单吗？未撤销的账单会先撤销影响再删除。")) return;
+  const response = await apiFetch(`/api/bills/${id}`, { method: "DELETE" }, "正在删除账单...");
+  const data = await response.json();
+  if (!response.ok) {
+    alert(data.error || "删除账单失败。");
+    return;
+  }
+  selectedBillIds.delete(id);
+  await reloadAfterMutation("正在同步最新数据...");
+}
+
+async function bulkUpdateBills(action) {
+  const ids = [...selectedBillIds];
+  if (!ids.length) return;
+  const isDelete = action === "delete";
+  const message = isDelete
+    ? `确定删除选中的 ${ids.length} 笔账单吗？未撤销的账单会先撤销影响再删除。`
+    : `确定撤销选中的 ${ids.length} 笔账单吗？已撤销账单会自动跳过。`;
+  if (!confirm(message)) return;
+
+  const response = await apiFetch("/api/bills/bulk", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action, ids })
+  }, isDelete ? "正在批量删除账单..." : "正在批量撤销账单...");
+  const data = await response.json();
+  if (!response.ok) {
+    alert(data.error || "批量操作失败。");
+    return;
+  }
+  selectedBillIds.clear();
   await reloadAfterMutation("正在同步最新数据...");
 }
 
@@ -1711,15 +1857,50 @@ searchInput.addEventListener("input", renderList);
 userSearchInput.addEventListener("input", renderUsers);
 billSearchInput.addEventListener("input", renderBills);
 billMonthFilter.addEventListener("input", renderBills);
+billSelectAll.addEventListener("change", () => {
+  const keyword = billSearchInput.value.trim().toLowerCase();
+  const month = billMonthFilter.value;
+  const visible = bills.filter(bill => {
+    const linkedUser = bill.user ? users.find(user => user.id === bill.user.id) || bill.user : null;
+    const userLabel = linkedUser?.userId || bill.userLabel || "";
+    const haystack = `${userLabel} ${billTypeLabels[bill.type] || bill.type || ""} ${bill.description || ""}`.toLowerCase();
+    return haystack.includes(keyword) && (!month || billMonthValue(bill.occurredAt) === month);
+  });
+  visible.forEach(bill => {
+    if (billSelectAll.checked) selectedBillIds.add(bill.id);
+    else selectedBillIds.delete(bill.id);
+  });
+  renderBills();
+});
+billRows.addEventListener("change", event => {
+  const checkbox = event.target.closest("[data-bill-id]");
+  if (!checkbox) return;
+  if (checkbox.checked) selectedBillIds.add(checkbox.dataset.billId);
+  else selectedBillIds.delete(checkbox.dataset.billId);
+  renderBills();
+});
+bulkReverseBillsButton.addEventListener("click", () => bulkUpdateBills("reverse"));
+bulkDeleteBillsButton.addEventListener("click", () => bulkUpdateBills("delete"));
 subscriptionSelect.addEventListener("change", () => {
   userManuallySelectedSubscription = true;
+});
+renewSubscriptionSelect.addEventListener("change", () => {
+  renewManuallySelectedSubscription = true;
 });
 userForm.elements.purchasedAt.addEventListener("change", () => {
   updateRecommendedSubscription();
 });
+renewForm.elements.purchasedAt.addEventListener("change", () => {
+  updateRecommendedRenewSubscription();
+});
 userForm.querySelectorAll('input[name="duration"]').forEach(input => {
   input.addEventListener("change", () => {
     updateRecommendedSubscription();
+  });
+});
+renewForm.querySelectorAll('input[name="duration"]').forEach(input => {
+  input.addEventListener("change", () => {
+    updateRecommendedRenewSubscription();
   });
 });
 expirySortButton.addEventListener("click", () => {

@@ -8,6 +8,7 @@
     "dev": "nodemon server.js",
     "build": "node scripts/write-build-meta.js",
     "check": "node --check server.js && node --check public/app.js",
+    "migrate:duration-days": "node scripts/migrate-duration-days.js",
     "migrate:json-to-db": "node scripts/migrate-json-to-db.js",
     "test": "node test.js"
   },

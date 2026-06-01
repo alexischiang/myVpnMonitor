@@ -342,27 +342,23 @@ function safeHostName(value) {
   }
 }
 
-function durationMonths(duration) {
+function durationDays(duration) {
   const values = {
-    monthly: 1,
-    quarterly: 3,
-    half_yearly: 6,
-    yearly: 12
+    monthly: 30,
+    quarterly: 90,
+    half_yearly: 180,
+    yearly: 360
   };
   return values[duration] || null;
 }
 
 function calculateExpiry(purchasedAt, duration) {
-  const months = durationMonths(duration);
+  const days = durationDays(duration);
   const start = new Date(purchasedAt);
-  if (!months || Number.isNaN(start.getTime())) return null;
+  if (!days || Number.isNaN(start.getTime())) return null;
 
   const expiresAt = new Date(start.getTime());
-  const day = expiresAt.getDate();
-  expiresAt.setDate(1);
-  expiresAt.setMonth(expiresAt.getMonth() + months);
-  const lastDay = new Date(expiresAt.getFullYear(), expiresAt.getMonth() + 1, 0).getDate();
-  expiresAt.setDate(Math.min(day, lastDay));
+  expiresAt.setUTCDate(expiresAt.getUTCDate() + days);
   return expiresAt.toISOString();
 }
 
@@ -379,7 +375,7 @@ function normalizeUser(input, existing = {}) {
 
   if (!userId) throw new Error("请填写用户 ID。");
   if (!subscription) throw new Error("请选择已添加的 URL。");
-  if (!durationMonths(duration)) throw new Error("请选择购买时长。");
+  if (!durationDays(duration)) throw new Error("请选择购买时长。");
   if (!expiresAt) throw new Error("购买时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
 
@@ -467,14 +463,22 @@ function reverseBill(bill) {
   return bill;
 }
 
+function deleteBillRecord(bill) {
+  if (!bill.reversedAt) reverseBill(bill);
+  bills = bills.filter(entry => entry.id !== bill.id);
+}
+
 function renewUser(user, input) {
   const duration = String(input.duration || "monthly").trim();
   const actualPaid = normalizePaymentAmount(input.actualPaid ?? "");
   const renewedAt = new Date(input.purchasedAt || new Date().toISOString());
+  const subscriptionId = String(input.subscriptionId || user.subscriptionId || "").trim();
+  const subscription = subscriptions.find(item => item.id === subscriptionId);
   const currentExpiry = user.expiresAt ? new Date(user.expiresAt) : null;
   const previousPaid = Number(user.actualPaid) || 0;
 
-  if (!durationMonths(duration)) throw new Error("请选择续费时长。");
+  if (!durationDays(duration)) throw new Error("请选择续费时长。");
+  if (!subscription) throw new Error("请选择已添加的 URL。");
   if (Number.isNaN(renewedAt.getTime())) throw new Error("续费时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
 
@@ -486,6 +490,7 @@ function renewUser(user, input) {
     purchasedAt: renewedAt.toISOString(),
     duration,
     actualPaid: Math.round((previousPaid + actualPaid) * 100) / 100,
+    subscriptionId,
     expiresAt,
     updatedAt: new Date().toISOString()
   });
@@ -1035,6 +1040,44 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/bills/bulk" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const ids = Array.isArray(payload.ids) ? payload.ids.map(id => String(id)) : [];
+      const action = String(payload.action || "");
+      if (!ids.length) {
+        sendJson(res, 400, { error: "请选择账单。" });
+        return;
+      }
+      if (action !== "reverse" && action !== "delete") {
+        sendJson(res, 400, { error: "不支持的批量操作。" });
+        return;
+      }
+
+      let changed = 0;
+      for (const id of ids) {
+        const bill = bills.find(entry => entry.id === id);
+        if (!bill) continue;
+        if (action === "reverse") {
+          if (!bill.reversedAt) {
+            reverseBill(bill);
+            changed += 1;
+          }
+        } else {
+          deleteBillRecord(bill);
+          changed += 1;
+        }
+      }
+
+      await saveBills();
+      await saveUsers();
+      sendJson(res, 200, { ok: true, changed });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const billMatch = pathname.match(/^\/api\/bills\/([^/]+)\/reverse$/);
   if (billMatch) {
     const bill = bills.find(entry => entry.id === billMatch[1]);
@@ -1048,6 +1091,26 @@ async function handleApi(req, res, pathname) {
       await saveBills();
       await saveUsers();
       sendJson(res, 200, publicBill(bill));
+      return;
+    }
+
+    sendJson(res, 405, { error: "Method not allowed." });
+    return;
+  }
+
+  const deleteBillMatch = pathname.match(/^\/api\/bills\/([^/]+)$/);
+  if (deleteBillMatch) {
+    const bill = bills.find(entry => entry.id === deleteBillMatch[1]);
+    if (!bill) {
+      sendJson(res, 404, { error: "没有找到这笔账单。" });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      deleteBillRecord(bill);
+      await saveBills();
+      await saveUsers();
+      sendJson(res, 200, { ok: true });
       return;
     }
 

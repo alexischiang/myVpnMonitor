@@ -119,12 +119,15 @@
             <div class="sheet-tools">
               <input id="billMonthFilter" class="month-input" type="month" aria-label="筛选月份">
               <input id="billSearch" placeholder="搜索用户、类型或备注">
+              <button id="bulkReverseBills" class="secondary" type="button" disabled>批量撤销</button>
+              <button id="bulkDeleteBills" class="danger" type="button" disabled>批量删除</button>
             </div>
           </div>
           <div class="table-wrap">
             <table id="billTable">
               <thead>
                 <tr>
+                  <th class="select-col"><input id="billSelectAll" class="row-checkbox" type="checkbox" aria-label="全选账单"></th>
                   <th class="index-col">#</th>
                   <th><button id="billTimeSortButton" class="sort-button" type="button">账单时间 <span id="billTimeSortIcon">↓</span></button></th>
                   <th>用户</th>
@@ -139,7 +142,7 @@
               <tbody id="billRows"></tbody>
               <tfoot>
                 <tr>
-                  <td colspan="4">筛选合计</td>
+                  <td colspan="5">筛选合计</td>
                   <td id="billTotalAmount">0.00</td>
                   <td colspan="4" id="billTotalMeta">0 笔有效账单</td>
                 </tr>
@@ -212,19 +215,23 @@
           <legend>购买时长</legend>
           <label class="radio-row">
             <input type="radio" name="duration" value="monthly" checked>
-            月付
+            <span class="duration-name">月付</span>
+            <span class="duration-expiry" data-duration-expiry="monthly"></span>
           </label>
           <label class="radio-row">
             <input type="radio" name="duration" value="quarterly">
-            季付
+            <span class="duration-name">季付</span>
+            <span class="duration-expiry" data-duration-expiry="quarterly"></span>
           </label>
           <label class="radio-row">
             <input type="radio" name="duration" value="half_yearly">
-            半年付
+            <span class="duration-name">半年付</span>
+            <span class="duration-expiry" data-duration-expiry="half_yearly"></span>
           </label>
           <label class="radio-row">
             <input type="radio" name="duration" value="yearly">
-            年付
+            <span class="duration-name">年付</span>
+            <span class="duration-expiry" data-duration-expiry="yearly"></span>
           </label>
         </fieldset>
         <label>
@@ -273,21 +280,29 @@
           <legend>续费时长</legend>
           <label class="radio-row">
             <input type="radio" name="duration" value="monthly" checked>
-            月付
+            <span class="duration-name">月付</span>
+            <span class="duration-expiry" data-duration-expiry="monthly"></span>
           </label>
           <label class="radio-row">
             <input type="radio" name="duration" value="quarterly">
-            季付
+            <span class="duration-name">季付</span>
+            <span class="duration-expiry" data-duration-expiry="quarterly"></span>
           </label>
           <label class="radio-row">
             <input type="radio" name="duration" value="half_yearly">
-            半年付
+            <span class="duration-name">半年付</span>
+            <span class="duration-expiry" data-duration-expiry="half_yearly"></span>
           </label>
           <label class="radio-row">
             <input type="radio" name="duration" value="yearly">
-            年付
+            <span class="duration-name">年付</span>
+            <span class="duration-expiry" data-duration-expiry="yearly"></span>
           </label>
         </fieldset>
+        <label>
+          使用的 URL
+          <select name="subscriptionId" required id="renewSubscriptionSelect"></select>
+        </label>
         <div class="dialog-actions">
           <p class="form-message" id="renewFormMessage"></p>
           <button type="submit">确认续费</button>

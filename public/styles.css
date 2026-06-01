@@ -150,7 +150,7 @@ button.compact {
   margin: 0 auto;
   max-width: none;
   padding: 28px 24px 32px;
-  width: 100%;
+  width: 80%;
 }
 
 .toolbar {
@@ -422,12 +422,27 @@ tbody tr:hover {
   width: 54px;
 }
 
+.select-col,
+.select-cell {
+  text-align: center;
+  width: 48px;
+}
+
+.row-checkbox {
+  accent-color: var(--sky);
+  cursor: pointer;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  width: 16px;
+}
+
 .action-col {
   width: 280px;
 }
 
 .bill-action-col {
-  width: 92px;
+  width: 152px;
 }
 
 .count-cell {
@@ -752,6 +767,32 @@ select {
   width: 100%;
 }
 
+select {
+  appearance: none;
+  background-color: var(--bg3);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text2) 50%),
+    linear-gradient(135deg, var(--text2) 50%, transparent 50%);
+  background-position:
+    calc(100% - 24px) 50%,
+    calc(100% - 18px) 50%;
+  background-repeat: no-repeat;
+  background-size: 6px 6px, 6px 6px;
+  padding-right: 44px;
+}
+
+select:focus {
+  background-color: var(--bg4);
+}
+
+select:disabled {
+  opacity: 0.65;
+}
+
+select::-ms-expand {
+  display: none;
+}
+
 input::placeholder,
 textarea::placeholder {
   color: var(--slate-400);
@@ -760,7 +801,7 @@ textarea::placeholder {
 input:focus,
 textarea:focus,
 select:focus {
-  background: var(--bg4);
+  background-color: var(--bg4);
   border-color: var(--blue-600);
   box-shadow: 0 0 0 4px var(--ring);
 }
@@ -797,6 +838,7 @@ legend {
   font-size: 14px;
   font-weight: 700;
   gap: 8px;
+  justify-content: flex-start;
   min-height: 40px;
   padding: 0 10px;
 }
@@ -811,6 +853,25 @@ legend {
   flex: 0 0 auto;
   min-height: auto;
   width: auto;
+}
+
+.duration-name {
+  flex: 0 0 auto;
+}
+
+.duration-expiry {
+  color: var(--slate-500);
+  font-size: 12px;
+  font-weight: 500;
+  margin-left: auto;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.radio-row:has(input:checked) .duration-expiry {
+  color: var(--text2);
 }
 
 .form-dialog,
@@ -1288,6 +1349,7 @@ body.is-initial-loading .table-wrap {
 @media (max-width: 920px) {
   .shell {
     padding: 14px;
+    width: 100%;
   }
 
   .toolbar {
