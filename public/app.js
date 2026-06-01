@@ -73,7 +73,6 @@ let billSortKey = "occurredAt";
 let billSortDirection = "desc";
 let userManuallySelectedSubscription = false;
 const dialogFormSnapshots = new WeakMap();
-let pageRefreshToken = 0;
 let dataLoadingCount = 0;
 let isInitialLoading = true;
 
@@ -148,7 +147,19 @@ function userTotalPaid(user) {
   return Number(user.actualPaid) || 0;
 }
 
+function dateParts(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3])
+  };
+}
+
 function billMonthValue(value) {
+  const parts = dateParts(value);
+  if (parts) return `${parts.year}-${String(parts.month).padStart(2, "0")}`;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -185,6 +196,8 @@ function formatBytes(bytes) {
 
 function formatDate(value) {
   if (!value) return "未知";
+  const parts = dateParts(value);
+  if (parts) return `${parts.year}/${String(parts.month).padStart(2, "0")}/${String(parts.day).padStart(2, "0")}`;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "未知";
   return date.toLocaleString("zh-CN", {
@@ -195,16 +208,7 @@ function formatDate(value) {
 }
 
 function formatDateTime(value) {
-  if (!value) return "未知";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "未知";
-  return date.toLocaleString("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  return formatDate(value);
 }
 
 function formatMoney(value) {
@@ -265,9 +269,9 @@ function keepFieldVisible(event) {
   }, 120);
 }
 
-function toDatetimeLocalValue(date = new Date()) {
+function toDateInputValue(date = new Date()) {
   const offset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
 function durationMonths(duration) {
@@ -317,6 +321,11 @@ function userType(user) {
 }
 
 function isCurrentNaturalMonth(value) {
+  const parts = dateParts(value);
+  if (parts) {
+    const now = new Date();
+    return parts.year === now.getFullYear() && parts.month === now.getMonth() + 1;
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return false;
   const now = new Date();
@@ -824,13 +833,18 @@ function updateTableWidth(table) {
     if (header) header.style.width = `${width}px`;
     return sum + width;
   }, 0);
-  const wrapWidth = table.id === "billTable" ? table.closest(".table-wrap")?.clientWidth || 0 : 0;
+  const wrapWidth = table.closest(".table-wrap")?.clientWidth || 0;
 
-  if (table.id === "billTable" && wrapWidth > total) {
-    const fillIndexes = [6, 7];
+  if (wrapWidth > total) {
+    const fillIndexMap = {
+      urlTable: [2, 8],
+      userTable: [6, 9],
+      billTable: [6, 7]
+    };
+    const fillIndexes = fillIndexMap[table.id] || [cols.length - 1];
     const fillCols = fillIndexes.map(index => cols[index]).filter(Boolean);
     const extra = wrapWidth - total;
-    fillCols.forEach((col, fillIndex) => {
+    fillCols.forEach(col => {
       const index = cols.indexOf(col);
       const baseWidth = parseFloat(col.dataset.userWidth) || parseFloat(col.style.width) || 0;
       const width = baseWidth + extra / fillCols.length;
@@ -1430,6 +1444,11 @@ async function reloadAllData(message = "请稍候，正在从数据库拉取..."
   ]);
 }
 
+async function reloadAfterMutation(message = "正在同步最新数据...") {
+  await reloadAllData(message);
+  render();
+}
+
 async function loadAppMeta() {
   const response = await apiFetch("/api/app-meta", {}, "正在读取版本信息...");
   const payload = await response.json();
@@ -1460,7 +1479,7 @@ function openUserDialog(user = null) {
   userForm.elements.userId.value = user?.userId || "";
   userForm.elements.wechatName.value = user?.wechatName || "";
   userForm.elements.imessageId.value = user?.imessageId || "";
-  userForm.elements.purchasedAt.value = user?.purchasedAt ? toDatetimeLocalValue(new Date(user.purchasedAt)) : toDatetimeLocalValue();
+  userForm.elements.purchasedAt.value = user?.purchasedAt ? toDateInputValue(new Date(user.purchasedAt)) : toDateInputValue();
   userForm.elements.actualPaid.value = user?.actualPaid ?? "";
   userForm.elements.duration.value = user?.duration || "monthly";
   userForm.elements.subscriptionId.value = user?.subscriptionId || subscriptionsByLatestExpiry()[0]?.id || "";
@@ -1474,18 +1493,21 @@ function openRenewDialog(user) {
   renewFormMessage.textContent = "";
   renewDialogTitle.textContent = `${user.userId || "用户"} 续费`;
   renewForm.elements.id.value = user.id;
-  renewForm.elements.purchasedAt.value = toDatetimeLocalValue();
+  renewForm.elements.purchasedAt.value = toDateInputValue();
   renewForm.elements.actualPaid.value = "";
   renewForm.elements.duration.value = user.duration || "monthly";
   rememberDialogForm(renewDialog);
   showDialog(renewDialog);
 }
 
-async function refreshOne(id) {
+async function refreshOne(id, { sync = true } = {}) {
   const response = await apiFetch(`/api/subscriptions/${id}/refresh`, { method: "POST" }, "正在刷新 URL...");
   const updated = await response.json();
+  if (sync) {
+    await reloadAfterMutation("正在同步最新数据...");
+    return;
+  }
   subscriptions = subscriptions.map(item => item.id === id ? updated : item);
-  render();
 }
 
 function setRefreshPending(isPending, completed = 0, total = 0) {
@@ -1499,15 +1521,13 @@ function setRefreshPending(isPending, completed = 0, total = 0) {
 async function deleteOne(id) {
   if (!confirm("确定删除这个 URL 吗？已关联的用户会保留。")) return;
   await apiFetch(`/api/subscriptions/${id}`, { method: "DELETE" }, "正在删除 URL...");
-  subscriptions = subscriptions.filter(item => item.id !== id);
-  render();
+  await reloadAfterMutation("正在同步最新数据...");
 }
 
 async function deleteUser(id) {
   if (!confirm("确定删除这个用户吗？")) return;
   await apiFetch(`/api/users/${id}`, { method: "DELETE" }, "正在删除用户...");
-  users = users.filter(user => user.id !== id);
-  render();
+  await reloadAfterMutation("正在同步最新数据...");
 }
 
 async function reverseBill(id) {
@@ -1518,25 +1538,12 @@ async function reverseBill(id) {
     alert(data.error || "撤销账单失败。");
     return;
   }
-  bills = bills.map(bill => bill.id === id ? data : bill);
-  await loadUsers();
-  render();
+  await reloadAfterMutation("正在同步最新数据...");
 }
 
-async function switchPage(pageName, shouldReload = true) {
-  const refreshToken = ++pageRefreshToken;
+async function switchPage(pageName) {
   tabs.forEach(tab => tab.classList.toggle("active", tab.dataset.page === pageName));
   pages.forEach(page => page.classList.toggle("active", page.id === `${pageName}Page`));
-  if (shouldReload) {
-    try {
-      await reloadAllData("正在加载最新表格数据...");
-      if (refreshToken !== pageRefreshToken) return;
-      render();
-    } catch (error) {
-      console.error(error);
-      alert("刷新最新数据失败，请稍后再试。");
-    }
-  }
   document.querySelectorAll(".table-wrap table").forEach(updateTableWidth);
 }
 
@@ -1557,13 +1564,8 @@ form.addEventListener("submit", async event => {
     return;
   }
 
-  if (id) {
-    subscriptions = subscriptions.map(item => item.id === id ? data : item);
-  } else {
-    subscriptions.unshift(data);
-  }
   urlDialog.close();
-  render();
+  await reloadAfterMutation("正在同步最新数据...");
 });
 
 userForm.addEventListener("submit", async event => {
@@ -1583,14 +1585,8 @@ userForm.addEventListener("submit", async event => {
     return;
   }
 
-  if (id) {
-    users = users.map(user => user.id === id ? data : user);
-  } else {
-    users.unshift(data);
-  }
-  await loadBills();
   userDialog.close();
-  render();
+  await reloadAfterMutation("正在同步最新数据...");
   if (!id) showPurchaseSuccess(data);
 });
 
@@ -1611,10 +1607,8 @@ renewForm.addEventListener("submit", async event => {
     return;
   }
 
-  users = users.map(user => user.id === id ? data : user);
-  await loadBills();
   renewDialog.close();
-  render();
+  await reloadAfterMutation("正在同步最新数据...");
 });
 
 refreshAllButton.addEventListener("click", async () => {
@@ -1625,9 +1619,10 @@ refreshAllButton.addEventListener("click", async () => {
   setRefreshPending(true, 0, items.length);
   try {
     for (const [index, item] of items.entries()) {
-      await refreshOne(item.id);
+      await refreshOne(item.id, { sync: false });
       setRefreshPending(true, index + 1, items.length);
     }
+    await reloadAfterMutation("正在同步最新数据...");
   } finally {
     setRefreshPending(false);
     refreshAllButton.disabled = false;

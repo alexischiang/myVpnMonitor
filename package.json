@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "build": "node scripts/write-build-meta.js",
     "check": "node --check server.js && node --check public/app.js",
     "migrate:json-to-db": "node scripts/migrate-json-to-db.js",
     "test": "node test.js"

@@ -148,8 +148,9 @@ button.compact {
 
 .shell {
   margin: 0 auto;
-  max-width: 1280px;
+  max-width: none;
   padding: 28px 24px 32px;
+  width: 100%;
 }
 
 .toolbar {

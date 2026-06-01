@@ -31,6 +31,7 @@ const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
 const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const PUBLIC_DIR = path.join(__dirname, "public");
+const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "build-meta.json");
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 50 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
@@ -192,9 +193,19 @@ function readFallbackUpdatedAt() {
   }
 }
 
+function readBuildMeta() {
+  try {
+    return JSON.parse(fsSync.readFileSync(BUILD_META_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
 function appMeta() {
   if (cachedAppMeta) return cachedAppMeta;
+  const buildMeta = readBuildMeta();
   const updatedAt = process.env.APP_UPDATED_AT
+    || buildMeta.APP_UPDATED_AT
     || process.env.GIT_COMMIT_TIMESTAMP
     || readGitUpdatedAt()
     || readFallbackUpdatedAt();
