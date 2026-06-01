@@ -59,6 +59,8 @@ const refreshProgressText = document.querySelector("#refreshProgressText");
 const refreshProgressBar = document.querySelector("#refreshProgressBar");
 const dataLoadingOverlay = document.querySelector("#dataLoadingOverlay");
 const dataLoadingText = document.querySelector("#dataLoadingText");
+const appVersion = document.querySelector("#appVersion");
+const appUpdatedAt = document.querySelector("#appUpdatedAt");
 
 let subscriptions = [];
 let users = [];
@@ -74,6 +76,11 @@ const dialogFormSnapshots = new WeakMap();
 let pageRefreshToken = 0;
 let dataLoadingCount = 0;
 let isInitialLoading = true;
+
+function syncAppHeight() {
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  document.documentElement.style.setProperty("--app-height", `${Math.round(viewportHeight)}px`);
+}
 
 function loginPageUrl() {
   if (window.location.protocol === "file:") return new URL("login.html", window.location.href).href;
@@ -244,8 +251,18 @@ function updateDialogScrollLock() {
 }
 
 function showDialog(dialog) {
+  syncAppHeight();
   dialog.showModal();
   updateDialogScrollLock();
+}
+
+function keepFieldVisible(event) {
+  const field = event.target;
+  if (!field.matches("input, textarea, select")) return;
+  window.setTimeout(() => {
+    syncAppHeight();
+    field.scrollIntoView({ block: "center", inline: "nearest" });
+  }, 120);
 }
 
 function toDatetimeLocalValue(date = new Date()) {
@@ -1413,6 +1430,14 @@ async function reloadAllData(message = "请稍候，正在从数据库拉取..."
   ]);
 }
 
+async function loadAppMeta() {
+  const response = await apiFetch("/api/app-meta", {}, "正在读取版本信息...");
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `Request failed: ${response.status}`);
+  if (appVersion) appVersion.textContent = `Version ${payload.version || "--"}`;
+  if (appUpdatedAt) appUpdatedAt.textContent = `Latest updated: ${formatDateTime(payload.updatedAt)}`;
+}
+
 function openUrlDialog(item = null) {
   form.reset();
   formMessage.textContent = "";
@@ -1659,6 +1684,16 @@ document.querySelectorAll("dialog").forEach(dialog => {
   dialog.addEventListener("close", updateDialogScrollLock);
 });
 
+window.addEventListener("resize", syncAppHeight);
+window.addEventListener("orientationchange", syncAppHeight);
+window.visualViewport?.addEventListener("resize", syncAppHeight);
+window.visualViewport?.addEventListener("scroll", syncAppHeight);
+document.addEventListener("focusin", keepFieldVisible);
+document.addEventListener("focusout", () => {
+  window.setTimeout(syncAppHeight, 80);
+});
+syncAppHeight();
+
 document.querySelectorAll('input[type="number"]').forEach(input => {
   input.addEventListener("wheel", event => {
     event.preventDefault();
@@ -1739,6 +1774,7 @@ reloadAllData("正在加载最新数据...").then(() => {
   setupResizableTables();
   initUrlColumnControls();
   applyUrlColumnVisibility();
+  return loadAppMeta();
 }).catch(error => {
   clearInitialSkeleton();
   console.error(error);

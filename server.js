@@ -1,9 +1,11 @@
 const http = require("http");
+const { execFileSync } = require("child_process");
 const fsSync = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const { createDataStore } = require("./database");
+const packageJson = require("./package.json");
 
 function loadLocalEnv() {
   const envPath = path.join(__dirname, ".env");
@@ -41,6 +43,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto
   .digest("hex");
 const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 const REMEMBER_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+let cachedAppMeta = null;
 const REQUEST_PROFILES = [
   {
     name: "shadowrocket",
@@ -167,6 +170,40 @@ function sendJson(res, status, payload, headers = {}) {
     ...headers
   });
   res.end(JSON.stringify(payload));
+}
+
+function readGitUpdatedAt() {
+  try {
+    return execFileSync("git", ["log", "-1", "--format=%cI"], {
+      cwd: __dirname,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function readFallbackUpdatedAt() {
+  try {
+    return fsSync.statSync(path.join(PUBLIC_DIR, "index.html")).mtime.toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
+function appMeta() {
+  if (cachedAppMeta) return cachedAppMeta;
+  const updatedAt = process.env.APP_UPDATED_AT
+    || process.env.GIT_COMMIT_TIMESTAMP
+    || readGitUpdatedAt()
+    || readFallbackUpdatedAt();
+
+  cachedAppMeta = {
+    version: process.env.APP_VERSION || packageJson.version || "1.0.0",
+    updatedAt
+  };
+  return cachedAppMeta;
 }
 
 function parseCookies(req) {
@@ -886,6 +923,11 @@ async function handleApi(req, res, pathname) {
       return;
     }
     sendJson(res, 200, { ok: true, account: session.account });
+    return;
+  }
+
+  if (pathname === "/api/app-meta" && req.method === "GET") {
+    sendJson(res, 200, appMeta());
     return;
   }
 

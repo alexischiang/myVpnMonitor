@@ -742,7 +742,9 @@ select {
   border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--slate-900);
+  font-size: 16px;
   min-height: 42px;
+  line-height: 1.4;
   outline: none;
   padding: 10px 13px;
   transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
@@ -816,7 +818,7 @@ legend {
   border: 1px solid var(--border);
   border-radius: 18px;
   box-shadow: var(--shadow-lg);
-  max-height: calc(100dvh - 32px);
+  max-height: calc(var(--app-height, 100dvh) - 32px);
   max-width: 640px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -837,6 +839,7 @@ legend {
   gap: 16px;
   min-height: 0;
   padding: 22px;
+  padding-bottom: calc(22px + env(safe-area-inset-bottom));
 }
 
 .dialog-top,
@@ -1360,12 +1363,20 @@ body.is-initial-loading .table-wrap {
 
   .form-dialog,
   .debug-dialog {
-    max-height: calc(100dvh - 16px);
-    width: calc(100vw - 20px);
+    border-radius: 16px;
+    max-height: calc(var(--app-height, 100dvh) - 8px);
+    width: calc(100vw - 12px);
+  }
+
+  .form-dialog[open],
+  .debug-dialog[open] {
+    inset: 4px;
+    margin: auto;
   }
 
   .dialog-top,
   .debug-top {
+    background: var(--bg3);
     position: sticky;
     top: 0;
     z-index: 2;
@@ -1375,6 +1386,7 @@ body.is-initial-loading .table-wrap {
     background: var(--bg2);
     bottom: 0;
     position: sticky;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
     z-index: 2;
   }
 
@@ -1425,5 +1437,27 @@ body.is-initial-loading .table-wrap {
   td {
     height: 44px;
     padding: 9px 11px;
+  }
+
+  .form-dialog,
+  .debug-dialog {
+    border-radius: 14px;
+    width: calc(100vw - 8px);
+  }
+
+  .form-dialog form {
+    padding: 18px;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .dialog-top {
+    margin: -18px -18px 2px;
+    padding: 16px 18px;
+  }
+
+  .dialog-actions {
+    margin: 4px -18px -18px;
+    padding: 14px 18px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
   }
 }
