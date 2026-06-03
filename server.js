@@ -352,7 +352,7 @@ function currentSession(req) {
 
 function requireAuth(req, res) {
   if (currentSession(req)) return true;
-  sendJson(res, 401, { error: "请先登录。", loginUrl: "/login.html" });
+  sendJson(res, 401, { error: "请先登录。", loginUrl: "/login" });
   return false;
 }
 
@@ -1449,7 +1449,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/auth/me" && req.method === "GET") {
     const session = currentSession(req);
     if (!session) {
-      sendJson(res, 401, { error: "请先登录。", loginUrl: "/login.html" });
+      sendJson(res, 401, { error: "请先登录。", loginUrl: "/login" });
       return;
     }
     sendJson(res, 200, { ok: true, account: session.account });

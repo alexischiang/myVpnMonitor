@@ -33,8 +33,6 @@ import {
 } from "antd";
 import {
   ApiOutlined,
-  BarsOutlined,
-  CalendarOutlined,
   CopyOutlined,
   DashboardOutlined,
   DeleteOutlined,
@@ -124,14 +122,6 @@ function createMuse(palette) {
     navDivider: `1px solid ${palette.border}`
   };
 }
-
-const iconColorMap = {
-  blue: "#1890ff",
-  green: "#52c41a",
-  orange: "#faad14",
-  purple: "#722ed1",
-  cyan: "#13c2c2"
-};
 
 const tablePagination = { pageSize: 20, showSizeChanger: false };
 
@@ -258,25 +248,70 @@ function UrlText({ value }) {
   );
 }
 
+function MobileUrlBlock({ value }) {
+  const text = value || "未知";
+  return (
+    <Flex align="center" gap={8} style={{ minWidth: 0 }}>
+      <Tag color="gold" style={{ marginInlineEnd: 0, flex: "0 0 auto" }}>{String(text).slice(-4)}</Tag>
+      <Text
+        code
+        ellipsis={{ tooltip: text }}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          maxWidth: "100%",
+          fontSize: 13,
+          lineHeight: 1.6
+        }}
+      >
+        {text}
+      </Text>
+      <Button size="small" icon={<CopyOutlined />} style={{ flex: "0 0 auto", fontWeight: 400 }} onClick={() => copyText(value || "")}>复制</Button>
+    </Flex>
+  );
+}
+
 function PageCard({ title, extra, children }) {
   const muse = useMuse();
   const { palette } = useThemeMode();
+  const screens = Grid.useBreakpoint();
+  const mobile = !screens.md;
   return (
     <Card
       hoverable
       bordered={false}
       style={muse.card}
       title={<Flex align="center" gap={10}><DashboardOutlined /><Text strong style={{ fontSize: 16 }}>{title}</Text></Flex>}
-      extra={extra}
+      extra={mobile ? null : extra}
       styles={{ header: { padding: "20px 24px", borderBottomColor: palette.borderSoft }, body: { padding: 24 } }}
     >
+      {mobile && extra ? <div style={{ marginBottom: 18 }}>{extra}</div> : null}
       {children}
     </Card>
   );
 }
 
 function Toolbar({ children }) {
-  return <Flex wrap="nowrap" gap={8} justify="flex-end" align="center">{children}</Flex>;
+  const screens = Grid.useBreakpoint();
+  const mobile = !screens.md;
+  return (
+    <Flex wrap={mobile ? "wrap" : "nowrap"} gap={8} justify={mobile ? "flex-start" : "flex-end"} align="center" style={{ width: "100%" }}>
+      {React.Children.map(children, child => {
+        if (!React.isValidElement(child)) return child;
+        const isInput = child.type === Input.Search || child.type === DatePicker;
+        const style = {
+          ...(child.props.style || {}),
+          width: mobile ? "100%" : child.props.style?.width,
+          minWidth: mobile ? 0 : child.props.style?.minWidth
+        };
+        return (
+          <div style={{ flex: mobile ? (isInput ? "1 1 100%" : "1 1 auto") : "0 0 auto", minWidth: 0 }}>
+            {React.cloneElement(child, { style })}
+          </div>
+        );
+      })}
+    </Flex>
+  );
 }
 
 function InlineActions({ children }) {
@@ -284,7 +319,24 @@ function InlineActions({ children }) {
 }
 
 function CardActions({ children }) {
-  return <Flex wrap="wrap" gap={8} align="center">{children}</Flex>;
+  return (
+    <Flex wrap="wrap" gap={8} align="center">
+      {React.Children.map(children, child => {
+        if (!React.isValidElement(child)) return child;
+        return React.cloneElement(child, {
+          size: "small",
+          style: {
+            ...(child.props.style || {}),
+            height: 32,
+            paddingInline: 12,
+            borderRadius: 10,
+            fontSize: 13,
+            fontWeight: 500
+          }
+        });
+      })}
+    </Flex>
+  );
 }
 
 function DebugModal({ title, content, onClose }) {
@@ -486,29 +538,40 @@ function Summary() {
   const paidTotal = activeBills.reduce((sum, bill) => sum + (Number(bill.amount) || 0), 0);
   const expiringUsers = users.filter(user => userStatus(user) === "warning").length;
   const items = [
-    { title: "池 URL", value: subscriptions.length, icon: <ApiOutlined />, color: "blue" },
-    { title: "用户", value: users.length, icon: <TeamOutlined />, color: "green" },
-    { title: "需关注 URL", value: counts.warning || 0, icon: <BarsOutlined />, color: "orange" },
-    { title: "即将到期用户", value: expiringUsers, icon: <CalendarOutlined />, color: "purple" },
-    { title: "实付款合计", value: formatMoney(paidTotal), icon: <DollarOutlined />, color: "cyan" }
+    { title: "池 URL", value: subscriptions.length },
+    { title: "用户", value: users.length },
+    { title: "需关注 URL", value: counts.warning || 0 },
+    { title: "即将到期用户", value: expiringUsers },
+    { title: "实付款合计", value: formatMoney(paidTotal) }
   ];
   return (
-    <Row gutter={[16, 16]}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(172px, 1fr))",
+        gap: 16,
+        alignItems: "stretch"
+      }}
+    >
       {items.map(item => (
-        <Col xs={24} sm={12} xl={Math.floor(24 / items.length)} key={item.title}>
-          <Card hoverable bordered={false} style={muse.softCard} styles={{ body: { padding: "18px 20px" } }}>
-            <Flex justify="space-between" align="center">
-              <Statistic
-                title={<Text type="secondary" style={{ fontSize: 13, fontWeight: 600 }}>{item.title}</Text>}
-                value={item.value}
-                valueStyle={{ fontSize: 24, fontWeight: 700, lineHeight: 1.15, color: palette.text }}
-              />
-              <Avatar size={42} icon={item.icon} style={{ background: iconColorMap[item.color] || palette.primary, boxShadow: "0 8px 16px rgba(24, 144, 255, 0.18)" }} />
-            </Flex>
-          </Card>
-        </Col>
+        <Card hoverable bordered={false} style={{ ...muse.softCard, minWidth: 0 }} styles={{ body: { padding: "16px 18px" } }} key={item.title}>
+          <Statistic
+            title={<Text type="secondary" style={{ display: "block", fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>{item.title}</Text>}
+            value={item.value}
+            valueStyle={{
+              fontSize: item.title === "实付款合计" ? 24 : 25,
+              fontWeight: 750,
+              lineHeight: 1.2,
+              color: palette.text,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis"
+            }}
+            style={{ minWidth: 0 }}
+          />
+        </Card>
       ))}
-    </Row>
+    </div>
   );
 }
 
@@ -603,22 +666,45 @@ function UrlPoolPage() {
 
 function PoolCards({ items, actions }) {
   const muse = useMuse();
+  const { palette } = useThemeMode();
   if (!items.length) return <Empty description="还没有池 URL。" />;
   return (
     <Flex vertical gap={12}>
       {items.map(item => (
-        <Card hoverable bordered={false} style={muse.softCard} key={item.id}>
-          <Flex justify="space-between" gap={12} align="start">
-            <div><Text strong>{item.email || item.name || "未填写"}</Text><br /><Text type="secondary">{item.customerCount || 0} 个客户</Text></div>
+        <Card
+          hoverable
+          bordered={false}
+          style={{ ...muse.softCard, borderRadius: 14 }}
+          styles={{ body: { padding: 16 } }}
+          key={item.id}
+        >
+          <Flex justify="space-between" gap={12} align="start" style={{ marginBottom: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <Text strong ellipsis={{ tooltip: item.email || item.name || "未填写" }} style={{ display: "block", fontSize: 15 }}>
+                {item.email || item.name || "未填写"}
+              </Text>
+              <Text type="secondary" style={{ fontSize: 13 }}>{item.customerCount || 0} 个客户</Text>
+            </div>
             <StatusBadge status={item.status} />
           </Flex>
-          <UrlText value={item.url} />
-          <Descriptions size="small" column={1}>
-            <Descriptions.Item label="剩余流量">{item.status === "expired" ? "-" : formatBytes(item.metrics?.remainingBytes)}</Descriptions.Item>
-            <Descriptions.Item label="到期">{item.status === "expired" ? "-" : formatDate(item.metrics?.expireAt)}</Descriptions.Item>
-            <Descriptions.Item label="缓存">{item.cachedConfig?.fetchedAt ? formatDateTime(item.cachedConfig.fetchedAt) : "未缓存"}</Descriptions.Item>
-          </Descriptions>
-          {actions(item)}
+          <div style={{ padding: "10px 0 12px", borderTop: `1px solid ${palette.borderSoft}`, borderBottom: `1px solid ${palette.borderSoft}` }}>
+            <MobileUrlBlock value={item.url} />
+          </div>
+          <div style={{ display: "grid", gap: 8, padding: "12px 0" }}>
+            {[
+              ["剩余流量", item.status === "expired" ? "-" : formatBytes(item.metrics?.remainingBytes)],
+              ["到期", item.status === "expired" ? "-" : formatDate(item.metrics?.expireAt)],
+              ["缓存", item.cachedConfig?.fetchedAt ? formatDateTime(item.cachedConfig.fetchedAt) : "未缓存"]
+            ].map(([label, value]) => (
+              <Flex justify="space-between" align="center" gap={12} key={label}>
+                <Text type="secondary" style={{ fontSize: 13, flex: "0 0 auto" }}>{label}</Text>
+                <Text strong ellipsis={{ tooltip: value }} style={{ minWidth: 0, textAlign: "right", fontSize: 13 }}>{value}</Text>
+              </Flex>
+            ))}
+          </div>
+          <div style={{ paddingTop: 2 }}>
+            {actions(item)}
+          </div>
         </Card>
       ))}
     </Flex>

@@ -33,7 +33,13 @@ npm install
 npm start
 ```
 
-开发时热重载：
+开发时热重载前端和后端：
+
+```bash
+npm run dev:all
+```
+
+只启动前端开发服务：
 
 ```bash
 npm run dev
@@ -45,11 +51,19 @@ npm run dev
 http://localhost:3000
 ```
 
+开发模式下打开：
+
+```text
+http://localhost:5173
+```
+
 ## 常用命令
 
 ```bash
 npm start              # 启动后台
-npm run dev            # nodemon 热重载
+npm run dev:all        # 同时启动后端和 Vite 前端热重载
+npm run dev            # 只启动 Vite 前端开发服务
+npm run dev:server     # 只启动后端热重载
 npm run check          # 检查代码语法
 npm test               # 运行解析测试
 npm run migrate:json-to-db # 将 data/*.json 导入 DATABASE_URL 指向的数据库

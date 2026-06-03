@@ -4,8 +4,9 @@
   "description": "Local dashboard for monitoring sold VPN subscription URLs, traffic usage, and expiry dates.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node scripts/ensure-dist.js && node server.js",
     "dev": "vite --configLoader runner",
+    "dev:all": "node scripts/dev-all.js",
     "dev:server": "nodemon server.js",
     "build": "vite build --configLoader runner && node scripts/write-build-meta.js",
     "check": "node --check server.js && vite build --configLoader runner --mode development",
