@@ -2,14 +2,14 @@ const { spawn } = require("child_process");
 const path = require("path");
 
 const rootDir = path.join(__dirname, "..");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCommand = process.platform === "win32" ? "npm" : "npm";
 const children = [];
 
 function run(name, args) {
   const child = spawn(npmCommand, args, {
     cwd: rootDir,
     stdio: "inherit",
-    shell: false
+    shell: true
   });
 
   children.push(child);

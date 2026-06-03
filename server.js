@@ -900,14 +900,17 @@ function publicItem(item) {
 
 function publicUser(user) {
   const subscription = subscriptions.find(item => item.id === user.subscriptionId);
-  const relayPath = user.subscriptionToken ? `/sub/${user.subscriptionToken}` : "";
+  let relayPath = "";
+  if (user.useCustomRelay) {
+    const customUrl = customUrls.find(item => item.token === user.subscriptionToken);
+    if (customUrl) relayPath = `/c/${customUrl.token}`;
+  }
   return {
     ...user,
     relayPath,
     subscription: subscription ? {
       id: subscription.id,
       url: subscription.url,
-      relayPath,
       email: subscription.email || "",
       name: subscription.name || ""
     } : null

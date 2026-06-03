@@ -1,0 +1,39 @@
+/* 移动端 / iOS 体验修复，全局生效 */
+
+/* iOS 下拉 / 日期面板触摸惯性滚动兜底 */
+.ant-select-dropdown .rc-virtual-list-holder,
+.ant-select-dropdown .ant-select-item-option,
+.ant-picker-dropdown .ant-picker-panel-container {
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 575px) {
+  /* 防止 iOS 聚焦输入框时整页自动放大（字号 < 16px 会触发） */
+  .ant-input,
+  .ant-input-affix-wrapper input,
+  .ant-select-selector,
+  .ant-picker-input input,
+  textarea.ant-input {
+    font-size: 16px;
+  }
+
+  /* 弹窗在小屏不再超宽溢出，body 内部可滚动 */
+  .ant-modal {
+    max-width: calc(100vw - 16px);
+    margin: 8px auto;
+  }
+
+  .ant-modal-body {
+    max-height: 72vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+html,
+body {
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+}

@@ -52,6 +52,7 @@ import {
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import "antd/dist/reset.css";
+import "./styles.css";
 import { apiFetch, fetchJson, postJson } from "./api";
 import {
   absoluteUrl,
@@ -79,6 +80,11 @@ const menuItems = [
   { key: "/bills", icon: <DollarOutlined />, label: "账单管理" }
 ];
 
+// 弹窗内的下拉 / 日期面板：关掉虚拟滚动并渲染进 Form 内部，
+// 修复 iOS WebKit 下 Modal 锁定 body 滚动导致下拉无法上下滑动的问题。
+const inModalSelectProps = { virtual: false, getPopupContainer: node => node.parentElement };
+const inModalPickerProps = { getPopupContainer: node => node.parentElement };
+
 function createMuse(palette) {
   return {
     app: {
@@ -93,11 +99,15 @@ function createMuse(palette) {
     header: isMobile => ({
     height: "auto",
     background: palette.page,
-    padding: isMobile ? "18px 16px 8px" : "24px 28px 10px",
+    padding: isMobile
+      ? "calc(18px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left))"
+      : "24px 28px 10px",
     lineHeight: 1.3
     }),
     content: isMobile => ({
-    padding: isMobile ? "12px 16px 24px" : "14px 28px 28px"
+    padding: isMobile
+      ? "12px calc(16px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))"
+      : "14px 28px 28px"
     }),
     card: {
     borderRadius: 16,
@@ -794,19 +804,38 @@ function CustomUrlsPage() {
 
 function CustomUrlCards({ items, actions }) {
   const muse = useMuse();
+  const { palette } = useThemeMode();
   if (!items.length) return <Empty description="还没有自定义 URL。" />;
   return (
     <Flex vertical gap={12}>
       {items.map(item => (
-        <Card hoverable bordered={false} style={muse.softCard} key={item.id}>
-          <Flex justify="space-between" gap={12}><Text strong>{item.name}</Text>{item.enabled === false ? <Tag>已停用</Tag> : <Tag color="success">正常</Tag>}</Flex>
-          <UrlText value={absoluteUrl(item.publicPath)} />
-          <UrlText value={item.source?.url || "池 URL 不存在"} />
-          <Descriptions size="small" column={1}>
-            <Descriptions.Item label="到期">{item.expiresAt ? formatDateTime(item.expiresAt) : "长期有效"}</Descriptions.Item>
-            <Descriptions.Item label="缓存">{item.source?.cache?.fetchedAt ? formatDateTime(item.source.cache.fetchedAt) : "未缓存"}</Descriptions.Item>
-          </Descriptions>
-          {actions(item)}
+        <Card hoverable bordered={false} style={{ ...muse.softCard, borderRadius: 14 }} styles={{ body: { padding: 16 } }} key={item.id}>
+          <Flex justify="space-between" gap={12} align="center" style={{ marginBottom: 10 }}>
+            <Text strong ellipsis={{ tooltip: item.name }} style={{ fontSize: 15 }}>{item.name}</Text>
+            {item.enabled === false ? <Tag>已停用</Tag> : <Tag color="success">正常</Tag>}
+          </Flex>
+          <Flex vertical gap={6} style={{ padding: "10px 0 12px", borderTop: `1px solid ${palette.borderSoft}`, borderBottom: `1px solid ${palette.borderSoft}` }}>
+            <Flex align="center" gap={6}>
+              <Text type="secondary" style={{ fontSize: 12, flex: "0 0 auto" }}>中转</Text>
+              <MobileUrlBlock value={absoluteUrl(item.publicPath)} />
+            </Flex>
+            <Flex align="center" gap={6}>
+              <Text type="secondary" style={{ fontSize: 12, flex: "0 0 auto" }}>池</Text>
+              <MobileUrlBlock value={item.source?.url || "池 URL 不存在"} />
+            </Flex>
+          </Flex>
+          <div style={{ display: "grid", gap: 8, padding: "12px 0" }}>
+            {[
+              ["到期", item.expiresAt ? formatDateTime(item.expiresAt) : "长期有效"],
+              ["缓存", item.source?.cache?.fetchedAt ? formatDateTime(item.source.cache.fetchedAt) : "未缓存"]
+            ].map(([label, value]) => (
+              <Flex justify="space-between" align="center" gap={12} key={label}>
+                <Text type="secondary" style={{ fontSize: 13, flex: "0 0 auto" }}>{label}</Text>
+                <Text strong ellipsis={{ tooltip: value }} style={{ minWidth: 0, textAlign: "right", fontSize: 13 }}>{value}</Text>
+              </Flex>
+            ))}
+          </div>
+          <div style={{ paddingTop: 2 }}>{actions(item)}</div>
         </Card>
       ))}
     </Flex>
@@ -844,9 +873,9 @@ function CustomUrlForm({ item, subscriptions, onClose, onSaved }) {
       }} onFinish={submit}>
         <Row gutter={16}>
           <Col xs={24} md={12}><Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入名称" }]}><Input /></Form.Item></Col>
-          <Col xs={24} md={12}><Form.Item name="sourceSubscriptionId" label="池 URL" rules={[{ required: true, message: "请选择池 URL" }]}><Select options={subscriptions.map(source => ({ value: source.id, label: source.email || source.url }))} /></Form.Item></Col>
-          <Col xs={24} md={12}><Form.Item name="expiresAt" label="到期时间"><DatePicker showTime style={{ width: "100%" }} /></Form.Item></Col>
-          <Col xs={24} md={12}><Form.Item name="mode" label="Clash mode"><Select options={[{ value: "", label: "保持原配置" }, { value: "Rule", label: "Rule" }, { value: "Global", label: "Global" }, { value: "Direct", label: "Direct" }]} /></Form.Item></Col>
+          <Col xs={24} md={12}><Form.Item name="sourceSubscriptionId" label="池 URL" rules={[{ required: true, message: "请选择池 URL" }]}><Select {...inModalSelectProps} options={subscriptions.map(source => ({ value: source.id, label: source.email || source.url }))} /></Form.Item></Col>
+          <Col xs={24} md={12}><Form.Item name="expiresAt" label="到期时间"><DatePicker {...inModalPickerProps} showTime style={{ width: "100%" }} /></Form.Item></Col>
+          <Col xs={24} md={12}><Form.Item name="mode" label="Clash mode"><Select {...inModalSelectProps} options={[{ value: "", label: "保持原配置" }, { value: "Rule", label: "Rule" }, { value: "Global", label: "Global" }, { value: "Direct", label: "Direct" }]} /></Form.Item></Col>
         </Row>
         <Space wrap><Form.Item name="enabled" valuePropName="checked"><Checkbox>启用</Checkbox></Form.Item><Form.Item name="replaceRules" valuePropName="checked"><Checkbox>用下方规则替换原 rules</Checkbox></Form.Item></Space>
         <Form.Item name="prependRules" label="前置规则"><TextArea rows={4} /></Form.Item>
@@ -893,7 +922,7 @@ function UsersPage() {
     { title: "到期", render: (_, user) => formatDate(user.expiresAt) },
     { title: "时长", render: (_, user) => durationLabels[user.duration] || "未知" },
     { title: "总付款", render: (_, user) => formatMoney(user.actualPaid) },
-    { title: "客户订阅 URL", render: (_, user) => <UrlText value={absoluteUrl(user.relayPath || user.subscription?.relayPath) || user.subscription?.url || "关联 URL 不存在"} />, width: 320 },
+    { title: "客户订阅 URL", render: (_, user) => <UrlText value={user.relayPath ? absoluteUrl(user.relayPath) : (user.subscription?.url || "关联 URL 不存在")} />, width: 320 },
     { title: "绑定邮箱", render: (_, user) => user.subscription?.email || "" },
     { title: "购买时间", render: (_, user) => formatDate(user.purchasedAt) },
     { title: "操作", render: (_, user) => actions(user, true), width: 230 }
@@ -914,20 +943,33 @@ function UsersPage() {
 
 function UserCards({ users, actions }) {
   const muse = useMuse();
+  const { palette } = useThemeMode();
   if (!users.length) return <Empty description="还没有匹配的用户。" />;
   return (
     <Flex vertical gap={12}>
       {users.map(user => (
-        <Card hoverable bordered={false} style={muse.softCard} key={user.id}>
-          <Flex justify="space-between" gap={12}><Text strong>{user.userId}</Text><StatusBadge status={userStatus(user)} /></Flex>
-          <UrlText value={absoluteUrl(user.relayPath || user.subscription?.relayPath) || user.subscription?.url || "关联 URL 不存在"} />
-          <Descriptions size="small" column={1}>
-            <Descriptions.Item label="到期">{formatDate(user.expiresAt)}</Descriptions.Item>
-            <Descriptions.Item label="时长">{durationLabels[user.duration] || "未知"}</Descriptions.Item>
-            <Descriptions.Item label="总付款">{formatMoney(user.actualPaid)}</Descriptions.Item>
-            <Descriptions.Item label="购买时间">{formatDate(user.purchasedAt)}</Descriptions.Item>
-          </Descriptions>
-          {actions(user)}
+        <Card hoverable bordered={false} style={{ ...muse.softCard, borderRadius: 14 }} styles={{ body: { padding: 16 } }} key={user.id}>
+          <Flex justify="space-between" gap={12} align="center" style={{ marginBottom: 10 }}>
+            <Text strong ellipsis={{ tooltip: user.userId }} style={{ fontSize: 15 }}>{user.userId}</Text>
+            <StatusBadge status={userStatus(user)} />
+          </Flex>
+          <div style={{ padding: "10px 0 12px", borderTop: `1px solid ${palette.borderSoft}`, borderBottom: `1px solid ${palette.borderSoft}` }}>
+            <MobileUrlBlock value={user.relayPath ? absoluteUrl(user.relayPath) : (user.subscription?.url || "关联 URL 不存在")} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "12px 0" }}>
+            {[
+              ["到期", formatDate(user.expiresAt)],
+              ["时长", durationLabels[user.duration] || "未知"],
+              ["总付款", formatMoney(user.actualPaid)],
+              ["购买时间", formatDate(user.purchasedAt)]
+            ].map(([label, value]) => (
+              <div key={label}>
+                <Text type="secondary" style={{ fontSize: 12, display: "block" }}>{label}</Text>
+                <Text strong style={{ fontSize: 13 }}>{value}</Text>
+              </div>
+            ))}
+          </div>
+          <div style={{ paddingTop: 2 }}>{actions(user)}</div>
         </Card>
       ))}
     </Flex>
@@ -960,11 +1002,11 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
         <Form.Item name="wechatName" label="微信名"><Input /></Form.Item>
         <Form.Item name="imessageId" label="iMessage ID"><Input /></Form.Item>
         <Row gutter={16}>
-          <Col xs={24} sm={12}><Form.Item name="purchasedAt" label="购买时间" rules={[{ required: true, message: "请选择购买时间" }]}><DatePicker style={{ width: "100%" }} /></Form.Item></Col>
+          <Col xs={24} sm={12}><Form.Item name="purchasedAt" label="购买时间" rules={[{ required: true, message: "请选择购买时间" }]}><DatePicker {...inModalPickerProps} style={{ width: "100%" }} /></Form.Item></Col>
           <Col xs={24} sm={12}><Form.Item name="actualPaid" label="实付款" rules={[{ required: true, message: "请输入付款金额" }]}><Input type="number" min="0" step="0.01" /></Form.Item></Col>
         </Row>
-        <Form.Item name="duration" label="购买时长"><Select options={Object.entries(durationLabels).map(([value, label]) => ({ value, label }))} /></Form.Item>
-        <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]}><Select options={subscriptions.map(source => ({ value: source.id, label: source.email || source.url }))} /></Form.Item>
+        <Form.Item name="duration" label="购买时长"><Select {...inModalSelectProps} options={Object.entries(durationLabels).map(([value, label]) => ({ value, label }))} /></Form.Item>
+        <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]}><Select {...inModalSelectProps} options={subscriptions.map(source => ({ value: source.id, label: source.email || source.url }))} /></Form.Item>
         <Form.Item name="useCustomRelay" valuePropName="checked">
           <Checkbox>启用自定义 URL 中转逻辑</Checkbox>
         </Form.Item>
@@ -985,10 +1027,10 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
   return (
     <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden>
       <Form layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", useCustomRelay: Boolean(user.useCustomRelay) }} onFinish={submit}>
-        <Form.Item name="purchasedAt" label="续费时间" rules={[{ required: true, message: "请选择续费时间" }]}><DatePicker style={{ width: "100%" }} /></Form.Item>
+        <Form.Item name="purchasedAt" label="续费时间" rules={[{ required: true, message: "请选择续费时间" }]}><DatePicker {...inModalPickerProps} style={{ width: "100%" }} /></Form.Item>
         <Form.Item name="actualPaid" label="实付款" rules={[{ required: true, message: "请输入付款金额" }]}><Input type="number" min="0" step="0.01" /></Form.Item>
-        <Form.Item name="duration" label="续费时长"><Select options={Object.entries(durationLabels).map(([value, label]) => ({ value, label }))} /></Form.Item>
-        <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]}><Select options={subscriptions.map(source => ({ value: source.id, label: source.email || source.url }))} /></Form.Item>
+        <Form.Item name="duration" label="续费时长"><Select {...inModalSelectProps} options={Object.entries(durationLabels).map(([value, label]) => ({ value, label }))} /></Form.Item>
+        <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]}><Select {...inModalSelectProps} options={subscriptions.map(source => ({ value: source.id, label: source.email || source.url }))} /></Form.Item>
         <Form.Item name="useCustomRelay" valuePropName="checked">
           <Checkbox>启用自定义 URL 中转逻辑</Checkbox>
         </Form.Item>
@@ -1053,20 +1095,34 @@ function BillsPage() {
 
 function BillCards({ bills, actions, total }) {
   const muse = useMuse();
+  const { palette } = useThemeMode();
   return (
     <Flex vertical gap={12}>
       <Card hoverable bordered={false} style={muse.softCard}><Statistic title="筛选合计" value={formatMoney(total)} /></Card>
       {!bills.length && <Empty description="还没有匹配的账单。" />}
       {bills.map(bill => (
-        <Card hoverable bordered={false} style={muse.softCard} key={bill.id}>
-          <Flex justify="space-between" gap={12}><div><Text strong>{bill.userLabel}</Text><br /><Text type="secondary">{formatDateTime(bill.occurredAt)}</Text></div><Text type={Number(bill.amount) < 0 ? "danger" : "success"} strong>{formatMoney(bill.amount)}</Text></Flex>
-          <Descriptions size="small" column={1}>
-            <Descriptions.Item label="类型">{billTypeLabels[bill.type] || bill.type}</Descriptions.Item>
-            <Descriptions.Item label="时长">{durationLabels[bill.duration] || bill.duration || "-"}</Descriptions.Item>
-            <Descriptions.Item label="到期变化">{bill.type === "renewal" ? `${formatDate(bill.beforeExpiresAt)} 延至 ${formatDate(bill.afterExpiresAt)}` : formatDate(bill.afterExpiresAt)}</Descriptions.Item>
-            <Descriptions.Item label="状态">{bill.reversedAt ? "已撤销" : "有效"}</Descriptions.Item>
-          </Descriptions>
-          {actions(bill)}
+        <Card hoverable bordered={false} style={{ ...muse.softCard, borderRadius: 14 }} styles={{ body: { padding: 16 } }} key={bill.id}>
+          <Flex justify="space-between" gap={12} align="start" style={{ marginBottom: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <Text strong ellipsis={{ tooltip: bill.userLabel }} style={{ display: "block", fontSize: 15 }}>{bill.userLabel}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{formatDateTime(bill.occurredAt)}</Text>
+            </div>
+            <Text type={Number(bill.amount) < 0 ? "danger" : "success"} strong style={{ fontSize: 16, flex: "0 0 auto" }}>{formatMoney(bill.amount)}</Text>
+          </Flex>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "10px 0 12px", borderTop: `1px solid ${palette.borderSoft}`, borderBottom: `1px solid ${palette.borderSoft}` }}>
+            {[
+              ["类型", billTypeLabels[bill.type] || bill.type],
+              ["状态", bill.reversedAt ? "已撤销" : "有效"],
+              ["时长", durationLabels[bill.duration] || bill.duration || "-"],
+              ["到期变化", bill.type === "renewal" ? `${formatDate(bill.beforeExpiresAt)} → ${formatDate(bill.afterExpiresAt)}` : formatDate(bill.afterExpiresAt)]
+            ].map(([label, value]) => (
+              <div key={label}>
+                <Text type="secondary" style={{ fontSize: 12, display: "block" }}>{label}</Text>
+                <Text strong style={{ fontSize: 13 }}>{value}</Text>
+              </div>
+            ))}
+          </div>
+          <div style={{ paddingTop: 10 }}>{actions(bill)}</div>
         </Card>
       ))}
     </Flex>
