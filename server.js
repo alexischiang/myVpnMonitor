@@ -29,12 +29,19 @@ const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "subscri
 const DATA_DIR = path.dirname(DATA_FILE);
 const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
 const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
+const CUSTOM_URLS_FILE = process.env.CUSTOM_URLS_FILE || path.join(DATA_DIR, "custom-urls.json");
+const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
 const DATABASE_URL = process.env.DATABASE_URL || "";
-const PUBLIC_DIR = path.join(__dirname, "public");
+const DIST_DIR = path.join(__dirname, "dist");
+const PUBLIC_DIR = fsSync.existsSync(path.join(DIST_DIR, "index.html")) ? DIST_DIR : path.join(__dirname, "public");
 const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "build-meta.json");
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 50 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
+const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 2);
+const RELAY_AFTER_EXPIRY_DAYS = Number(process.env.RELAY_AFTER_EXPIRY_DAYS || 10);
+const RELAY_MAX_CUSTOMERS = Number(process.env.RELAY_MAX_CUSTOMERS || 8);
+const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 const AUTH_COOKIE_NAME = "xela_session";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
@@ -111,13 +118,15 @@ const REQUEST_PROFILES = [
 let subscriptions = [];
 let users = [];
 let bills = [];
+let customUrls = [];
 const dataStore = createDataStore({
   dataDir: DATA_DIR,
   databaseUrl: DATABASE_URL,
   files: {
     subscriptions: DATA_FILE,
     users: USERS_FILE,
-    bills: BILLS_FILE
+    bills: BILLS_FILE,
+    customUrls: CUSTOM_URLS_FILE
   }
 });
 
@@ -134,6 +143,7 @@ async function ensureDataFile() {
   subscriptions = state.subscriptions;
   users = state.users;
   bills = state.bills;
+  customUrls = state.customUrls;
 
   if (state.missing.subscriptions) await saveData();
   if (state.missing.users) await saveUsers();
@@ -141,6 +151,8 @@ async function ensureDataFile() {
     bills = initialBillsFromUsers();
     await saveBills();
   }
+  if (state.missing.customUrls) await saveCustomUrls();
+  if (ensureUserRelayTokens()) await saveUsers();
 }
 
 async function loadLatestData() {
@@ -148,6 +160,7 @@ async function loadLatestData() {
   subscriptions = state.subscriptions;
   users = state.users;
   bills = state.bills;
+  customUrls = state.customUrls;
 }
 
 async function saveData() {
@@ -160,6 +173,59 @@ async function saveUsers() {
 
 async function saveBills() {
   await dataStore.saveCollection("bills", bills);
+}
+
+async function saveCustomUrls() {
+  await dataStore.saveCollection("customUrls", customUrls);
+}
+
+function poolCacheUsesFiles() {
+  return dataStore.kind === "json";
+}
+
+function poolCacheFileName(item) {
+  const safeId = String(item.id || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `${safeId}.yaml`;
+}
+
+async function writePoolCachedBody(item, body) {
+  const text = String(body || "");
+  if (!poolCacheUsesFiles()) {
+    return { body: text, bodyFile: null, bodyLength: text.length };
+  }
+
+  await fs.mkdir(POOL_CACHE_DIR, { recursive: true });
+  const bodyFile = poolCacheFileName(item);
+  await fs.writeFile(path.join(POOL_CACHE_DIR, bodyFile), text, "utf8");
+  return { body: null, bodyFile, bodyLength: text.length };
+}
+
+async function readPoolCachedBody(item) {
+  const cache = item?.cachedConfig || null;
+  if (!cache) return "";
+  if (typeof cache.body === "string") return cache.body;
+  if (!cache.bodyFile) return "";
+
+  try {
+    return await fs.readFile(path.join(POOL_CACHE_DIR, cache.bodyFile), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function relayToken() {
+  return crypto.randomBytes(18).toString("base64url");
+}
+
+function ensureUserRelayTokens() {
+  let changed = false;
+  for (const user of users) {
+    if (!user.subscriptionToken) {
+      user.subscriptionToken = relayToken();
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function sendJson(res, status, payload, headers = {}) {
@@ -362,16 +428,63 @@ function calculateExpiry(purchasedAt, duration) {
   return expiresAt.toISOString();
 }
 
-function normalizeUser(input, existing = {}) {
+function startOfUtcDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
+function subscriptionCustomerCount(subscriptionId, ignoredUserId = "") {
+  return users.filter(user => user.subscriptionId === subscriptionId && user.id !== ignoredUserId).length;
+}
+
+function subscriptionsByLatestExpiry() {
+  return [...subscriptions].sort((a, b) => {
+    const timeA = a.metrics?.expireAt ? new Date(a.metrics.expireAt).getTime() : 0;
+    const timeB = b.metrics?.expireAt ? new Date(b.metrics.expireAt).getTime() : 0;
+    return timeB - timeA;
+  });
+}
+
+function findRecommendedSubscriptionForExpiry(expiresAt, { fallbackId = "", ignoredUserId = "" } = {}) {
+  const userExpiryTime = startOfUtcDate(expiresAt);
+  const dayMs = 86400000;
+  const candidates = subscriptions
+    .map(item => {
+      const expireTime = item.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
+      if (!Number.isFinite(expireTime) || !Number.isFinite(userExpiryTime)) return null;
+      const customerCount = subscriptionCustomerCount(item.id, ignoredUserId);
+      const diffDays = (expireTime - userExpiryTime) / dayMs;
+      if (customerCount > RELAY_MAX_CUSTOMERS || diffDays < -RELAY_BEFORE_EXPIRY_DAYS || diffDays > RELAY_AFTER_EXPIRY_DAYS) return null;
+      return { item, diffDays, customerCount };
+    })
+    .filter(Boolean);
+
+  const afterCandidates = candidates
+    .filter(candidate => candidate.diffDays >= 0)
+    .sort((a, b) => a.diffDays - b.diffDays || a.customerCount - b.customerCount);
+  if (afterCandidates.length) return afterCandidates[0].item;
+
+  const beforeCandidates = candidates
+    .filter(candidate => candidate.diffDays < 0)
+    .sort((a, b) => Math.abs(a.diffDays) - Math.abs(b.diffDays) || a.customerCount - b.customerCount);
+  if (beforeCandidates.length) return beforeCandidates[0].item;
+
+  return subscriptions.find(item => item.id === fallbackId) || subscriptionsByLatestExpiry()[0] || null;
+}
+
+function normalizeUser(input, existing = {}, options = {}) {
   const userId = String(input.userId || existing.userId || "").trim();
   const wechatName = String(input.wechatName || existing.wechatName || "").trim();
   const imessageId = String(input.imessageId || existing.imessageId || "").trim();
   const purchasedAt = String(input.purchasedAt || existing.purchasedAt || new Date().toISOString()).trim();
   const duration = String(input.duration || existing.duration || "monthly").trim();
-  const subscriptionId = String(input.subscriptionId || existing.subscriptionId || "").trim();
+  const requestedSubscriptionId = String(input.subscriptionId || existing.subscriptionId || "").trim();
   const actualPaid = normalizePaymentAmount(input.actualPaid ?? existing.actualPaid ?? "");
-  const subscription = subscriptions.find(item => item.id === subscriptionId);
   const expiresAt = calculateExpiry(purchasedAt, duration);
+  const subscription = options.autoSelectSubscription
+    ? findRecommendedSubscriptionForExpiry(expiresAt, { fallbackId: requestedSubscriptionId, ignoredUserId: existing.id || "" })
+    : subscriptions.find(item => item.id === requestedSubscriptionId);
 
   if (!userId) throw new Error("请填写用户 ID。");
   if (!subscription) throw new Error("请选择已添加的 URL。");
@@ -387,7 +500,9 @@ function normalizeUser(input, existing = {}) {
     purchasedAt: new Date(purchasedAt).toISOString(),
     duration,
     actualPaid,
-    subscriptionId,
+    subscriptionId: subscription.id,
+    useCustomRelay: input.useCustomRelay === undefined ? Boolean(existing.useCustomRelay) : Boolean(input.useCustomRelay),
+    subscriptionToken: existing.subscriptionToken || relayToken(),
     expiresAt,
     updatedAt: new Date().toISOString()
   };
@@ -399,6 +514,111 @@ function normalizePaymentAmount(value) {
   const amount = Number(raw);
   if (!Number.isFinite(amount) || amount < 0) return null;
   return Math.round(amount * 100) / 100;
+}
+
+function normalizeCustomUrl(input, existing = {}) {
+  const name = String(input.name || existing.name || "").trim();
+  const sourceSubscriptionId = String(input.sourceSubscriptionId || existing.sourceSubscriptionId || "").trim();
+  const expiresAtValue = String(input.expiresAt || existing.expiresAt || "").trim();
+  const note = String(input.note || existing.note || "").trim();
+  const enabled = input.enabled === undefined ? existing.enabled !== false : Boolean(input.enabled);
+  const token = String(existing.token || input.token || relayToken()).trim();
+  const transform = {
+    mode: String(input.mode ?? existing.transform?.mode ?? "").trim(),
+    replaceRules: Boolean(input.replaceRules ?? existing.transform?.replaceRules ?? false),
+    prependRules: String(input.prependRules ?? existing.transform?.prependRules ?? "").trim(),
+    appendRules: String(input.appendRules ?? existing.transform?.appendRules ?? "").trim(),
+    customYaml: String(input.customYaml ?? existing.transform?.customYaml ?? "").trim()
+  };
+  const source = subscriptions.find(item => item.id === sourceSubscriptionId);
+  const expiresAt = expiresAtValue ? new Date(expiresAtValue) : null;
+
+  if (!name) throw new Error("请填写自定义 URL 名称。");
+  if (!source) throw new Error("请选择一个池 URL。");
+  if (expiresAtValue && Number.isNaN(expiresAt.getTime())) throw new Error("自定义 URL 到期时间格式不正确。");
+
+  return {
+    ...existing,
+    name,
+    token,
+    sourceSubscriptionId,
+    expiresAt: expiresAt ? expiresAt.toISOString() : null,
+    enabled,
+    note,
+    transform,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function publicCustomUrl(item) {
+  const source = subscriptions.find(subscription => subscription.id === item.sourceSubscriptionId);
+  return {
+    ...item,
+    publicPath: `/c/${item.token}`,
+    source: source ? {
+      id: source.id,
+      url: source.url,
+      email: source.email || "",
+      name: source.name || "",
+      cache: source.cachedConfig ? {
+        fetchedAt: source.cachedConfig.fetchedAt || null,
+        status: source.cachedConfig.status || null,
+        bodyLength: source.cachedConfig.bodyLength || (source.cachedConfig.body ? source.cachedConfig.body.length : 0),
+        error: source.cachedConfig.error || null
+      } : null
+    } : null
+  };
+}
+
+function yamlListBlock(values) {
+  const lines = String(values || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line.startsWith("- ") ? line : `- ${line}`);
+  return lines.join("\n");
+}
+
+function replaceYamlRules(source, rulesBlock) {
+  const body = String(source || "");
+  const rules = yamlListBlock(rulesBlock);
+  if (!rules) return body;
+  const match = body.match(/^rules:\s*\r?\n(?:(?:\s+- .*(?:\r?\n|$))*)/m);
+  if (match) return body.slice(0, match.index) + `rules:\n${rules}\n` + body.slice(match.index + match[0].length);
+  return `${body.trimEnd()}\n\nrules:\n${rules}\n`;
+}
+
+function appendYamlRules(source, prependRules, appendRules) {
+  const body = String(source || "");
+  const before = yamlListBlock(prependRules);
+  const after = yamlListBlock(appendRules);
+  if (!before && !after) return body;
+
+  const match = body.match(/^rules:\s*\r?\n((?:(?:\s+- .*(?:\r?\n|$))*))/m);
+  const existing = match ? match[1].trimEnd() : "";
+  const nextRules = [before, existing, after].filter(Boolean).join("\n");
+  if (match) return body.slice(0, match.index) + `rules:\n${nextRules}\n` + body.slice(match.index + match[0].length);
+  return `${body.trimEnd()}\n\nrules:\n${nextRules}\n`;
+}
+
+function setYamlMode(source, mode) {
+  const body = String(source || "");
+  const value = String(mode || "").trim();
+  if (!value) return body;
+  if (/^mode:\s*.*$/m.test(body)) return body.replace(/^mode:\s*.*$/m, `mode: ${value}`);
+  return `mode: ${value}\n${body}`;
+}
+
+function convertClashConfig(source, transform = {}) {
+  let output = String(source || "");
+  output = setYamlMode(output, transform.mode);
+  if (transform.replaceRules) {
+    output = replaceYamlRules(output, [transform.prependRules, transform.appendRules].filter(Boolean).join("\n"));
+  } else {
+    output = appendYamlRules(output, transform.prependRules, transform.appendRules);
+  }
+  if (transform.customYaml) output = `${output.trimEnd()}\n\n${transform.customYaml.trim()}\n`;
+  return output;
 }
 
 function billUserLabel(user) {
@@ -472,25 +692,30 @@ function renewUser(user, input) {
   const duration = String(input.duration || "monthly").trim();
   const actualPaid = normalizePaymentAmount(input.actualPaid ?? "");
   const renewedAt = new Date(input.purchasedAt || new Date().toISOString());
-  const subscriptionId = String(input.subscriptionId || user.subscriptionId || "").trim();
-  const subscription = subscriptions.find(item => item.id === subscriptionId);
+  const requestedSubscriptionId = String(input.subscriptionId || user.subscriptionId || "").trim();
   const currentExpiry = user.expiresAt ? new Date(user.expiresAt) : null;
   const previousPaid = Number(user.actualPaid) || 0;
 
   if (!durationDays(duration)) throw new Error("请选择续费时长。");
-  if (!subscription) throw new Error("请选择已添加的 URL。");
   if (Number.isNaN(renewedAt.getTime())) throw new Error("续费时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
 
   const baseTime = currentExpiry && currentExpiry.getTime() > renewedAt.getTime() ? currentExpiry : renewedAt;
   const expiresAt = calculateExpiry(baseTime.toISOString(), duration);
+  const subscription = findRecommendedSubscriptionForExpiry(expiresAt, {
+    fallbackId: requestedSubscriptionId,
+    ignoredUserId: user.id || ""
+  });
   if (!expiresAt) throw new Error("续费时间格式不正确。");
+  if (!subscription) throw new Error("请选择已添加的 URL。");
 
   Object.assign(user, {
     purchasedAt: renewedAt.toISOString(),
     duration,
     actualPaid: Math.round((previousPaid + actualPaid) * 100) / 100,
-    subscriptionId,
+    subscriptionId: subscription.id,
+    useCustomRelay: input.useCustomRelay === undefined ? Boolean(user.useCustomRelay) : Boolean(input.useCustomRelay),
+    subscriptionToken: user.subscriptionToken || relayToken(),
     expiresAt,
     updatedAt: new Date().toISOString()
   });
@@ -675,11 +900,14 @@ function publicItem(item) {
 
 function publicUser(user) {
   const subscription = subscriptions.find(item => item.id === user.subscriptionId);
+  const relayPath = user.subscriptionToken ? `/sub/${user.subscriptionToken}` : "";
   return {
     ...user,
+    relayPath,
     subscription: subscription ? {
       id: subscription.id,
       url: subscription.url,
+      relayPath,
       email: subscription.email || "",
       name: subscription.name || ""
     } : null
@@ -865,6 +1093,26 @@ async function debugSubscription(url) {
 }
 
 async function fetchSubscriptionMetrics(url, profile) {
+  if (user.useCustomRelay) {
+    const cache = subscription.cachedConfig || null;
+    const cachedBody = await readPoolCachedBody(subscription);
+    if (!cachedBody) {
+      sendSubscriptionMessage(res, 503, cache?.error || "池 URL 缓存为空，请先刷新缓存。");
+      return;
+    }
+
+    const body = convertClashConfig(cachedBody, user.customRelayTransform || {});
+    res.writeHead(200, {
+      "content-type": cache.contentType || "text/plain; charset=utf-8",
+      "cache-control": "no-store, max-age=0",
+      "pragma": "no-cache",
+      "expires": "0",
+      ...(cache.subscriptionUserinfo ? { "subscription-userinfo": cache.subscriptionUserinfo } : {})
+    });
+    res.end(body);
+    return;
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
 
@@ -898,6 +1146,260 @@ async function fetchSubscriptionMetrics(url, profile) {
   }
 }
 
+function cacheIsFresh(cache, now = Date.now()) {
+  const fetchedAt = cache?.fetchedAt ? new Date(cache.fetchedAt).getTime() : 0;
+  return Boolean(cache?.body || cache?.bodyFile) && Number.isFinite(fetchedAt) && now - fetchedAt < POOL_CONFIG_CACHE_TTL_MS;
+}
+
+function clashConfigScore(body) {
+  const text = String(body || "");
+  let score = Math.min(text.length, 100000) / 1000;
+  if (/^proxies:\s*\[\s*\]\s*$/m.test(text)) score -= 500;
+  if (/^proxies:\s*\r?\n\s*-\s+/m.test(text)) score += 1000;
+  if (/^proxy-groups:\s*\r?\n\s*-\s+/m.test(text)) score += 500;
+  if (/^rules:\s*\r?\n\s*-\s+/m.test(text)) score += 200;
+  if (/^(mixed-port|port|socks-port):\s*/m.test(text)) score += 100;
+  return score;
+}
+
+function extractClashConfigBody(body) {
+  const text = String(body || "").replace(/\r\n/g, "\n");
+  if (!text.trim()) return "";
+
+  const lines = text.split("\n");
+  const startIndex = lines.findIndex(line => /^(mixed-port|port|socks-port|redir-port|tproxy-port|allow-lan|mode|log-level|external-controller|proxies):\s*/.test(line));
+  const trimmedStart = startIndex >= 0 ? startIndex : 0;
+  const scopedLines = lines.slice(trimmedStart);
+  const rulesIndex = scopedLines.findIndex(line => /^rules:\s*$/.test(line));
+  if (rulesIndex === -1) return scopedLines.join("\n").trimEnd() + "\n";
+
+  let endIndex = scopedLines.length;
+  for (let index = rulesIndex + 1; index < scopedLines.length; index += 1) {
+    const line = scopedLines[index];
+    if (/^[A-Za-z0-9_-]+:\s*/.test(line)) {
+      endIndex = index;
+      break;
+    }
+  }
+
+  return scopedLines.slice(0, endIndex).join("\n").trimEnd() + "\n";
+}
+
+async function refreshPoolConfigCache(item, { force = false } = {}) {
+  if (!force && cacheIsFresh(item.cachedConfig)) return item.cachedConfig;
+
+  const profiles = REQUEST_PROFILES.filter(profile => profile.name === "clash-meta");
+  const results = [];
+  for (const profile of profiles) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(item.url, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          ...profile.headers,
+          "Cache-Control": "no-cache",
+          "Pragma": "no-cache"
+        }
+      });
+      const rawBody = await response.text();
+      const body = extractClashConfigBody(rawBody);
+      results.push({
+        body,
+        client: profile.name,
+        status: response.status,
+        score: clashConfigScore(body),
+        rawBodyLength: rawBody.length,
+        contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+        subscriptionUserinfo: response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo") || "",
+        error: null
+      });
+    } catch (error) {
+      results.push({
+        body: "",
+        client: profile.name,
+        status: null,
+        score: -1000,
+        rawBodyLength: 0,
+        contentType: "text/plain; charset=utf-8",
+        subscriptionUserinfo: "",
+        error: error.name === "AbortError" ? "缓存请求超时。" : error.message
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  const best = results.sort((a, b) => b.score - a.score)[0];
+  if (best?.body) {
+    const storedBody = await writePoolCachedBody(item, best.body);
+    item.cachedConfig = {
+      ...storedBody,
+      status: best.status,
+      client: best.client,
+      fetchedAt: new Date().toISOString(),
+      contentType: best.contentType,
+      subscriptionUserinfo: best.subscriptionUserinfo,
+      score: best.score,
+      attempts: results.map(result => ({
+        client: result.client,
+        status: result.status,
+        score: result.score,
+        bodyLength: result.body.length,
+        rawBodyLength: result.rawBodyLength || result.body.length,
+        error: result.error
+      })),
+      error: null
+    };
+  } else {
+    item.cachedConfig = {
+      ...(item.cachedConfig || {}),
+      fetchedAt: new Date().toISOString(),
+      attempts: results.map(result => ({
+        client: result.client,
+        status: result.status,
+        score: result.score,
+        bodyLength: result.body.length,
+        rawBodyLength: result.rawBodyLength || result.body.length,
+        error: result.error
+      })),
+      error: results.find(result => result.error)?.error || "没有获取到可缓存的 Clash 配置。"
+    };
+  }
+  return item.cachedConfig;
+}
+
+async function refreshAllPoolConfigCaches({ force = false } = {}) {
+  for (const item of subscriptions) {
+    await refreshPoolConfigCache(item, { force });
+  }
+  await saveData();
+}
+
+function sendSubscriptionMessage(res, status, message) {
+  res.writeHead(status, {
+    "content-type": "text/plain; charset=utf-8",
+    "cache-control": "no-store, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0"
+  });
+  res.end(message);
+}
+
+function isUserExpired(user, now = Date.now()) {
+  const expiresAt = user?.expiresAt ? new Date(user.expiresAt).getTime() : NaN;
+  return !Number.isFinite(expiresAt) || expiresAt <= now;
+}
+
+function forwardedSubscriptionHeaders(req) {
+  const headers = {
+    "User-Agent": req.headers["user-agent"] || REQUEST_PROFILES[0].headers["User-Agent"],
+    "Accept": req.headers.accept || "text/plain, application/yaml, */*",
+    "Accept-Language": req.headers["accept-language"] || "zh-CN,zh;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache"
+  };
+  return headers;
+}
+
+function copyUpstreamHeaders(response) {
+  const headers = {
+    "cache-control": "no-store, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0"
+  };
+  for (const name of ["content-type", "subscription-userinfo", "profile-update-interval"]) {
+    const value = response.headers.get(name);
+    if (value) headers[name] = value;
+  }
+  if (!headers["content-type"]) headers["content-type"] = "text/plain; charset=utf-8";
+  return headers;
+}
+
+async function handleRelaySubscription(req, res, token) {
+  await loadLatestData();
+  ensureUserRelayTokens();
+
+  const user = users.find(item => item.subscriptionToken === token);
+  if (!user) {
+    sendSubscriptionMessage(res, 404, "订阅链接不存在或已被删除，请联系客服。");
+    return;
+  }
+
+  if (isUserExpired(user)) {
+    sendSubscriptionMessage(res, 200, `订阅已到期，请续费后继续使用。\n到期时间：${user.expiresAt || "未知"}`);
+    return;
+  }
+
+  const subscription = subscriptions.find(item => item.id === user.subscriptionId);
+  if (!subscription?.url) {
+    sendSubscriptionMessage(res, 503, "订阅暂时不可用，请联系客服处理。");
+    return;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(subscription.url, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: forwardedSubscriptionHeaders(req)
+    });
+    const body = Buffer.from(await response.arrayBuffer());
+    res.writeHead(response.status, copyUpstreamHeaders(response));
+    res.end(body);
+  } catch (error) {
+    const message = error.name === "AbortError"
+      ? "订阅请求超时，请稍后重试。"
+      : "订阅暂时无法读取，请稍后重试或联系客服。";
+    sendSubscriptionMessage(res, 502, message);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function handleCustomUrlSubscription(req, res, token) {
+  await loadLatestData();
+
+  const item = customUrls.find(entry => entry.token === token);
+  if (!item || item.enabled === false) {
+    sendSubscriptionMessage(res, 404, "自定义订阅链接不存在或已停用，请联系客服。");
+    return;
+  }
+
+  if (item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now()) {
+    sendSubscriptionMessage(res, 200, `订阅已到期，请续费后继续使用。\n到期时间：${item.expiresAt}`);
+    return;
+  }
+
+  const source = subscriptions.find(subscription => subscription.id === item.sourceSubscriptionId);
+  if (!source?.url) {
+    sendSubscriptionMessage(res, 503, "池 URL 不存在，订阅暂时不可用。");
+    return;
+  }
+
+  const cache = source.cachedConfig || null;
+  const cachedBody = await readPoolCachedBody(source);
+  if (!cachedBody) {
+    sendSubscriptionMessage(res, 503, cache?.error || "池 URL 缓存为空，请先刷新缓存。");
+    return;
+  }
+
+  const body = convertClashConfig(cachedBody, item.transform);
+
+  res.writeHead(200, {
+    "content-type": cache.contentType || "text/plain; charset=utf-8",
+    "cache-control": "no-store, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0",
+    ...(cache.subscriptionUserinfo ? { "subscription-userinfo": cache.subscriptionUserinfo } : {})
+  });
+  res.end(body);
+}
+
 async function refreshAll() {
   for (const item of subscriptions) {
     await refreshSubscription(item);
@@ -906,6 +1408,18 @@ async function refreshAll() {
 }
 
 async function handleApi(req, res, pathname) {
+  const relayApiMatch = pathname.match(/^\/api\/sub\/([^/]+)$/);
+  if (relayApiMatch && req.method === "GET") {
+    await handleRelaySubscription(req, res, relayApiMatch[1]);
+    return;
+  }
+
+  const customPublicApiMatch = pathname.match(/^\/api\/(?:c|custom)\/([^/]+)$/);
+  if (customPublicApiMatch && req.method === "GET") {
+    await handleCustomUrlSubscription(req, res, customPublicApiMatch[1]);
+    return;
+  }
+
   if (pathname === "/api/auth/login" && req.method === "POST") {
     try {
       const payload = await readJson(req);
@@ -969,6 +1483,7 @@ async function handleApi(req, res, pathname) {
 
     await loadLatestData();
     await refreshAll();
+    await refreshAllPoolConfigCaches({ force: true });
     sendJson(res, 200, { ok: true, refreshed: subscriptions.length });
     return;
   }
@@ -1003,6 +1518,37 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/subscriptions/cache-refresh" && req.method === "POST") {
+    await refreshAllPoolConfigCaches({ force: true });
+    sendJson(res, 200, { ok: true, refreshed: subscriptions.length });
+    return;
+  }
+
+  if (pathname === "/api/custom-urls" && req.method === "GET") {
+    sendJson(res, 200, customUrls.map(publicCustomUrl));
+    return;
+  }
+
+  if (pathname === "/api/custom-urls" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const item = {
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        token: relayToken(),
+        lastGeneratedAt: null,
+        lastError: null
+      };
+      const normalized = normalizeCustomUrl(payload, item);
+      customUrls.unshift(normalized);
+      await saveCustomUrls();
+      sendJson(res, 201, publicCustomUrl(normalized));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/users" && req.method === "GET") {
     sendJson(res, 200, users.map(publicUser));
     return;
@@ -1020,7 +1566,7 @@ async function handleApi(req, res, pathname) {
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString()
       };
-      const normalized = normalizeUser(payload, item);
+      const normalized = normalizeUser(payload, item, { autoSelectSubscription: true });
       users.unshift(normalized);
       bills.unshift(makeBill({
         user: normalized,
@@ -1118,7 +1664,80 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const match = pathname.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|debug))?$/);
+  const customMatch = pathname.match(/^\/api\/custom-urls\/([^/]+)(?:\/(preview|refresh-cache))?$/);
+  if (customMatch) {
+    const id = customMatch[1];
+    const action = customMatch[2];
+    const item = customUrls.find(entry => entry.id === id);
+    if (!item) {
+      sendJson(res, 404, { error: "没有找到这个自定义 URL。" });
+      return;
+    }
+
+    if (action === "preview" && req.method === "GET") {
+      const source = subscriptions.find(subscription => subscription.id === item.sourceSubscriptionId);
+      if (!source) {
+        sendJson(res, 404, { error: "池 URL 不存在。" });
+        return;
+      }
+      const cache = await refreshPoolConfigCache(source, { force: false });
+      await saveData();
+      const cachedBody = await readPoolCachedBody(source);
+      if (!cachedBody) {
+        sendJson(res, 503, { error: cache?.error || "池 URL 缓存为空。" });
+        return;
+      }
+      const converted = convertClashConfig(cachedBody, item.transform);
+      sendJson(res, 200, {
+        body: converted.slice(0, 12000),
+        bodyLength: converted.length,
+        cacheFetchedAt: cache.fetchedAt || null,
+        truncated: converted.length > 12000
+      });
+      return;
+    }
+
+    if (action === "refresh-cache" && req.method === "POST") {
+      const source = subscriptions.find(subscription => subscription.id === item.sourceSubscriptionId);
+      if (!source) {
+        sendJson(res, 404, { error: "池 URL 不存在。" });
+        return;
+      }
+      const cache = await refreshPoolConfigCache(source, { force: true });
+      await saveData();
+      sendJson(res, 200, { ok: true, cache });
+      return;
+    }
+
+    if (action) {
+      sendJson(res, 405, { error: "Method not allowed." });
+      return;
+    }
+
+    if (req.method === "PUT") {
+      try {
+        const payload = await readJson(req);
+        Object.assign(item, normalizeCustomUrl(payload, item));
+        await saveCustomUrls();
+        sendJson(res, 200, publicCustomUrl(item));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      customUrls = customUrls.filter(entry => entry.id !== id);
+      await saveCustomUrls();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    sendJson(res, 405, { error: "Method not allowed." });
+    return;
+  }
+
+  const match = pathname.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|debug|cache|refresh-cache))?$/);
   const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew))?$/);
   if (userMatch) {
     const id = userMatch[1];
@@ -1219,6 +1838,53 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname.endsWith("/cache") && req.method === "GET") {
+    const cache = item.cachedConfig || null;
+    const cachedBody = await readPoolCachedBody(item);
+    if (!cachedBody) {
+      sendJson(res, 404, {
+        error: cache?.error || (cache?.bodyFile ? "缓存文件不存在，请重新刷新这条池 URL 缓存。" : "这条池 URL 还没有缓存 Clash 配置。"),
+        cache
+      });
+      return;
+    }
+    sendJson(res, 200, {
+      status: cache.status || null,
+      client: cache.client || "",
+      score: cache.score || null,
+      attempts: cache.attempts || [],
+      storage: cache.bodyFile ? "local-file" : "database",
+      bodyFile: cache.bodyFile || "",
+      fetchedAt: cache.fetchedAt || null,
+      contentType: cache.contentType || "",
+      subscriptionUserinfo: cache.subscriptionUserinfo || "",
+      error: cache.error || null,
+      body: cachedBody.slice(0, 20000),
+      bodyLength: cache.bodyLength || cachedBody.length,
+      truncated: cachedBody.length > 20000
+    });
+    return;
+  }
+
+  if (pathname.endsWith("/refresh-cache") && req.method === "POST") {
+    const cache = await refreshPoolConfigCache(item, { force: true });
+    await saveData();
+    sendJson(res, 200, { ok: true, cache: {
+      status: cache?.status || null,
+      client: cache?.client || "",
+      score: cache?.score || null,
+      attempts: cache?.attempts || [],
+      fetchedAt: cache?.fetchedAt || null,
+      contentType: cache?.contentType || "",
+      subscriptionUserinfo: cache?.subscriptionUserinfo || "",
+      error: cache?.error || null,
+      storage: cache?.bodyFile ? "local-file" : "database",
+      bodyFile: cache?.bodyFile || "",
+      bodyLength: cache?.bodyLength || (cache?.body ? cache.body.length : 0)
+    } });
+    return;
+  }
+
   if (req.method === "PUT") {
     try {
       const payload = await readJson(req);
@@ -1245,16 +1911,27 @@ async function handleApi(req, res, pathname) {
 
 async function serveStatic(req, res, pathname) {
   const requestedPath = pathname === "/" ? "/index.html" : pathname;
-  if (requestedPath === "/index.html" && !currentSession(req)) {
+  const isAppRoute = !path.extname(requestedPath);
+  const isLoginRoute = requestedPath === "/login" || requestedPath === "/login.html";
+  if (requestedPath === "/login.html") {
     res.writeHead(302, {
-      "location": "/login.html",
+      "location": "/login",
+      "cache-control": "no-store, max-age=0"
+    });
+    res.end();
+    return;
+  }
+  if ((requestedPath === "/index.html" || isAppRoute) && !isLoginRoute && !currentSession(req)) {
+    res.writeHead(302, {
+      "location": "/login",
       "cache-control": "no-store, max-age=0"
     });
     res.end();
     return;
   }
 
-  const filePath = path.normalize(path.join(PUBLIC_DIR, requestedPath));
+  const staticPath = isAppRoute ? "/index.html" : requestedPath;
+  const filePath = path.normalize(path.join(PUBLIC_DIR, staticPath));
 
   if (!filePath.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
@@ -1268,6 +1945,14 @@ async function serveStatic(req, res, pathname) {
     res.writeHead(200, { "content-type": mimeTypes[ext] || "application/octet-stream" });
     res.end(content);
   } catch {
+    if (!path.extname(requestedPath)) {
+      try {
+        const content = await fs.readFile(path.join(PUBLIC_DIR, "index.html"));
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(content);
+        return;
+      } catch {}
+    }
     res.writeHead(404);
     res.end("Not found");
   }
@@ -1283,7 +1968,13 @@ async function requestHandler(req, res) {
       initialized = true;
     }
 
-    if (url.pathname.startsWith("/api/")) {
+    const customPublicMatch = url.pathname.match(/^\/(?:c|custom)\/([^/]+)$/);
+    const relayMatch = url.pathname.match(/^\/sub\/([^/]+)$/);
+    if (customPublicMatch && req.method === "GET") {
+      await handleCustomUrlSubscription(req, res, customPublicMatch[1]);
+    } else if (relayMatch && req.method === "GET") {
+      await handleRelaySubscription(req, res, relayMatch[1]);
+    } else if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url.pathname);
     } else {
       await serveStatic(req, res, url.pathname);
@@ -1322,6 +2013,8 @@ module.exports = Object.assign(requestHandler, {
   parseBodyHints,
   parseAccountUnavailable,
   calculateExpiry,
+  convertClashConfig,
+  extractClashConfigBody,
   statusFor,
   toBytes
 });

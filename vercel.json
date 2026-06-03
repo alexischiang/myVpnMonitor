@@ -1,9 +1,26 @@
 {
   "installCommand": "npm install",
   "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/sub/:token",
+      "destination": "/api/sub/:token"
+    },
+    {
+      "source": "/c/:token",
+      "destination": "/api/c/:token"
+    },
+    {
+      "source": "/custom/:token",
+      "destination": "/api/custom/:token"
+    },
+    {
       "source": "/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/((?!api/.*).*)",
       "destination": "/index.html"
     }
   ],

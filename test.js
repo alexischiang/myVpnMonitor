@@ -4,6 +4,8 @@ const {
   parseBodyHints,
   parseAccountUnavailable,
   calculateExpiry,
+  convertClashConfig,
+  extractClashConfigBody,
   statusFor,
   toBytes
 } = require("./server");
@@ -51,5 +53,28 @@ assert.strictEqual(calculateExpiry("2026-07-02T00:00:00.000Z", "monthly").slice(
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "quarterly").slice(0, 10), "2026-08-26");
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "half_yearly").slice(0, 10), "2026-11-24");
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "yearly").slice(0, 10), "2027-05-23");
+
+const converted = convertClashConfig("mixed-port: 7890\nmode: Global\nrules:\n  - MATCH,PROXY\n", {
+  mode: "Rule",
+  prependRules: "DOMAIN-SUFFIX,example.com,DIRECT",
+  appendRules: "MATCH,AUTO"
+});
+assert.ok(converted.includes("mode: Rule"));
+assert.ok(converted.includes("- DOMAIN-SUFFIX,example.com,DIRECT"));
+assert.ok(converted.includes("- MATCH,PROXY"));
+assert.ok(converted.includes("- MATCH,AUTO"));
+
+const replaced = convertClashConfig("rules:\n  - MATCH,PROXY\n", {
+  replaceRules: true,
+  appendRules: "MATCH,DIRECT"
+});
+assert.ok(!replaced.includes("MATCH,PROXY"));
+assert.ok(replaced.includes("- MATCH,DIRECT"));
+
+const extracted = extractClashConfigBody("prefix\nmixed-port: 7890\nproxies:\n  - name: node\nrules:\n  - MATCH,PROXY\nextra:\n  value: ignored\n");
+assert.ok(extracted.startsWith("mixed-port: 7890"));
+assert.ok(extracted.includes("proxies:\n  - name: node"));
+assert.ok(extracted.includes("rules:\n  - MATCH,PROXY"));
+assert.ok(!extracted.includes("extra:"));
 
 console.log("All checks passed.");
