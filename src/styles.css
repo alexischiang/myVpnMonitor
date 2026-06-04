@@ -1,6 +1,4 @@
-/* 移动端 / iOS 体验修复，全局生效 */
-
-/* iOS 下拉 / 日期面板触摸惯性滚动兜底 */
+/* iOS 体验修复 */
 .ant-select-dropdown .rc-virtual-list-holder,
 .ant-select-dropdown .ant-select-item-option,
 .ant-picker-dropdown .ant-picker-panel-container {
@@ -9,8 +7,56 @@
   overscroll-behavior: contain;
 }
 
+html, body {
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+}
+
+/* Apple 风格：去掉默认 outline，用更柔和的 focus ring */
+*:focus-visible {
+  outline: 2px solid rgba(0, 122, 255, 0.5);
+  outline-offset: 2px;
+}
+
+/* 表格圆角 */
+.ant-table-wrapper .ant-table {
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+/* Sidebar 分隔线去掉默认 box-shadow */
+.ant-layout-sider {
+  box-shadow: none !important;
+}
+
+/* Modal 毛玻璃背景遮罩 */
+.ant-modal-mask {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Modal 圆角和阴影 */
+.ant-modal-content {
+  border-radius: 20px !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* 下拉面板圆角 */
+.ant-select-dropdown,
+.ant-picker-dropdown .ant-picker-panel-container {
+  border-radius: 14px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+  overflow: hidden;
+}
+
+/* 滚动条苹果风格 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(120, 120, 128, 0.3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(120, 120, 128, 0.5); }
+
 @media (max-width: 575px) {
-  /* 防止 iOS 聚焦输入框时整页自动放大（字号 < 16px 会触发） */
   .ant-input,
   .ant-input-affix-wrapper input,
   .ant-select-selector,
@@ -19,7 +65,6 @@
     font-size: 16px;
   }
 
-  /* 弹窗在小屏不再超宽溢出，body 内部可滚动 */
   .ant-modal {
     max-width: calc(100vw - 16px);
     margin: 8px auto;
@@ -30,10 +75,4 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
-}
-
-html,
-body {
-  -webkit-text-size-adjust: 100%;
-  overscroll-behavior-y: none;
 }

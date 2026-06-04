@@ -900,11 +900,7 @@ function publicItem(item) {
 
 function publicUser(user) {
   const subscription = subscriptions.find(item => item.id === user.subscriptionId);
-  let relayPath = "";
-  if (user.useCustomRelay) {
-    const customUrl = customUrls.find(item => item.token === user.subscriptionToken);
-    if (customUrl) relayPath = `/c/${customUrl.token}`;
-  }
+  const relayPath = user.useCustomRelay && user.subscriptionToken ? `/sub/${user.subscriptionToken}` : "";
   return {
     ...user,
     relayPath,
@@ -1096,26 +1092,6 @@ async function debugSubscription(url) {
 }
 
 async function fetchSubscriptionMetrics(url, profile) {
-  if (user.useCustomRelay) {
-    const cache = subscription.cachedConfig || null;
-    const cachedBody = await readPoolCachedBody(subscription);
-    if (!cachedBody) {
-      sendSubscriptionMessage(res, 503, cache?.error || "池 URL 缓存为空，请先刷新缓存。");
-      return;
-    }
-
-    const body = convertClashConfig(cachedBody, user.customRelayTransform || {});
-    res.writeHead(200, {
-      "content-type": cache.contentType || "text/plain; charset=utf-8",
-      "cache-control": "no-store, max-age=0",
-      "pragma": "no-cache",
-      "expires": "0",
-      ...(cache.subscriptionUserinfo ? { "subscription-userinfo": cache.subscriptionUserinfo } : {})
-    });
-    res.end(body);
-    return;
-  }
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
 
@@ -1275,9 +1251,10 @@ async function refreshPoolConfigCache(item, { force = false } = {}) {
 }
 
 async function refreshAllPoolConfigCaches({ force = false } = {}) {
-  for (const item of subscriptions) {
-    await refreshPoolConfigCache(item, { force });
-  }
+  await Promise.all(subscriptions.map(item => Promise.all([
+    refreshSubscription(item),
+    refreshPoolConfigCache(item, { force })
+  ])));
   await saveData();
 }
 
@@ -1527,6 +1504,21 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/subscriptions/recommend" && req.method === "GET") {
+    const purchasedAt = url.searchParams.get("purchasedAt") || new Date().toISOString();
+    const duration = url.searchParams.get("duration") || "monthly";
+    const ignoredUserId = url.searchParams.get("ignoredUserId") || "";
+    const expiresAt = calculateExpiry(purchasedAt, duration);
+    if (!expiresAt) { sendJson(res, 400, { error: "参数不正确。" }); return; }
+    const recommended = findRecommendedSubscriptionForExpiry(expiresAt, { ignoredUserId });
+    sendJson(res, 200, {
+      expiresAt,
+      recommended: recommended ? { id: recommended.id, email: recommended.email || "", url: recommended.url, expireAt: recommended.metrics?.expireAt || null } : null,
+      reason: recommended ? null : subscriptions.length === 0 ? "没有可用的池 URL。" : "没有找到到期时间接近的池 URL，请手动选择。"
+    });
+    return;
+  }
+
   if (pathname === "/api/custom-urls" && req.method === "GET") {
     sendJson(res, 200, customUrls.map(publicCustomUrl));
     return;
@@ -1741,7 +1733,7 @@ async function handleApi(req, res, pathname) {
   }
 
   const match = pathname.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|debug|cache|refresh-cache))?$/);
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|relay-preview|relay-refresh-cache))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -1774,6 +1766,45 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
+    if (action === "relay-preview" && req.method === "GET") {
+      const subscription = subscriptions.find(s => s.id === item.subscriptionId);
+      if (!subscription?.url) {
+        sendJson(res, 404, { error: "池 URL 不存在。" });
+        return;
+      }
+      const clashMeta = REQUEST_PROFILES.find(p => p.name === "clash-meta");
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      try {
+        const response = await fetch(subscription.url, {
+          method: "GET",
+          redirect: "follow",
+          signal: controller.signal,
+          headers: { ...clashMeta.headers, "Cache-Control": "no-cache", "Pragma": "no-cache" }
+        });
+        const text = await response.text();
+        const body = text.slice(0, 12000);
+        sendJson(res, 200, { body, bodyLength: text.length, truncated: text.length > 12000 });
+      } catch (error) {
+        sendJson(res, 502, { error: error.name === "AbortError" ? "请求超时。" : error.message });
+      } finally {
+        clearTimeout(timer);
+      }
+      return;
+    }
+
+    if (action === "relay-refresh-cache" && req.method === "POST") {
+      const subscription = subscriptions.find(s => s.id === item.subscriptionId);
+      if (!subscription) {
+        sendJson(res, 404, { error: "池 URL 不存在。" });
+        return;
+      }
+      const cache = await refreshPoolConfigCache(subscription, { force: true });
+      await saveData();
+      sendJson(res, 200, { ok: true, cache });
+      return;
+    }
+
     if (action) {
       sendJson(res, 405, { error: "Method not allowed." });
       return;
@@ -1784,6 +1815,7 @@ async function handleApi(req, res, pathname) {
         const payload = await readJson(req);
         const previousPaid = Number(item.actualPaid) || 0;
         Object.assign(item, normalizeUser(payload, item));
+        if (payload.customRelayTransform !== undefined) item.customRelayTransform = payload.customRelayTransform;
         const nextPaid = Number(item.actualPaid) || 0;
         const diff = Math.round((nextPaid - previousPaid) * 100) / 100;
         if (diff !== 0) {
@@ -1830,7 +1862,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname.endsWith("/refresh") && req.method === "POST") {
-    await refreshSubscription(item);
+    await Promise.all([refreshSubscription(item), refreshPoolConfigCache(item, { force: true })]);
     await saveData();
     sendJson(res, 200, publicItem(item));
     return;
@@ -1866,25 +1898,6 @@ async function handleApi(req, res, pathname) {
       bodyLength: cache.bodyLength || cachedBody.length,
       truncated: cachedBody.length > 20000
     });
-    return;
-  }
-
-  if (pathname.endsWith("/refresh-cache") && req.method === "POST") {
-    const cache = await refreshPoolConfigCache(item, { force: true });
-    await saveData();
-    sendJson(res, 200, { ok: true, cache: {
-      status: cache?.status || null,
-      client: cache?.client || "",
-      score: cache?.score || null,
-      attempts: cache?.attempts || [],
-      fetchedAt: cache?.fetchedAt || null,
-      contentType: cache?.contentType || "",
-      subscriptionUserinfo: cache?.subscriptionUserinfo || "",
-      error: cache?.error || null,
-      storage: cache?.bodyFile ? "local-file" : "database",
-      bodyFile: cache?.bodyFile || "",
-      bodyLength: cache?.bodyLength || (cache?.body ? cache.body.length : 0)
-    } });
     return;
   }
 
