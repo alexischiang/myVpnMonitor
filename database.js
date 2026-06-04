@@ -62,7 +62,10 @@ class PostgresDataStore {
     const { Pool } = this.loadPg();
     this.pool = new Pool({
       connectionString: this.connectionString,
-      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined
+      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+      idleTimeoutMillis: 10000,
+      connectionTimeoutMillis: 10000,
+      max: 5
     });
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS app_records (
