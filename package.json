@@ -28,6 +28,7 @@
     "@vitejs/plugin-react": "^4.6.0",
     "antd": "^6.4.3",
     "dayjs": "^1.11.21",
+    "nodemailer": "^8.0.10",
     "pg": "^8.21.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

@@ -5,6 +5,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const { createDataStore } = require("./database");
+const notifier = require("./notifier");
 const packageJson = require("./package.json");
 
 function loadLocalEnv() {
@@ -31,6 +32,8 @@ const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
 const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
 const CUSTOM_URLS_FILE = process.env.CUSTOM_URLS_FILE || path.join(DATA_DIR, "custom-urls.json");
 const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
+const ALERT_STATE_FILE = process.env.ALERT_STATE_FILE || path.join(DATA_DIR, "alert-state.json");
+const alertStore = notifier.createAlertStore(ALERT_STATE_FILE);
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const DIST_DIR = path.join(__dirname, "dist");
 const PUBLIC_DIR = fsSync.existsSync(path.join(DIST_DIR, "index.html")) ? DIST_DIR : path.join(__dirname, "public");
@@ -1385,6 +1388,16 @@ async function refreshAll() {
     await refreshSubscription(item);
   }
   await saveData();
+  await runLowTrafficCheck();
+}
+
+async function runLowTrafficCheck() {
+  try {
+    if (!notifier.isConfigured()) return;
+    await notifier.checkAndNotifyLowTraffic(subscriptions, alertStore, { logger: console });
+  } catch (error) {
+    console.error("Alert check failed:", error.message);
+  }
 }
 
 async function handleApi(req, res, pathname) {
@@ -1470,6 +1483,43 @@ async function handleApi(req, res, pathname) {
 
   if (!requireAuth(req, res)) return;
   await loadLatestData();
+
+  if (pathname === "/api/alerts/status" && req.method === "GET") {
+    const cfg = notifier.getMailerConfig();
+    sendJson(res, 200, {
+      configured: notifier.isConfigured(),
+      to: cfg.to,
+      from: cfg.from ? `${cfg.from.slice(0, 3)}***${cfg.from.slice(cfg.from.indexOf("@"))}` : "",
+      threshold: cfg.threshold,
+      thresholdHuman: notifier.formatBytes(cfg.threshold),
+      cooldownMs: cfg.cooldownMs
+    });
+    return;
+  }
+
+  if (pathname === "/api/alerts/test" && req.method === "POST") {
+    try {
+      if (!notifier.isConfigured()) {
+        sendJson(res, 400, { error: "未配置 ALERT_EMAIL_FROM / ALERT_EMAIL_PASS。" });
+        return;
+      }
+      const cfg = notifier.getMailerConfig();
+      await notifier.sendMail({
+        subject: "[XELA] 告警测试邮件",
+        text: `这是一封测试邮件。告警阈值：${notifier.formatBytes(cfg.threshold)}（剩余流量低于此值时会通知到 ${cfg.to}）。`
+      });
+      sendJson(res, 200, { ok: true, to: cfg.to });
+    } catch (error) {
+      sendJson(res, 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/alerts/check" && req.method === "POST") {
+    const result = await notifier.checkAndNotifyLowTraffic(subscriptions, alertStore, { logger: console });
+    sendJson(res, 200, { ok: true, ...result });
+    return;
+  }
 
   if (pathname === "/api/subscriptions" && req.method === "GET") {
     sendJson(res, 200, subscriptions.map(publicItem));

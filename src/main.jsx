@@ -523,26 +523,24 @@ function LoginPage() {
   }
 
   return (
-    <AntLayout style={{ ...muse.app, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ width: "100%", maxWidth: 380, padding: "0 24px" }}>
-        <Flex vertical align="center" gap={6} style={{ marginBottom: 32 }}>
-          <div style={{ width: 64, height: 64, borderRadius: 18, ...muse.brandAvatar, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, fontWeight: 700, color: "#fff", marginBottom: 4 }}>X</div>
-          <Title level={3} style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: -0.5 }}>XELA monitor</Title>
+    <AntLayout style={{ ...muse.app, display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)" }}>
+      <div style={{ width: "100%", maxWidth: 400, padding: "0 24px" }}>
+        <div style={{ border: "1px solid var(--ant-color-border)", borderRadius: 16, padding: "24px", background: "var(--ant-color-bg-container)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", marginBottom: 20, textAlign: "center" }}>
+          <Title level={3} style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: -0.5 }}>XELA monitor</Title>
           <Text type="secondary" style={{ fontSize: 14 }}>订阅中转管理后台</Text>
-        </Flex>
-        <Form layout="vertical" size="large" onFinish={submit} requiredMark={false}>
-          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 14, overflow: "hidden", marginBottom: 16 }}>
-            <Form.Item name="account" label="账号" rules={[{ required: true, message: "请输入账号" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
-              <Input variant="borderless" prefix={<UserOutlined style={{ color: "var(--ant-color-text-tertiary)" }} />} autoComplete="username" placeholder="请输入账号" />
+        </div>
+        <div style={{ border: "1px solid var(--ant-color-border)", borderRadius: 16, padding: "28px 24px", background: "var(--ant-color-bg-container)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+          <Form layout="vertical" size="large" onFinish={submit} requiredMark={false}>
+            <Form.Item name="account" label="账号" rules={[{ required: true, message: "请输入账号" }]} style={{ marginBottom: 18 }}>
+              <Input autoComplete="username" placeholder="请输入账号" style={{ borderRadius: 10, height: 44 }} />
             </Form.Item>
-            <div style={{ height: 1, background: "var(--ant-color-border-secondary)", margin: "0 16px" }} />
-            <Form.Item name="password" label="密码" rules={[{ required: true, message: "请输入密码" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
-              <Input.Password variant="borderless" autoComplete="current-password" placeholder="请输入密码" />
+            <Form.Item name="password" label="密码" rules={[{ required: true, message: "请输入密码" }]} style={{ marginBottom: 20 }}>
+              <Input.Password autoComplete="current-password" placeholder="请输入密码" style={{ borderRadius: 10, height: 44 }} />
             </Form.Item>
-          </div>
-          {message && <Text type="danger" style={{ display: "block", marginBottom: 12, fontSize: 13 }}>{message}</Text>}
-          <Button type="primary" htmlType="submit" block loading={loading} size="large" style={{ borderRadius: 12, fontWeight: 600, height: 48 }}>登录</Button>
-        </Form>
+            {message && <Text type="danger" style={{ display: "block", marginBottom: 14, fontSize: 13 }}>{message}</Text>}
+            <Button type="primary" htmlType="submit" block loading={loading} size="large" style={{ borderRadius: 10, fontWeight: 600, height: 46 }}>登录</Button>
+          </Form>
+        </div>
       </div>
     </AntLayout>
   );
