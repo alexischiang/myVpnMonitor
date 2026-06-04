@@ -2046,6 +2046,7 @@ async function requestHandler(req, res) {
       await serveStatic(req, res, url.pathname);
     }
   } catch (error) {
+    console.error("[500]", error);
     sendJson(res, 500, { error: error.message });
   }
 }
