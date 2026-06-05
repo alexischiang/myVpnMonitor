@@ -973,7 +973,7 @@ async function refreshSubscription(item) {
     item.httpStatus = bestResult.status;
     item.lastClient = bestResult.client;
 
-    if (bestResult.metrics && bestScore >= existingScore) {
+    if (bestResult.metrics && (bestScore >= existingScore || bestResult.metrics.expireAt)) {
       item.metrics = bestResult.metrics;
       item.lastError = null;
     } else if (bestResult.metrics && item.metrics) {

@@ -292,21 +292,28 @@ function DataProvider({ children }) {
   const [state, setState] = useState({ subscriptions: [], users: [], customUrls: [], bills: [], meta: null, loading: true, error: "" });
   const [busy, setBusy] = useState(null);
 
-  const reload = useCallback(async () => {
-    setState(current => ({ ...current, loading: true, error: "" }));
+  const collectionApis = useMemo(() => ({
+    subscriptions: "/api/subscriptions",
+    users: "/api/users",
+    customUrls: "/api/custom-urls",
+    bills: "/api/bills",
+    meta: "/api/app-meta"
+  }), []);
+
+  const reload = useCallback(async (collections = null) => {
+    const keys = collections || ["subscriptions", "users", "customUrls", "bills", "meta"];
+    setState(current => ({ ...current, loading: !collections, error: "" }));
     try {
-      const [subscriptions, users, customUrls, bills, meta] = await Promise.all([
-        fetchJson("/api/subscriptions"),
-        fetchJson("/api/users"),
-        fetchJson("/api/custom-urls"),
-        fetchJson("/api/bills"),
-        fetchJson("/api/app-meta")
-      ]);
-      setState({ subscriptions, users, customUrls, bills, meta, loading: false, error: "" });
+      const results = await Promise.all(keys.map(k => fetchJson(collectionApis[k])));
+      setState(current => {
+        const patch = {};
+        keys.forEach((k, i) => { patch[k] = results[i]; });
+        return { ...current, ...patch, loading: false, error: "" };
+      });
     } catch (error) {
       setState(current => ({ ...current, loading: false, error: error.message }));
     }
-  }, []);
+  }, [collectionApis]);
 
   useEffect(() => { reload(); }, [reload]);
   const runAsync = useCallback(async (task, label = "处理中...") => {
@@ -735,6 +742,7 @@ function useResponsiveList() {
 
 function UrlPoolPage() {
   const { subscriptions, users, reload, runAsync, busy } = useData();
+  const { notification } = AntApp.useApp();
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -751,8 +759,12 @@ function UrlPoolPage() {
 
   async function action(run) {
     await runAsync(async () => {
-      await run();
-      await reload();
+      try {
+        await run();
+        await reload(["subscriptions"]);
+      } catch (error) {
+        notification.error({ message: "操作失败", description: error.message, placement: "bottomRight" });
+      }
     }, "正在处理 URL 池操作...");
   }
 
@@ -800,7 +812,7 @@ function UrlPoolPage() {
   return (
     <PageCard title="URL 池" extra={<Toolbar><Input.Search allowClear placeholder="搜索 URL、邮箱或备注" style={{ width: 210 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} /><Button onClick={() => setShowExpired(v => !v)}>{showExpired ? "隐藏已到期" : "显示已到期"}</Button><Button icon={<ReloadOutlined />} onClick={() => action(() => postJson("/api/subscriptions/cache-refresh"))}>刷新缓存</Button><Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>添加 URL</Button></Toolbar>}>
       {mobile ? <PoolCards items={visible} actions={actions} /> : <Table size="middle" rowKey="id" columns={columns} dataSource={visible} pagination={tablePagination} scroll={{ x: 1520 }} />}
-      {editing && <SubscriptionForm item={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
+      {editing && <SubscriptionForm item={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["subscriptions"]); }} />}
       {detail && <PoolDetailModal item={detail.item} cache={detail.cache} boundUsers={detail.boundUsers} onClose={() => setDetail(null)} />}
     </PageCard>
   );
@@ -890,6 +902,7 @@ function SubscriptionForm({ item, onClose, onSaved }) {
 
 function CustomUrlsPage() {
   const { customUrls, users, subscriptions, reload, runAsync, busy } = useData();
+  const { notification } = AntApp.useApp();
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(null);
   const [editingRelay, setEditingRelay] = useState(null);
@@ -924,8 +937,12 @@ function CustomUrlsPage() {
 
   async function mutate(run) {
     await runAsync(async () => {
-      await run();
-      await reload();
+      try {
+        await run();
+        await reload(["customUrls"]);
+      } catch (error) {
+        notification.error({ message: "操作失败", description: error.message, placement: "bottomRight" });
+      }
     }, "正在处理自定义 URL...");
   }
 
@@ -970,8 +987,8 @@ function CustomUrlsPage() {
   return (
     <PageCard title="自定义 URL" extra={<Toolbar><Input.Search allowClear placeholder="搜索名称、池 URL 或备注" style={{ minWidth: 240 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} /><Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ enabled: true, transform: {} })}>添加自定义 URL</Button></Toolbar>}>
       {mobile ? <CustomUrlCards items={visible} actions={actions} /> : <Table size="middle" rowKey="id" columns={columns} dataSource={visible} pagination={tablePagination} scroll={{ x: 1360 }} />}
-      {editing && <CustomUrlForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
-      {editingRelay && <UserRelayForm item={editingRelay} subscriptions={subscriptions} onClose={() => setEditingRelay(null)} onSaved={async () => { setEditingRelay(null); await reload(); }} />}
+      {editing && <CustomUrlForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["customUrls"]); }} />}
+      {editingRelay && <UserRelayForm item={editingRelay} subscriptions={subscriptions} onClose={() => setEditingRelay(null)} onSaved={async () => { setEditingRelay(null); await reload(["customUrls"]); }} />}
       {debug && <DebugModal title={debug.title} content={debug.content} onClose={() => setDebug(null)} />}
     </PageCard>
   );
@@ -1092,6 +1109,7 @@ function CustomUrlForm({ item, subscriptions, onClose, onSaved }) {
 
 function UsersPage() {
   const { users, subscriptions, reload, runAsync, busy } = useData();
+  const { notification } = AntApp.useApp();
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(null);
   const [renewing, setRenewing] = useState(null);
@@ -1100,8 +1118,12 @@ function UsersPage() {
 
   async function mutate(run) {
     await runAsync(async () => {
-      await run();
-      await reload();
+      try {
+        await run();
+        await reload(["users", "bills"]);
+      } catch (error) {
+        notification.error({ message: "操作失败", description: error.message, placement: "bottomRight" });
+      }
     }, "正在处理用户操作...");
   }
 
@@ -1137,8 +1159,8 @@ function UsersPage() {
   return (
     <PageCard title="用户管理" extra={<Toolbar><Input.Search allowClear placeholder="搜索用户、邮箱或 URL" style={{ minWidth: 240 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} /><Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>添加用户</Button></Toolbar>}>
       {mobile ? <UserCards users={visible} actions={actions} /> : <Table size="middle" rowKey="id" columns={columns} dataSource={visible} pagination={tablePagination} scroll={{ x: 1380 }} />}
-      {editing && <UserForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
-      {renewing && <RenewForm user={renewing} subscriptions={subscriptions} onClose={() => setRenewing(null)} onSaved={async () => { setRenewing(null); await reload(); }} />}
+      {editing && <UserForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["users", "bills"]); }} />}
+      {renewing && <RenewForm user={renewing} subscriptions={subscriptions} onClose={() => setRenewing(null)} onSaved={async () => { setRenewing(null); await reload(["users", "bills"]); }} />}
     </PageCard>
   );
 }
@@ -1346,6 +1368,7 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
 
 function BillsPage() {
   const { bills, reload, runAsync, busy } = useData();
+  const { notification } = AntApp.useApp();
   const [keyword, setKeyword] = useState("");
   const [month, setMonth] = useState(null);
   const mobile = useResponsiveList();
@@ -1358,8 +1381,12 @@ function BillsPage() {
 
   async function mutate(run) {
     await runAsync(async () => {
-      await run();
-      await reload();
+      try {
+        await run();
+        await reload(["bills", "users"]);
+      } catch (error) {
+        notification.error({ message: "操作失败", description: error.message, placement: "bottomRight" });
+      }
     }, "正在处理账单操作...");
   }
 
