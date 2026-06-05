@@ -1,7 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 
-const COLLECTIONS = ["subscriptions", "users", "bills", "customUrls"];
+const COLLECTIONS = ["subscriptions", "users", "bills"];
 
 class JsonDataStore {
   constructor({ dataDir, files }) {
@@ -88,11 +88,11 @@ class PostgresDataStore {
   }
 
   async loadAll() {
+    const results = await Promise.all(COLLECTIONS.map(c => this.loadCollection(c)));
     const result = { missing: {} };
-    for (const collection of COLLECTIONS) {
-      const { rows, missing } = await this.loadCollection(collection);
-      result[collection] = rows;
-      result.missing[collection] = missing;
+    for (const [i, collection] of COLLECTIONS.entries()) {
+      result[collection] = results[i].rows;
+      result.missing[collection] = results[i].missing;
     }
     return result;
   }

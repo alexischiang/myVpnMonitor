@@ -57,6 +57,26 @@ http://localhost:3000
 http://localhost:5173
 ```
 
+## subconverter
+
+`npm run dev:all` 会自动下载并启动 subconverter（仅 macOS / Linux）。Windows 需手动安装。
+
+**检查是否正常运行：**
+
+```bash
+curl http://127.0.0.1:25500/version
+```
+
+正常返回类似 `subconverter v0.9.1-mihomo backend`。
+
+**手动停止：**
+
+```bash
+pkill -f subconverter
+```
+
+subconverter 是独立后台进程，`ctrl+c` 停止 `dev:all` 时不会自动停止，下次 `npm run dev:all` 会检测到已在运行并跳过启动。
+
 ## 常用命令
 
 ```bash

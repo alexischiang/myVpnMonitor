@@ -12,7 +12,20 @@ html, body {
   overscroll-behavior-y: none;
 }
 
-/* Apple 风格：去掉默认 outline，用更柔和的 focus ring */
+/* 主题切换过渡 */
+*, *::before, *::after {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 200ms;
+  transition-timing-function: ease;
+}
+
+/* 排除动画不应被覆盖的元素 */
+.ant-btn, .ant-input, .ant-select-selector, .ant-card, .ant-menu-item,
+.ant-spin, .ant-progress, [class*="ant-motion"] {
+  transition-property: all;
+}
+
+/* Apple 风格 focus ring */
 *:focus-visible {
   outline: 2px solid rgba(0, 122, 255, 0.5);
   outline-offset: 2px;
@@ -24,22 +37,33 @@ html, body {
   overflow: hidden;
 }
 
-/* Sidebar 分隔线去掉默认 box-shadow */
+/* Sidebar 去掉默认 box-shadow */
 .ant-layout-sider {
   box-shadow: none !important;
 }
 
-/* Modal 毛玻璃背景遮罩 */
+/* Modal 毛玻璃遮罩 */
 .ant-modal-mask {
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  background: rgba(0, 0, 0, 0.3) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.25) !important;
+  transition: opacity 180ms ease;
 }
 
 /* Modal 圆角和阴影 */
 .ant-modal-content {
   border-radius: 20px !important;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Drawer macOS Side Panel 风格 */
+.ant-drawer-content {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.ant-drawer-content-wrapper {
+  box-shadow: -2px 0 40px rgba(0, 0, 0, 0.12) !important;
 }
 
 /* 下拉面板圆角 */
@@ -50,7 +74,30 @@ html, body {
   overflow: hidden;
 }
 
-/* 滚动条苹果风格 */
+/* Tabs — Apple Segmented Control 风格 */
+.ant-tabs-nav::before {
+  border-bottom: none !important;
+}
+
+.ant-tabs-tab {
+  transition: color 160ms ease !important;
+}
+
+.ant-tabs-ink-bar {
+  border-radius: 2px;
+  transition: all 200ms ease !important;
+}
+
+/* 通用动画规范 160–220ms ease */
+.ant-btn,
+.ant-input,
+.ant-select-selector,
+.ant-card,
+.ant-menu-item {
+  transition: all 180ms ease !important;
+}
+
+/* 滚动条 Apple 风格 */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(120, 120, 128, 0.3); border-radius: 3px; }

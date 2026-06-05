@@ -30,7 +30,7 @@ const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "subscri
 const DATA_DIR = path.dirname(DATA_FILE);
 const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
 const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
-const CUSTOM_URLS_FILE = process.env.CUSTOM_URLS_FILE || path.join(DATA_DIR, "custom-urls.json");
+
 const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
 const ALERT_STATE_FILE = process.env.ALERT_STATE_FILE || path.join(DATA_DIR, "alert-state.json");
 const alertStore = notifier.createAlertStore(ALERT_STATE_FILE);
@@ -45,6 +45,7 @@ const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 
 const RELAY_AFTER_EXPIRY_DAYS = Number(process.env.RELAY_AFTER_EXPIRY_DAYS || 10);
 const RELAY_MAX_CUSTOMERS = Number(process.env.RELAY_MAX_CUSTOMERS || 8);
 const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
+const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
 const AUTH_COOKIE_NAME = "xela_session";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
@@ -54,6 +55,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto
   .digest("hex");
 const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 const REMEMBER_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || SESSION_SECRET.slice(0, 32);
 let cachedAppMeta = null;
 const REQUEST_PROFILES = [
   {
@@ -121,15 +123,13 @@ const REQUEST_PROFILES = [
 let subscriptions = [];
 let users = [];
 let bills = [];
-let customUrls = [];
 const dataStore = createDataStore({
   dataDir: DATA_DIR,
   databaseUrl: DATABASE_URL,
   files: {
     subscriptions: DATA_FILE,
     users: USERS_FILE,
-    bills: BILLS_FILE,
-    customUrls: CUSTOM_URLS_FILE
+    bills: BILLS_FILE
   }
 });
 
@@ -146,7 +146,6 @@ async function ensureDataFile() {
   subscriptions = state.subscriptions;
   users = state.users;
   bills = state.bills;
-  customUrls = state.customUrls;
 
   if (state.missing.subscriptions) await saveData();
   if (state.missing.users) await saveUsers();
@@ -154,16 +153,19 @@ async function ensureDataFile() {
     bills = initialBillsFromUsers();
     await saveBills();
   }
-  if (state.missing.customUrls) await saveCustomUrls();
   if (ensureUserRelayTokens()) await saveUsers();
 }
 
-async function loadLatestData() {
+let lastLoadedAt = 0;
+const DATA_CACHE_TTL_MS = Number(process.env.DATA_CACHE_TTL_MS || 30000);
+
+async function loadLatestData({ force = false } = {}) {
+  if (!force && Date.now() - lastLoadedAt < DATA_CACHE_TTL_MS) return;
   const state = await dataStore.loadAll();
   subscriptions = state.subscriptions;
   users = state.users;
   bills = state.bills;
-  customUrls = state.customUrls;
+  lastLoadedAt = Date.now();
 }
 
 async function saveData() {
@@ -178,9 +180,6 @@ async function saveBills() {
   await dataStore.saveCollection("bills", bills);
 }
 
-async function saveCustomUrls() {
-  await dataStore.saveCollection("customUrls", customUrls);
-}
 
 function poolCacheUsesFiles() {
   return dataStore.kind === "json";
@@ -504,7 +503,6 @@ function normalizeUser(input, existing = {}, options = {}) {
     duration,
     actualPaid,
     subscriptionId: subscription.id,
-    useCustomRelay: input.useCustomRelay === undefined ? Boolean(existing.useCustomRelay) : Boolean(input.useCustomRelay),
     subscriptionToken: existing.subscriptionToken || relayToken(),
     expiresAt,
     updatedAt: new Date().toISOString()
@@ -519,110 +517,6 @@ function normalizePaymentAmount(value) {
   return Math.round(amount * 100) / 100;
 }
 
-function normalizeCustomUrl(input, existing = {}) {
-  const name = String(input.name || existing.name || "").trim();
-  const sourceSubscriptionId = String(input.sourceSubscriptionId || existing.sourceSubscriptionId || "").trim();
-  const expiresAtValue = String(input.expiresAt || existing.expiresAt || "").trim();
-  const note = String(input.note || existing.note || "").trim();
-  const enabled = input.enabled === undefined ? existing.enabled !== false : Boolean(input.enabled);
-  const token = String(existing.token || input.token || relayToken()).trim();
-  const transform = {
-    mode: String(input.mode ?? existing.transform?.mode ?? "").trim(),
-    replaceRules: Boolean(input.replaceRules ?? existing.transform?.replaceRules ?? false),
-    prependRules: String(input.prependRules ?? existing.transform?.prependRules ?? "").trim(),
-    appendRules: String(input.appendRules ?? existing.transform?.appendRules ?? "").trim(),
-    customYaml: String(input.customYaml ?? existing.transform?.customYaml ?? "").trim()
-  };
-  const source = subscriptions.find(item => item.id === sourceSubscriptionId);
-  const expiresAt = expiresAtValue ? new Date(expiresAtValue) : null;
-
-  if (!name) throw new Error("请填写自定义 URL 名称。");
-  if (!source) throw new Error("请选择一个池 URL。");
-  if (expiresAtValue && Number.isNaN(expiresAt.getTime())) throw new Error("自定义 URL 到期时间格式不正确。");
-
-  return {
-    ...existing,
-    name,
-    token,
-    sourceSubscriptionId,
-    expiresAt: expiresAt ? expiresAt.toISOString() : null,
-    enabled,
-    note,
-    transform,
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function publicCustomUrl(item) {
-  const source = subscriptions.find(subscription => subscription.id === item.sourceSubscriptionId);
-  return {
-    ...item,
-    publicPath: `/c/${item.token}`,
-    source: source ? {
-      id: source.id,
-      url: source.url,
-      email: source.email || "",
-      name: source.name || "",
-      cache: source.cachedConfig ? {
-        fetchedAt: source.cachedConfig.fetchedAt || null,
-        status: source.cachedConfig.status || null,
-        bodyLength: source.cachedConfig.bodyLength || (source.cachedConfig.body ? source.cachedConfig.body.length : 0),
-        error: source.cachedConfig.error || null
-      } : null
-    } : null
-  };
-}
-
-function yamlListBlock(values) {
-  const lines = String(values || "")
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => line.startsWith("- ") ? line : `- ${line}`);
-  return lines.join("\n");
-}
-
-function replaceYamlRules(source, rulesBlock) {
-  const body = String(source || "");
-  const rules = yamlListBlock(rulesBlock);
-  if (!rules) return body;
-  const match = body.match(/^rules:\s*\r?\n(?:(?:\s+- .*(?:\r?\n|$))*)/m);
-  if (match) return body.slice(0, match.index) + `rules:\n${rules}\n` + body.slice(match.index + match[0].length);
-  return `${body.trimEnd()}\n\nrules:\n${rules}\n`;
-}
-
-function appendYamlRules(source, prependRules, appendRules) {
-  const body = String(source || "");
-  const before = yamlListBlock(prependRules);
-  const after = yamlListBlock(appendRules);
-  if (!before && !after) return body;
-
-  const match = body.match(/^rules:\s*\r?\n((?:(?:\s+- .*(?:\r?\n|$))*))/m);
-  const existing = match ? match[1].trimEnd() : "";
-  const nextRules = [before, existing, after].filter(Boolean).join("\n");
-  if (match) return body.slice(0, match.index) + `rules:\n${nextRules}\n` + body.slice(match.index + match[0].length);
-  return `${body.trimEnd()}\n\nrules:\n${nextRules}\n`;
-}
-
-function setYamlMode(source, mode) {
-  const body = String(source || "");
-  const value = String(mode || "").trim();
-  if (!value) return body;
-  if (/^mode:\s*.*$/m.test(body)) return body.replace(/^mode:\s*.*$/m, `mode: ${value}`);
-  return `mode: ${value}\n${body}`;
-}
-
-function convertClashConfig(source, transform = {}) {
-  let output = String(source || "");
-  output = setYamlMode(output, transform.mode);
-  if (transform.replaceRules) {
-    output = replaceYamlRules(output, [transform.prependRules, transform.appendRules].filter(Boolean).join("\n"));
-  } else {
-    output = appendYamlRules(output, transform.prependRules, transform.appendRules);
-  }
-  if (transform.customYaml) output = `${output.trimEnd()}\n\n${transform.customYaml.trim()}\n`;
-  return output;
-}
 
 function billUserLabel(user) {
   return user.userId || user.wechatName || user.imessageId || "未知用户";
@@ -717,7 +611,6 @@ function renewUser(user, input) {
     duration,
     actualPaid: Math.round((previousPaid + actualPaid) * 100) / 100,
     subscriptionId: subscription.id,
-    useCustomRelay: input.useCustomRelay === undefined ? Boolean(user.useCustomRelay) : Boolean(input.useCustomRelay),
     subscriptionToken: user.subscriptionToken || relayToken(),
     expiresAt,
     updatedAt: new Date().toISOString()
@@ -903,10 +796,9 @@ function publicItem(item) {
 
 function publicUser(user) {
   const subscription = subscriptions.find(item => item.id === user.subscriptionId);
-  const relayPath = user.useCustomRelay && user.subscriptionToken ? `/sub/${user.subscriptionToken}` : "";
   return {
     ...user,
-    relayPath,
+    relayPath: user.subscriptionToken ? `/sub/${user.subscriptionToken}` : "",
     subscription: subscription ? {
       id: subscription.id,
       url: subscription.url,
@@ -1322,6 +1214,42 @@ async function handleRelaySubscription(req, res, token) {
     return;
   }
 
+  // subconverter 路径：用户配置了 target 且服务端有 SUB_CONVERTER_URL
+  const sc = user.subconverterConfig;
+  if (sc?.target && SUB_CONVERTER_URL) {
+    const cacheUrl = `http://127.0.0.1:${PORT}/api/internal/pool-cache/${subscription.id}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
+    const params = new URLSearchParams({ target: sc.target, url: cacheUrl });
+    if (sc.config) params.set("config", sc.config);
+    if (sc.include) params.set("include", sc.include);
+    if (sc.exclude) params.set("exclude", sc.exclude);
+    if (sc.emoji !== undefined) params.set("emoji", String(sc.emoji));
+    if (sc.udp !== undefined) params.set("udp", String(sc.udp));
+    if (sc.scv !== undefined) params.set("scv", String(sc.scv));
+    if (sc.sort !== undefined) params.set("sort", String(sc.sort));
+    if (sc.rename) params.set("rename", sc.rename);
+    const subUrl = `${SUB_CONVERTER_URL}/sub?${params.toString()}`;
+    console.log("[subconverter] request:", subUrl);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25000);
+    try {
+      const response = await fetch(subUrl, { signal: controller.signal });
+      const body = Buffer.from(await response.arrayBuffer());
+      res.writeHead(response.status, {
+        "content-type": response.headers.get("content-type") || "text/plain; charset=utf-8",
+        "cache-control": "no-store, max-age=0",
+        "pragma": "no-cache",
+        "expires": "0",
+        ...(subscription.cachedConfig?.subscriptionUserinfo ? { "subscription-userinfo": subscription.cachedConfig.subscriptionUserinfo } : {})
+      });
+      res.end(body);
+    } catch (error) {
+      sendSubscriptionMessage(res, 502, error.name === "AbortError" ? "订阅转换超时，请稍后重试。" : "订阅转换暂时不可用，请稍后重试。");
+    } finally {
+      clearTimeout(timer);
+    }
+    return;
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
   try {
@@ -1342,45 +1270,6 @@ async function handleRelaySubscription(req, res, token) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-async function handleCustomUrlSubscription(req, res, token) {
-  await loadLatestData();
-
-  const item = customUrls.find(entry => entry.token === token);
-  if (!item || item.enabled === false) {
-    sendSubscriptionMessage(res, 404, "自定义订阅链接不存在或已停用，请联系客服。");
-    return;
-  }
-
-  if (item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now()) {
-    sendSubscriptionMessage(res, 200, `订阅已到期，请续费后继续使用。\n到期时间：${item.expiresAt}`);
-    return;
-  }
-
-  const source = subscriptions.find(subscription => subscription.id === item.sourceSubscriptionId);
-  if (!source?.url) {
-    sendSubscriptionMessage(res, 503, "池 URL 不存在，订阅暂时不可用。");
-    return;
-  }
-
-  const cache = source.cachedConfig || null;
-  const cachedBody = await readPoolCachedBody(source);
-  if (!cachedBody) {
-    sendSubscriptionMessage(res, 503, cache?.error || "池 URL 缓存为空，请先刷新缓存。");
-    return;
-  }
-
-  const body = convertClashConfig(cachedBody, item.transform);
-
-  res.writeHead(200, {
-    "content-type": cache.contentType || "text/plain; charset=utf-8",
-    "cache-control": "no-store, max-age=0",
-    "pragma": "no-cache",
-    "expires": "0",
-    ...(cache.subscriptionUserinfo ? { "subscription-userinfo": cache.subscriptionUserinfo } : {})
-  });
-  res.end(body);
 }
 
 async function refreshAll() {
@@ -1407,11 +1296,6 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const customPublicApiMatch = pathname.match(/^\/api\/(?:c|custom)\/([^/]+)$/);
-  if (customPublicApiMatch && req.method === "GET") {
-    await handleCustomUrlSubscription(req, res, customPublicApiMatch[1]);
-    return;
-  }
 
   if (pathname === "/api/auth/login" && req.method === "POST") {
     try {
@@ -1431,6 +1315,28 @@ async function handleApi(req, res, pathname) {
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
+    return;
+  }
+
+  // 内部端点：供 subconverter 拉取池 URL 的缓存 YAML（不需要 session，用 INTERNAL_TOKEN 鉴权）
+  const internalCacheMatch = pathname.match(/^\/api\/internal\/pool-cache\/([^/]+)$/);
+  if (internalCacheMatch && req.method === "GET") {
+    const url = new URL(`http://x${pathname}${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`);
+    if (url.searchParams.get("token") !== INTERNAL_TOKEN) {
+      res.writeHead(403, { "content-type": "text/plain" });
+      res.end("Forbidden");
+      return;
+    }
+    await loadLatestData();
+    const sub = subscriptions.find(s => s.id === internalCacheMatch[1]);
+    if (!sub) { res.writeHead(404); res.end("Not found"); return; }
+    const body = await readPoolCachedBody(sub);
+    if (!body) { res.writeHead(503); res.end("Cache empty"); return; }
+    res.writeHead(200, {
+      "content-type": sub.cachedConfig?.contentType || "text/plain; charset=utf-8",
+      ...(sub.cachedConfig?.subscriptionUserinfo ? { "subscription-userinfo": sub.cachedConfig.subscriptionUserinfo } : {})
+    });
+    res.end(body);
     return;
   }
 
@@ -1569,30 +1475,6 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (pathname === "/api/custom-urls" && req.method === "GET") {
-    sendJson(res, 200, customUrls.map(publicCustomUrl));
-    return;
-  }
-
-  if (pathname === "/api/custom-urls" && req.method === "POST") {
-    try {
-      const payload = await readJson(req);
-      const item = {
-        id: crypto.randomUUID(),
-        createdAt: new Date().toISOString(),
-        token: relayToken(),
-        lastGeneratedAt: null,
-        lastError: null
-      };
-      const normalized = normalizeCustomUrl(payload, item);
-      customUrls.unshift(normalized);
-      await saveCustomUrls();
-      sendJson(res, 201, publicCustomUrl(normalized));
-    } catch (error) {
-      sendJson(res, 400, { error: error.message });
-    }
-    return;
-  }
 
   if (pathname === "/api/users" && req.method === "GET") {
     sendJson(res, 200, users.map(publicUser));
@@ -1709,81 +1591,8 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const customMatch = pathname.match(/^\/api\/custom-urls\/([^/]+)(?:\/(preview|refresh-cache))?$/);
-  if (customMatch) {
-    const id = customMatch[1];
-    const action = customMatch[2];
-    const item = customUrls.find(entry => entry.id === id);
-    if (!item) {
-      sendJson(res, 404, { error: "没有找到这个自定义 URL。" });
-      return;
-    }
-
-    if (action === "preview" && req.method === "GET") {
-      const source = subscriptions.find(subscription => subscription.id === item.sourceSubscriptionId);
-      if (!source) {
-        sendJson(res, 404, { error: "池 URL 不存在。" });
-        return;
-      }
-      const cache = await refreshPoolConfigCache(source, { force: false });
-      await saveData();
-      const cachedBody = await readPoolCachedBody(source);
-      if (!cachedBody) {
-        sendJson(res, 503, { error: cache?.error || "池 URL 缓存为空。" });
-        return;
-      }
-      const converted = convertClashConfig(cachedBody, item.transform);
-      sendJson(res, 200, {
-        body: converted.slice(0, 12000),
-        bodyLength: converted.length,
-        cacheFetchedAt: cache.fetchedAt || null,
-        truncated: converted.length > 12000
-      });
-      return;
-    }
-
-    if (action === "refresh-cache" && req.method === "POST") {
-      const source = subscriptions.find(subscription => subscription.id === item.sourceSubscriptionId);
-      if (!source) {
-        sendJson(res, 404, { error: "池 URL 不存在。" });
-        return;
-      }
-      const cache = await refreshPoolConfigCache(source, { force: true });
-      await saveData();
-      sendJson(res, 200, { ok: true, cache });
-      return;
-    }
-
-    if (action) {
-      sendJson(res, 405, { error: "Method not allowed." });
-      return;
-    }
-
-    if (req.method === "PUT") {
-      try {
-        const payload = await readJson(req);
-        Object.assign(item, normalizeCustomUrl(payload, item));
-        await saveCustomUrls();
-        sendJson(res, 200, publicCustomUrl(item));
-      } catch (error) {
-        sendJson(res, 400, { error: error.message });
-      }
-      return;
-    }
-
-    if (req.method === "DELETE") {
-      customUrls = customUrls.filter(entry => entry.id !== id);
-      await saveCustomUrls();
-      sendJson(res, 200, { ok: true });
-      return;
-    }
-
-    sendJson(res, 405, { error: "Method not allowed." });
-    return;
-  }
-
   const match = pathname.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|debug|cache|refresh-cache))?$/);
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|relay-preview|relay-refresh-cache))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -1816,45 +1625,6 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    if (action === "relay-preview" && req.method === "GET") {
-      const subscription = subscriptions.find(s => s.id === item.subscriptionId);
-      if (!subscription?.url) {
-        sendJson(res, 404, { error: "池 URL 不存在。" });
-        return;
-      }
-      const clashMeta = REQUEST_PROFILES.find(p => p.name === "clash-meta");
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 20000);
-      try {
-        const response = await fetch(subscription.url, {
-          method: "GET",
-          redirect: "follow",
-          signal: controller.signal,
-          headers: { ...clashMeta.headers, "Cache-Control": "no-cache", "Pragma": "no-cache" }
-        });
-        const text = await response.text();
-        const body = text.slice(0, 12000);
-        sendJson(res, 200, { body, bodyLength: text.length, truncated: text.length > 12000 });
-      } catch (error) {
-        sendJson(res, 502, { error: error.name === "AbortError" ? "请求超时。" : error.message });
-      } finally {
-        clearTimeout(timer);
-      }
-      return;
-    }
-
-    if (action === "relay-refresh-cache" && req.method === "POST") {
-      const subscription = subscriptions.find(s => s.id === item.subscriptionId);
-      if (!subscription) {
-        sendJson(res, 404, { error: "池 URL 不存在。" });
-        return;
-      }
-      const cache = await refreshPoolConfigCache(subscription, { force: true });
-      await saveData();
-      sendJson(res, 200, { ok: true, cache });
-      return;
-    }
-
     if (action) {
       sendJson(res, 405, { error: "Method not allowed." });
       return;
@@ -1865,7 +1635,7 @@ async function handleApi(req, res, pathname) {
         const payload = await readJson(req);
         const previousPaid = Number(item.actualPaid) || 0;
         Object.assign(item, normalizeUser(payload, item));
-        if (payload.customRelayTransform !== undefined) item.customRelayTransform = payload.customRelayTransform;
+        if (payload.subconverterConfig !== undefined) item.subconverterConfig = payload.subconverterConfig || null;
         const nextPaid = Number(item.actualPaid) || 0;
         const diff = Math.round((nextPaid - previousPaid) * 100) / 100;
         if (diff !== 0) {
@@ -2034,11 +1804,8 @@ async function requestHandler(req, res) {
       initialized = true;
     }
 
-    const customPublicMatch = url.pathname.match(/^\/(?:c|custom)\/([^/]+)$/);
     const relayMatch = url.pathname.match(/^\/sub\/([^/]+)$/);
-    if (customPublicMatch && req.method === "GET") {
-      await handleCustomUrlSubscription(req, res, customPublicMatch[1]);
-    } else if (relayMatch && req.method === "GET") {
+    if (relayMatch && req.method === "GET") {
       await handleRelaySubscription(req, res, relayMatch[1]);
     } else if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url.pathname);
@@ -2080,7 +1847,6 @@ module.exports = Object.assign(requestHandler, {
   parseBodyHints,
   parseAccountUnavailable,
   calculateExpiry,
-  convertClashConfig,
   extractClashConfigBody,
   statusFor,
   toBytes

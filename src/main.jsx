@@ -11,6 +11,7 @@ import {
   ConfigProvider,
   DatePicker,
   Descriptions,
+  Divider,
   Drawer,
   Empty,
   Flex,
@@ -42,7 +43,6 @@ import {
   DollarOutlined,
   EditOutlined,
   EyeOutlined,
-  LinkOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MoonOutlined,
@@ -78,7 +78,6 @@ const ThemeModeContext = createContext({ darkMode: false, toggleTheme: () => {} 
 
 const menuItems = [
   { key: "/urls", icon: <ApiOutlined />, label: "URL 池" },
-  { key: "/custom-urls", icon: <LinkOutlined />, label: "自定义 URL" },
   { key: "/users", icon: <TeamOutlined />, label: "用户管理" },
   { key: "/bills", icon: <DollarOutlined />, label: "账单管理" }
 ];
@@ -163,6 +162,16 @@ function subscriptionLabel(s) {
   return `${tail} · ${expire} · ${email}`;
 }
 const inModalPickerProps = {};
+
+const GROUP = { background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" };
+const GROUP_ITEM = { padding: "10px 16px 4px", marginBottom: 0 };
+const GROUP_SEP = { height: 1, background: "var(--ant-color-border-secondary)", margin: "0 16px" };
+const TEXTAREA_GROUP = { background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "12px 16px" };
+
+const modalFormStyles = {
+  header: { paddingBottom: 16, borderBottom: "1px solid var(--ant-color-border-secondary)", marginBottom: 0 },
+  body: { paddingTop: 20 }
+};
 
 function createMuse(palette) {
   return {
@@ -289,19 +298,18 @@ function BusyModal({ busy }) {
 }
 
 function DataProvider({ children }) {
-  const [state, setState] = useState({ subscriptions: [], users: [], customUrls: [], bills: [], meta: null, loading: true, error: "" });
+  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], meta: null, loading: true, error: "" });
   const [busy, setBusy] = useState(null);
 
   const collectionApis = useMemo(() => ({
     subscriptions: "/api/subscriptions",
     users: "/api/users",
-    customUrls: "/api/custom-urls",
     bills: "/api/bills",
     meta: "/api/app-meta"
   }), []);
 
   const reload = useCallback(async (collections = null) => {
-    const keys = collections || ["subscriptions", "users", "customUrls", "bills", "meta"];
+    const keys = collections || ["subscriptions", "users", "bills", "meta"];
     setState(current => ({ ...current, loading: !collections, error: "" }));
     try {
       const results = await Promise.all(keys.map(k => fetchJson(collectionApis[k])));
@@ -530,7 +538,7 @@ function LoginPage() {
   }
 
   return (
-    <AntLayout style={{ ...muse.app, display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)" }}>
+    <AntLayout style={{ ...muse.app, display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
       <div style={{ width: "100%", maxWidth: 400, padding: "0 24px" }}>
         <div style={{ border: "1px solid var(--ant-color-border)", borderRadius: 16, padding: "24px", background: "var(--ant-color-bg-container)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", marginBottom: 20, textAlign: "center" }}>
           <Title level={3} style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: -0.5 }}>XELA monitor</Title>
@@ -569,7 +577,7 @@ function RequireAuth({ children }) {
 function AppLayout() {
   const muse = useMuse();
   const { darkMode, toggleTheme } = useThemeMode();
-  const { meta, loading, error, subscriptions, users, customUrls, bills } = useData();
+  const { meta, loading, error, subscriptions, users, bills } = useData();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -587,7 +595,7 @@ function AppLayout() {
   }
 
   const nav = <SideNavigation selectedKey={location.pathname} onSelect={handleMenu} />;
-  const initialLoading = loading && !subscriptions.length && !users.length && !customUrls.length && !bills.length;
+  const initialLoading = loading && !subscriptions.length && !users.length && !bills.length;
 
   return (
     <AntLayout style={muse.app}>
@@ -626,7 +634,6 @@ function AppLayout() {
                 <Summary />
                 <Routes>
                   <Route path="/urls" element={<UrlPoolPage />} />
-                  <Route path="/custom-urls" element={<CustomUrlsPage />} />
                   <Route path="/users" element={<UsersPage />} />
                   <Route path="/bills" element={<BillsPage />} />
                   <Route path="*" element={<Navigate to="/urls" replace />} />
@@ -705,14 +712,16 @@ function Summary() {
   ];
 
   function StatGrid({ items }) {
+    const screens = Grid.useBreakpoint();
+    const cols = screens.xl ? 4 : screens.md ? 4 : screens.sm ? 2 : 2;
     return (
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 10 }}>
         {items.map(item => (
           <Card bordered={false} style={{ ...muse.softCard, minWidth: 0 }} styles={{ body: { padding: "14px 16px" } }} key={item.title}>
             <Statistic
               title={<Text type="secondary" style={{ display: "block", fontSize: 12, fontWeight: 600 }}>{item.title}</Text>}
               value={item.value}
-              valueStyle={{ fontSize: 22, fontWeight: 700, lineHeight: 1.2, color: palette.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+              valueStyle={{ fontSize: 20, fontWeight: 700, lineHeight: 1.2, color: palette.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
               style={{ minWidth: 0 }}
             />
           </Card>
@@ -889,219 +898,19 @@ function SubscriptionForm({ item, onClose, onSaved }) {
     }, item.id ? "正在更新池 URL..." : "正在添加池 URL...");
   }
   return (
-    <Modal title={item.id ? "编辑池 URL" : "添加池 URL"} open onCancel={onClose} footer={null} destroyOnHidden>
+    <Modal title={item.id ? "编辑池 URL" : "添加池 URL"} open onCancel={onClose} footer={null} destroyOnHidden styles={modalFormStyles}>
       <Form form={form} layout="vertical" initialValues={{ url: item.url || "", email: item.email || "", note: item.note || "" }} onFinish={submit}>
-        <Form.Item name="url" label="订阅 URL" rules={[{ required: true, type: "url", message: "请输入正确的 URL" }]}><Input /></Form.Item>
-        <Form.Item name="email" label="绑定邮箱" rules={[{ required: true, type: "email", message: "请输入邮箱" }]}><Input /></Form.Item>
-        <Form.Item name="note" label="备注"><TextArea rows={4} /></Form.Item>
-        <Flex justify="end"><Button type="primary" htmlType="submit">保存</Button></Flex>
-      </Form>
-    </Modal>
-  );
-}
-
-function CustomUrlsPage() {
-  const { customUrls, users, subscriptions, reload, runAsync, busy } = useData();
-  const { notification } = AntApp.useApp();
-  const [keyword, setKeyword] = useState("");
-  const [editing, setEditing] = useState(null);
-  const [editingRelay, setEditingRelay] = useState(null);
-  const [debug, setDebug] = useState(null);
-  const mobile = useResponsiveList();
-
-  const userRelayItems = users
-    .filter(u => u.useCustomRelay && u.subscriptionToken)
-    .map(u => ({
-      id: `user-relay-${u.id}`,
-      _userId: u.id,
-      _userRelay: true,
-      name: u.userId || u.wechatName || u.id,
-      publicPath: `/sub/${u.subscriptionToken}`,
-      expiresAt: u.expiresAt,
-      enabled: true,
-      source: u.subscription ? { url: u.subscription.url } : null,
-      subscriptionId: u.subscriptionId,
-      transform: u.customRelayTransform || {}
-    }));
-
-  const allItems = [...customUrls, ...userRelayItems];
-  const visible = allItems.filter(item => `${item.name || ""} ${item.note || ""} ${item.source?.url || ""}`.toLowerCase().includes(keyword.toLowerCase()));
-
-  async function preview(item) {
-    await runAsync(async () => {
-      const url = item._userRelay ? `/api/users/${item._userId}/relay-preview` : `/api/custom-urls/${item.id}/preview`;
-      const payload = await fetchJson(url);
-      setDebug({ title: `${item.name} 预览`, content: payload.body });
-    }, "正在生成预览...");
-  }
-
-  async function mutate(run) {
-    await runAsync(async () => {
-      try {
-        await run();
-        await reload(["customUrls"]);
-      } catch (error) {
-        notification.error({ message: "操作失败", description: error.message, placement: "bottomRight" });
-      }
-    }, "正在处理自定义 URL...");
-  }
-
-  const actions = (item, compact = false) => {
-    const Wrap = compact ? InlineActions : CardActions;
-    const buttonProps = compact ? { size: "small", style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy } : { style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy };
-    if (item._userRelay) {
-      return (
-        <Wrap>
-          <Button {...buttonProps} icon={<EyeOutlined />} onClick={() => preview(item)}>预览</Button>
-          <Button {...buttonProps} icon={<RetweetOutlined />} onClick={() => mutate(() => postJson(`/api/users/${item._userId}/relay-refresh-cache`))}>刷新缓存</Button>
-          <Button {...buttonProps} icon={<EditOutlined />} onClick={() => setEditingRelay(item)}>编辑</Button>
-          <Button {...buttonProps} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除用户", content: "确定删除这个用户吗？", onOk: () => mutate(() => fetchJson(`/api/users/${item._userId}`, { method: "DELETE" })) })}>删除</Button>
-        </Wrap>
-      );
-    }
-    return (
-      <Wrap>
-        <Button {...buttonProps} icon={<EyeOutlined />} onClick={() => preview(item)}>预览</Button>
-        <Button {...buttonProps} icon={<RetweetOutlined />} onClick={() => mutate(() => postJson(`/api/custom-urls/${item.id}/refresh-cache`))}>刷新缓存</Button>
-        <Button {...buttonProps} icon={<EditOutlined />} onClick={() => setEditing(item)}>编辑</Button>
-        <Button {...buttonProps} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除自定义 URL", content: "确定删除这个自定义 URL 吗？", onOk: () => mutate(() => fetchJson(`/api/custom-urls/${item.id}`, { method: "DELETE" })) })}>删除</Button>
-      </Wrap>
-    );
-  };
-
-  const columns = [
-    { title: "#", render: (_, __, index) => index + 1, width: 64 },
-    { title: "名称", render: (_, item) => <Flex align="center" gap={6}><span>{item.name}</span>{item._userRelay && <Tag color="blue">用户中转</Tag>}</Flex> },
-    { title: "自定义 URL", render: (_, item) => <UrlText value={absoluteUrl(item.publicPath)} />, width: 320 },
-    { title: "池 URL", render: (_, item) => <UrlText value={item.source?.url || "池 URL 不存在"} />, width: 320 },
-    { title: "到期", render: (_, item) => item.expiresAt ? formatDateTime(item.expiresAt) : "长期有效" },
-    { title: "缓存", render: (_, item) => item._userRelay ? "—" : (item.source?.cache?.fetchedAt ? `${formatDateTime(item.source.cache.fetchedAt)} · ${formatBytes(item.source.cache.bodyLength || 0)}` : "未缓存"), width: 230 },
-    { title: "状态", render: (_, item) => item.enabled === false ? <Tag>已停用</Tag> : <Tag color="success">正常</Tag> },
-    { title: "操作", render: (_, item) => actions(item, true), width: 330 }
-  ].map(column => ({
-    ...column,
-    onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }),
-    onCell: () => ({ style: { whiteSpace: "nowrap" } })
-  }));
-
-  return (
-    <PageCard title="自定义 URL" extra={<Toolbar><Input.Search allowClear placeholder="搜索名称、池 URL 或备注" style={{ minWidth: 240 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} /><Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ enabled: true, transform: {} })}>添加自定义 URL</Button></Toolbar>}>
-      {mobile ? <CustomUrlCards items={visible} actions={actions} /> : <Table size="middle" rowKey="id" columns={columns} dataSource={visible} pagination={tablePagination} scroll={{ x: 1360 }} />}
-      {editing && <CustomUrlForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["customUrls"]); }} />}
-      {editingRelay && <UserRelayForm item={editingRelay} subscriptions={subscriptions} onClose={() => setEditingRelay(null)} onSaved={async () => { setEditingRelay(null); await reload(["customUrls"]); }} />}
-      {debug && <DebugModal title={debug.title} content={debug.content} onClose={() => setDebug(null)} />}
-    </PageCard>
-  );
-}
-
-function CustomUrlCards({ items, actions }) {
-  const muse = useMuse();
-  const { palette } = useThemeMode();
-  if (!items.length) return <Empty description="还没有自定义 URL。" />;
-  return (
-    <Flex vertical gap={12}>
-      {items.map(item => (
-        <Card hoverable bordered={false} style={{ ...muse.softCard, borderRadius: 14 }} styles={{ body: { padding: 16 } }} key={item.id}>
-          <Flex justify="space-between" gap={12} align="center" style={{ marginBottom: 10 }}>
-            <Text strong ellipsis={{ tooltip: item.name }} style={{ fontSize: 15 }}>{item.name}</Text>
-            {item.enabled === false ? <Tag>已停用</Tag> : <Tag color="success">正常</Tag>}
-          </Flex>
-          <Flex vertical gap={6} style={{ padding: "10px 0 12px", borderTop: `1px solid ${palette.borderSoft}`, borderBottom: `1px solid ${palette.borderSoft}` }}>
-            <Flex align="center" gap={6}>
-              <Text type="secondary" style={{ fontSize: 12, flex: "0 0 auto" }}>中转</Text>
-              <MobileUrlBlock value={absoluteUrl(item.publicPath)} />
-            </Flex>
-            <Flex align="center" gap={6}>
-              <Text type="secondary" style={{ fontSize: 12, flex: "0 0 auto" }}>池</Text>
-              <MobileUrlBlock value={item.source?.url || "池 URL 不存在"} />
-            </Flex>
-          </Flex>
-          <div style={{ display: "grid", gap: 8, padding: "12px 0" }}>
-            {[
-              ["到期", item.expiresAt ? formatDateTime(item.expiresAt) : "长期有效"],
-              ["缓存", item.source?.cache?.fetchedAt ? formatDateTime(item.source.cache.fetchedAt) : "未缓存"]
-            ].map(([label, value]) => (
-              <Flex justify="space-between" align="center" gap={12} key={label}>
-                <Text type="secondary" style={{ fontSize: 13, flex: "0 0 auto" }}>{label}</Text>
-                <Text strong ellipsis={{ tooltip: value }} style={{ minWidth: 0, textAlign: "right", fontSize: 13 }}>{value}</Text>
-              </Flex>
-            ))}
+        <Flex vertical gap={16}>
+          <div style={GROUP}>
+            <Form.Item name="url" label="订阅 URL" rules={[{ required: true, type: "url", message: "请输入正确的 URL" }]} style={GROUP_ITEM}><Input variant="borderless" placeholder="https://" /></Form.Item>
+            <div style={GROUP_SEP} />
+            <Form.Item name="email" label="绑定邮箱" rules={[{ required: true, type: "email", message: "请输入邮箱" }]} style={GROUP_ITEM}><Input variant="borderless" placeholder="user@example.com" /></Form.Item>
           </div>
-          <div style={{ paddingTop: 2 }}>{actions(item)}</div>
-        </Card>
-      ))}
-    </Flex>
-  );
-}
-
-function UserRelayForm({ item, subscriptions, onClose, onSaved }) {
-  const { runAsync } = useData();
-  async function submit(values) {
-    await runAsync(async () => {
-      const user = { subscriptionId: values.subscriptionId, expiresAt: values.expiresAt ? values.expiresAt.toISOString() : "", customRelayTransform: { mode: values.mode || "", replaceRules: Boolean(values.replaceRules), prependRules: values.prependRules || "", appendRules: values.appendRules || "", customYaml: values.customYaml || "" } };
-      await fetchJson(`/api/users/${item._userId}`, { method: "PUT", body: JSON.stringify(user) });
-      await onSaved();
-    }, "正在更新用户中转配置...");
-  }
-  return (
-    <Modal title={`${item.name} 中转配置`} open onCancel={onClose} footer={null} width={860} destroyOnHidden>
-      <Form layout="vertical" initialValues={{ subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", expiresAt: item.expiresAt ? dayjs(item.expiresAt) : null, mode: item.transform?.mode || "", replaceRules: Boolean(item.transform?.replaceRules), prependRules: item.transform?.prependRules || "", appendRules: item.transform?.appendRules || "", customYaml: item.transform?.customYaml || "" }} onFinish={submit}>
-        <Row gutter={16}>
-          <Col xs={24} md={12}><Form.Item name="subscriptionId" label="池 URL" rules={[{ required: true, message: "请选择池 URL" }]}><Select {...inModalSelectProps} options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} /></Form.Item></Col>
-          <Col xs={24} md={12}><Form.Item name="expiresAt" label="到期时间"><DatePicker {...inModalPickerProps} showTime style={{ width: "100%" }} /></Form.Item></Col>
-          <Col xs={24} md={12}><Form.Item name="mode" label="Clash mode"><Select {...inModalSelectProps} options={[{ value: "", label: "保持原配置" }, { value: "Rule", label: "Rule" }, { value: "Global", label: "Global" }, { value: "Direct", label: "Direct" }]} /></Form.Item></Col>
-        </Row>
-        <Space wrap><Form.Item name="replaceRules" valuePropName="checked"><Checkbox>用下方规则替换原 rules</Checkbox></Form.Item></Space>
-        <Form.Item name="prependRules" label="前置规则"><TextArea rows={4} /></Form.Item>
-        <Form.Item name="appendRules" label="后置规则"><TextArea rows={4} /></Form.Item>
-        <Form.Item name="customYaml" label="追加 YAML 片段"><TextArea rows={4} /></Form.Item>
-        <Flex justify="end"><Button type="primary" htmlType="submit">保存</Button></Flex>
-      </Form>
-    </Modal>
-  );
-}
-
-function CustomUrlForm({ item, subscriptions, onClose, onSaved }) {
-  const { runAsync } = useData();
-  async function submit(values) {
-    await runAsync(async () => {
-      const payload = {
-        ...values,
-        expiresAt: values.expiresAt ? values.expiresAt.toISOString() : "",
-        enabled: Boolean(values.enabled),
-        replaceRules: Boolean(values.replaceRules)
-      };
-      if (item.id) await fetchJson(`/api/custom-urls/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
-      else await postJson("/api/custom-urls", payload);
-      await onSaved();
-    }, item.id ? "正在更新自定义 URL..." : "正在添加自定义 URL...");
-  }
-  return (
-    <Modal title={item.id ? "编辑自定义 URL" : "添加自定义 URL"} open onCancel={onClose} footer={null} width={860} destroyOnHidden>
-      <Form layout="vertical" initialValues={{
-        name: item.name || "",
-        sourceSubscriptionId: item.sourceSubscriptionId || subscriptions[0]?.id || "",
-        expiresAt: item.expiresAt ? dayjs(item.expiresAt) : null,
-        enabled: item.enabled !== false,
-        mode: item.transform?.mode || "",
-        replaceRules: Boolean(item.transform?.replaceRules),
-        prependRules: item.transform?.prependRules || "",
-        appendRules: item.transform?.appendRules || "",
-        customYaml: item.transform?.customYaml || "",
-        note: item.note || ""
-      }} onFinish={submit}>
-        <Row gutter={16}>
-          <Col xs={24} md={12}><Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入名称" }]}><Input /></Form.Item></Col>
-          <Col xs={24} md={12}><Form.Item name="sourceSubscriptionId" label="池 URL" rules={[{ required: true, message: "请选择池 URL" }]}><Select {...inModalSelectProps} options={subscriptions.map(source => ({ value: source.id, label: subscriptionLabel(source) }))} /></Form.Item></Col>
-          <Col xs={24} md={12}><Form.Item name="expiresAt" label="到期时间"><DatePicker {...inModalPickerProps} showTime style={{ width: "100%" }} /></Form.Item></Col>
-          <Col xs={24} md={12}><Form.Item name="mode" label="Clash mode"><Select {...inModalSelectProps} options={[{ value: "", label: "保持原配置" }, { value: "Rule", label: "Rule" }, { value: "Global", label: "Global" }, { value: "Direct", label: "Direct" }]} /></Form.Item></Col>
-        </Row>
-        <Space wrap><Form.Item name="enabled" valuePropName="checked"><Checkbox>启用</Checkbox></Form.Item><Form.Item name="replaceRules" valuePropName="checked"><Checkbox>用下方规则替换原 rules</Checkbox></Form.Item></Space>
-        <Form.Item name="prependRules" label="前置规则"><TextArea rows={4} /></Form.Item>
-        <Form.Item name="appendRules" label="后置规则"><TextArea rows={4} /></Form.Item>
-        <Form.Item name="customYaml" label="追加 YAML 片段"><TextArea rows={4} /></Form.Item>
-        <Form.Item name="note" label="备注"><TextArea rows={3} /></Form.Item>
-        <Flex justify="end"><Button type="primary" htmlType="submit">保存</Button></Flex>
+          <div style={TEXTAREA_GROUP}>
+            <Form.Item name="note" label="备注" style={{ marginBottom: 0 }}><TextArea variant="borderless" rows={3} placeholder="选填" style={{ padding: 0 }} /></Form.Item>
+          </div>
+          <Flex justify="end"><Button type="primary" htmlType="submit">保存</Button></Flex>
+        </Flex>
       </Form>
     </Modal>
   );
@@ -1200,29 +1009,91 @@ function UserCards({ users, actions }) {
   );
 }
 
+const SC_TARGETS = [
+  { value: "clash", label: "Clash" },
+  { value: "clashr", label: "ClashR" },
+  { value: "quan", label: "Quantumult" },
+  { value: "quanx", label: "Quantumult X" },
+  { value: "loon", label: "Loon" },
+  { value: "surge&ver=4", label: "Surge 4" },
+  { value: "surge&ver=3", label: "Surge 3" },
+  { value: "shadowrocket", label: "Shadowrocket" },
+  { value: "v2ray", label: "V2Ray" },
+  { value: "mixed", label: "Mixed（节点列表）" }
+];
+
+function SubconverterPanel() {
+  return (
+    <div style={GROUP}>
+      <div style={{ padding: "10px 16px 8px" }}>
+        <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.3 }}>订阅转换 · 可选</Text>
+        <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>填写 target 后，订阅将通过 subconverter 转换输出</Text>
+      </div>
+      <div style={GROUP_SEP} />
+      <Form.Item name={["subconverterConfig", "target"]} label="输出格式 (target)" style={GROUP_ITEM}>
+        <Select {...inModalSelectProps} variant="borderless" allowClear placeholder="不启用转换" options={SC_TARGETS} style={{ marginLeft: -11 }} />
+      </Form.Item>
+      <div style={GROUP_SEP} />
+      <Form.Item name={["subconverterConfig", "config"]} label="远程配置 URL (config)" style={GROUP_ITEM}>
+        <Input variant="borderless" placeholder="选填，https://..." />
+      </Form.Item>
+      <div style={GROUP_SEP} />
+      <Form.Item name={["subconverterConfig", "include"]} label="节点过滤 include (正则)" style={GROUP_ITEM}>
+        <Input variant="borderless" placeholder="选填" />
+      </Form.Item>
+      <div style={GROUP_SEP} />
+      <Form.Item name={["subconverterConfig", "exclude"]} label="节点排除 exclude (正则)" style={GROUP_ITEM}>
+        <Input variant="borderless" placeholder="选填" />
+      </Form.Item>
+      <div style={GROUP_SEP} />
+      <Form.Item name={["subconverterConfig", "rename"]} label="节点重命名 rename" style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
+        <Input variant="borderless" placeholder="选填，如 旧名@新名" />
+      </Form.Item>
+      <div style={GROUP_SEP} />
+      <div style={{ padding: "10px 16px 12px" }}>
+        <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 8 }}>选项</Text>
+        <Flex gap={16} wrap="wrap">
+          <Form.Item name={["subconverterConfig", "emoji"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>Emoji</Checkbox></Form.Item>
+          <Form.Item name={["subconverterConfig", "udp"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>UDP</Checkbox></Form.Item>
+          <Form.Item name={["subconverterConfig", "scv"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>跳过 TLS 验证</Checkbox></Form.Item>
+          <Form.Item name={["subconverterConfig", "sort"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>排序节点</Checkbox></Form.Item>
+        </Flex>
+      </div>
+    </div>
+  );
+}
+
 function UserForm({ item, subscriptions, onClose, onSaved }) {
   const { runAsync, users } = useData();
   const [form] = Form.useForm();
-  const useCustomRelay = Form.useWatch("useCustomRelay", form);
+  const useSubconverter = Form.useWatch("useSubconverter", form);
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
 
   const { result: recommended, reason: recommendReason } = useMemo(() => {
-    if (useCustomRelay || item.id || !purchasedAt || !duration) return { result: null, reason: null };
+    if (item.id || !purchasedAt || !duration) return { result: null, reason: null };
     const expiresAt = calcExpiry(purchasedAt, duration);
     return findRecommendedSubscription(subscriptions, users, expiresAt);
-  }, [purchasedAt, duration, useCustomRelay, item.id, subscriptions, users]);
+  }, [purchasedAt, duration, item.id, subscriptions, users]);
 
   async function submit(values) {
     await runAsync(async () => {
-      const payload = { ...values, purchasedAt: values.purchasedAt ? values.purchasedAt.format("YYYY-MM-DD") : "" };
+      const sc = values.subconverterConfig || {};
+      const payload = {
+        ...values,
+        purchasedAt: values.purchasedAt ? values.purchasedAt.format("YYYY-MM-DD") : "",
+        subconverterConfig: values.useSubconverter && sc.target ? sc : null
+      };
+      delete payload.useSubconverter;
       if (item.id) await fetchJson(`/api/users/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
       else await postJson("/api/users", payload);
       await onSaved();
     }, item.id ? "正在更新用户..." : "正在添加用户...");
   }
+
+  const sc = item.subconverterConfig || {};
   return (
-    <Modal title={item.id ? "编辑用户" : "添加用户"} open onCancel={onClose} footer={null} destroyOnHidden width={480}>
+    <Modal title={item.id ? "编辑用户" : "添加用户"} open onCancel={onClose} footer={null} destroyOnHidden width={480} styles={modalFormStyles}>
       <Form form={form} layout="vertical" initialValues={{
         userId: item.userId || "",
         wechatName: item.wechatName || "",
@@ -1231,57 +1102,68 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
         actualPaid: item.actualPaid ?? "",
         duration: item.duration || "monthly",
         subscriptionId: item.subscriptionId || subscriptions[0]?.id || "",
-        useCustomRelay: Boolean(item.useCustomRelay)
-      }} onFinish={submit} style={{ marginTop: 8 }}>
+        useSubconverter: Boolean(item.subconverterConfig?.target),
+        subconverterConfig: {
+          target: sc.target || "",
+          config: sc.config || "",
+          include: sc.include || "",
+          exclude: sc.exclude || "",
+          rename: sc.rename || "",
+          emoji: sc.emoji !== false,
+          udp: sc.udp !== false,
+          scv: Boolean(sc.scv),
+          sort: Boolean(sc.sort)
+        }
+      }} onFinish={submit}>
         <Flex vertical gap={16}>
-          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" }}>
-            <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={{ padding: "10px 16px 0", marginBottom: 0 }}><Input variant="borderless" placeholder="必填" /></Form.Item>
-            <div style={{ height: 1, background: "var(--ant-color-border-secondary)", margin: "0 16px" }} />
-            <Form.Item name="wechatName" label="微信名" style={{ padding: "10px 16px 0", marginBottom: 0 }}><Input variant="borderless" placeholder="选填" /></Form.Item>
-            <div style={{ height: 1, background: "var(--ant-color-border-secondary)", margin: "0 16px" }} />
-            <Form.Item name="imessageId" label="iMessage ID" style={{ padding: "10px 16px 4px", marginBottom: 0 }}><Input variant="borderless" placeholder="选填" /></Form.Item>
+          <div style={GROUP}>
+            <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={GROUP_ITEM}><Input variant="borderless" placeholder="必填" /></Form.Item>
+            <div style={GROUP_SEP} />
+            <Form.Item name="wechatName" label="微信名" style={GROUP_ITEM}><Input variant="borderless" placeholder="选填" /></Form.Item>
+            <div style={GROUP_SEP} />
+            <Form.Item name="imessageId" label="iMessage ID" style={{ ...GROUP_ITEM, paddingBottom: 4 }}><Input variant="borderless" placeholder="选填" /></Form.Item>
           </div>
 
-          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" }}>
+          <div style={GROUP}>
             <Row gutter={0}>
               <Col xs={24} sm={12} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-                <Form.Item name="purchasedAt" label="购买时间" rules={[{ required: true, message: "请选择购买时间" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
+                <Form.Item name="purchasedAt" label="购买时间" rules={[{ required: true, message: "请选择购买时间" }]} style={GROUP_ITEM}>
                   <DatePicker {...inModalPickerProps} variant="borderless" style={{ width: "100%", paddingLeft: 0 }} />
                 </Form.Item>
               </Col>
               <Col xs={24} sm={12}>
-                <Form.Item name="actualPaid" label="实付款" rules={[{ required: true, message: "请输入" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
+                <Form.Item name="actualPaid" label="实付款" rules={[{ required: true, message: "请输入" }]} style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
                   <Input variant="borderless" type="number" min="0" step="0.01" placeholder="0.00" style={{ paddingLeft: 0 }} />
                 </Form.Item>
               </Col>
             </Row>
           </div>
 
-          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "12px 16px" }}>
+          <div style={TEXTAREA_GROUP}>
             <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 10 }}>购买时长</Text>
             <Form.Item name="duration" style={{ marginBottom: 0 }}><DurationRadio purchasedAt={purchasedAt} /></Form.Item>
           </div>
 
-          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "12px 16px" }}>
-            <Form.Item name="useCustomRelay" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Checkbox><Text style={{ fontSize: 14 }}>启用自定义 URL 中转逻辑</Text></Checkbox>
+          <div style={GROUP}>
+            {!item.id && (
+              <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
+                <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
+                  {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
+                </Text>
+              </div>
+            )}
+            <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]} style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
+              <Select virtual={false} variant="borderless" options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} style={{ marginLeft: -11 }} />
             </Form.Item>
           </div>
 
-          {!useCustomRelay && (
-            <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" }}>
-              {!item.id && (
-                <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
-                  <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
-                    {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
-                  </Text>
-                </div>
-              )}
-              <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
-                <Select virtual={false} variant="borderless" options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} style={{ marginLeft: -11 }} />
-              </Form.Item>
-            </div>
-          )}
+          <div style={{ ...GROUP, padding: "12px 16px" }}>
+            <Form.Item name="useSubconverter" valuePropName="checked" style={{ marginBottom: 0 }}>
+              <Checkbox><Text style={{ fontSize: 14 }}>通过 subconverter 转换订阅</Text></Checkbox>
+            </Form.Item>
+          </div>
+
+          {useSubconverter && <SubconverterPanel />}
 
           <Button type="primary" htmlType="submit" block size="large" style={{ borderRadius: 12, fontWeight: 600 }}>
             {item.id ? "保存" : "添加用户"}
@@ -1295,16 +1177,15 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
 function RenewForm({ user, subscriptions, onClose, onSaved }) {
   const { runAsync, users } = useData();
   const [form] = Form.useForm();
-  const useCustomRelay = Form.useWatch("useCustomRelay", form);
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
 
   const { result: recommended, reason: recommendReason } = useMemo(() => {
-    if (useCustomRelay || !purchasedAt || !duration) return { result: null, reason: null };
+    if (!purchasedAt || !duration) return { result: null, reason: null };
     const base = user.expiresAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt;
     const expiresAt = calcExpiry(base, duration);
     return findRecommendedSubscription(subscriptions, users, expiresAt, user.id);
-  }, [purchasedAt, duration, useCustomRelay, user.id, user.expiresAt, subscriptions, users]);
+  }, [purchasedAt, duration, user.id, user.expiresAt, subscriptions, users]);
 
   async function submit(values) {
     await runAsync(async () => {
@@ -1313,8 +1194,8 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
     }, "正在续费用户...");
   }
   return (
-    <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden width={480}>
-      <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", useCustomRelay: Boolean(user.useCustomRelay) }} onFinish={submit} style={{ marginTop: 8 }}>
+    <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden width={480} styles={modalFormStyles}>
+      <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "" }} onFinish={submit}>
         <Flex vertical gap={16}>
           <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" }}>
             <Row gutter={0}>
@@ -1338,24 +1219,16 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
             </Form.Item>
           </div>
 
-          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "12px 16px" }}>
-            <Form.Item name="useCustomRelay" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Checkbox><Text style={{ fontSize: 14 }}>启用自定义 URL 中转逻辑</Text></Checkbox>
+          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" }}>
+            <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
+              <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
+                {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
+              </Text>
+            </div>
+            <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
+              <Select virtual={false} variant="borderless" options={subscriptions.map(source => ({ value: source.id, label: subscriptionLabel(source) }))} style={{ marginLeft: -11 }} />
             </Form.Item>
           </div>
-
-          {!useCustomRelay && (
-            <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" }}>
-              <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
-                <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
-                  {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
-                </Text>
-              </div>
-              <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
-                <Select virtual={false} variant="borderless" options={subscriptions.map(source => ({ value: source.id, label: subscriptionLabel(source) }))} style={{ marginLeft: -11 }} />
-              </Form.Item>
-            </div>
-          )}
 
           <Button type="primary" htmlType="submit" block size="large" style={{ borderRadius: 12, fontWeight: 600 }}>
             确认续费
@@ -1461,7 +1334,21 @@ function BillCards({ bills, actions, total }) {
 }
 
 function App() {
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("themeMode") === "dark");
+  const [darkMode, setDarkMode] = useState(() => {
+    const stored = localStorage.getItem("themeMode");
+    if (stored) return stored === "dark";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    function handler(e) {
+      if (!localStorage.getItem("themeMode")) setDarkMode(e.matches);
+    }
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
   const palette = darkMode ? THEME_PALETTES.dark : THEME_PALETTES.light;
   const toggleTheme = useCallback(() => {
     setDarkMode(current => {
@@ -1581,6 +1468,19 @@ function App() {
           Statistic: {
             titleFontSize: 12,
             contentFontSize: 22
+          },
+          Drawer: {
+            colorBgElevated: palette.surfaceElevated
+          },
+          Tabs: {
+            inkBarColor: palette.primary,
+            itemColor: palette.textSecondary,
+            itemSelectedColor: palette.primary,
+            itemHoverColor: palette.text,
+            cardBg: palette.fill
+          },
+          Notification: {
+            colorBgElevated: palette.surfaceElevated
           }
         }
       }}
