@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -396,6 +396,17 @@ function MobileUrlBlock({ value }) {
   );
 }
 
+function userOutputMode(user) {
+  return user?.subconverterConfig?.target ? "subconverter" : "direct";
+}
+
+function userClientSubscriptionUrl(user) {
+  if (userOutputMode(user) === "subconverter") {
+    return user.relayPath ? absoluteUrl(user.relayPath) : "自定义 URL 不存在";
+  }
+  return user.subscription?.url || "关联 URL 不存在";
+}
+
 function PageCard({ title, extra, children }) {
   const muse = useMuse();
   const { palette } = useThemeMode();
@@ -498,10 +509,10 @@ function PoolDetailModal({ item, cache, boundUsers = [], onClose }) {
         </div>
         <div>
           <Text strong style={{ display: "block", marginBottom: 8 }}>
-            YAML 缓存
+            实时 YAML
             {cache?.fetchedAt && <Text type="secondary" style={{ fontWeight: 400, marginLeft: 8, fontSize: 12 }}>{formatDateTime(cache.fetchedAt)} · {formatBytes(cache.bodyLength || 0)}{cache.truncated ? "（已截断）" : ""}</Text>}
           </Text>
-          <TextArea value={cache?.error ? `错误：${cache.error}` : (cache?.body || "（暂无缓存）")} readOnly autoSize={{ minRows: 8, maxRows: 20 }} />
+          <TextArea value={cache?.error ? `错误：${cache.error}` : (cache?.body || "（未获取到实时 YAML）")} readOnly autoSize={{ minRows: 8, maxRows: 20 }} />
         </div>
       </Flex>
     </Modal>
@@ -810,7 +821,7 @@ function UrlPoolPage() {
     }, width: 140 },
     { title: "到期", render: (_, item) => item.status === "expired" ? "-" : formatDate(item.metrics?.expireAt), width: 120 },
     { title: "状态", dataIndex: "status", render: value => <StatusBadge status={value} />, width: 90 },
-    { title: "缓存", render: (_, item) => item.cachedConfig?.fetchedAt ? `${formatDateTime(item.cachedConfig.fetchedAt)} · ${formatBytes(item.cachedConfig.bodyLength || item.cachedConfig.body?.length || 0)}` : "未缓存", width: 210 },
+    { title: "实时 YAML", render: () => "查看时获取", width: 120 },
     { title: "操作", render: (_, item) => actions(item, true), width: 300 }
   ].map(column => ({
     ...column,
@@ -819,7 +830,7 @@ function UrlPoolPage() {
   }));
 
   return (
-    <PageCard title="URL 池" extra={<Toolbar><Input.Search allowClear placeholder="搜索 URL、邮箱或备注" style={{ width: 210 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} /><Button onClick={() => setShowExpired(v => !v)}>{showExpired ? "隐藏已到期" : "显示已到期"}</Button><Button icon={<ReloadOutlined />} onClick={() => action(() => postJson("/api/subscriptions/cache-refresh"))}>刷新缓存</Button><Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>添加 URL</Button></Toolbar>}>
+    <PageCard title="URL 池" extra={<Toolbar><Input.Search allowClear placeholder="搜索 URL、邮箱或备注" style={{ width: 210 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} /><Button onClick={() => setShowExpired(v => !v)}>{showExpired ? "隐藏已到期" : "显示已到期"}</Button><Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>添加 URL</Button></Toolbar>}>
       {mobile ? <PoolCards items={visible} actions={actions} /> : <Table size="middle" rowKey="id" columns={columns} dataSource={visible} pagination={tablePagination} scroll={{ x: 1520 }} />}
       {editing && <SubscriptionForm item={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["subscriptions"]); }} />}
       {detail && <PoolDetailModal item={detail.item} cache={detail.cache} boundUsers={detail.boundUsers} onClose={() => setDetail(null)} />}
@@ -870,7 +881,7 @@ function PoolCards({ items, actions }) {
             )}
             {[
               ["到期", item.status === "expired" ? "-" : formatDate(item.metrics?.expireAt)],
-              ["缓存", item.cachedConfig?.fetchedAt ? formatDateTime(item.cachedConfig.fetchedAt) : "未缓存"]
+              ["实时 YAML", "查看时获取"]
             ].map(([label, value]) => (
               <Flex justify="space-between" align="center" gap={12} key={label}>
                 <Text type="secondary" style={{ fontSize: 13, flex: "0 0 auto" }}>{label}</Text>
@@ -955,7 +966,7 @@ function UsersPage() {
     { title: "到期", render: (_, user) => formatDate(user.expiresAt) },
     { title: "时长", render: (_, user) => durationLabels[user.duration] || "未知" },
     { title: "总付款", render: (_, user) => formatMoney(user.actualPaid) },
-    { title: "客户订阅 URL", render: (_, user) => <UrlText value={user.relayPath ? absoluteUrl(user.relayPath) : (user.subscription?.url || "关联 URL 不存在")} />, width: 320 },
+    { title: "客户订阅 URL", render: (_, user) => <UrlText value={userClientSubscriptionUrl(user)} />, width: 320 },
     { title: "绑定邮箱", render: (_, user) => user.subscription?.email || "" },
     { title: "购买时间", render: (_, user) => formatDate(user.purchasedAt) },
     { title: "操作", render: (_, user) => actions(user, true), width: 230 }
@@ -987,7 +998,7 @@ function UserCards({ users, actions }) {
             <StatusBadge status={userStatus(user)} />
           </Flex>
           <div style={{ padding: "10px 0 12px", borderTop: `1px solid ${palette.borderSoft}`, borderBottom: `1px solid ${palette.borderSoft}` }}>
-            <MobileUrlBlock value={user.relayPath ? absoluteUrl(user.relayPath) : (user.subscription?.url || "关联 URL 不存在")} />
+            <MobileUrlBlock value={userClientSubscriptionUrl(user)} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "12px 0" }}>
             {[
@@ -1022,37 +1033,47 @@ const SC_TARGETS = [
   { value: "mixed", label: "Mixed（节点列表）" }
 ];
 
+const DEFAULT_SC_TARGET = "clash";
+
 function SubconverterPanel() {
   return (
     <div style={GROUP}>
-      <div style={{ padding: "10px 16px 8px" }}>
-        <Text type="secondary" style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.3 }}>订阅转换 · 可选</Text>
-        <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>填写 target 后，订阅将通过 subconverter 转换输出</Text>
+      <div style={{ padding: "10px 16px 0" }}>
+        <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>Subconverter 参数</Text>
       </div>
+      <Row gutter={0}>
+        <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
+          <Form.Item name={["subconverterConfig", "target"]} label="输出格式" style={GROUP_ITEM}>
+            <Select {...inModalSelectProps} variant="borderless" allowClear placeholder="target" options={SC_TARGETS} style={{ marginLeft: -11 }} />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={16}>
+          <Form.Item name={["subconverterConfig", "config"]} label="远程配置 URL" style={GROUP_ITEM}>
+            <Input variant="borderless" placeholder="选填，https://..." />
+          </Form.Item>
+        </Col>
+      </Row>
       <div style={GROUP_SEP} />
-      <Form.Item name={["subconverterConfig", "target"]} label="输出格式 (target)" style={GROUP_ITEM}>
-        <Select {...inModalSelectProps} variant="borderless" allowClear placeholder="不启用转换" options={SC_TARGETS} style={{ marginLeft: -11 }} />
-      </Form.Item>
-      <div style={GROUP_SEP} />
-      <Form.Item name={["subconverterConfig", "config"]} label="远程配置 URL (config)" style={GROUP_ITEM}>
-        <Input variant="borderless" placeholder="选填，https://..." />
-      </Form.Item>
-      <div style={GROUP_SEP} />
-      <Form.Item name={["subconverterConfig", "include"]} label="节点过滤 include (正则)" style={GROUP_ITEM}>
-        <Input variant="borderless" placeholder="选填" />
-      </Form.Item>
-      <div style={GROUP_SEP} />
-      <Form.Item name={["subconverterConfig", "exclude"]} label="节点排除 exclude (正则)" style={GROUP_ITEM}>
-        <Input variant="borderless" placeholder="选填" />
-      </Form.Item>
-      <div style={GROUP_SEP} />
-      <Form.Item name={["subconverterConfig", "rename"]} label="节点重命名 rename" style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
-        <Input variant="borderless" placeholder="选填，如 旧名@新名" />
-      </Form.Item>
+      <Row gutter={0}>
+        <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
+          <Form.Item name={["subconverterConfig", "include"]} label="include" style={GROUP_ITEM}>
+            <Input variant="borderless" placeholder="节点过滤正则" />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
+          <Form.Item name={["subconverterConfig", "exclude"]} label="exclude" style={GROUP_ITEM}>
+            <Input variant="borderless" placeholder="节点排除正则" />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={8}>
+          <Form.Item name={["subconverterConfig", "rename"]} label="rename" style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
+            <Input variant="borderless" placeholder="旧名@新名" />
+          </Form.Item>
+        </Col>
+      </Row>
       <div style={GROUP_SEP} />
       <div style={{ padding: "10px 16px 12px" }}>
-        <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 8 }}>选项</Text>
-        <Flex gap={16} wrap="wrap">
+        <Flex gap={16} wrap="wrap" align="center">
           <Form.Item name={["subconverterConfig", "emoji"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>Emoji</Checkbox></Form.Item>
           <Form.Item name={["subconverterConfig", "udp"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>UDP</Checkbox></Form.Item>
           <Form.Item name={["subconverterConfig", "scv"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>跳过 TLS 验证</Checkbox></Form.Item>
@@ -1066,25 +1087,53 @@ function SubconverterPanel() {
 function UserForm({ item, subscriptions, onClose, onSaved }) {
   const { runAsync, users } = useData();
   const [form] = Form.useForm();
-  const useSubconverter = Form.useWatch("useSubconverter", form);
+  const expiryTouched = useRef(false);
+  const outputMode = Form.useWatch("outputMode", form);
+  const initialOutputMode = item.id
+    ? (item.subconverterConfig?.target ? "subconverter" : "direct")
+    : "subconverter";
+  const selectedOutputMode = outputMode || initialOutputMode;
+  const useSubconverter = selectedOutputMode === "subconverter";
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
+  const expiresAt = Form.useWatch("expiresAt", form);
 
   const { result: recommended, reason: recommendReason } = useMemo(() => {
     if (item.id || !purchasedAt || !duration) return { result: null, reason: null };
-    const expiresAt = calcExpiry(purchasedAt, duration);
-    return findRecommendedSubscription(subscriptions, users, expiresAt);
-  }, [purchasedAt, duration, item.id, subscriptions, users]);
+    return findRecommendedSubscription(subscriptions, users, expiresAt || calcExpiry(purchasedAt, duration));
+  }, [purchasedAt, duration, expiresAt, item.id, subscriptions, users]);
+
+  const initialPurchasedAt = item.purchasedAt ? dayjs(item.purchasedAt) : dayjs();
+  const initialDuration = item.duration || "monthly";
+  const initialExpiresAt = item.expiresAt
+    ? dayjs(item.expiresAt)
+    : dayjs(calcExpiry(initialPurchasedAt, initialDuration));
+
+  function handleUserFormChange(changed, values) {
+    if (Object.prototype.hasOwnProperty.call(changed, "expiresAt")) {
+      expiryTouched.current = true;
+      return;
+    }
+    if (!expiryTouched.current && (Object.prototype.hasOwnProperty.call(changed, "purchasedAt") || Object.prototype.hasOwnProperty.call(changed, "duration"))) {
+      const nextExpiry = calcExpiry(values.purchasedAt, values.duration);
+      if (nextExpiry) form.setFieldsValue({ expiresAt: dayjs(nextExpiry) });
+    }
+  }
 
   async function submit(values) {
     await runAsync(async () => {
       const sc = values.subconverterConfig || {};
+      const shouldUseSubconverter = values.outputMode === "subconverter";
+      const subconverterConfig = shouldUseSubconverter
+        ? { ...sc, target: sc.target || DEFAULT_SC_TARGET }
+        : null;
       const payload = {
         ...values,
         purchasedAt: values.purchasedAt ? values.purchasedAt.format("YYYY-MM-DD") : "",
-        subconverterConfig: values.useSubconverter && sc.target ? sc : null
+        expiresAt: values.expiresAt ? values.expiresAt.toISOString() : "",
+        subconverterConfig
       };
-      delete payload.useSubconverter;
+      delete payload.outputMode;
       if (item.id) await fetchJson(`/api/users/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
       else await postJson("/api/users", payload);
       await onSaved();
@@ -1092,19 +1141,27 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
   }
 
   const sc = item.subconverterConfig || {};
+  const fallbackLogs = Array.isArray(item.fallbackLogs) ? item.fallbackLogs : [];
+  const fallbackLogColumns = [
+    { title: "\u65f6\u95f4", dataIndex: "at", render: value => formatDateTime(value), width: 150 },
+    { title: "\u539f\u56e0", dataIndex: "reasonText", render: value => value || "-", width: 150 },
+    { title: "\u539f\u6c60 URL", dataIndex: "fromSubscriptionLabel", ellipsis: true },
+    { title: "\u65b0\u6c60 URL", dataIndex: "toSubscriptionLabel", ellipsis: true }
+  ];
   return (
-    <Modal title={item.id ? "编辑用户" : "添加用户"} open onCancel={onClose} footer={null} destroyOnHidden width={480} styles={modalFormStyles}>
+    <Modal title={item.id ? "编辑用户" : "添加用户"} open onCancel={onClose} footer={null} destroyOnHidden width={720} styles={modalFormStyles}>
       <Form form={form} layout="vertical" initialValues={{
         userId: item.userId || "",
         wechatName: item.wechatName || "",
         imessageId: item.imessageId || "",
-        purchasedAt: item.purchasedAt ? dayjs(item.purchasedAt) : dayjs(),
+        purchasedAt: initialPurchasedAt,
         actualPaid: item.actualPaid ?? "",
-        duration: item.duration || "monthly",
+        duration: initialDuration,
+        expiresAt: initialExpiresAt,
         subscriptionId: item.subscriptionId || subscriptions[0]?.id || "",
-        useSubconverter: Boolean(item.subconverterConfig?.target),
+        outputMode: initialOutputMode,
         subconverterConfig: {
-          target: sc.target || "",
+          target: sc.target || DEFAULT_SC_TARGET,
           config: sc.config || "",
           include: sc.include || "",
           exclude: sc.exclude || "",
@@ -1114,56 +1171,111 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
           scv: Boolean(sc.scv),
           sort: Boolean(sc.sort)
         }
-      }} onFinish={submit}>
-        <Flex vertical gap={16}>
+      }} onValuesChange={handleUserFormChange} onFinish={submit}>
+        <Flex vertical gap={12}>
           <div style={GROUP}>
-            <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={GROUP_ITEM}><Input variant="borderless" placeholder="必填" /></Form.Item>
-            <div style={GROUP_SEP} />
-            <Form.Item name="wechatName" label="微信名" style={GROUP_ITEM}><Input variant="borderless" placeholder="选填" /></Form.Item>
-            <div style={GROUP_SEP} />
-            <Form.Item name="imessageId" label="iMessage ID" style={{ ...GROUP_ITEM, paddingBottom: 4 }}><Input variant="borderless" placeholder="选填" /></Form.Item>
+            <div style={{ padding: "10px 16px 0" }}>
+              <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>基本信息</Text>
+            </div>
+            <Row gutter={0}>
+              <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
+                <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={GROUP_ITEM}><Input variant="borderless" placeholder="必填" /></Form.Item>
+              </Col>
+              <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
+                <Form.Item name="wechatName" label="微信名" style={GROUP_ITEM}><Input variant="borderless" placeholder="选填" /></Form.Item>
+              </Col>
+              <Col xs={24} md={8}>
+                <Form.Item name="imessageId" label="iMessage ID" style={{ ...GROUP_ITEM, paddingBottom: 4 }}><Input variant="borderless" placeholder="选填" /></Form.Item>
+              </Col>
+            </Row>
           </div>
 
           <div style={GROUP}>
+            <div style={{ padding: "10px 16px 0" }}>
+              <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>套餐信息</Text>
+            </div>
             <Row gutter={0}>
-              <Col xs={24} sm={12} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
+              <Col xs={24} sm={12} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
                 <Form.Item name="purchasedAt" label="购买时间" rules={[{ required: true, message: "请选择购买时间" }]} style={GROUP_ITEM}>
                   <DatePicker {...inModalPickerProps} variant="borderless" style={{ width: "100%", paddingLeft: 0 }} />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={12}>
+              <Col xs={24} sm={12} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
+                <Form.Item name="expiresAt" label="到期时间" rules={[{ required: true, message: "请选择到期时间" }]} style={GROUP_ITEM}>
+                  <DatePicker {...inModalPickerProps} variant="borderless" style={{ width: "100%", paddingLeft: 0 }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={8}>
                 <Form.Item name="actualPaid" label="实付款" rules={[{ required: true, message: "请输入" }]} style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
                   <Input variant="borderless" type="number" min="0" step="0.01" placeholder="0.00" style={{ paddingLeft: 0 }} />
                 </Form.Item>
               </Col>
             </Row>
-          </div>
-
-          <div style={TEXTAREA_GROUP}>
-            <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 10 }}>购买时长</Text>
-            <Form.Item name="duration" style={{ marginBottom: 0 }}><DurationRadio purchasedAt={purchasedAt} /></Form.Item>
+            <div style={GROUP_SEP} />
+            <Form.Item name="duration" label="购买时长" style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
+              <DurationRadio purchasedAt={purchasedAt} />
+            </Form.Item>
           </div>
 
           <div style={GROUP}>
-            {!item.id && (
-              <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
-                <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
-                  {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
-                </Text>
-              </div>
+            <div style={{ padding: "10px 16px 0" }}>
+              <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>输出方式</Text>
+            </div>
+            <Form.Item name="outputMode" style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
+              <Radio.Group
+                optionType="button"
+                buttonStyle="solid"
+                style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}
+              >
+                <Radio.Button value="subconverter" style={{ textAlign: "center" }}>A. Subconverter</Radio.Button>
+                <Radio.Button value="direct" style={{ textAlign: "center" }}>B. 池 URL</Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+            {!useSubconverter && (
+              <>
+                <div style={GROUP_SEP} />
+                {!item.id && (
+                  <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
+                    <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
+                      {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
+                    </Text>
+                  </div>
+                )}
+                <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]} style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
+                  <Select virtual={false} variant="borderless" options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} style={{ marginLeft: -11 }} />
+                </Form.Item>
+              </>
             )}
-            <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]} style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
-              <Select virtual={false} variant="borderless" options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} style={{ marginLeft: -11 }} />
-            </Form.Item>
-          </div>
-
-          <div style={{ ...GROUP, padding: "12px 16px" }}>
-            <Form.Item name="useSubconverter" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Checkbox><Text style={{ fontSize: 14 }}>通过 subconverter 转换订阅</Text></Checkbox>
-            </Form.Item>
           </div>
 
           {useSubconverter && <SubconverterPanel />}
+
+          {useSubconverter && (
+            <div style={{ display: "none" }}>
+              <Form.Item name="subscriptionId" hidden>
+                <Input />
+              </Form.Item>
+            </div>
+          )}
+
+          {fallbackLogs.length > 0 && (
+            <div style={GROUP}>
+              <div style={{ padding: "10px 16px 8px" }}>
+                <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>{"\u81ea\u52a8\u6362\u6c60\u65e5\u5fd7"}</Text>
+              </div>
+              <div style={GROUP_SEP} />
+              <div style={{ padding: "10px 16px 12px" }}>
+                <Table
+                  size="small"
+                  rowKey="id"
+                  columns={fallbackLogColumns}
+                  dataSource={fallbackLogs}
+                  pagination={false}
+                  scroll={{ x: 620 }}
+                />
+              </div>
+            </div>
+          )}
 
           <Button type="primary" htmlType="submit" block size="large" style={{ borderRadius: 12, fontWeight: 600 }}>
             {item.id ? "保存" : "添加用户"}

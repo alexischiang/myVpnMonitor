@@ -46,6 +46,7 @@ const RELAY_AFTER_EXPIRY_DAYS = Number(process.env.RELAY_AFTER_EXPIRY_DAYS || 10
 const RELAY_MAX_CUSTOMERS = Number(process.env.RELAY_MAX_CUSTOMERS || 8);
 const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
+const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const AUTH_COOKIE_NAME = "xela_session";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
@@ -56,6 +57,8 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto
 const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 const REMEMBER_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || SESSION_SECRET.slice(0, 32);
+const LIVE_POOL_CONFIG_TTL_MS = Number(process.env.LIVE_POOL_CONFIG_TTL_MS || 60 * 1000);
+const livePoolConfigs = new Map();
 let cachedAppMeta = null;
 const REQUEST_PROFILES = [
   {
@@ -483,7 +486,12 @@ function normalizeUser(input, existing = {}, options = {}) {
   const duration = String(input.duration || existing.duration || "monthly").trim();
   const requestedSubscriptionId = String(input.subscriptionId || existing.subscriptionId || "").trim();
   const actualPaid = normalizePaymentAmount(input.actualPaid ?? existing.actualPaid ?? "");
-  const expiresAt = calculateExpiry(purchasedAt, duration);
+  const calculatedExpiresAt = calculateExpiry(purchasedAt, duration);
+  const requestedExpiresAt = String(input.expiresAt || "").trim();
+  const requestedExpiresDate = requestedExpiresAt ? new Date(requestedExpiresAt) : null;
+  const expiresAt = requestedExpiresDate && !Number.isNaN(requestedExpiresDate.getTime())
+    ? requestedExpiresDate.toISOString()
+    : calculatedExpiresAt;
   const subscription = options.autoSelectSubscription
     ? findRecommendedSubscriptionForExpiry(expiresAt, { fallbackId: requestedSubscriptionId, ignoredUserId: existing.id || "" })
     : subscriptions.find(item => item.id === requestedSubscriptionId);
@@ -492,6 +500,7 @@ function normalizeUser(input, existing = {}, options = {}) {
   if (!subscription) throw new Error("请选择已添加的 URL。");
   if (!durationDays(duration)) throw new Error("请选择购买时长。");
   if (!expiresAt) throw new Error("购买时间格式不正确。");
+  if (requestedExpiresAt && (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime()))) throw new Error("到期时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
 
   return {
@@ -506,6 +515,16 @@ function normalizeUser(input, existing = {}, options = {}) {
     subscriptionToken: existing.subscriptionToken || relayToken(),
     expiresAt,
     updatedAt: new Date().toISOString()
+  };
+}
+
+function normalizeSubconverterConfig(input) {
+  if (!input) return null;
+  const target = String(input.target || DEFAULT_SUBCONVERTER_TARGET).trim();
+  if (!target) return null;
+  return {
+    ...input,
+    target
   };
 }
 
@@ -1059,6 +1078,361 @@ function extractClashConfigBody(body) {
   return scopedLines.slice(0, endIndex).join("\n").trimEnd() + "\n";
 }
 
+function registerLivePoolConfig(config) {
+  const id = crypto.randomBytes(18).toString("base64url");
+  livePoolConfigs.set(id, {
+    ...config,
+    expiresAt: Date.now() + LIVE_POOL_CONFIG_TTL_MS
+  });
+  return id;
+}
+
+function readLivePoolConfig(id) {
+  const config = livePoolConfigs.get(id);
+  if (!config) return null;
+  if (Date.now() > config.expiresAt) {
+    livePoolConfigs.delete(id);
+    return null;
+  }
+  return config;
+}
+
+function cleanupLivePoolConfigs() {
+  const now = Date.now();
+  for (const [id, config] of livePoolConfigs) {
+    if (now > config.expiresAt) livePoolConfigs.delete(id);
+  }
+}
+
+function livePoolConfigFailure(results, best) {
+  const message = results.find(result => result.error)?.error
+    || (best?.status ? `池 URL 获取失败（HTTP ${best.status}）。` : "没有获取到可用的 Clash YAML 配置。");
+  const error = new Error(message);
+  error.attempts = results.map(result => ({
+    client: result.client,
+    status: result.status,
+    score: result.score,
+    bodyLength: result.body.length,
+    rawBodyLength: result.rawBodyLength,
+    error: result.error
+  }));
+  return error;
+}
+
+async function fetchLivePoolConfig(item) {
+  const profiles = REQUEST_PROFILES.filter(profile => profile.name === "clash-meta");
+  const results = [];
+  relayLog("live-pool-fetch-start", {
+    pool: poolLogInfo(item),
+    profiles: profiles.map(profile => profile.name)
+  });
+  for (const profile of profiles) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    const requestHeaders = {
+      ...profile.headers,
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache"
+    };
+    relayLog("live-pool-fetch-request", {
+      poolId: item?.id || "",
+      url: item?.url || "",
+      method: "GET",
+      profile: profile.name,
+      headers: headersForLog(requestHeaders)
+    });
+    try {
+      const response = await fetch(item.url, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: requestHeaders
+      });
+      const rawBody = await response.text();
+      const body = response.ok ? extractClashConfigBody(rawBody) : "";
+      const score = response.ok ? clashConfigScore(body) : -1000;
+      relayLog("live-pool-fetch-response", {
+        poolId: item?.id || "",
+        profile: profile.name,
+        ok: response.ok,
+        status: response.status,
+        headers: responseHeadersForLog(response),
+        rawBodyLength: rawBody.length,
+        extractedBodyLength: body.length,
+        score,
+        subscriptionUserinfo: response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo") || "",
+        rawBodyPreview: bodyPreview(rawBody),
+        extractedBodyPreview: bodyPreview(body)
+      });
+      results.push({
+        body,
+        client: profile.name,
+        status: response.status,
+        score,
+        rawBodyLength: rawBody.length,
+        contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+        subscriptionUserinfo: response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo") || "",
+        error: response.ok ? null : `池 URL 获取失败（HTTP ${response.status}）：${rawBody.slice(0, 200)}`
+      });
+    } catch (error) {
+      relayLog("live-pool-fetch-error", {
+        poolId: item?.id || "",
+        profile: profile.name,
+        errorName: error.name,
+        errorMessage: error.message
+      });
+      results.push({
+        body: "",
+        client: profile.name,
+        status: null,
+        score: -1000,
+        rawBodyLength: 0,
+        contentType: "text/plain; charset=utf-8",
+        subscriptionUserinfo: "",
+        error: error.name === "AbortError" ? "池 URL 请求超时。" : `池 URL 请求失败：${error.message}`
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  const best = results.sort((a, b) => b.score - a.score)[0];
+  relayLog("live-pool-fetch-best", {
+    poolId: item?.id || "",
+    best: best ? {
+      client: best.client,
+      status: best.status,
+      score: best.score,
+      bodyLength: best.body.length,
+      rawBodyLength: best.rawBodyLength,
+      error: best.error
+    } : null
+  });
+  if (!best?.body) {
+    relayLog("live-pool-fetch-failed", {
+      poolId: item?.id || "",
+      attempts: results.map(result => ({
+        client: result.client,
+        status: result.status,
+        score: result.score,
+        bodyLength: result.body.length,
+        rawBodyLength: result.rawBodyLength,
+        error: result.error
+      }))
+    });
+    throw livePoolConfigFailure(results, best);
+  }
+
+  return {
+    body: best.body,
+    status: best.status,
+    client: best.client,
+    fetchedAt: new Date().toISOString(),
+    contentType: best.contentType,
+    subscriptionUserinfo: best.subscriptionUserinfo,
+    score: best.score,
+    bodyLength: best.body.length,
+    attempts: results.map(result => ({
+      client: result.client,
+      status: result.status,
+      score: result.score,
+      bodyLength: result.body.length,
+      rawBodyLength: result.rawBodyLength,
+      error: result.error
+    })),
+    error: null
+  };
+}
+
+function poolMetricUnavailableReason(item, now = Date.now()) {
+  const expireTime = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
+  if (Number.isFinite(expireTime) && expireTime <= now) return "pool-expired";
+  const remaining = item?.metrics?.remainingBytes;
+  if (remaining !== null && remaining !== undefined && Number(remaining) <= 0) return "pool-depleted";
+  return "";
+}
+
+const fallbackReasonText = {
+  "pool-expired": "\u539f\u6c60 URL \u5df2\u5230\u671f",
+  "pool-depleted": "\u539f\u6c60 URL \u6d41\u91cf\u5df2\u7528\u5c3d",
+  "pool-fetch-failed": "\u539f\u6c60 URL \u5b9e\u65f6\u83b7\u53d6\u5931\u8d25",
+  "pool-missing": "\u539f\u6c60 URL \u4e0d\u5b58\u5728"
+};
+
+function subscriptionLogLabel(item) {
+  if (!item) return "";
+  return item.email || item.name || item.url || item.id || "";
+}
+
+function relayLog(event, details = {}) {
+  try {
+    console.log(`[relay:${event}] ${JSON.stringify({
+      at: new Date().toISOString(),
+      ...details
+    })}`);
+  } catch {
+    console.log(`[relay:${event}]`, details);
+  }
+}
+
+function redactHeaderValue(name, value) {
+  if (/authorization|cookie|token|secret|password/i.test(String(name))) return "[redacted]";
+  return value;
+}
+
+function headersForLog(headers = {}) {
+  const output = {};
+  for (const [name, value] of Object.entries(headers || {})) {
+    output[name] = redactHeaderValue(name, value);
+  }
+  return output;
+}
+
+function responseHeadersForLog(response) {
+  const output = {};
+  for (const [name, value] of response.headers.entries()) {
+    output[name] = redactHeaderValue(name, value);
+  }
+  return output;
+}
+
+function bodyPreview(body, length = 500) {
+  return String(body || "").slice(0, length).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+}
+
+function poolLogInfo(item) {
+  return {
+    id: item?.id || "",
+    label: subscriptionLogLabel(item),
+    url: item?.url || "",
+    metrics: item?.metrics || null,
+    metricUnavailableReason: poolMetricUnavailableReason(item) || ""
+  };
+}
+
+function fallbackCandidateRank(item, user) {
+  const userTime = user?.expiresAt ? startOfUtcDate(user.expiresAt) : null;
+  const poolTime = item?.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
+  const dayMs = 86400000;
+  if (!Number.isFinite(userTime) || !Number.isFinite(poolTime)) {
+    return { group: 2, distance: Number.POSITIVE_INFINITY };
+  }
+  const diffDays = (poolTime - userTime) / dayMs;
+  if (Math.abs(diffDays) > 10) return null;
+  return {
+    group: diffDays >= 0 ? 0 : 1,
+    distance: Math.abs(diffDays)
+  };
+}
+
+function fallbackCandidates(user, currentSubscription) {
+  const candidates = subscriptions
+    .filter(item => item.id !== currentSubscription?.id)
+    .map(item => {
+      const rank = fallbackCandidateRank(item, user);
+      if (rank === null) return null;
+      const metricReason = poolMetricUnavailableReason(item);
+      return {
+        item,
+        rank: {
+          ...rank,
+          metricPenalty: metricReason ? 1 : 0,
+          metricReason
+        }
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) =>
+      a.rank.group - b.rank.group
+      || a.rank.metricPenalty - b.rank.metricPenalty
+      || a.rank.distance - b.rank.distance);
+  relayLog("fallback-candidates", {
+    userId: user?.id || "",
+    userExpiresAt: user?.expiresAt || "",
+    currentPool: poolLogInfo(currentSubscription),
+    candidates: candidates.map(candidate => ({
+      pool: poolLogInfo(candidate.item),
+      rank: candidate.rank
+    }))
+  });
+  return candidates.map(candidate => candidate.item);
+}
+
+async function findFallbackSubscription(user, currentSubscription) {
+  const errors = [];
+  relayLog("fallback-search-start", {
+    userId: user?.id || "",
+    currentPool: poolLogInfo(currentSubscription)
+  });
+  for (const candidate of fallbackCandidates(user, currentSubscription)) {
+    relayLog("fallback-candidate-validate-start", {
+      userId: user?.id || "",
+      candidatePool: poolLogInfo(candidate)
+    });
+    try {
+      const liveConfig = await fetchLivePoolConfig(candidate);
+      relayLog("fallback-candidate-validate-ok", {
+        userId: user?.id || "",
+        candidatePool: poolLogInfo(candidate),
+        liveConfig: {
+          status: liveConfig.status,
+          client: liveConfig.client,
+          score: liveConfig.score,
+          bodyLength: liveConfig.bodyLength,
+          subscriptionUserinfo: liveConfig.subscriptionUserinfo
+        }
+      });
+      return { subscription: candidate, liveConfig, errors };
+    } catch (error) {
+      relayLog("fallback-candidate-validate-failed", {
+        userId: user?.id || "",
+        candidatePool: poolLogInfo(candidate),
+        error: error.message,
+        attempts: error.attempts || []
+      });
+      errors.push({
+        subscriptionId: candidate.id,
+        subscriptionLabel: subscriptionLogLabel(candidate),
+        error: error.message
+      });
+    }
+  }
+  relayLog("fallback-search-empty", {
+    userId: user?.id || "",
+    currentPool: poolLogInfo(currentSubscription),
+    errors
+  });
+  return { subscription: null, liveConfig: null, errors };
+}
+
+async function switchUserSubscription(user, fromSubscription, toSubscription, reason, req, target = "") {
+  const log = {
+    id: crypto.randomUUID(),
+    at: new Date().toISOString(),
+    fromSubscriptionId: fromSubscription?.id || "",
+    fromSubscriptionLabel: subscriptionLogLabel(fromSubscription),
+    toSubscriptionId: toSubscription.id,
+    toSubscriptionLabel: subscriptionLogLabel(toSubscription),
+    reason,
+    reasonText: fallbackReasonText[reason] || reason,
+    requestPath: req?.url || "",
+    target
+  };
+  user.subscriptionId = toSubscription.id;
+  user.lastFallbackAt = log.at;
+  user.lastFallbackFromSubscriptionId = log.fromSubscriptionId;
+  user.lastFallbackReason = reason;
+  user.fallbackLogs = [log, ...(Array.isArray(user.fallbackLogs) ? user.fallbackLogs : [])].slice(0, 50);
+  user.updatedAt = log.at;
+  await saveUsers();
+  relayLog("fallback-switch-saved", {
+    userId: user?.id || "",
+    log,
+    nextSubscriptionId: user.subscriptionId
+  });
+  return log;
+}
+
 async function refreshPoolConfigCache(item, { force = false } = {}) {
   if (!force && cacheIsFresh(item.cachedConfig)) return item.cachedConfig;
 
@@ -1163,6 +1537,82 @@ function sendSubscriptionMessage(res, status, message) {
   res.end(message);
 }
 
+function yamlString(value) {
+  return JSON.stringify(String(value));
+}
+
+function placeholderSubscription(user, nodeName) {
+  return {
+    contentType: "application/yaml; charset=utf-8",
+    body: [
+      "mixed-port: 7890",
+      "allow-lan: false",
+      "mode: rule",
+      "log-level: info",
+      "proxies:",
+      `  - name: ${yamlString(nodeName)}`,
+      "    type: ss",
+      "    server: 127.0.0.1",
+      "    port: 1",
+      "    cipher: aes-128-gcm",
+      "    password: notice",
+      "proxy-groups:",
+      "  - name: PROXY",
+      "    type: select",
+      "    proxies:",
+      `      - ${yamlString(nodeName)}`,
+      "rules:",
+      "  - MATCH,PROXY",
+      ""
+    ].join("\n")
+  };
+}
+
+function expiredPlaceholderSubscription(user) {
+  return placeholderSubscription(user, "\u8ba2\u9605\u5df2\u5230\u671f-\u8bf7\u8054\u7cfb\u5ba2\u670d");
+}
+
+function unavailablePoolPlaceholderSubscription(user) {
+  return placeholderSubscription(user, "\u6682\u65e0\u53ef\u7528\u6c60-\u8bf7\u8054\u7cfb\u5ba2\u670d");
+}
+
+function disabledCustomUrlPlaceholderSubscription(user) {
+  return placeholderSubscription(user, "\u8be5URL\u672a\u542f\u7528-\u8bf7\u8054\u7cfb\u5ba2\u670d");
+}
+
+function sendExpiredPlaceholderSubscription(res, user) {
+  const placeholder = expiredPlaceholderSubscription(user);
+  res.writeHead(200, {
+    "content-type": placeholder.contentType,
+    "cache-control": "no-store, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0"
+  });
+  res.end(placeholder.body);
+}
+
+function sendUnavailablePoolPlaceholderSubscription(res, user) {
+  const placeholder = unavailablePoolPlaceholderSubscription(user);
+  res.writeHead(200, {
+    "content-type": placeholder.contentType,
+    "cache-control": "no-store, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0"
+  });
+  res.end(placeholder.body);
+}
+
+function sendDisabledCustomUrlPlaceholderSubscription(res, user) {
+  const placeholder = disabledCustomUrlPlaceholderSubscription(user);
+  res.writeHead(200, {
+    "content-type": placeholder.contentType,
+    "cache-control": "no-store, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0"
+  });
+  res.end(placeholder.body);
+}
+
 function isUserExpired(user, now = Date.now()) {
   const expiresAt = user?.expiresAt ? new Date(user.expiresAt).getTime() : NaN;
   return !Number.isFinite(expiresAt) || expiresAt <= now;
@@ -1193,32 +1643,274 @@ function copyUpstreamHeaders(response) {
   return headers;
 }
 
+async function fallbackToUsableSubscription(user, currentSubscription, reason, req, target = "") {
+  const fallback = await findFallbackSubscription(user, currentSubscription);
+  if (!fallback.subscription) return fallback;
+  await switchUserSubscription(user, currentSubscription, fallback.subscription, reason, req, target);
+  console.log(`[relay] fallback switched user=${user.id} from=${currentSubscription?.id || ""} to=${fallback.subscription.id} reason=${reason}`);
+  return fallback;
+}
+
+async function findDirectFallbackSubscription(user, currentSubscription, req) {
+  const errors = [];
+  const headers = forwardedSubscriptionHeaders(req);
+  relayLog("direct-fallback-search-start", {
+    userId: user?.id || "",
+    currentPool: poolLogInfo(currentSubscription),
+    forwardedHeaders: headersForLog(headers)
+  });
+  for (const candidate of fallbackCandidates(user, currentSubscription)) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    relayLog("direct-fallback-request", {
+      userId: user?.id || "",
+      candidatePool: poolLogInfo(candidate),
+      method: "GET",
+      url: candidate.url,
+      headers: headersForLog(headers)
+    });
+    try {
+      const response = await fetch(candidate.url, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers
+      });
+      if (!response.ok) throw new Error(`Fallback pool URL returned HTTP ${response.status}`);
+      const body = Buffer.from(await response.arrayBuffer());
+      relayLog("direct-fallback-response-ok", {
+        userId: user?.id || "",
+        candidatePool: poolLogInfo(candidate),
+        status: response.status,
+        headers: responseHeadersForLog(response),
+        bodyLength: body.length,
+        bodyPreview: bodyPreview(body.toString("utf8"))
+      });
+      return {
+        subscription: candidate,
+        body,
+        headers: copyUpstreamHeaders(response),
+        errors
+      };
+    } catch (error) {
+      relayLog("direct-fallback-response-failed", {
+        userId: user?.id || "",
+        candidatePool: poolLogInfo(candidate),
+        errorName: error.name,
+        errorMessage: error.message
+      });
+      errors.push({
+        subscriptionId: candidate.id,
+        subscriptionLabel: subscriptionLogLabel(candidate),
+        error: error.name === "AbortError" ? "Fallback pool URL request timed out" : error.message
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  relayLog("direct-fallback-search-empty", {
+    userId: user?.id || "",
+    currentPool: poolLogInfo(currentSubscription),
+    errors
+  });
+  return { subscription: null, body: null, headers: null, errors };
+}
+
 async function handleRelaySubscription(req, res, token) {
+  const relayRequestId = crypto.randomBytes(6).toString("hex");
+  relayLog("request-start", {
+    relayRequestId,
+    method: req.method,
+    url: req.url,
+    tokenPrefix: String(token || "").slice(0, 8),
+    headers: headersForLog(req.headers)
+  });
   await loadLatestData();
   ensureUserRelayTokens();
 
   const user = users.find(item => item.subscriptionToken === token);
   if (!user) {
+    relayLog("user-not-found", {
+      relayRequestId,
+      tokenPrefix: String(token || "").slice(0, 8)
+    });
     sendSubscriptionMessage(res, 404, "订阅链接不存在或已被删除，请联系客服。");
     return;
   }
 
-  if (isUserExpired(user)) {
-    sendSubscriptionMessage(res, 200, `订阅已到期，请续费后继续使用。\n到期时间：${user.expiresAt || "未知"}`);
+  const now = Date.now();
+  const expiresAtTime = user?.expiresAt ? new Date(user.expiresAt).getTime() : NaN;
+  const expired = isUserExpired(user, now);
+  relayLog("user-date-check", {
+    relayRequestId,
+    userId: user.id,
+    userLabel: user.userId || user.wechatName || "",
+    nowIso: new Date(now).toISOString(),
+    expiresAt: user.expiresAt || "",
+    expiresAtTime: Number.isFinite(expiresAtTime) ? expiresAtTime : null,
+    expired,
+    duration: user.duration || "",
+    purchasedAt: user.purchasedAt || ""
+  });
+  if (expired) {
+    relayLog("response-placeholder-expired", {
+      relayRequestId,
+      userId: user.id
+    });
+    sendExpiredPlaceholderSubscription(res, user);
     return;
   }
 
-  const subscription = subscriptions.find(item => item.id === user.subscriptionId);
+  let subscription = subscriptions.find(item => item.id === user.subscriptionId);
+  const sc = user.subconverterConfig;
+  let precheckedLiveConfig = null;
+  const initialFallbackReason = !subscription?.url ? "pool-missing" : (sc?.target ? poolMetricUnavailableReason(subscription) : "");
+  relayLog("current-pool-selected", {
+    relayRequestId,
+    userId: user.id,
+    useSubconverter: Boolean(sc?.target),
+    subconverterConfig: sc || null,
+    currentPool: poolLogInfo(subscription),
+    initialFallbackReason
+  });
+  if (!sc?.target) {
+    relayLog("response-placeholder-custom-url-disabled", {
+      relayRequestId,
+      userId: user.id,
+      currentPool: poolLogInfo(subscription)
+    });
+    sendDisabledCustomUrlPlaceholderSubscription(res, user);
+    return;
+  }
+  if (initialFallbackReason) {
+    if (subscription?.url) {
+      try {
+        precheckedLiveConfig = await fetchLivePoolConfig(subscription);
+        relayLog("current-pool-live-precheck-ok", {
+          relayRequestId,
+          userId: user.id,
+          reason: initialFallbackReason,
+          pool: poolLogInfo(subscription),
+          liveConfig: {
+            status: precheckedLiveConfig.status,
+            client: precheckedLiveConfig.client,
+            score: precheckedLiveConfig.score,
+            bodyLength: precheckedLiveConfig.bodyLength,
+            subscriptionUserinfo: precheckedLiveConfig.subscriptionUserinfo
+          }
+        });
+      } catch (error) {
+        relayLog("current-pool-live-precheck-failed", {
+          relayRequestId,
+          userId: user.id,
+          reason: initialFallbackReason,
+          pool: poolLogInfo(subscription),
+          error: error.message,
+          attempts: error.attempts || []
+        });
+      }
+    }
+    if (!precheckedLiveConfig) {
+      const fallback = await fallbackToUsableSubscription(user, subscription, initialFallbackReason, req, user.subconverterConfig?.target || "");
+      if (!fallback.subscription) {
+        relayLog("response-placeholder-unavailable", {
+          relayRequestId,
+          userId: user.id,
+          stage: "initial-fallback",
+          reason: initialFallbackReason,
+          fallbackErrors: fallback.errors || []
+        });
+        sendUnavailablePoolPlaceholderSubscription(res, user);
+        return;
+      }
+      subscription = fallback.subscription;
+      precheckedLiveConfig = fallback.liveConfig;
+      relayLog("current-pool-replaced-by-fallback", {
+        relayRequestId,
+        userId: user.id,
+        reason: initialFallbackReason,
+        nextPool: poolLogInfo(subscription)
+      });
+    }
+  }
   if (!subscription?.url) {
+    relayLog("response-error-no-pool-url", {
+      relayRequestId,
+      userId: user.id,
+      currentPool: poolLogInfo(subscription)
+    });
     sendSubscriptionMessage(res, 503, "订阅暂时不可用，请联系客服处理。");
     return;
   }
 
   // subconverter 路径：用户配置了 target 且服务端有 SUB_CONVERTER_URL
-  const sc = user.subconverterConfig;
+  if (sc?.target && !SUB_CONVERTER_URL) {
+    relayLog("subconverter-not-configured", {
+      relayRequestId,
+      userId: user.id,
+      target: sc.target
+    });
+    sendSubscriptionMessage(res, 503, "服务端未配置 SUB_CONVERTER_URL，无法进行订阅转换。请联系管理员。");
+    return;
+  }
   if (sc?.target && SUB_CONVERTER_URL) {
-    const cacheUrl = `http://127.0.0.1:${PORT}/api/internal/pool-cache/${subscription.id}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
-    const params = new URLSearchParams({ target: sc.target, url: cacheUrl });
+    relayLog("subconverter-flow-start", {
+      relayRequestId,
+      userId: user.id,
+      pool: poolLogInfo(subscription),
+      config: sc
+    });
+    let liveConfig = precheckedLiveConfig;
+    try {
+      if (!liveConfig) liveConfig = await fetchLivePoolConfig(subscription);
+    } catch (error) {
+      relayLog("subconverter-current-live-fetch-failed", {
+        relayRequestId,
+        userId: user.id,
+        pool: poolLogInfo(subscription),
+        error: error.message,
+        attempts: error.attempts || []
+      });
+      const fallback = await fallbackToUsableSubscription(user, subscription, "pool-fetch-failed", req, sc.target);
+      if (!fallback.subscription) {
+        relayLog("response-placeholder-unavailable", {
+          relayRequestId,
+          userId: user.id,
+          stage: "subconverter-live-fetch",
+          reason: "pool-fetch-failed",
+          fallbackErrors: fallback.errors || []
+        });
+        sendUnavailablePoolPlaceholderSubscription(res, user);
+        return;
+      }
+      subscription = fallback.subscription;
+      liveConfig = fallback.liveConfig;
+      relayLog("subconverter-using-fallback-pool", {
+        relayRequestId,
+        userId: user.id,
+        pool: poolLogInfo(subscription),
+        liveConfig: {
+          status: liveConfig.status,
+          client: liveConfig.client,
+          score: liveConfig.score,
+          bodyLength: liveConfig.bodyLength,
+          subscriptionUserinfo: liveConfig.subscriptionUserinfo
+        }
+      });
+    }
+    const liveConfigId = registerLivePoolConfig(liveConfig);
+    cleanupLivePoolConfigs();
+    relayLog("subconverter-live-config-registered", {
+      relayRequestId,
+      userId: user.id,
+      pool: poolLogInfo(subscription),
+      liveConfigId,
+      liveConfigTtlMs: LIVE_POOL_CONFIG_TTL_MS,
+      bodyLength: liveConfig.bodyLength,
+      bodyPreview: bodyPreview(liveConfig.body)
+    });
+    const liveConfigUrl = `http://127.0.0.1:${PORT}/api/internal/pool-live/${liveConfigId}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
+    const params = new URLSearchParams({ target: sc.target, url: liveConfigUrl });
     if (sc.config) params.set("config", sc.config);
     if (sc.include) params.set("include", sc.include);
     if (sc.exclude) params.set("exclude", sc.exclude);
@@ -1228,22 +1920,65 @@ async function handleRelaySubscription(req, res, token) {
     if (sc.sort !== undefined) params.set("sort", String(sc.sort));
     if (sc.rename) params.set("rename", sc.rename);
     const subUrl = `${SUB_CONVERTER_URL}/sub?${params.toString()}`;
-    console.log("[subconverter] request:", subUrl);
+    relayLog("subconverter-request", {
+      relayRequestId,
+      userId: user.id,
+      url: subUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]"),
+      params: {
+        ...Object.fromEntries(params.entries()),
+        url: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
+      },
+      liveConfigUrl: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
+    });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 25000);
     try {
       const response = await fetch(subUrl, { signal: controller.signal });
+      relayLog("subconverter-response", {
+        relayRequestId,
+        userId: user.id,
+        ok: response.ok,
+        status: response.status,
+        headers: responseHeadersForLog(response)
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        relayLog("subconverter-response-error-body", {
+          relayRequestId,
+          userId: user.id,
+          bodyLength: text.length,
+          bodyPreview: bodyPreview(text)
+        });
+        sendSubscriptionMessage(res, 502, `Subconverter failed (${response.status}): ${text.slice(0, 200)}`);
+        return;
+      }
       const body = Buffer.from(await response.arrayBuffer());
+      relayLog("response-subconverter-ok", {
+        relayRequestId,
+        userId: user.id,
+        status: response.status,
+        contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+        bodyLength: body.length,
+        bodyPreview: bodyPreview(body.toString("utf8"))
+      });
       res.writeHead(response.status, {
         "content-type": response.headers.get("content-type") || "text/plain; charset=utf-8",
         "cache-control": "no-store, max-age=0",
         "pragma": "no-cache",
         "expires": "0",
-        ...(subscription.cachedConfig?.subscriptionUserinfo ? { "subscription-userinfo": subscription.cachedConfig.subscriptionUserinfo } : {})
+        ...(liveConfig.subscriptionUserinfo ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
       });
       res.end(body);
     } catch (error) {
-      sendSubscriptionMessage(res, 502, error.name === "AbortError" ? "订阅转换超时，请稍后重试。" : "订阅转换暂时不可用，请稍后重试。");
+      relayLog("subconverter-request-error", {
+        relayRequestId,
+        userId: user.id,
+        errorName: error.name,
+        errorMessage: error.message
+      });
+      sendSubscriptionMessage(res, 502, error.name === "AbortError"
+        ? "Subconverter request timed out. Please retry."
+        : `Subconverter request failed: ${error.message}`);
     } finally {
       clearTimeout(timer);
     }
@@ -1252,21 +1987,66 @@ async function handleRelaySubscription(req, res, token) {
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
+  const directHeaders = forwardedSubscriptionHeaders(req);
+  relayLog("direct-current-request", {
+    relayRequestId,
+    userId: user.id,
+    pool: poolLogInfo(subscription),
+    method: "GET",
+    url: subscription.url,
+    headers: headersForLog(directHeaders)
+  });
   try {
     const response = await fetch(subscription.url, {
       method: "GET",
       redirect: "follow",
       signal: controller.signal,
-      headers: forwardedSubscriptionHeaders(req)
+      headers: directHeaders
     });
+    if (!response.ok) throw new Error(`Pool URL returned HTTP ${response.status}`);
     const body = Buffer.from(await response.arrayBuffer());
+    relayLog("direct-current-response-ok", {
+      relayRequestId,
+      userId: user.id,
+      pool: poolLogInfo(subscription),
+      status: response.status,
+      headers: responseHeadersForLog(response),
+      bodyLength: body.length,
+      bodyPreview: bodyPreview(body.toString("utf8"))
+    });
     res.writeHead(response.status, copyUpstreamHeaders(response));
     res.end(body);
   } catch (error) {
-    const message = error.name === "AbortError"
-      ? "订阅请求超时，请稍后重试。"
-      : "订阅暂时无法读取，请稍后重试或联系客服。";
-    sendSubscriptionMessage(res, 502, message);
+    relayLog("direct-current-response-failed", {
+      relayRequestId,
+      userId: user.id,
+      pool: poolLogInfo(subscription),
+      errorName: error.name,
+      errorMessage: error.message
+    });
+    const fallback = await findDirectFallbackSubscription(user, subscription, req);
+    if (!fallback.subscription) {
+      relayLog("response-placeholder-unavailable", {
+        relayRequestId,
+        userId: user.id,
+        stage: "direct-fallback",
+        reason: "pool-fetch-failed",
+        fallbackErrors: fallback.errors || []
+      });
+      sendUnavailablePoolPlaceholderSubscription(res, user);
+      return;
+    }
+    await switchUserSubscription(user, subscription, fallback.subscription, "pool-fetch-failed", req);
+    relayLog("response-direct-fallback-ok", {
+      relayRequestId,
+      userId: user.id,
+      fromPool: poolLogInfo(subscription),
+      toPool: poolLogInfo(fallback.subscription),
+      bodyLength: fallback.body.length,
+      bodyPreview: bodyPreview(fallback.body.toString("utf8"))
+    });
+    res.writeHead(200, fallback.headers);
+    res.end(fallback.body);
   } finally {
     clearTimeout(timer);
   }
@@ -1315,6 +2095,48 @@ async function handleApi(req, res, pathname) {
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
+    return;
+  }
+
+  const internalLiveMatch = pathname.match(/^\/api\/internal\/pool-live\/([^/]+)$/);
+  if (internalLiveMatch && req.method === "GET") {
+    const url = new URL(`http://x${pathname}${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`);
+    relayLog("internal-live-request", {
+      id: internalLiveMatch[1],
+      method: req.method,
+      url: req.url.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]"),
+      tokenOk: url.searchParams.get("token") === INTERNAL_TOKEN,
+      headers: headersForLog(req.headers)
+    });
+    if (url.searchParams.get("token") !== INTERNAL_TOKEN) {
+      relayLog("internal-live-forbidden", {
+        id: internalLiveMatch[1]
+      });
+      res.writeHead(403, { "content-type": "text/plain" });
+      res.end("Forbidden");
+      return;
+    }
+    const config = readLivePoolConfig(internalLiveMatch[1]);
+    if (!config) {
+      relayLog("internal-live-expired-or-missing", {
+        id: internalLiveMatch[1]
+      });
+      res.writeHead(410, { "content-type": "text/plain; charset=utf-8" });
+      res.end("Live YAML expired before subconverter could fetch it. Please retry.");
+      return;
+    }
+    relayLog("internal-live-response-ok", {
+      id: internalLiveMatch[1],
+      contentType: config.contentType || "text/plain; charset=utf-8",
+      subscriptionUserinfo: config.subscriptionUserinfo || "",
+      bodyLength: String(config.body || "").length,
+      bodyPreview: bodyPreview(config.body)
+    });
+    res.writeHead(200, {
+      "content-type": config.contentType || "text/plain; charset=utf-8",
+      ...(config.subscriptionUserinfo ? { "subscription-userinfo": config.subscriptionUserinfo } : {})
+    });
+    res.end(config.body);
     return;
   }
 
@@ -1374,15 +2196,18 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/cron/refresh" && (req.method === "GET" || req.method === "POST")) {
     const expectedSecret = process.env.CRON_SECRET || "";
+    if (!expectedSecret) {
+      sendJson(res, 503, { error: "CRON_SECRET 未配置，接口已禁用。" });
+      return;
+    }
     const authorization = req.headers.authorization || "";
-    if (expectedSecret && authorization !== `Bearer ${expectedSecret}`) {
+    if (authorization !== `Bearer ${expectedSecret}`) {
       sendJson(res, 401, { error: "Unauthorized." });
       return;
     }
 
     await loadLatestData();
     await refreshAll();
-    await refreshAllPoolConfigCaches({ force: true });
     sendJson(res, 200, { ok: true, refreshed: subscriptions.length });
     return;
   }
@@ -1455,7 +2280,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/subscriptions/cache-refresh" && req.method === "POST") {
-    await refreshAllPoolConfigCaches({ force: true });
+    await refreshAll();
     sendJson(res, 200, { ok: true, refreshed: subscriptions.length });
     return;
   }
@@ -1494,6 +2319,14 @@ async function handleApi(req, res, pathname) {
         createdAt: new Date().toISOString()
       };
       const normalized = normalizeUser(payload, item, { autoSelectSubscription: true });
+      if (payload.subconverterConfig !== undefined) {
+        const subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
+        if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
+          sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
+          return;
+        }
+        normalized.subconverterConfig = subconverterConfig;
+      }
       users.unshift(normalized);
       bills.unshift(makeBill({
         user: normalized,
@@ -1635,7 +2468,14 @@ async function handleApi(req, res, pathname) {
         const payload = await readJson(req);
         const previousPaid = Number(item.actualPaid) || 0;
         Object.assign(item, normalizeUser(payload, item));
-        if (payload.subconverterConfig !== undefined) item.subconverterConfig = payload.subconverterConfig || null;
+        if (payload.subconverterConfig !== undefined) {
+          const subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
+          if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
+            sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
+            return;
+          }
+          item.subconverterConfig = subconverterConfig;
+        }
         const nextPaid = Number(item.actualPaid) || 0;
         const diff = Math.round((nextPaid - previousPaid) * 100) / 100;
         if (diff !== 0) {
@@ -1682,7 +2522,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname.endsWith("/refresh") && req.method === "POST") {
-    await Promise.all([refreshSubscription(item), refreshPoolConfigCache(item, { force: true })]);
+    await refreshSubscription(item);
     await saveData();
     sendJson(res, 200, publicItem(item));
     return;
@@ -1694,30 +2534,29 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname.endsWith("/cache") && req.method === "GET") {
-    const cache = item.cachedConfig || null;
-    const cachedBody = await readPoolCachedBody(item);
-    if (!cachedBody) {
-      sendJson(res, 404, {
-        error: cache?.error || (cache?.bodyFile ? "缓存文件不存在，请重新刷新这条池 URL 缓存。" : "这条池 URL 还没有缓存 Clash 配置。"),
-        cache
+    try {
+      const liveConfig = await fetchLivePoolConfig(item);
+      sendJson(res, 200, {
+        status: liveConfig.status || null,
+        client: liveConfig.client || "",
+        score: liveConfig.score || null,
+        attempts: liveConfig.attempts || [],
+        storage: "live",
+        bodyFile: "",
+        fetchedAt: liveConfig.fetchedAt || null,
+        contentType: liveConfig.contentType || "",
+        subscriptionUserinfo: liveConfig.subscriptionUserinfo || "",
+        error: null,
+        body: liveConfig.body.slice(0, 20000),
+        bodyLength: liveConfig.bodyLength || liveConfig.body.length,
+        truncated: liveConfig.body.length > 20000
       });
-      return;
+    } catch (error) {
+      sendJson(res, 502, {
+        error: error.message,
+        attempts: error.attempts || []
+      });
     }
-    sendJson(res, 200, {
-      status: cache.status || null,
-      client: cache.client || "",
-      score: cache.score || null,
-      attempts: cache.attempts || [],
-      storage: cache.bodyFile ? "local-file" : "database",
-      bodyFile: cache.bodyFile || "",
-      fetchedAt: cache.fetchedAt || null,
-      contentType: cache.contentType || "",
-      subscriptionUserinfo: cache.subscriptionUserinfo || "",
-      error: cache.error || null,
-      body: cachedBody.slice(0, 20000),
-      bodyLength: cache.bodyLength || cachedBody.length,
-      truncated: cachedBody.length > 20000
-    });
     return;
   }
 
@@ -1804,6 +2643,7 @@ async function requestHandler(req, res) {
       initialized = true;
     }
 
+    console.log(`[req] ${req.method} ${url.pathname}`);
     const relayMatch = url.pathname.match(/^\/sub\/([^/]+)$/);
     if (relayMatch && req.method === "GET") {
       await handleRelaySubscription(req, res, relayMatch[1]);
