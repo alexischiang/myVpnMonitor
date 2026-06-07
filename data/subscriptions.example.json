@@ -2,6 +2,8 @@
   {
     "id": "example",
     "name": "示例线路",
+    "serviceProvider": "YKK Cloud",
+    "serviceProviderWebsite": "https://example.com",
     "customer": "示例客户",
     "url": "https://example.com/subscription",
     "note": "这里放套餐或付款备注",

@@ -46,6 +46,7 @@ const RELAY_AFTER_EXPIRY_DAYS = Number(process.env.RELAY_AFTER_EXPIRY_DAYS || 10
 const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
+const DEFAULT_SERVICE_PROVIDER = "YKK Cloud";
 const AUTH_COOKIE_NAME = "xela_session";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
@@ -155,6 +156,7 @@ async function ensureDataFile() {
     bills = initialBillsFromUsers();
     await saveBills();
   }
+  if (ensureSubscriptionServiceProviders()) await saveData();
   if (ensureUserRelayTokens()) await saveUsers();
 }
 
@@ -226,6 +228,40 @@ function ensureUserRelayTokens() {
   for (const user of users) {
     if (!user.subscriptionToken) {
       user.subscriptionToken = relayToken();
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function normalizeServiceProvider(input = {}, existing = {}) {
+  return String(
+    input.serviceProvider
+    || input.provider
+    || existing.serviceProvider
+    || existing.provider
+    || DEFAULT_SERVICE_PROVIDER
+  ).trim() || DEFAULT_SERVICE_PROVIDER;
+}
+
+function normalizeServiceProviderWebsite(input = {}, existing = {}, serviceProvider = DEFAULT_SERVICE_PROVIDER) {
+  const hasInput = Object.prototype.hasOwnProperty.call(input, "serviceProviderWebsite")
+    || Object.prototype.hasOwnProperty.call(input, "providerWebsite");
+  const raw = hasInput
+    ? (input.serviceProviderWebsite ?? input.providerWebsite ?? "")
+    : (existing.serviceProvider === serviceProvider ? existing.serviceProviderWebsite || existing.providerWebsite || "" : "");
+  const value = String(raw || "").trim();
+  if (value && !/^https?:\/\//i.test(value)) throw new Error("服务商官网需以 http 或 https 开头。");
+  return value;
+}
+
+function ensureSubscriptionServiceProviders() {
+  let changed = false;
+  for (const item of subscriptions) {
+    const nextProvider = normalizeServiceProvider({}, item);
+    if (item.serviceProvider !== nextProvider) {
+      item.serviceProvider = nextProvider;
+      item.updatedAt = item.updatedAt || new Date().toISOString();
       changed = true;
     }
   }
@@ -387,6 +423,8 @@ function normalizeSubscription(input, existing = {}) {
   const generatedName = email || safeHostName(rawUrl) || existing.name || "";
   const name = String(input.name || generatedName).trim();
   const url = String(input.url || existing.url || "").trim();
+  const serviceProvider = normalizeServiceProvider(input, existing);
+  const serviceProviderWebsite = normalizeServiceProviderWebsite(input, existing, serviceProvider);
   const customer = String(input.customer || existing.customer || "").trim();
   const note = String(input.note || existing.note || "").trim();
 
@@ -398,6 +436,8 @@ function normalizeSubscription(input, existing = {}) {
     name,
     url,
     email,
+    serviceProvider,
+    serviceProviderWebsite,
     customer,
     note,
     updatedAt: new Date().toISOString()
@@ -839,6 +879,7 @@ function publicItem(item) {
   const customerCount = users.filter(user => user.subscriptionId === item.id).length;
   return {
     ...item,
+    serviceProvider: normalizeServiceProvider({}, item),
     customerCount,
     status: statusFor(item, customerCount)
   };
@@ -853,6 +894,8 @@ function publicUser(user) {
       id: subscription.id,
       url: subscription.url,
       email: subscription.email || "",
+      serviceProvider: normalizeServiceProvider({}, subscription),
+      serviceProviderWebsite: subscription.serviceProviderWebsite || "",
       name: subscription.name || ""
     } : null
   };
