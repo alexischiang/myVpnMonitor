@@ -41,9 +41,8 @@ const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "bui
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 50 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
-const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 2);
+const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 10);
 const RELAY_AFTER_EXPIRY_DAYS = Number(process.env.RELAY_AFTER_EXPIRY_DAYS || 10);
-const RELAY_MAX_CUSTOMERS = Number(process.env.RELAY_MAX_CUSTOMERS || 8);
 const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
@@ -452,15 +451,27 @@ function subscriptionsByLatestExpiry() {
 }
 
 function findRecommendedSubscriptionForExpiry(expiresAt, { fallbackId = "", ignoredUserId = "" } = {}) {
+  return recommendSubscriptionForExpiry(expiresAt, { fallbackId, ignoredUserId }).subscription;
+}
+
+function recommendSubscriptionForExpiry(expiresAt, { fallbackId = "", ignoredUserId = "" } = {}) {
   const userExpiryTime = startOfUtcDate(expiresAt);
   const dayMs = 86400000;
+  let noExpiry = 0;
+  let outOfWindow = 0;
   const candidates = subscriptions
     .map(item => {
       const expireTime = item.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
-      if (!Number.isFinite(expireTime) || !Number.isFinite(userExpiryTime)) return null;
+      if (!Number.isFinite(expireTime) || !Number.isFinite(userExpiryTime)) {
+        noExpiry++;
+        return null;
+      }
       const customerCount = subscriptionCustomerCount(item.id, ignoredUserId);
       const diffDays = (expireTime - userExpiryTime) / dayMs;
-      if (customerCount > RELAY_MAX_CUSTOMERS || diffDays < -RELAY_BEFORE_EXPIRY_DAYS || diffDays > RELAY_AFTER_EXPIRY_DAYS) return null;
+      if (diffDays < -RELAY_BEFORE_EXPIRY_DAYS || diffDays > RELAY_AFTER_EXPIRY_DAYS) {
+        outOfWindow++;
+        return null;
+      }
       return { item, diffDays, customerCount };
     })
     .filter(Boolean);
@@ -468,14 +479,34 @@ function findRecommendedSubscriptionForExpiry(expiresAt, { fallbackId = "", igno
   const afterCandidates = candidates
     .filter(candidate => candidate.diffDays >= 0)
     .sort((a, b) => a.diffDays - b.diffDays || a.customerCount - b.customerCount);
-  if (afterCandidates.length) return afterCandidates[0].item;
+  if (afterCandidates.length) {
+    const best = afterCandidates[0];
+    return { subscription: best.item, reason: null, diffDays: best.diffDays, customerCount: best.customerCount, fallback: false };
+  }
 
   const beforeCandidates = candidates
     .filter(candidate => candidate.diffDays < 0)
     .sort((a, b) => Math.abs(a.diffDays) - Math.abs(b.diffDays) || a.customerCount - b.customerCount);
-  if (beforeCandidates.length) return beforeCandidates[0].item;
+  if (beforeCandidates.length) {
+    const best = beforeCandidates[0];
+    return { subscription: best.item, reason: null, diffDays: best.diffDays, customerCount: best.customerCount, fallback: false };
+  }
 
-  return subscriptions.find(item => item.id === fallbackId) || subscriptionsByLatestExpiry()[0] || null;
+  const fallback = subscriptions.find(item => item.id === fallbackId) || subscriptionsByLatestExpiry()[0] || null;
+  const reason = subscriptions.length === 0
+    ? "没有可用的池 URL。"
+    : outOfWindow > 0
+    ? "没有到期时间接近的池 URL，已使用兜底池 URL。"
+    : noExpiry > 0
+    ? "池 URL 缺少到期时间，已使用兜底池 URL。"
+    : "没有匹配的池 URL，已使用兜底池 URL。";
+  return {
+    subscription: fallback,
+    reason: fallback ? reason : "没有可用的池 URL。",
+    diffDays: null,
+    customerCount: fallback ? subscriptionCustomerCount(fallback.id, ignoredUserId) : null,
+    fallback: Boolean(fallback)
+  };
 }
 
 function normalizeUser(input, existing = {}, options = {}) {
@@ -2285,17 +2316,26 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (pathname === "/api/subscriptions/recommend" && req.method === "GET") {
-    const purchasedAt = url.searchParams.get("purchasedAt") || new Date().toISOString();
-    const duration = url.searchParams.get("duration") || "monthly";
-    const ignoredUserId = url.searchParams.get("ignoredUserId") || "";
-    const expiresAt = calculateExpiry(purchasedAt, duration);
-    if (!expiresAt) { sendJson(res, 400, { error: "参数不正确。" }); return; }
-    const recommended = findRecommendedSubscriptionForExpiry(expiresAt, { ignoredUserId });
+  if (pathname === "/api/subscriptions/recommend" && req.method === "POST") {
+    const payload = await readJson(req);
+    const expiresAt = payload.expiresAt || calculateExpiry(payload.purchasedAt || new Date().toISOString(), payload.duration || "monthly");
+    if (!expiresAt) {
+      sendJson(res, 400, { error: "参数不正确。" });
+      return;
+    }
+    const recommendation = recommendSubscriptionForExpiry(expiresAt, {
+      ignoredUserId: payload.ignoredUserId || "",
+      fallbackId: payload.fallbackId || ""
+    });
+    const recommended = recommendation.subscription;
     sendJson(res, 200, {
       expiresAt,
-      recommended: recommended ? { id: recommended.id, email: recommended.email || "", url: recommended.url, expireAt: recommended.metrics?.expireAt || null } : null,
-      reason: recommended ? null : subscriptions.length === 0 ? "没有可用的池 URL。" : "没有找到到期时间接近的池 URL，请手动选择。"
+      subscription: recommended ? publicItem(recommended) : null,
+      recommended: recommended ? publicItem(recommended) : null,
+      reason: recommendation.reason,
+      diffDays: recommendation.diffDays,
+      customerCount: recommendation.customerCount,
+      fallback: recommendation.fallback
     });
     return;
   }
@@ -2438,7 +2478,16 @@ async function handleApi(req, res, pathname) {
     if (action === "renew" && req.method === "POST") {
       try {
         const payload = await readJson(req);
+        let subconverterConfig = item.subconverterConfig || null;
+        if (payload.subconverterConfig !== undefined) {
+          subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
+          if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
+            sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
+            return;
+          }
+        }
         const renewal = renewUser(item, payload);
+        item.subconverterConfig = subconverterConfig;
         bills.unshift(makeBill({
           user: item,
           type: "renewal",

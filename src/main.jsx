@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   App as AntApp,
   Avatar,
@@ -106,53 +106,21 @@ function DurationRadio({ purchasedAt, value, onChange }) {
             key={key}
             onClick={() => onChange?.(key)}
             style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              border: `1.5px solid ${selected ? "var(--ant-color-primary)" : "var(--ant-color-border)"}`,
-              background: selected ? "var(--ant-color-primary-bg)" : "transparent",
+              padding: "10px 12px",
+              borderRadius: 6,
+              border: `1px solid ${selected ? "var(--ant-color-text)" : "var(--ant-color-border-secondary)"}`,
+              background: selected ? "var(--ant-color-fill-tertiary)" : "var(--ant-color-bg-container)",
               cursor: "pointer",
-              transition: "all 0.15s"
+              transition: "all 0.15s ease"
             }}
           >
-            <Text strong style={{ fontSize: 14, color: selected ? "var(--ant-color-primary)" : undefined }}>{label}</Text>
+            <Text strong style={{ fontSize: 14, color: selected ? "var(--ant-color-text)" : undefined }}>{label}</Text>
             {expiry && <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>到 {formatDate(expiry)}</Text>}
           </div>
         );
       })}
     </div>
   );
-}
-
-const RELAY_BEFORE_EXPIRY_DAYS = 2;
-const RELAY_AFTER_EXPIRY_DAYS = 10;
-const RELAY_MAX_CUSTOMERS = 8;
-
-function findRecommendedSubscription(subscriptions, users, expiresAt, ignoredUserId = "") {
-  if (!expiresAt) return { result: null, reason: null };
-  const userExpiry = new Date(expiresAt).setHours(0, 0, 0, 0);
-  const dayMs = 86400000;
-  let noExpiry = 0, outOfWindow = 0, tooFull = 0;
-  const candidates = subscriptions.map(s => {
-    const poolExpiry = s.metrics?.expireAt ? new Date(s.metrics.expireAt).setHours(0, 0, 0, 0) : null;
-    if (!poolExpiry) { noExpiry++; return null; }
-    const customerCount = users.filter(u => u.subscriptionId === s.id && u.id !== ignoredUserId).length;
-    const diffDays = (poolExpiry - userExpiry) / dayMs;
-    if (customerCount > RELAY_MAX_CUSTOMERS) { tooFull++; return null; }
-    if (diffDays < -RELAY_BEFORE_EXPIRY_DAYS || diffDays > RELAY_AFTER_EXPIRY_DAYS) { outOfWindow++; return null; }
-    return { s, diffDays, customerCount };
-  }).filter(Boolean);
-  const after = candidates.filter(c => c.diffDays >= 0).sort((a, b) => a.diffDays - b.diffDays || a.customerCount - b.customerCount);
-  if (after.length) return { result: after[0].s, reason: null };
-  const before = candidates.filter(c => c.diffDays < 0).sort((a, b) => Math.abs(a.diffDays) - Math.abs(b.diffDays) || a.customerCount - b.customerCount);
-  if (before.length) return { result: before[0].s, reason: null };
-  const reason = tooFull > 0 && outOfWindow === 0
-    ? `${tooFull} 条池 URL 时间匹配但已满员（>${RELAY_MAX_CUSTOMERS} 客户），请手动选择`
-    : outOfWindow > 0 && tooFull === 0
-    ? "没有到期时间接近的池 URL，请手动选择"
-    : tooFull > 0
-    ? `有 ${tooFull} 条满员、${outOfWindow} 条时间不匹配，请手动选择`
-    : "没有可用的池 URL";
-  return { result: null, reason };
 }
 
 function subscriptionLabel(s) {
@@ -163,10 +131,10 @@ function subscriptionLabel(s) {
 }
 const inModalPickerProps = {};
 
-const GROUP = { background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" };
-const GROUP_ITEM = { padding: "10px 16px 4px", marginBottom: 0 };
+const GROUP = { background: "var(--ant-color-bg-container)", border: "1px solid var(--ant-color-border-secondary)", borderRadius: 8, padding: "4px 0", overflow: "hidden" };
+const GROUP_ITEM = { padding: "10px 16px 6px", marginBottom: 0 };
 const GROUP_SEP = { height: 1, background: "var(--ant-color-border-secondary)", margin: "0 16px" };
-const TEXTAREA_GROUP = { background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "12px 16px" };
+const TEXTAREA_GROUP = { background: "var(--ant-color-bg-container)", border: "1px solid var(--ant-color-border-secondary)", borderRadius: 8, padding: "12px 16px" };
 
 const modalFormStyles = {
   header: { paddingBottom: 16, borderBottom: "1px solid var(--ant-color-border-secondary)", marginBottom: 0 },
@@ -179,37 +147,53 @@ function createMuse(palette) {
     sider: {
       minHeight: "100dvh",
       background: palette.sidebar,
-      padding: "32px 12px 24px",
+      padding: "24px 12px",
       borderRight: `1px solid ${palette.border}`
     },
     header: isMobile => ({
       height: "auto",
       background: palette.page,
       padding: isMobile
-        ? "calc(18px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left))"
-        : "28px 32px 12px",
+        ? "calc(18px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 12px calc(16px + env(safe-area-inset-left))"
+        : "26px 32px 14px",
       lineHeight: 1.3
     }),
     content: isMobile => ({
       padding: isMobile
         ? "12px calc(16px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))"
-        : "16px 32px 32px"
+        : "16px 24px 40px",
+      width: "100%",
+      margin: "0 auto"
     }),
     card: {
-      borderRadius: 18,
+      borderRadius: 8,
       background: palette.surface,
       border: `1px solid ${palette.border}`,
       boxShadow: palette.shadowCard
     },
     softCard: {
-      borderRadius: 18,
+      borderRadius: 8,
       background: palette.surface,
       border: `1px solid ${palette.border}`,
       boxShadow: palette.shadowSoft
     },
+    pageSection: {
+      background: palette.surface,
+      border: `1px solid ${palette.border}`,
+      borderRadius: 8,
+      overflow: "hidden"
+    },
+    pageHeader: {
+      padding: "16px 20px",
+      borderBottom: `1px solid ${palette.border}`,
+      background: palette.surface
+    },
+    pageBody: {
+      padding: 20
+    },
     brandAvatar: {
-      background: palette.primary,
-      boxShadow: "0 4px 12px rgba(0,122,255,0.3)"
+      background: palette.action,
+      color: palette.surface
     },
     menu: { borderInlineEnd: 0, background: "transparent" },
     navDivider: `1px solid ${palette.border}`
@@ -218,40 +202,128 @@ function createMuse(palette) {
 
 const tablePagination = { pageSize: 20, showSizeChanger: false };
 
+const resizableTableComponents = {
+  header: {
+    cell: ResizableHeaderCell
+  }
+};
+
+function columnStorageKey(column, index) {
+  if (column.key) return String(column.key);
+  if (Array.isArray(column.dataIndex)) return column.dataIndex.join(".");
+  if (column.dataIndex) return String(column.dataIndex);
+  if (typeof column.title === "string") return column.title;
+  return `column-${index}`;
+}
+
+function ResizableHeaderCell({ width, onResizeColumn, children, style, ...restProps }) {
+  function handleMouseDown(event) {
+    if (!width || !onResizeColumn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = width;
+
+    function handleMouseMove(moveEvent) {
+      const nextWidth = Math.max(72, Math.round(startWidth + moveEvent.clientX - startX));
+      onResizeColumn(nextWidth);
+    }
+
+    function handleMouseUp() {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.classList.remove("is-resizing-table-column");
+    }
+
+    document.body.classList.add("is-resizing-table-column");
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }
+
+  return (
+    <th {...restProps} style={{ ...style, width }}>
+      <span className="resizable-table-title">{children}</span>
+      {width ? <span className="resizable-table-handle" onMouseDown={handleMouseDown} /> : null}
+    </th>
+  );
+}
+
+function useResizableColumns(columns, storageKey) {
+  const [widths, setWidths] = useState(() => {
+    if (typeof window === "undefined" || !storageKey) return {};
+    try {
+      return JSON.parse(localStorage.getItem(`table-widths:${storageKey}`) || "{}");
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !storageKey) return;
+    localStorage.setItem(`table-widths:${storageKey}`, JSON.stringify(widths));
+  }, [storageKey, widths]);
+
+  const resizableColumns = useMemo(() => columns.map((column, index) => {
+    const key = columnStorageKey(column, index);
+    const width = widths[key] || column.width || 140;
+    const originalHeaderCell = column.onHeaderCell;
+    return {
+      ...column,
+      key,
+      width,
+      onHeaderCell: currentColumn => ({
+        ...(typeof originalHeaderCell === "function" ? originalHeaderCell(currentColumn) : {}),
+        width,
+        onResizeColumn: nextWidth => {
+          setWidths(currentWidths => ({ ...currentWidths, [key]: nextWidth }));
+        }
+      })
+    };
+  }), [columns, widths]);
+
+  const scrollX = useMemo(() => resizableColumns.reduce((sum, column) => sum + (Number(column.width) || 140), 0), [resizableColumns]);
+
+  return { columns: resizableColumns, components: resizableTableComponents, scrollX };
+}
+
 const THEME_PALETTES = {
   light: {
-    primary: "#007aff",
-    page: "#f2f2f7",
+    primary: "#0071e3",
+    action: "#000000",
+    actionHover: "#4f4e4a",
+    page: "#ffffff",
     sidebar: "#ffffff",
     surface: "#ffffff",
     surfaceElevated: "#ffffff",
-    surfaceHover: "#f2f2f7",
-    border: "rgba(60,60,67,0.13)",
-    borderSoft: "rgba(60,60,67,0.08)",
-    text: "#1c1c1e",
-    textSecondary: "#6e6e73",
-    textMuted: "#aeaeb2",
-    fill: "rgba(120,120,128,0.12)",
-    fillSecondary: "rgba(120,120,128,0.08)",
-    fillTertiary: "rgba(120,120,128,0.05)",
-    shadowCard: "0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04)",
-    shadowSoft: "0 1px 2px rgba(0,0,0,0.06)"
+    surfaceHover: "#f5f5f5",
+    border: "#e7e6e2",
+    borderSoft: "#e7e6e2",
+    text: "#292827",
+    textSecondary: "#4f4e4a",
+    textMuted: "#9e9c98",
+    fill: "#f5f5f5",
+    fillSecondary: "#e7e6e2",
+    fillTertiary: "#f5f5f5",
+    shadowCard: "none",
+    shadowSoft: "none"
   },
   dark: {
-    primary: "#0a84ff",
-    page: "#000000",
-    sidebar: "#1c1c1e",
-    surface: "#1c1c1e",
-    surfaceElevated: "#2c2c2e",
-    surfaceHover: "#2c2c2e",
-    border: "rgba(255,255,255,0.12)",
-    borderSoft: "rgba(255,255,255,0.07)",
-    text: "#ffffff",
-    textSecondary: "#ebebf599",
-    textMuted: "#ebebf54d",
-    fill: "rgba(120,120,128,0.22)",
-    fillSecondary: "rgba(120,120,128,0.16)",
-    fillTertiary: "rgba(120,120,128,0.10)",
+    primary: "#60a5fa",
+    action: "#ffffff",
+    actionHover: "#e7e6e2",
+    page: "#101010",
+    sidebar: "#151515",
+    surface: "#181818",
+    surfaceElevated: "#202020",
+    surfaceHover: "#242424",
+    border: "rgba(231,230,226,0.16)",
+    borderSoft: "rgba(231,230,226,0.12)",
+    text: "#f5f5f5",
+    textSecondary: "#cbc9c4",
+    textMuted: "#9e9c98",
+    fill: "rgba(245,245,245,0.08)",
+    fillSecondary: "rgba(245,245,245,0.10)",
+    fillTertiary: "rgba(245,245,245,0.06)",
     shadowCard: "none",
     shadowSoft: "none"
   }
@@ -282,14 +354,14 @@ function BusyModal({ busy }) {
   }, [busy]);
   return (
     <Modal open={Boolean(busy)} footer={null} closable={false} centered maskClosable={false} width={340}
-      styles={{ content: { borderRadius: 20, padding: "32px 28px 28px" } }}>
+      styles={{ content: { borderRadius: 8, padding: "28px 24px 24px" } }}>
       <Flex vertical align="center" gap={20}>
-        <div style={{ width: 48, height: 48, borderRadius: 14, background: "rgba(0,122,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: 44, height: 44, borderRadius: 8, background: "var(--ant-color-fill-tertiary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Spin size="default" />
         </div>
         <Flex vertical align="center" gap={6} style={{ width: "100%" }}>
-          <Text strong style={{ fontSize: 16, letterSpacing: -0.3 }}>{busy?.label || "处理中..."}</Text>
-          <Progress percent={progress} showInfo={false} strokeColor="#007aff" trailColor="rgba(0,0,0,0.06)" strokeLinecap="round" style={{ width: "100%", margin: "4px 0" }} />
+          <Text strong style={{ fontSize: 16 }}>{busy?.label || "处理中..."}</Text>
+          <Progress percent={progress} showInfo={false} strokeColor="var(--ant-color-primary)" trailColor="var(--ant-color-fill-secondary)" strokeLinecap="round" style={{ width: "100%", margin: "4px 0" }} />
           <Text type="secondary" style={{ fontSize: 12 }}>请稍候，完成后自动关闭</Text>
         </Flex>
       </Flex>
@@ -357,6 +429,10 @@ function StatusBadge({ status }) {
 }
 
 function UrlText({ value }) {
+  return <CopyableUrlPill value={value} />;
+}
+
+function CopyableUrlPill({ value, className = "" }) {
   const { message } = AntApp.useApp();
   const [copied, setCopied] = useState(false);
   const text = value || "未知";
@@ -368,31 +444,86 @@ function UrlText({ value }) {
     });
   }
   return (
-    <Flex align="center" gap={8}>
-      <Tag color="gold">{String(text).slice(-4)}</Tag>
-      <Text code ellipsis={{ tooltip: text }}>{text}</Text>
-      <Button size="small" icon={copied ? <CheckOutlined /> : <CopyOutlined />} style={copied ? { color: "#52c41a", borderColor: "#52c41a" } : {}} onClick={handleCopy} />
-    </Flex>
+    <div className={`copyable-url ${className}`}>
+      <Text code className="copyable-url-text">{text}</Text>
+      <Button className="copyable-url-button" size="small" icon={copied ? <CheckOutlined /> : <CopyOutlined />} style={copied ? { color: "#52c41a", borderColor: "#52c41a" } : {}} onClick={handleCopy} />
+    </div>
   );
 }
 
 function MobileUrlBlock({ value }) {
-  const { message } = AntApp.useApp();
-  const [copied, setCopied] = useState(false);
-  const text = value || "未知";
-  function handleCopy() {
-    copyText(value || "").then(() => {
-      message.success("已复制");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  return <CopyableUrlPill value={value} className="copyable-url-mobile" />;
+}
+
+function renderYamlLine(line) {
+  if (!line) return " ";
+  const commentIndex = line.indexOf("#");
+  const source = commentIndex >= 0 ? line.slice(0, commentIndex) : line;
+  const comment = commentIndex >= 0 ? line.slice(commentIndex) : "";
+  const keyMatch = source.match(/^(\s*-?\s*)([A-Za-z0-9_.-]+)(\s*:\s*)(.*)$/);
+  if (keyMatch) {
+    return (
+      <>
+        {keyMatch[1]}
+        <span className="code-token-key">{keyMatch[2]}</span>
+        <span className="code-token-punctuation">{keyMatch[3]}</span>
+        {renderYamlValue(keyMatch[4])}
+        {comment && <span className="code-token-comment">{comment}</span>}
+      </>
+    );
   }
   return (
-    <Flex align="center" gap={8} style={{ minWidth: 0 }}>
-      <Tag color="gold" style={{ marginInlineEnd: 0, flex: "0 0 auto" }}>{String(text).slice(-4)}</Tag>
-      <Text code ellipsis={{ tooltip: text }} style={{ flex: 1, minWidth: 0, maxWidth: "100%", fontSize: 13, lineHeight: 1.6 }}>{text}</Text>
-      <Button size="small" icon={copied ? <CheckOutlined /> : <CopyOutlined />} style={{ flex: "0 0 auto", ...(copied ? { color: "#52c41a", borderColor: "#52c41a" } : {}) }} onClick={handleCopy} />
-    </Flex>
+    <>
+      {renderYamlValue(source)}
+      {comment && <span className="code-token-comment">{comment}</span>}
+    </>
+  );
+}
+
+function renderYamlValue(value) {
+  if (!value) return value;
+  const parts = value.split(/('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\btrue\b|\bfalse\b|\bnull\b|-?\b\d+(?:\.\d+)?\b)/gi);
+  return parts.map((part, index) => {
+    if (!part) return null;
+    if (/^'.*'$|^".*"$/.test(part)) return <span className="code-token-string" key={index}>{part}</span>;
+    if (/^(true|false)$/i.test(part)) return <span className="code-token-boolean" key={index}>{part}</span>;
+    if (/^null$/i.test(part)) return <span className="code-token-null" key={index}>{part}</span>;
+    if (/^-?\d+(?:\.\d+)?$/.test(part)) return <span className="code-token-number" key={index}>{part}</span>;
+    return part;
+  });
+}
+
+function CodeViewer({ code, meta, language = "YAML" }) {
+  const { message } = AntApp.useApp();
+  const [copied, setCopied] = useState(false);
+  const lines = String(code || "").split("\n");
+
+  function handleCopy() {
+    copyText(code || "").then(() => {
+      message.success("已复制");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  }
+
+  return (
+    <div className="code-viewer">
+      <div className="code-viewer-toolbar">
+        <div className="code-viewer-tabs">
+          <span className="code-viewer-tab code-viewer-tab-active">{language}</span>
+        </div>
+        <Button type="text" size="small" icon={copied ? <CheckOutlined /> : <CopyOutlined />} onClick={handleCopy} />
+      </div>
+      {meta && <div className="code-viewer-meta">{meta}</div>}
+      <pre className="code-viewer-body" aria-label={`${language} code`}>
+        {lines.map((line, index) => (
+          <div className="code-viewer-line" key={`${index}-${line.slice(0, 12)}`}>
+            <span className="code-viewer-line-number">{index + 1}</span>
+            <code>{renderYamlLine(line)}</code>
+          </div>
+        ))}
+      </pre>
+    </div>
   );
 }
 
@@ -409,20 +540,18 @@ function userClientSubscriptionUrl(user) {
 
 function PageCard({ title, extra, children }) {
   const muse = useMuse();
-  const { palette } = useThemeMode();
   const screens = Grid.useBreakpoint();
   const mobile = !screens.md;
   return (
-    <Card
-      bordered={false}
-      style={muse.card}
-      title={<Text strong style={{ fontSize: 15, letterSpacing: -0.2 }}>{title}</Text>}
-      extra={mobile ? null : extra}
-      styles={{ header: { padding: "18px 20px", borderBottomColor: palette.borderSoft }, body: { padding: 20 } }}
-    >
-      {mobile && extra ? <div style={{ marginBottom: 16 }}>{extra}</div> : null}
-      {children}
-    </Card>
+    <section style={muse.pageSection}>
+      <div style={muse.pageHeader}>
+        <Flex align={mobile ? "stretch" : "center"} justify="space-between" gap={12} vertical={mobile}>
+          <Text strong style={{ fontSize: 16, lineHeight: 1.4 }}>{title}</Text>
+          {extra ? <div style={{ width: mobile ? "100%" : "auto" }}>{extra}</div> : null}
+        </Flex>
+      </div>
+      <div style={muse.pageBody}>{children}</div>
+    </section>
   );
 }
 
@@ -464,7 +593,7 @@ function CardActions({ children }) {
             ...(child.props.style || {}),
             height: 32,
             paddingInline: 12,
-            borderRadius: 10,
+            borderRadius: 6,
             fontSize: 13,
             fontWeight: 500
           }
@@ -474,51 +603,277 @@ function CardActions({ children }) {
   );
 }
 
-function PoolDetailModal({ item, cache, boundUsers = [], onClose }) {
-  const m = item.metrics || {};
-  const statusItems = [
-    { label: "状态", children: <StatusBadge status={item.status} /> },
-    { label: "到期时间", children: m.expireAt ? formatDateTime(m.expireAt) : "—" },
-    { label: "剩余流量", children: m.remainingBytes != null ? formatBytes(m.remainingBytes) : "—" },
-    { label: "已用流量", children: m.usedBytes != null ? formatBytes(m.usedBytes) : "—" },
-    { label: "总流量", children: m.totalBytes != null ? formatBytes(m.totalBytes) : "—" },
-    { label: "上次检查", children: item.lastCheckedAt ? formatDateTime(item.lastCheckedAt) : "—" },
-    { label: "HTTP 状态", children: item.httpStatus || "—" },
-    { label: "错误", children: item.lastError || "—" },
-  ];
+function PoolDetailPage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const screens = Grid.useBreakpoint();
+  const { darkMode, palette } = useThemeMode();
+  const { subscriptions, users, reload, runAsync } = useData();
+  const [cache, setCache] = useState(null);
+  const [refreshingTraffic, setRefreshingTraffic] = useState(false);
+  const item = subscriptions.find(entry => entry.id === id);
+  const boundUsers = item ? users.filter(user => user.subscriptionId === item.id) : [];
   const userColumns = [
     { title: "用户 ID", dataIndex: "userId" },
     { title: "微信名", dataIndex: "wechatName", render: v => v || "—" },
     { title: "到期", render: (_, u) => formatDate(u.expiresAt) },
     { title: "状态", render: (_, u) => <StatusBadge status={userStatus(u)} /> },
   ];
+  const boundUserTable = useResizableColumns(userColumns, "url-detail-bound-users");
+
+  useEffect(() => {
+    if (!item?.id) return;
+    let cancelled = false;
+    runAsync(async () => {
+      const result = await fetchJson(`/api/subscriptions/${item.id}/cache`).catch(error => ({ error: error.message }));
+      if (!cancelled) setCache(result);
+    }, "正在读取详情...");
+    return () => {
+      cancelled = true;
+    };
+  }, [item?.id, runAsync]);
+
+  if (!item) {
+    return (
+      <PageCard title="URL 详情">
+        <Empty description="没有找到这条池 URL。" />
+      </PageCard>
+    );
+  }
+
+  async function refreshTraffic() {
+    setRefreshingTraffic(true);
+    try {
+      await runAsync(async () => {
+        await postJson(`/api/subscriptions/${item.id}/refresh`);
+        await reload(["subscriptions"]);
+      }, "正在刷新 URL 数据...");
+    } finally {
+      setRefreshingTraffic(false);
+    }
+  }
+
+  const m = item.metrics || {};
+  const trafficPercent = m.totalBytes ? Math.max(0, Math.min(100, Math.round((m.remainingBytes || 0) / m.totalBytes * 100))) : 0;
+  const usedPercent = m.totalBytes ? Math.max(0, Math.min(100, Math.round((m.usedBytes || 0) / m.totalBytes * 100))) : 0;
+  const detailTone = darkMode
+    ? {
+      panel: palette.surface,
+      panelSoft: palette.fillTertiary,
+      border: palette.border,
+      title: "#f5f5f5",
+      text: "#e5e5e5",
+      muted: palette.textMuted,
+      mutedStrong: palette.textSecondary
+    }
+    : {
+      panel: palette.surface,
+      panelSoft: palette.fillTertiary,
+      border: palette.border,
+      title: palette.text,
+      text: palette.text,
+      muted: palette.textMuted,
+      mutedStrong: palette.textSecondary
+    };
+  const isNarrow = !screens.lg;
+  const isMobileDetail = !screens.md;
+  const detailSingleColumn = !screens.xl;
+  const sectionTitleStyle = {
+    margin: 0,
+    color: detailTone.title,
+    fontSize: 18,
+    lineHeight: 1.35,
+    fontWeight: 600
+  };
+  const keyTextStyle = {
+    color: detailTone.muted,
+    fontSize: 14,
+    lineHeight: 1.55,
+    fontWeight: 400
+  };
+  const valueTextStyle = {
+    color: detailTone.text,
+    fontSize: 14,
+    lineHeight: 1.45,
+    fontWeight: 500
+  };
+  const sectionStyle = {
+    padding: isNarrow ? "22px 0" : "26px 0",
+    borderTop: `1px solid ${detailTone.border}`
+  };
+  const firstSectionStyle = {
+    ...sectionStyle,
+    borderTop: "none",
+    paddingTop: 0
+  };
+  const infoRows = [
+    { label: "状态", value: <StatusBadge status={item.status} /> },
+    { label: "到期时间", value: m.expireAt ? formatDateTime(m.expireAt) : "-" },
+    { label: "HTTP 状态", value: item.httpStatus || "-" },
+    { label: "上次检查", value: item.lastCheckedAt ? formatDateTime(item.lastCheckedAt) : "-" }
+  ];
+  const trafficRows = [
+    { label: "剩余流量", value: m.remainingBytes != null ? formatBytes(m.remainingBytes) : "-", tone: "remaining" },
+    { label: "已用流量", value: m.usedBytes != null ? formatBytes(m.usedBytes) : "-", tone: "used" },
+    { label: "总流量", value: m.totalBytes != null ? formatBytes(m.totalBytes) : "-", tone: "total" }
+  ];
+  const usageRows = [
+    { label: "绑定用户", value: `${boundUsers.length} 人` },
+    { label: "剩余流量比例", value: `${trafficPercent}%` },
+    { label: "池 URL ID", value: item.id }
+  ];
+  const renderRows = rows => (
+    <div style={{ display: "grid", gap: 15 }}>
+      {rows.map(row => (
+        <div
+          key={row.label}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(92px, 0.42fr) minmax(0, 1fr)",
+            gap: 16,
+            alignItems: "start"
+          }}
+        >
+          <Text style={keyTextStyle}>{row.label}</Text>
+          <div style={{ ...valueTextStyle, minWidth: 0, textAlign: isNarrow ? "left" : "right", wordBreak: "break-word" }}>{row.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+  const cacheText = cache?.error ? `错误：${cache.error}` : (cache?.body || "（未获取到实时 YAML）");
+  const cacheMeta = cache?.fetchedAt
+    ? `${formatDateTime(cache.fetchedAt)} · ${formatBytes(cache.bodyLength || 0)}${cache.truncated ? "（已截断）" : ""}`
+    : "";
   return (
-    <Modal title={item.email || item.name || "池 URL 详情"} open width={960} footer={null} onCancel={onClose} destroyOnHidden>
-      <Flex vertical gap={20}>
-        <div>
-          <Text strong style={{ display: "block", marginBottom: 8 }}>订阅状态</Text>
-          <Descriptions size="small" bordered column={{ xs: 1, sm: 2 }} items={statusItems} />
+    <div className="detail-page" style={{ color: detailTone.text }}>
+      <header style={{ padding: isNarrow ? "2px 0 18px" : "4px 0 22px", borderBottom: `1px solid ${detailTone.border}` }}>
+        <div style={{ height: 1, background: detailTone.border, margin: isNarrow ? "14px 0 18px" : "18px 0 20px" }} />
+        <div className="detail-hero">
+          <div className="detail-hero-toolbar">
+            <div className="detail-hero-actions">
+              <Button size="small" onClick={() => navigate("/urls")} style={{ height: 32, borderRadius: 6, paddingInline: 12, fontSize: 13 }}>返回 URL 池</Button>
+              <Button
+                className="detail-refresh-button"
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={refreshingTraffic}
+                onClick={refreshTraffic}
+                style={{ height: 32, borderRadius: 6, paddingInline: refreshingTraffic ? 16 : 12 }}
+              >
+                刷新
+              </Button>
+            </div>
+          </div>
+          <div className="detail-hero-main">
+            <Title level={1} style={{ margin: 0, color: detailTone.title, fontSize: isMobileDetail ? 24 : isNarrow ? 26 : 32, lineHeight: 1.25, fontWeight: 600 }}>
+              {item.email || item.name || "池 URL 详情"}
+            </Title>
+            <CopyableUrlPill value={item.url} className="detail-url-copyable" />
+          </div>
         </div>
-        <div>
-          <Text strong style={{ display: "block", marginBottom: 8 }}>绑定用户 <Text type="secondary" style={{ fontWeight: 400, fontSize: 12 }}>({boundUsers.length} 人)</Text></Text>
-          {boundUsers.length ? (
-            <Table size="small" rowKey="id" columns={userColumns} dataSource={boundUsers} pagination={false} />
-          ) : (
-            <Text type="secondary">暂无绑定用户</Text>
+      </header>
+
+      <main
+        style={{
+          display: "grid",
+          gridTemplateColumns: detailSingleColumn ? "1fr" : "minmax(0, 1fr) minmax(300px, 380px)",
+          columnGap: detailSingleColumn ? 0 : 48
+        }}
+      >
+        <div style={{ padding: isNarrow ? "22px 0 0" : "28px 0 0", minWidth: 0 }}>
+          <section style={firstSectionStyle}>
+            <Flex justify="space-between" align="center" gap={12} wrap="wrap" style={{ marginBottom: 16 }}>
+              <Title level={3} style={sectionTitleStyle}>流量</Title>
+            </Flex>
+            <div className="traffic-visual-panel">
+              <div className="traffic-visual-header">
+                <div>
+                  <Text type="secondary" style={{ display: "block", fontSize: 13 }}>剩余流量比例</Text>
+                  <Text strong style={{ fontSize: 28, lineHeight: 1.2 }}>{trafficPercent}%</Text>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <Text type="secondary" style={{ display: "block", fontSize: 13 }}>已用流量比例</Text>
+                  <Text strong style={{ fontSize: 20, lineHeight: 1.35 }}>{usedPercent}%</Text>
+                </div>
+              </div>
+              <div className="traffic-bar" aria-label={`剩余 ${trafficPercent}%，已用 ${usedPercent}%`}>
+                <div className="traffic-bar-used" style={{ width: `${usedPercent}%` }} />
+                <div className="traffic-bar-remaining" style={{ width: `${trafficPercent}%` }} />
+              </div>
+              <div className="traffic-stat-grid">
+                {trafficRows.map(row => (
+                  <div className={`traffic-stat traffic-stat-${row.tone}`} key={row.label}>
+                    <Text type="secondary" style={{ display: "block", fontSize: 13 }}>{row.label}</Text>
+                    <Text strong className="traffic-stat-value">{row.value}</Text>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section style={sectionStyle}>
+            <Flex justify="space-between" align="center" gap={12} wrap="wrap" style={{ marginBottom: 16 }}>
+              <Title level={3} style={sectionTitleStyle}>绑定用户</Title>
+              <Text style={keyTextStyle}>{boundUsers.length} 人正在使用</Text>
+            </Flex>
+            {boundUsers.length && isMobileDetail ? (
+              <div className="detail-user-card-list">
+                {boundUsers.map(user => (
+                  <div className="detail-user-card" key={user.id}>
+                    <div>
+                      <Text strong>{user.userId}</Text>
+                      <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 2 }}>{user.wechatName || "—"}</Text>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <Text style={{ display: "block", fontSize: 13 }}>{formatDate(user.expiresAt)}</Text>
+                      <StatusBadge status={userStatus(user)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : boundUsers.length ? (
+              <Table className="plain-detail-table" size="small" rowKey="id" columns={boundUserTable.columns} components={boundUserTable.components} dataSource={boundUsers} pagination={false} scroll={{ x: Math.max(620, boundUserTable.scrollX) }} />
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无绑定用户" />
+            )}
+          </section>
+
+          <section style={sectionStyle}>
+            <Flex justify="space-between" align="center" gap={12} wrap="wrap" style={{ marginBottom: 16 }}>
+              <Title level={3} style={sectionTitleStyle}>实时 YAML</Title>
+            </Flex>
+            <CodeViewer code={cacheText} meta={cacheMeta} language="YAML" />
+          </section>
+        </div>
+
+        <aside
+          style={{
+            padding: detailSingleColumn ? "24px 0 0" : "28px 0 0 24px",
+            borderLeft: detailSingleColumn ? "none" : `1px solid ${detailTone.border}`,
+            borderTop: detailSingleColumn ? `1px solid ${detailTone.border}` : "none"
+          }}
+        >
+          <section style={firstSectionStyle}>
+            <Title level={3} style={{ ...sectionTitleStyle, marginBottom: 18 }}>信息</Title>
+            {renderRows(infoRows)}
+          </section>
+
+          <section style={sectionStyle}>
+            <Title level={3} style={{ ...sectionTitleStyle, marginBottom: 18 }}>使用情况</Title>
+            {renderRows(usageRows)}
+          </section>
+
+          {item.lastError && (
+            <section style={sectionStyle}>
+              <Title level={3} style={{ ...sectionTitleStyle, marginBottom: 12, color: "var(--ant-color-error)" }}>错误</Title>
+              <Paragraph style={{ margin: 0, color: detailTone.text, fontSize: 13, lineHeight: 1.7 }}>{item.lastError}</Paragraph>
+            </section>
           )}
-        </div>
-        <div>
-          <Text strong style={{ display: "block", marginBottom: 8 }}>
-            实时 YAML
-            {cache?.fetchedAt && <Text type="secondary" style={{ fontWeight: 400, marginLeft: 8, fontSize: 12 }}>{formatDateTime(cache.fetchedAt)} · {formatBytes(cache.bodyLength || 0)}{cache.truncated ? "（已截断）" : ""}</Text>}
-          </Text>
-          <TextArea value={cache?.error ? `错误：${cache.error}` : (cache?.body || "（未获取到实时 YAML）")} readOnly autoSize={{ minRows: 8, maxRows: 20 }} />
-        </div>
-      </Flex>
-    </Modal>
+        </aside>
+      </main>
+    </div>
   );
 }
-
 function DebugModal({ title, content, onClose }) {
   return (
     <Modal title={title || "返回信息"} open width={900} footer={null} onCancel={onClose}>
@@ -551,20 +906,20 @@ function LoginPage() {
   return (
     <AntLayout style={{ ...muse.app, display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
       <div style={{ width: "100%", maxWidth: 400, padding: "0 24px" }}>
-        <div style={{ border: "1px solid var(--ant-color-border)", borderRadius: 16, padding: "24px", background: "var(--ant-color-bg-container)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", marginBottom: 20, textAlign: "center" }}>
-          <Title level={3} style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: -0.5 }}>XELA monitor</Title>
+        <div style={{ border: "1px solid var(--ant-color-border-secondary)", borderRadius: 8, padding: "22px 24px", background: "var(--ant-color-bg-container)", marginBottom: 16, textAlign: "center" }}>
+          <Title level={3} style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>XELA monitor</Title>
           <Text type="secondary" style={{ fontSize: 14 }}>订阅中转管理后台</Text>
         </div>
-        <div style={{ border: "1px solid var(--ant-color-border)", borderRadius: 16, padding: "28px 24px", background: "var(--ant-color-bg-container)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+        <div style={{ border: "1px solid var(--ant-color-border-secondary)", borderRadius: 8, padding: "26px 24px", background: "var(--ant-color-bg-container)" }}>
           <Form layout="vertical" size="large" onFinish={submit} requiredMark={false}>
             <Form.Item name="account" label="账号" rules={[{ required: true, message: "请输入账号" }]} style={{ marginBottom: 18 }}>
-              <Input autoComplete="username" placeholder="请输入账号" style={{ borderRadius: 10, height: 44 }} />
+              <Input autoComplete="username" placeholder="请输入账号" style={{ borderRadius: 6, height: 40 }} />
             </Form.Item>
             <Form.Item name="password" label="密码" rules={[{ required: true, message: "请输入密码" }]} style={{ marginBottom: 20 }}>
-              <Input.Password autoComplete="current-password" placeholder="请输入密码" style={{ borderRadius: 10, height: 44 }} />
+              <Input.Password autoComplete="current-password" placeholder="请输入密码" style={{ borderRadius: 6, height: 40 }} />
             </Form.Item>
             {message && <Text type="danger" style={{ display: "block", marginBottom: 14, fontSize: 13 }}>{message}</Text>}
-            <Button type="primary" htmlType="submit" block loading={loading} size="large" style={{ borderRadius: 10, fontWeight: 600, height: 46 }}>登录</Button>
+            <Button type="primary" htmlType="submit" block loading={loading} size="large" style={{ borderRadius: 6, fontWeight: 600, height: 42 }}>登录</Button>
           </Form>
         </div>
       </div>
@@ -605,7 +960,10 @@ function AppLayout() {
     setDrawerOpen(false);
   }
 
-  const nav = <SideNavigation selectedKey={location.pathname} onSelect={handleMenu} />;
+  const selectedMenuKey = location.pathname.startsWith("/urls") ? "/urls" : location.pathname;
+  const activeMenuItem = menuItems.find(item => item.key === selectedMenuKey);
+  const isUrlDetail = /^\/urls\/detail\/[^/]+/.test(location.pathname);
+  const nav = <SideNavigation selectedKey={selectedMenuKey} onSelect={handleMenu} />;
   const initialLoading = loading && !subscriptions.length && !users.length && !bills.length;
 
   return (
@@ -617,8 +975,8 @@ function AppLayout() {
             <Flex align="center" gap={12}>
               {isMobile && <Button icon={<MenuFoldOutlined />} onClick={() => setDrawerOpen(true)} />}
               <div>
-                <Text type="secondary" style={{ fontSize: 11, fontWeight: 500, letterSpacing: 0.2, textTransform: "uppercase" }}>{menuItems.find(item => item.key === location.pathname)?.label || "Dashboard"}</Text>
-                <Title level={4} style={{ margin: "2px 0 0", fontSize: 17, fontWeight: 700, letterSpacing: -0.4 }}>订阅中转控制台</Title>
+                <Text type="secondary" style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase" }}>{activeMenuItem?.label || "Dashboard"}</Text>
+                <Title level={4} style={{ margin: "2px 0 0", fontSize: 17, fontWeight: 700 }}>订阅中转控制台</Title>
               </div>
             </Flex>
             <Space size={8} wrap>
@@ -637,14 +995,20 @@ function AppLayout() {
         </Header>
         <Content style={muse.content(isMobile)}>
           <Flex vertical gap={16}>
-            {error && <Card bordered={false} style={muse.softCard}><Text type="danger">{error}</Text></Card>}
+            {error && <Card bordered style={muse.softCard}><Text type="danger">{error}</Text></Card>}
             {initialLoading ? (
               <DashboardSkeleton />
             ) : (
               <>
-                <Summary />
+                {!isUrlDetail && (
+                  <>
+                    <Summary />
+                    <div className="summary-route-divider" />
+                  </>
+                )}
                 <Routes>
                   <Route path="/urls" element={<UrlPoolPage />} />
+                  <Route path="/urls/detail/:id" element={<PoolDetailPage />} />
                   <Route path="/users" element={<UsersPage />} />
                   <Route path="/bills" element={<BillsPage />} />
                   <Route path="*" element={<Navigate to="/urls" replace />} />
@@ -670,13 +1034,13 @@ function DashboardSkeleton() {
       <Row gutter={[16, 16]}>
         {[1, 2, 3, 4, 5].map(item => (
           <Col xs={24} sm={12} xl={4} key={item}>
-            <Card bordered={false} style={muse.softCard}>
+            <Card bordered style={muse.softCard}>
               <Skeleton active paragraph={{ rows: 1 }} title={{ width: "45%" }} />
             </Card>
           </Col>
         ))}
       </Row>
-      <Card bordered={false} style={muse.card}>
+      <Card bordered style={muse.card}>
         <Skeleton active paragraph={{ rows: 8 }} />
       </Card>
     </>
@@ -690,7 +1054,7 @@ function SideNavigation({ selectedKey, onSelect }) {
     <Flex vertical gap={24}>
       <Flex align="center" gap={10} style={{ padding: "0 10px 20px", borderBottom: muse.navDivider }}>
         <Avatar size={32} style={{ ...muse.brandAvatar, fontSize: 13, fontWeight: 700 }}>X</Avatar>
-        <Text strong style={{ fontSize: 15, letterSpacing: -0.3 }}>XELA</Text>
+        <Text strong style={{ fontSize: 15 }}>XELA</Text>
       </Flex>
       <Menu mode="inline" selectedKeys={[selectedKey]} items={menuItems} onClick={onSelect} style={muse.menu} />
     </Flex>
@@ -728,11 +1092,11 @@ function Summary() {
     return (
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 10 }}>
         {items.map(item => (
-          <Card bordered={false} style={{ ...muse.softCard, minWidth: 0 }} styles={{ body: { padding: "14px 16px" } }} key={item.title}>
+            <Card bordered style={{ ...muse.softCard, minWidth: 0 }} styles={{ body: { padding: "12px 14px" } }} key={item.title}>
             <Statistic
-              title={<Text type="secondary" style={{ display: "block", fontSize: 12, fontWeight: 600 }}>{item.title}</Text>}
+               title={<Text type="secondary" style={{ display: "block", fontSize: 12, fontWeight: 500 }}>{item.title}</Text>}
               value={item.value}
-              valueStyle={{ fontSize: 20, fontWeight: 700, lineHeight: 1.2, color: palette.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+               valueStyle={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, color: palette.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
               style={{ minWidth: 0 }}
             />
           </Card>
@@ -744,11 +1108,11 @@ function Summary() {
   return (
     <Flex vertical gap={12}>
       <div>
-        <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 8, display: "block" }}>状态监控</Text>
+        <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", marginBottom: 8, display: "block" }}>状态监控</Text>
         <StatGrid items={statusItems} />
       </div>
       <div>
-        <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 8, display: "block" }}>收入情况</Text>
+        <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", marginBottom: 8, display: "block" }}>收入情况</Text>
         <StatGrid items={incomeItems} />
       </div>
     </Flex>
@@ -763,9 +1127,9 @@ function useResponsiveList() {
 function UrlPoolPage() {
   const { subscriptions, users, reload, runAsync, busy } = useData();
   const { notification } = AntApp.useApp();
+  const navigate = useNavigate();
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(null);
-  const [detail, setDetail] = useState(null);
   const [showExpired, setShowExpired] = useState(false);
   const mobile = useResponsiveList();
   const visible = subscriptions
@@ -788,14 +1152,6 @@ function UrlPoolPage() {
     }, "正在处理 URL 池操作...");
   }
 
-  async function showDetail(item) {
-    await runAsync(async () => {
-      const cache = await fetchJson(`/api/subscriptions/${item.id}/cache`).catch(e => ({ error: e.message }));
-      const boundUsers = users.filter(u => u.subscriptionId === item.id);
-      setDetail({ item, cache, boundUsers });
-    }, "正在读取详情...");
-  }
-
   const actions = (item, compact = false) => {
     const Wrap = compact ? InlineActions : CardActions;
     const buttonProps = compact ? { size: "small", style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy } : { style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy };
@@ -803,7 +1159,7 @@ function UrlPoolPage() {
       <Wrap>
         <Button {...buttonProps} icon={<EditOutlined />} onClick={() => setEditing(item)}>编辑</Button>
         <Button {...buttonProps} icon={<ReloadOutlined />} onClick={() => action(() => postJson(`/api/subscriptions/${item.id}/refresh`))}>刷新</Button>
-        <Button {...buttonProps} icon={<EyeOutlined />} onClick={() => showDetail(item)}>查看</Button>
+        <Button {...buttonProps} icon={<EyeOutlined />} onClick={() => navigate(`/urls/detail/${item.id}`)}>查看</Button>
         <Button {...buttonProps} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除池 URL", content: "确定删除这个池 URL 吗？", onOk: () => action(() => fetchJson(`/api/subscriptions/${item.id}`, { method: "DELETE" })) })}>删除</Button>
       </Wrap>
     );
@@ -828,13 +1184,21 @@ function UrlPoolPage() {
     onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }),
     onCell: () => ({ style: { whiteSpace: "nowrap" } })
   }));
+  const poolTable = useResizableColumns(columns, "url-pool");
 
   return (
-    <PageCard title="URL 池" extra={<Toolbar><Input.Search allowClear placeholder="搜索 URL、邮箱或备注" style={{ width: 210 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} /><Button onClick={() => setShowExpired(v => !v)}>{showExpired ? "隐藏已到期" : "显示已到期"}</Button><Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>添加 URL</Button></Toolbar>}>
-      {mobile ? <PoolCards items={visible} actions={actions} /> : <Table size="middle" rowKey="id" columns={columns} dataSource={visible} pagination={tablePagination} scroll={{ x: 1520 }} />}
+    <section className="flat-list-section">
+      <div className="flat-list-header">
+        <Title level={3} style={{ margin: 0, fontSize: 18, lineHeight: 1.35 }}>URL 池</Title>
+        <Toolbar>
+          <Input.Search allowClear placeholder="搜索 URL、邮箱或备注" style={{ width: 210 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} />
+          <Button onClick={() => setShowExpired(v => !v)}>{showExpired ? "隐藏已到期" : "显示已到期"}</Button>
+          <Button icon={<PlusOutlined />} onClick={() => setEditing({})}>添加 URL</Button>
+        </Toolbar>
+      </div>
+      {mobile ? <PoolCards items={visible} actions={actions} /> : <Table className="plain-detail-table user-flat-table" size="middle" rowKey="id" columns={poolTable.columns} components={poolTable.components} dataSource={visible} pagination={tablePagination} scroll={{ x: Math.max(1520, poolTable.scrollX) }} />}
       {editing && <SubscriptionForm item={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["subscriptions"]); }} />}
-      {detail && <PoolDetailModal item={detail.item} cache={detail.cache} boundUsers={detail.boundUsers} onClose={() => setDetail(null)} />}
-    </PageCard>
+    </section>
   );
 }
 
@@ -847,8 +1211,8 @@ function PoolCards({ items, actions }) {
       {items.map(item => (
         <Card
           hoverable
-          bordered={false}
-          style={{ ...muse.softCard, borderRadius: 14 }}
+          bordered
+          style={muse.softCard}
           styles={{ body: { padding: 16 } }}
           key={item.id}
         >
@@ -960,28 +1324,36 @@ function UsersPage() {
   };
 
   const columns = [
-    { title: "#", render: (_, __, index) => index + 1, width: 64 },
-    { title: "用户 ID", dataIndex: "userId" },
-    { title: "状态", render: (_, user) => <StatusBadge status={userStatus(user)} /> },
-    { title: "到期", render: (_, user) => formatDate(user.expiresAt) },
-    { title: "时长", render: (_, user) => durationLabels[user.duration] || "未知" },
-    { title: "总付款", render: (_, user) => formatMoney(user.actualPaid) },
-    { title: "客户订阅 URL", render: (_, user) => <UrlText value={userClientSubscriptionUrl(user)} />, width: 320 },
-    { title: "绑定邮箱", render: (_, user) => user.subscription?.email || "" },
-    { title: "购买时间", render: (_, user) => formatDate(user.purchasedAt) },
-    { title: "操作", render: (_, user) => actions(user, true), width: 230 }
+    { title: "#", render: (_, __, index) => index + 1, width: 48 },
+    { title: "用户 ID", dataIndex: "userId", width: 120 },
+    { title: "状态", render: (_, user) => <StatusBadge status={userStatus(user)} />, width: 76 },
+    { title: "到期", render: (_, user) => formatDate(user.expiresAt), width: 104 },
+    { title: "时长", render: (_, user) => durationLabels[user.duration] || "未知", width: 72 },
+    { title: "总付款", render: (_, user) => formatMoney(user.actualPaid), width: 88 },
+    { title: "客户订阅 URL", render: (_, user) => <UrlText value={userClientSubscriptionUrl(user)} />, width: 560 },
+    { title: "绑定邮箱", render: (_, user) => user.subscription?.email || "", width: 220 },
+    { title: "购买时间", render: (_, user) => formatDate(user.purchasedAt), width: 104 },
+    { title: "操作", render: (_, user) => actions(user, true), width: 190 }
   ].map(column => ({
     ...column,
     onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }),
     onCell: () => ({ style: { whiteSpace: "nowrap" } })
   }));
+  const userTable = useResizableColumns(columns, "users-v2");
 
   return (
-    <PageCard title="用户管理" extra={<Toolbar><Input.Search allowClear placeholder="搜索用户、邮箱或 URL" style={{ minWidth: 240 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} /><Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>添加用户</Button></Toolbar>}>
-      {mobile ? <UserCards users={visible} actions={actions} /> : <Table size="middle" rowKey="id" columns={columns} dataSource={visible} pagination={tablePagination} scroll={{ x: 1380 }} />}
+    <section className="flat-list-section">
+      <div className="flat-list-header">
+        <Title level={3} style={{ margin: 0, fontSize: 18, lineHeight: 1.35 }}>用户管理</Title>
+        <Toolbar>
+          <Input.Search allowClear placeholder="搜索用户、邮箱或 URL" style={{ minWidth: 240 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} />
+          <Button icon={<PlusOutlined />} onClick={() => setEditing({})}>添加用户</Button>
+        </Toolbar>
+      </div>
+      {mobile ? <UserCards users={visible} actions={actions} /> : <Table className="plain-detail-table user-flat-table" size="middle" rowKey="id" columns={userTable.columns} components={userTable.components} dataSource={visible} pagination={tablePagination} scroll={{ x: Math.max(1380, userTable.scrollX) }} />}
       {editing && <UserForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["users", "bills"]); }} />}
       {renewing && <RenewForm user={renewing} subscriptions={subscriptions} onClose={() => setRenewing(null)} onSaved={async () => { setRenewing(null); await reload(["users", "bills"]); }} />}
-    </PageCard>
+    </section>
   );
 }
 
@@ -992,7 +1364,7 @@ function UserCards({ users, actions }) {
   return (
     <Flex vertical gap={12}>
       {users.map(user => (
-        <Card hoverable bordered={false} style={{ ...muse.softCard, borderRadius: 14 }} styles={{ body: { padding: 16 } }} key={user.id}>
+        <Card hoverable bordered style={muse.softCard} styles={{ body: { padding: 16 } }} key={user.id}>
           <Flex justify="space-between" gap={12} align="center" style={{ marginBottom: 10 }}>
             <Text strong ellipsis={{ tooltip: user.userId }} style={{ fontSize: 15 }}>{user.userId}</Text>
             <StatusBadge status={userStatus(user)} />
@@ -1034,6 +1406,77 @@ const SC_TARGETS = [
 ];
 
 const DEFAULT_SC_TARGET = "clash";
+
+function initialOutputModeForUser(user) {
+  return user?.id
+    ? (user.subconverterConfig?.target ? "subconverter" : "direct")
+    : "subconverter";
+}
+
+function initialSubconverterConfig(user) {
+  const sc = user?.subconverterConfig || {};
+  return {
+    target: sc.target || DEFAULT_SC_TARGET,
+    config: sc.config || "",
+    include: sc.include || "",
+    exclude: sc.exclude || "",
+    rename: sc.rename || "",
+    emoji: sc.emoji !== false,
+    udp: sc.udp !== false,
+    scv: Boolean(sc.scv),
+    sort: Boolean(sc.sort)
+  };
+}
+
+function buildSubconverterConfig(values) {
+  const sc = values.subconverterConfig || {};
+  return values.outputMode === "subconverter"
+    ? { ...sc, target: sc.target || DEFAULT_SC_TARGET }
+    : null;
+}
+
+function recommendationDate(value) {
+  if (!value) return "";
+  if (typeof value?.toISOString === "function") return value.toISOString();
+  if (typeof value?.toDate === "function") return value.toDate().toISOString();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function useSubscriptionRecommendation({ expiresAt, purchasedAt, duration, ignoredUserId = "", fallbackId = "", enabled = true }) {
+  const [state, setState] = useState({ result: null, reason: null, loading: false });
+  useEffect(() => {
+    const normalizedExpiresAt = recommendationDate(expiresAt);
+    const normalizedPurchasedAt = recommendationDate(purchasedAt);
+    if (!enabled || (!normalizedExpiresAt && (!normalizedPurchasedAt || !duration))) {
+      setState({ result: null, reason: null, loading: false });
+      return;
+    }
+    let cancelled = false;
+    setState(previous => ({ ...previous, loading: true }));
+    postJson("/api/subscriptions/recommend", {
+      expiresAt: normalizedExpiresAt,
+      purchasedAt: normalizedPurchasedAt,
+      duration,
+      ignoredUserId,
+      fallbackId
+    }).then(payload => {
+      if (cancelled) return;
+      setState({
+        result: payload.subscription || payload.recommended || null,
+        reason: payload.reason || null,
+        loading: false
+      });
+    }).catch(error => {
+      if (cancelled) return;
+      setState({ result: null, reason: error.message, loading: false });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, expiresAt, purchasedAt, duration, ignoredUserId, fallbackId]);
+  return state;
+}
 
 function SubconverterPanel() {
   return (
@@ -1084,24 +1527,66 @@ function SubconverterPanel() {
   );
 }
 
+function OutputModeSection({ form, initialOutputMode, subscriptions, recommended, recommendReason, showRecommendation }) {
+  const outputMode = Form.useWatch("outputMode", form);
+  const useSubconverter = (outputMode || initialOutputMode) === "subconverter";
+  return (
+    <>
+      <div style={GROUP}>
+        <div style={{ padding: "10px 16px 0" }}>
+          <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>输出方式</Text>
+        </div>
+        <Form.Item name="outputMode" style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
+          <Radio.Group
+            optionType="button"
+            buttonStyle="solid"
+            style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}
+          >
+            <Radio.Button value="subconverter" style={{ textAlign: "center" }}>A. Subconverter</Radio.Button>
+            <Radio.Button value="direct" style={{ textAlign: "center" }}>B. 池 URL</Radio.Button>
+          </Radio.Group>
+        </Form.Item>
+        <div style={GROUP_SEP} />
+        {showRecommendation && (
+          <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
+            <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
+              {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
+            </Text>
+          </div>
+        )}
+        <Form.Item name="subscriptionId" label={useSubconverter ? "绑定池 URL" : "使用池 URL"} rules={[{ required: true, message: "请选择池 URL" }]} style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
+          <Select virtual={false} variant="borderless" options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} style={{ marginLeft: -11 }} />
+        </Form.Item>
+      </div>
+
+      {useSubconverter && <SubconverterPanel />}
+    </>
+  );
+}
+
 function UserForm({ item, subscriptions, onClose, onSaved }) {
-  const { runAsync, users } = useData();
+  const { runAsync, busy } = useData();
   const [form] = Form.useForm();
   const expiryTouched = useRef(false);
-  const outputMode = Form.useWatch("outputMode", form);
-  const initialOutputMode = item.id
-    ? (item.subconverterConfig?.target ? "subconverter" : "direct")
-    : "subconverter";
-  const selectedOutputMode = outputMode || initialOutputMode;
-  const useSubconverter = selectedOutputMode === "subconverter";
+  const subscriptionTouched = useRef(false);
+  const initialOutputMode = initialOutputModeForUser(item);
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
   const expiresAt = Form.useWatch("expiresAt", form);
 
-  const { result: recommended, reason: recommendReason } = useMemo(() => {
-    if (item.id || !purchasedAt || !duration) return { result: null, reason: null };
-    return findRecommendedSubscription(subscriptions, users, expiresAt || calcExpiry(purchasedAt, duration));
-  }, [purchasedAt, duration, expiresAt, item.id, subscriptions, users]);
+  const { result: recommended, reason: recommendReason } = useSubscriptionRecommendation({
+    expiresAt: expiresAt || calcExpiry(purchasedAt, duration),
+    duration,
+    ignoredUserId: item.id || "",
+    fallbackId: item.subscriptionId || subscriptions[0]?.id || "",
+    enabled: Boolean(purchasedAt && duration)
+  });
+
+  useEffect(() => {
+    if (!item.id && recommended?.id && !subscriptionTouched.current) {
+      form.setFieldsValue({ subscriptionId: recommended.id });
+    }
+  }, [form, item.id, recommended?.id]);
 
   const initialPurchasedAt = item.purchasedAt ? dayjs(item.purchasedAt) : dayjs();
   const initialDuration = item.duration || "monthly";
@@ -1110,6 +1595,9 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
     : dayjs(calcExpiry(initialPurchasedAt, initialDuration));
 
   function handleUserFormChange(changed, values) {
+    if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) {
+      subscriptionTouched.current = true;
+    }
     if (Object.prototype.hasOwnProperty.call(changed, "expiresAt")) {
       expiryTouched.current = true;
       return;
@@ -1122,16 +1610,11 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
 
   async function submit(values) {
     await runAsync(async () => {
-      const sc = values.subconverterConfig || {};
-      const shouldUseSubconverter = values.outputMode === "subconverter";
-      const subconverterConfig = shouldUseSubconverter
-        ? { ...sc, target: sc.target || DEFAULT_SC_TARGET }
-        : null;
       const payload = {
         ...values,
         purchasedAt: values.purchasedAt ? values.purchasedAt.format("YYYY-MM-DD") : "",
         expiresAt: values.expiresAt ? values.expiresAt.toISOString() : "",
-        subconverterConfig
+        subconverterConfig: buildSubconverterConfig(values)
       };
       delete payload.outputMode;
       if (item.id) await fetchJson(`/api/users/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
@@ -1140,7 +1623,6 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
     }, item.id ? "正在更新用户..." : "正在添加用户...");
   }
 
-  const sc = item.subconverterConfig || {};
   const fallbackLogs = Array.isArray(item.fallbackLogs) ? item.fallbackLogs : [];
   const fallbackLogColumns = [
     { title: "\u65f6\u95f4", dataIndex: "at", render: value => formatDateTime(value), width: 150 },
@@ -1148,6 +1630,7 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
     { title: "\u539f\u6c60 URL", dataIndex: "fromSubscriptionLabel", ellipsis: true },
     { title: "\u65b0\u6c60 URL", dataIndex: "toSubscriptionLabel", ellipsis: true }
   ];
+  const fallbackLogTable = useResizableColumns(fallbackLogColumns, "user-fallback-logs");
   return (
     <Modal title={item.id ? "编辑用户" : "添加用户"} open onCancel={onClose} footer={null} destroyOnHidden width={720} styles={modalFormStyles}>
       <Form form={form} layout="vertical" initialValues={{
@@ -1160,17 +1643,7 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
         expiresAt: initialExpiresAt,
         subscriptionId: item.subscriptionId || subscriptions[0]?.id || "",
         outputMode: initialOutputMode,
-        subconverterConfig: {
-          target: sc.target || DEFAULT_SC_TARGET,
-          config: sc.config || "",
-          include: sc.include || "",
-          exclude: sc.exclude || "",
-          rename: sc.rename || "",
-          emoji: sc.emoji !== false,
-          udp: sc.udp !== false,
-          scv: Boolean(sc.scv),
-          sort: Boolean(sc.sort)
-        }
+        subconverterConfig: initialSubconverterConfig(item)
       }} onValuesChange={handleUserFormChange} onFinish={submit}>
         <Flex vertical gap={12}>
           <div style={GROUP}>
@@ -1217,46 +1690,14 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
             </Form.Item>
           </div>
 
-          <div style={GROUP}>
-            <div style={{ padding: "10px 16px 0" }}>
-              <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>输出方式</Text>
-            </div>
-            <Form.Item name="outputMode" style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
-              <Radio.Group
-                optionType="button"
-                buttonStyle="solid"
-                style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}
-              >
-                <Radio.Button value="subconverter" style={{ textAlign: "center" }}>A. Subconverter</Radio.Button>
-                <Radio.Button value="direct" style={{ textAlign: "center" }}>B. 池 URL</Radio.Button>
-              </Radio.Group>
-            </Form.Item>
-            {!useSubconverter && (
-              <>
-                <div style={GROUP_SEP} />
-                {!item.id && (
-                  <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
-                    <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
-                      {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
-                    </Text>
-                  </div>
-                )}
-                <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]} style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
-                  <Select virtual={false} variant="borderless" options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} style={{ marginLeft: -11 }} />
-                </Form.Item>
-              </>
-            )}
-          </div>
-
-          {useSubconverter && <SubconverterPanel />}
-
-          {useSubconverter && (
-            <div style={{ display: "none" }}>
-              <Form.Item name="subscriptionId" hidden>
-                <Input />
-              </Form.Item>
-            </div>
-          )}
+          <OutputModeSection
+            form={form}
+            initialOutputMode={initialOutputMode}
+            subscriptions={subscriptions}
+            recommended={recommended}
+            recommendReason={recommendReason}
+            showRecommendation={!item.id}
+          />
 
           {fallbackLogs.length > 0 && (
             <div style={GROUP}>
@@ -1268,16 +1709,17 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
                 <Table
                   size="small"
                   rowKey="id"
-                  columns={fallbackLogColumns}
+                  columns={fallbackLogTable.columns}
+                  components={fallbackLogTable.components}
                   dataSource={fallbackLogs}
                   pagination={false}
-                  scroll={{ x: 620 }}
+                  scroll={{ x: Math.max(620, fallbackLogTable.scrollX) }}
                 />
               </div>
             </div>
           )}
 
-          <Button type="primary" htmlType="submit" block size="large" style={{ borderRadius: 12, fontWeight: 600 }}>
+          <Button className="detail-refresh-button" htmlType="submit" block size="large" loading={!!busy} disabled={!!busy} style={{ borderRadius: 6, fontWeight: 600 }}>
             {item.id ? "保存" : "添加用户"}
           </Button>
         </Flex>
@@ -1287,62 +1729,90 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
 }
 
 function RenewForm({ user, subscriptions, onClose, onSaved }) {
-  const { runAsync, users } = useData();
+  const { runAsync } = useData();
   const [form] = Form.useForm();
+  const subscriptionTouched = useRef(false);
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
+  const initialOutputMode = initialOutputModeForUser(user);
 
-  const { result: recommended, reason: recommendReason } = useMemo(() => {
-    if (!purchasedAt || !duration) return { result: null, reason: null };
-    const base = user.expiresAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt;
-    const expiresAt = calcExpiry(base, duration);
-    return findRecommendedSubscription(subscriptions, users, expiresAt, user.id);
-  }, [purchasedAt, duration, user.id, user.expiresAt, subscriptions, users]);
+  const renewalBase = user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt;
+  const renewalExpiresAt = renewalBase && duration ? calcExpiry(renewalBase, duration) : "";
+  const { result: recommended, reason: recommendReason } = useSubscriptionRecommendation({
+    expiresAt: renewalExpiresAt,
+    duration,
+    ignoredUserId: user.id,
+    fallbackId: user.subscriptionId || subscriptions[0]?.id || "",
+    enabled: Boolean(purchasedAt && duration)
+  });
+
+  useEffect(() => {
+    if (recommended?.id && !subscriptionTouched.current) {
+      form.setFieldsValue({ subscriptionId: recommended.id });
+    }
+  }, [form, recommended?.id]);
+
+  function handleRenewFormChange(changed) {
+    if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) {
+      subscriptionTouched.current = true;
+    }
+  }
 
   async function submit(values) {
     await runAsync(async () => {
-      await postJson(`/api/users/${user.id}/renew`, { ...values, purchasedAt: values.purchasedAt.format("YYYY-MM-DD") });
+      const payload = {
+        ...values,
+        purchasedAt: values.purchasedAt.format("YYYY-MM-DD"),
+        subconverterConfig: buildSubconverterConfig(values)
+      };
+      delete payload.outputMode;
+      await postJson(`/api/users/${user.id}/renew`, payload);
       await onSaved();
     }, "正在续费用户...");
   }
   return (
-    <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden width={480} styles={modalFormStyles}>
-      <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "" }} onFinish={submit}>
-        <Flex vertical gap={16}>
-          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" }}>
+    <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden width={720} styles={modalFormStyles}>
+      <Form form={form} layout="vertical" initialValues={{
+        purchasedAt: dayjs(),
+        actualPaid: "",
+        duration: user.duration || "monthly",
+        subscriptionId: user.subscriptionId || subscriptions[0]?.id || "",
+        outputMode: initialOutputMode,
+        subconverterConfig: initialSubconverterConfig(user)
+      }} onValuesChange={handleRenewFormChange} onFinish={submit}>
+        <Flex vertical gap={12}>
+          <div style={GROUP}>
+            <div style={{ padding: "10px 16px 0" }}>
+              <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>续费信息</Text>
+            </div>
             <Row gutter={0}>
-              <Col xs={24} sm={12} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-                <Form.Item name="purchasedAt" label="续费时间" rules={[{ required: true, message: "请选择续费时间" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
+              <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
+                <Form.Item name="purchasedAt" label="续费时间" rules={[{ required: true, message: "请选择续费时间" }]} style={GROUP_ITEM}>
                   <DatePicker {...inModalPickerProps} variant="borderless" style={{ width: "100%", paddingLeft: 0 }} />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={12}>
-                <Form.Item name="actualPaid" label="实付款" rules={[{ required: true, message: "请输入" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
+              <Col xs={24} md={16}>
+                <Form.Item name="actualPaid" label="实付款" rules={[{ required: true, message: "请输入" }]} style={GROUP_ITEM}>
                   <Input variant="borderless" type="number" min="0" step="0.01" placeholder="0.00" style={{ paddingLeft: 0 }} />
                 </Form.Item>
               </Col>
             </Row>
-          </div>
-
-          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "12px 16px" }}>
-            <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 10 }}>续费时长</Text>
-            <Form.Item name="duration" style={{ marginBottom: 0 }}>
+            <div style={GROUP_SEP} />
+            <Form.Item name="duration" label="续费时长" style={{ ...GROUP_ITEM, paddingBottom: 4 }}>
               <DurationRadio purchasedAt={user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt} />
             </Form.Item>
           </div>
 
-          <div style={{ background: "var(--ant-color-fill-tertiary)", borderRadius: 12, padding: "4px 0" }}>
-            <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
-              <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
-                {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
-              </Text>
-            </div>
-            <Form.Item name="subscriptionId" label="使用池 URL" rules={[{ required: true, message: "请选择池 URL" }]} style={{ padding: "10px 16px 4px", marginBottom: 0 }}>
-              <Select virtual={false} variant="borderless" options={subscriptions.map(source => ({ value: source.id, label: subscriptionLabel(source) }))} style={{ marginLeft: -11 }} />
-            </Form.Item>
-          </div>
+          <OutputModeSection
+            form={form}
+            initialOutputMode={initialOutputMode}
+            subscriptions={subscriptions}
+            recommended={recommended}
+            recommendReason={recommendReason}
+            showRecommendation
+          />
 
-          <Button type="primary" htmlType="submit" block size="large" style={{ borderRadius: 12, fontWeight: 600 }}>
+          <Button type="primary" htmlType="submit" block size="large" style={{ borderRadius: 6, fontWeight: 600 }}>
             确认续费
           </Button>
         </Flex>
@@ -1401,11 +1871,19 @@ function BillsPage() {
     onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }),
     onCell: () => ({ style: { whiteSpace: "nowrap" } })
   }));
+  const billTable = useResizableColumns(columns, "bills");
 
   return (
-    <PageCard title="账单管理" extra={<Toolbar><DatePicker picker="month" value={month} onChange={setMonth} placeholder="筛选月份" style={{ minWidth: 150 }} /><Input.Search allowClear placeholder="搜索用户、类型或备注" style={{ minWidth: 240 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} /></Toolbar>}>
-      {mobile ? <BillCards bills={visible} actions={actions} total={total} /> : <Table size="middle" rowKey="id" columns={columns} dataSource={visible} pagination={tablePagination} scroll={{ x: 1100 }} summary={() => <Table.Summary fixed><Table.Summary.Row><Table.Summary.Cell index={0} colSpan={4}>筛选合计</Table.Summary.Cell><Table.Summary.Cell index={4}><Text strong>{formatMoney(total)}</Text></Table.Summary.Cell><Table.Summary.Cell index={5} colSpan={4}>{visible.length} 笔账单</Table.Summary.Cell></Table.Summary.Row></Table.Summary>} />}
-    </PageCard>
+    <section className="flat-list-section">
+      <div className="flat-list-header">
+        <Title level={3} style={{ margin: 0, fontSize: 18, lineHeight: 1.35 }}>账单管理</Title>
+        <Toolbar>
+          <DatePicker picker="month" value={month} onChange={setMonth} placeholder="筛选月份" style={{ minWidth: 150 }} />
+          <Input.Search allowClear placeholder="搜索用户、类型或备注" style={{ minWidth: 240 }} onSearch={setKeyword} onChange={event => setKeyword(event.target.value)} />
+        </Toolbar>
+      </div>
+      {mobile ? <BillCards bills={visible} actions={actions} total={total} /> : <Table className="plain-detail-table user-flat-table" size="middle" rowKey="id" columns={billTable.columns} components={billTable.components} dataSource={visible} pagination={tablePagination} scroll={{ x: Math.max(1100, billTable.scrollX) }} summary={() => <Table.Summary fixed><Table.Summary.Row><Table.Summary.Cell index={0} colSpan={4}>筛选合计</Table.Summary.Cell><Table.Summary.Cell index={4}><Text strong>{formatMoney(total)}</Text></Table.Summary.Cell><Table.Summary.Cell index={5} colSpan={4}>{visible.length} 笔账单</Table.Summary.Cell></Table.Summary.Row></Table.Summary>} />}
+    </section>
   );
 }
 
@@ -1414,10 +1892,10 @@ function BillCards({ bills, actions, total }) {
   const { palette } = useThemeMode();
   return (
     <Flex vertical gap={12}>
-      <Card hoverable bordered={false} style={muse.softCard}><Statistic title="筛选合计" value={formatMoney(total)} /></Card>
+      <Card hoverable bordered style={muse.softCard}><Statistic title="筛选合计" value={formatMoney(total)} /></Card>
       {!bills.length && <Empty description="还没有匹配的账单。" />}
       {bills.map(bill => (
-        <Card hoverable bordered={false} style={{ ...muse.softCard, borderRadius: 14 }} styles={{ body: { padding: 16 } }} key={bill.id}>
+        <Card hoverable bordered style={muse.softCard} styles={{ body: { padding: 16 } }} key={bill.id}>
           <Flex justify="space-between" gap={12} align="start" style={{ marginBottom: 10 }}>
             <div style={{ minWidth: 0 }}>
               <Text strong ellipsis={{ tooltip: bill.userLabel }} style={{ display: "block", fontSize: 15 }}>{bill.userLabel}</Text>
@@ -1449,17 +1927,8 @@ function App() {
   const [darkMode, setDarkMode] = useState(() => {
     const stored = localStorage.getItem("themeMode");
     if (stored) return stored === "dark";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return false;
   });
-
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    function handler(e) {
-      if (!localStorage.getItem("themeMode")) setDarkMode(e.matches);
-    }
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
 
   const palette = darkMode ? THEME_PALETTES.dark : THEME_PALETTES.light;
   const toggleTheme = useCallback(() => {
@@ -1489,9 +1958,10 @@ function App() {
           colorBgContainer: palette.surface,
           colorBgElevated: palette.surfaceElevated,
           colorBgSpotlight: palette.surfaceElevated,
-          borderRadius: 12,
-          borderRadiusLG: 16,
-          fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', sans-serif",
+          borderRadius: 6,
+          borderRadiusLG: 8,
+          borderRadiusSM: 4,
+          fontFamily: "'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
           fontSize: 14,
           fontSizeHeading1: 28,
           fontSizeHeading2: 22,
@@ -1499,13 +1969,13 @@ function App() {
           fontSizeHeading4: 17,
           fontWeightStrong: 600,
           lineHeight: 1.5,
-          motionDurationMid: "0.2s",
+          motionDurationMid: "0.18s",
           motionEaseInOut: "cubic-bezier(0.4, 0, 0.2, 1)"
         },
         components: {
           Layout: { bodyBg: palette.page, headerBg: "transparent", siderBg: "transparent" },
           Card: {
-            borderRadiusLG: 18,
+            borderRadiusLG: 8,
             headerFontSize: 15,
             headerFontSizeSM: 14,
             headerHeight: 54,
@@ -1513,64 +1983,69 @@ function App() {
             colorBorderSecondary: palette.border
           },
           Menu: {
-            itemBorderRadius: 10,
-            itemHeight: 40,
+            itemBorderRadius: 6,
+            itemHeight: 36,
             fontSize: 14,
             fontWeightStrong: 600,
             itemBg: "transparent",
             itemColor: palette.textSecondary,
             itemHoverBg: palette.fill,
             itemHoverColor: palette.text,
-            itemSelectedBg: darkMode ? "rgba(10,132,255,0.15)" : "rgba(0,122,255,0.1)",
-            itemSelectedColor: palette.primary
+            itemSelectedBg: palette.fill,
+            itemSelectedColor: palette.text
           },
           Table: {
-            headerBg: darkMode ? palette.surfaceElevated : "rgba(120,120,128,0.06)",
+            headerBg: palette.fillTertiary,
             headerColor: palette.textSecondary,
-            headerSplitColor: "transparent",
+            headerSplitColor: palette.border,
             rowHoverBg: palette.surfaceHover,
             borderColor: palette.borderSoft,
             colorBgContainer: palette.surface,
-            cellPaddingBlock: 16,
-            cellPaddingInline: 16,
+            cellPaddingBlock: 12,
+            cellPaddingInline: 14,
             fontSize: 13,
             borderRadius: 0
           },
           Button: {
             fontWeight: 500,
-            controlHeight: 36,
-            controlHeightLG: 44,
-            borderRadius: 10,
-            borderRadiusLG: 12,
-            defaultBg: darkMode ? palette.surfaceElevated : "rgba(120,120,128,0.1)",
+            controlHeight: 34,
+            controlHeightLG: 40,
+            borderRadius: 4,
+            borderRadiusLG: 6,
+            defaultBg: palette.surface,
             defaultColor: palette.text,
-            defaultBorderColor: "transparent",
-            defaultHoverBg: darkMode ? palette.fill : "rgba(120,120,128,0.15)",
+            defaultBorderColor: palette.border,
+            defaultHoverBg: palette.fill,
             defaultHoverColor: palette.text,
-            defaultHoverBorderColor: "transparent",
+            defaultHoverBorderColor: palette.text,
+            primaryColor: palette.surface,
+            primaryBg: palette.action,
+            primaryHoverBg: palette.actionHover,
+            primaryActiveBg: palette.actionHover,
+            primaryBorderColor: palette.action,
             textHoverBg: palette.fill,
             textTextHoverColor: palette.text
           },
           Input: {
-            controlHeight: 36,
+            controlHeight: 34,
             colorBgContainer: palette.surface,
             hoverBg: palette.surfaceHover,
             activeBg: palette.surface,
-            borderRadius: 10
+            borderRadius: 6
           },
           Select: {
-            controlHeight: 36,
-            borderRadius: 10,
-            optionSelectedBg: darkMode ? "rgba(10,132,255,0.2)" : "rgba(0,122,255,0.08)",
+            controlHeight: 34,
+            borderRadius: 6,
+            optionSelectedBg: palette.fill,
             optionActiveBg: palette.fill
           },
           DatePicker: {
-            controlHeight: 36,
-            borderRadius: 10,
+            controlHeight: 34,
+            borderRadius: 6,
             colorBgContainer: palette.surface
           },
           Modal: {
-            borderRadiusLG: 20,
+            borderRadiusLG: 8,
             headerBg: palette.surface,
             contentBg: palette.surface
           },
