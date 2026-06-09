@@ -923,7 +923,6 @@ html, body {
   gap: 12px;
   padding: 16px 12px 12px;
   background: var(--ant-color-bg-container);
-  border-right: 1px solid var(--ant-color-border-secondary);
   box-shadow: none;
 }
 
@@ -1113,7 +1112,8 @@ html, body {
   position: relative;
   z-index: 10;
   height: auto;
-  background: var(--ant-color-bg-layout);
+  background: var(--ant-color-bg-container);
+  border-bottom: 1px solid var(--ant-color-border-secondary);
 }
 
 .console-header-bar {
@@ -1123,9 +1123,7 @@ html, body {
   gap: 20px;
   min-height: 64px;
   padding: 14px 0 16px;
-  border-bottom: 1px solid var(--ant-color-border-secondary);
   border-radius: 0;
-  background: var(--ant-color-bg-layout);
   box-shadow: none;
 }
 
@@ -1674,7 +1672,7 @@ html, body {
   }
 
   .console-workspace-inner {
-    padding: 0 14px 18px;
+    padding: 18px 14px 18px;
     gap: 18px;
   }
 
@@ -1695,28 +1693,19 @@ html, body {
   }
 
   .console-header-bar {
-    flex-direction: column;
-    padding: 12px 0 14px;
+    flex-direction: row;
+    padding: 12px 0;
+    justify-content: space-between;
   }
 
   .console-header-leading {
     gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .console-header-brandtitle {
-    font-size: 18px;
-  }
-
-  .console-header-copy {
-    padding-left: 0;
-    border-left: none;
-    gap: 8px;
+    flex-wrap: nowrap;
   }
 
   .console-header-actions {
-    width: 100%;
-    justify-content: space-between;
+    width: auto;
+    justify-content: flex-end;
   }
 
   .console-header-search.ant-input-affix-wrapper {

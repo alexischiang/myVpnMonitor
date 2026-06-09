@@ -38,6 +38,7 @@ import {
 import {
   ApiOutlined,
   BellOutlined,
+  DashboardOutlined,
   CheckOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -103,7 +104,7 @@ const PALETTE = {
     primary:         "#3F7CEC",
     primaryDark:     "#2C63C8",
     page:            "#060809",
-    surface:         "#0d1117",
+    surface:         "#060809",
     surfaceElevated: "#161b22",
     surfaceHover:    "#1c2128",
     border:          "rgba(255, 255, 255, 0.09)",
@@ -121,6 +122,7 @@ const PALETTE = {
 // 鈹€鈹€鈹€ Form constants 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 const NAV_DISPLAY = {
+  "/dashboard": { label: "Dashboard", icon: DashboardOutlined },
   "/urls":  { label: "订阅池", icon: ApiOutlined },
   "/users": { label: "用户", icon: TeamOutlined },
   "/bills": { label: "账单", icon: DollarOutlined }
@@ -368,7 +370,6 @@ function ManagementSection({ kicker, title, actions, summary, children }) {
       <div className="saas-section-head">
         <div className={summary ? "saas-section-summary" : undefined}>
           <div>
-            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{kicker}</Text>
             <Text strong className="saas-section-title">{title}</Text>
           </div>
           {summary}
@@ -586,7 +587,7 @@ function makeAntTheme(palette, dark) {
     components: {
       Layout: {
         bodyBg: palette.page,
-        headerBg: palette.page,
+        headerBg: palette.surface,
         siderBg: palette.surface,
         triggerBg: palette.surface,
         triggerColor: palette.textSub
@@ -866,7 +867,7 @@ function AppLayout() {
 
   return (
     <AntLayout className="console-shell" style={{ minHeight: "100dvh", background: p.page }}>
-      <Header className="console-workspace-header" style={{ background: "transparent", padding: 0, lineHeight: 1 }}>
+      <Header className="console-workspace-header" style={{ padding: 0, lineHeight: 1 }}>
         <div className="console-workspace-inner console-workspace-inner-top">
           <HeaderBar
             selectedKey={selKey}
@@ -903,11 +904,12 @@ function AppLayout() {
                 ) : (
                   <ErrorBoundary>
                     <Routes>
+                      <Route path="/dashboard" element={<DashboardPage />} />
                       <Route path="/urls" element={<UrlPoolPage />} />
                       <Route path="/urls/detail/:id" element={<PoolDetailPage />} />
                       <Route path="/users" element={<UsersPage />} />
                       <Route path="/bills" element={<BillsPage />} />
-                      <Route path="*" element={<Navigate to="/urls" replace />} />
+                      <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>
                   </ErrorBoundary>
                 )}
@@ -1340,23 +1342,26 @@ function HeaderBar({ selectedKey, isMobile, onDrawer, darkMode, toggleTheme, log
   return (
     <Flex className="console-header-bar" align="center" justify="space-between">
       <Flex className="console-header-leading" align="center">
-        {isMobile && (
+        {isMobile ? (
           <Button className="console-header-icon" type="default" icon={<MenuOutlined />} onClick={onDrawer} />
+        ) : (
+          <>
+            <Flex className="console-header-brand" align="center">
+              <Flex className="console-header-brandmark" align="center" justify="center">
+                <DwellixLogo size={32} />
+              </Flex>
+              <Text strong className="console-header-brandtitle">XELA Monitor</Text>
+            </Flex>
+            <Breadcrumb
+              className="console-header-breadcrumb"
+              separator={<Text className="console-header-slash">/</Text>}
+              items={[
+                { title: <Text className="console-header-path">工作区</Text> },
+                { title: <Text strong className="console-header-title">{pageMeta.label}</Text> }
+              ]}
+            />
+          </>
         )}
-        <Flex className="console-header-brand" align="center">
-          <Flex className="console-header-brandmark" align="center" justify="center">
-            <DwellixLogo size={32} />
-          </Flex>
-          <Text strong className="console-header-brandtitle">XELA Monitor</Text>
-        </Flex>
-        <Breadcrumb
-          className="console-header-breadcrumb"
-          separator={<Text className="console-header-slash">/</Text>}
-          items={[
-            { title: <Text className="console-header-path">工作区</Text> },
-            { title: <Text strong className="console-header-title">{pageMeta.label}</Text> }
-          ]}
-        />
       </Flex>
 
       <Flex className="console-header-actions" align="center">
@@ -1368,19 +1373,23 @@ function HeaderBar({ selectedKey, isMobile, onDrawer, darkMode, toggleTheme, log
             allowClear
           />
         )}
-        <Button className="console-header-icon" type="default" icon={<BellOutlined />} />
+        {!isMobile && <Button className="console-header-icon" type="default" icon={<BellOutlined />} />}
         <Tooltip title={darkMode ? "切换亮色" : "切换暗色"}>
           <Button className="console-header-icon" type="default" icon={darkMode ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} />
         </Tooltip>
-        <Dropdown menu={userMenu} trigger={["click"]} placement="bottomRight">
-          <Button className="console-user-button" type="default">
-            <Avatar size={30} icon={<UserOutlined />} style={{ background: p.fillMid, color: p.primary }} />
-            <Flex vertical className="console-user-copy">
-              <Text className="console-user-name">管理员</Text>
-              <Text className="console-user-meta">构建 {version || "--"}</Text>
-            </Flex>
-          </Button>
-        </Dropdown>
+        {isMobile ? (
+          <Button className="console-header-icon" type="default" icon={<LogoutOutlined />} onClick={logout} danger />
+        ) : (
+          <Dropdown menu={userMenu} trigger={["click"]} placement="bottomRight">
+            <Button className="console-user-button" type="default">
+              <Avatar size={30} icon={<UserOutlined />} style={{ background: p.fillMid, color: p.primary }} />
+              <Flex vertical className="console-user-copy">
+                <Text className="console-user-name">管理员</Text>
+                <Text className="console-user-meta">构建 {version || "--"}</Text>
+              </Flex>
+            </Button>
+          </Dropdown>
+        )}
       </Flex>
     </Flex>
   );
@@ -1432,6 +1441,10 @@ function PoolCards({ items, actions }) {
       ))}
     </Flex>
   );
+}
+
+function DashboardPage() {
+  return <ConsoleOverview />;
 }
 
 function UrlPoolPage() {
@@ -1490,7 +1503,6 @@ function UrlPoolPage() {
 
   return (
     <div className="console-page-stack">
-      <ConsoleOverview />
       <ManagementSection
         kicker="订阅池"
         title="订阅管理"
@@ -2023,9 +2035,10 @@ function ConsoleOverview() {
   ];
 
   const overviewCards = [
-    { label: "活跃订阅", value: activeUrls, hint: `${activeUrlPct}% 可用率` },
+    { label: "池URL数", value: totalUrls, hint: `${activeUrls} 活跃订阅` },
     { label: "用户", value: users.length, hint: `${expiringUsers.length} 即将到期` },
     { label: "本月收入", value: formatMoney(monthIncome), hint: `今日 ${formatMoney(todayIncome)}` },
+    { label: "总收入", value: formatMoney(paidTotal), hint: `共 ${activeBills.length} 笔账单` },
     { label: "告警", value: counts.warning || 0, hint: criticalUrl ? "需跟进" : "全部正常", accent: !!(counts.warning || criticalUrl) }
   ];
 
