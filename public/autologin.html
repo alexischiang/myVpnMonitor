@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Autologin</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: #0b1220;
+      color: #f8fafc;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    .status {
+      display: grid;
+      gap: 8px;
+      padding: 20px 24px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="status">
+    <strong>Signing in...</strong>
+    <span id="message">Preparing admin session.</span>
+  </div>
+  <script>
+    async function run() {
+      const message = document.getElementById("message");
+      try {
+        const response = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ account: "admin", password: "admin", remember: false })
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Unable to sign in.");
+        }
+        message.textContent = "Redirecting to dashboard...";
+        location.replace("/urls");
+      } catch (error) {
+        message.textContent = error.message || "Autologin failed.";
+      }
+    }
+
+    run();
+  </script>
+</body>
+</html>

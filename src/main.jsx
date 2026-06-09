@@ -1,14 +1,19 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   App as AntApp,
+  Avatar,
+  Card as AntCard,
   Button,
+  Breadcrumb,
   Checkbox,
   Col,
   ConfigProvider,
   DatePicker,
+  Divider,
   Drawer,
+  Dropdown,
   Empty,
   Flex,
   Form,
@@ -23,13 +28,16 @@ import {
   Select,
   Skeleton,
   Spin,
+  Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
   theme
 } from "antd";
 import {
   ApiOutlined,
+  BellOutlined,
   CheckOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -42,8 +50,10 @@ import {
   PlusOutlined,
   ReloadOutlined,
   RetweetOutlined,
+  SearchOutlined,
   SunOutlined,
   TeamOutlined,
+  UserOutlined,
   WarningOutlined
 } from "@ant-design/icons";
 import dayjs from "dayjs";
@@ -63,60 +73,58 @@ import {
   userStatus
 } from "./utils";
 
-const { Header, Content } = AntLayout;
+const { Header, Content, Sider } = AntLayout;
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 const DataContext = createContext(null);
 const ThemeModeContext = createContext({ darkMode: false, toggleTheme: () => {}, palette: {} });
 
-// ─── Design tokens ───────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Design tokens 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 const PALETTE = {
   light: {
-    primary: "#0D9762",
-    primaryDark: "#154618",
-    page: "#EEEEE9",
-    surface: "#FFFFFF",
-    surfaceElevated: "#FFFFFF",
-    surfaceHover: "#F0F7F4",
-    border: "#E0E0D8",
-    text: "#111111",
-    textSub: "#555550",
-    textMuted: "#9A9A90",
-    fill: "#F0F7F4",
-    fillMid: "#E0F0EA",
-    fillLight: "#F5F9F7",
-    shadow: "0 2px 8px rgba(0,0,0,0.07)",
-    shadowSm: "0 1px 3px rgba(0,0,0,0.05)"
+    primary:         "#2E6BE6",
+    primaryDark:     "#2157C3",
+    page:            "#F4F4F5",
+    surface:         "#FFFFFF",
+    surfaceElevated: "#FAFAFA",
+    surfaceHover:    "#F0F1F3",
+    border:          "rgba(17, 24, 39, 0.10)",
+    text:            "#09090B",
+    textSub:         "#3F3F46",
+    textMuted:       "#71717A",
+    fill:            "rgba(24, 24, 27, 0.04)",
+    fillMid:         "rgba(24, 24, 27, 0.08)",
+    fillLight:       "rgba(244, 244, 245, 0.96)",
+    shadow:          "0 1px 2px rgba(17, 24, 39, 0.04), 0 8px 20px rgba(17, 24, 39, 0.04)",
+    shadowSm:        "0 1px 2px rgba(17, 24, 39, 0.06)"
   },
   dark: {
-    primary: "#22C982",
-    primaryDark: "#22C982",
-    page: "#0D1A12",
-    surface: "#14201A",
-    surfaceElevated: "#1C2E22",
-    surfaceHover: "#1C2E22",
-    border: "rgba(13,151,98,0.20)",
-    text: "#EEF5F1",
-    textSub: "#A0C4B0",
-    textMuted: "#6A9A7A",
-    fill: "rgba(13,151,98,0.10)",
-    fillMid: "rgba(13,151,98,0.15)",
-    fillLight: "rgba(13,151,98,0.06)",
-    shadow: "none",
-    shadowSm: "none"
+    primary:         "#3F7CEC",
+    primaryDark:     "#2C63C8",
+    page:            "#060809",
+    surface:         "#0d1117",
+    surfaceElevated: "#161b22",
+    surfaceHover:    "#1c2128",
+    border:          "rgba(255, 255, 255, 0.09)",
+    text:            "#F5F5F5",
+    textSub:         "#C9CBD1",
+    textMuted:       "#8A8F98",
+    fill:            "rgba(255, 255, 255, 0.04)",
+    fillMid:         "rgba(255, 255, 255, 0.07)",
+    fillLight:       "rgba(255, 255, 255, 0.03)",
+    shadow:          "0 1px 2px rgba(0, 0, 0, 0.34), 0 12px 24px rgba(0, 0, 0, 0.20)",
+    shadowSm:        "0 1px 2px rgba(0, 0, 0, 0.30)"
   }
 };
 
-// ─── Navigation items ─────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Form constants 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-const NAV_ITEMS = [
-  { key: "/urls",  label: "URL 池" },
-  { key: "/users", label: "用户管理" },
-  { key: "/bills", label: "账单管理" }
-];
-
-// ─── Form constants ───────────────────────────────────────────────────────────
+const NAV_DISPLAY = {
+  "/urls":  { label: "订阅池", icon: ApiOutlined },
+  "/users": { label: "用户", icon: TeamOutlined },
+  "/bills": { label: "账单", icon: DollarOutlined }
+};
 
 const inModalSelectProps = { virtual: false, getPopupContainer: n => n.parentElement };
 const inModalPickerProps = {};
@@ -147,11 +155,11 @@ const SC_TARGETS = [
   { value: "surge&ver=3", label: "Surge 3" },
   { value: "shadowrocket",label: "Shadowrocket" },
   { value: "v2ray",       label: "V2Ray" },
-  { value: "mixed",       label: "Mixed（节点列表）" }
+  { value: "mixed",       label: "混合节点列表" }
 ];
 const DEFAULT_SC_TARGET = "clash";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function serviceProviderLabel(item, fallback = DEFAULT_PROVIDER) {
   return item?.serviceProvider || item?.provider || fallback;
@@ -159,8 +167,8 @@ function serviceProviderLabel(item, fallback = DEFAULT_PROVIDER) {
 
 function subscriptionLabel(s) {
   const tail   = s.url ? s.url.slice(-4) : "????";
-  const expire = s.metrics?.expireAt ? formatDate(s.metrics.expireAt) : "未知到期";
-  return `${serviceProviderLabel(s)} · ${tail} · ${expire} · ${s.email || "无邮箱"}`;
+  const expire = s.metrics?.expireAt ? formatDate(s.metrics.expireAt) : "Unknown expiry";
+  return `${serviceProviderLabel(s)} - ${tail} - ${expire} - ${s.email || "No email"}`;
 }
 
 function calcExpiry(purchasedAt, duration) {
@@ -208,9 +216,9 @@ function buildSubconverterConfig(values) {
 
 function userClientSubscriptionUrl(user) {
   if ((user?.subconverterConfig?.target ? "subconverter" : "direct") === "subconverter") {
-    return user.relayPath ? absoluteUrl(user.relayPath) : "自定义 URL 不存在";
+    return user.relayPath ? absoluteUrl(user.relayPath) : "自定义链接不可用";
   }
-  return user.subscription?.url || "关联 URL 不存在";
+  return user.subscription?.url || "关联链接不可用";
 }
 
 function statusColor(status) {
@@ -219,49 +227,74 @@ function statusColor(status) {
 
 const tablePag = { pageSize: 20, showSizeChanger: false };
 
-// ─── Context hooks ────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Context hooks 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function useData()      { return useContext(DataContext); }
 function useTheme()     { return useContext(ThemeModeContext); }
 function usePalette()   { return useContext(ThemeModeContext).palette; }
 
-// ─── Primitive UI components ─────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Error Boundary 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <AntCard bordered={false} style={{ padding: 32, background: "#fff1f0", border: "1px solid #ffa39e", borderRadius: 12, margin: 16 }}>
+          <Text strong style={{ display: "block", color: "#cf1322", marginBottom: 8 }}>页面渲染错误</Text>
+          <pre style={{ fontSize: 12, color: "#595959", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+            {this.state.error?.message}
+            {"\n"}
+            {this.state.error?.stack}
+          </pre>
+          <Button danger ghost onClick={() => this.setState({ error: null })} style={{ marginTop: 12, borderRadius: 6 }}>
+            重试
+          </Button>
+        </AntCard>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// 鈹€鈹€鈹€ Primitive UI components 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function Card({ children, style, pad = 20, hover = false, onClick }) {
   const p = usePalette();
-  const [hovered, setHovered] = useState(false);
   return (
-    <div
-      onClick={onClick}
-      onMouseEnter={() => hover && setHovered(true)}
-      onMouseLeave={() => hover && setHovered(false)}
+    <AntCard
+      className="app-card"
+      hoverable={hover}
+      bordered={false}
+      bodyStyle={{ padding: pad }}
       style={{
         background: p.surface,
-        borderRadius: 16,
-        border: `1px solid ${hovered ? p.primary : p.border}`,
-        boxShadow: hovered ? `0 4px 16px rgba(13,151,98,0.12)` : p.shadow,
-        padding: pad,
-        transition: "border-color 0.16s, box-shadow 0.16s, transform 0.16s",
-        transform: hovered ? "translateY(-2px)" : "none",
+        borderRadius: 8,
+        border: `1px solid ${p.border}`,
+        boxShadow: p.shadow,
         cursor: onClick ? "pointer" : undefined,
         ...style
       }}
+      onClick={onClick}
     >
       {children}
-    </div>
+    </AntCard>
   );
 }
 
-function SectionLabel({ children }) {
-  return (
-    <Text style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: "var(--ant-color-text-tertiary)", display: "block", marginBottom: 10 }}>
-      {children}
-    </Text>
-  );
-}
+const STATUS_BADGE_CLASS = {
+  ok:      "dw-badge dw-badge-ok",
+  warning: "dw-badge dw-badge-warning",
+  error:   "dw-badge dw-badge-error",
+  expired: "dw-badge dw-badge-expired",
+  depleted:"dw-badge dw-badge-depleted",
+  unknown: "dw-badge dw-badge-unknown"
+};
 
 function StatusBadge({ status }) {
-  return <Tag color={statusColor(status)}>{statusLabels[status] || "未知"}</Tag>;
+  const cls = STATUS_BADGE_CLASS[status] || "dw-badge dw-badge-expired";
+  return <Tag bordered={false} className={cls}>{statusLabels[status] || "Unknown"}</Tag>;
 }
 
 function CopyButton({ value, size = "small" }) {
@@ -269,7 +302,7 @@ function CopyButton({ value, size = "small" }) {
   const [done, setDone] = useState(false);
   function copy() {
     copyText(value || "").then(() => {
-      message.success("已复制");
+      message.success("Copied");
       setDone(true);
       setTimeout(() => setDone(false), 2000);
     });
@@ -288,8 +321,8 @@ function CopyButton({ value, size = "small" }) {
 function UrlPill({ value, mono = true }) {
   const p = usePalette();
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 4, maxWidth: "100%", minWidth: 0 }}>
-      <span style={{
+    <Space size={4} style={{ maxWidth: "100%", minWidth: 0 }}>
+      <Tag bordered={false} style={{
         fontFamily: mono ? "ui-monospace, Menlo, monospace" : undefined,
         fontSize: 12,
         background: p.fillLight,
@@ -300,10 +333,10 @@ function UrlPill({ value, mono = true }) {
         minWidth: 0,
         flex: 1
       }}>
-        {value || "—"}
-      </span>
+        {value || "-"}
+      </Tag>
       {value && <CopyButton value={value} />}
-    </div>
+    </Space>
   );
 }
 
@@ -312,45 +345,45 @@ function PageSection({ title, actions, children }) {
   const screens = Grid.useBreakpoint();
   const mobile = !screens.md;
   return (
-    <div style={{ background: p.surface, border: `1px solid ${p.border}`, borderRadius: 16, overflow: "hidden", boxShadow: p.shadow }}>
-      <div style={{ padding: "14px 20px", borderBottom: `1px solid ${p.border}`, display: "flex", alignItems: mobile ? "flex-start" : "center", justifyContent: "space-between", flexDirection: mobile ? "column" : "row", gap: 10 }}>
-        <Text strong style={{ fontSize: 16 }}>{title}</Text>
+    <AntCard
+      bordered={false}
+      className="page-section-card"
+      bodyStyle={{ padding: 0 }}
+      style={{ background: p.surface, border: `1px solid ${p.border}`, borderRadius: 8, overflow: "hidden", boxShadow: p.shadowSm }}
+    >
+      <Flex style={{ padding: "16px 20px", borderBottom: `1px solid ${p.border}` }} align={mobile ? "flex-start" : "center"} justify="space-between" vertical={mobile} gap={10}>
+        <Text strong style={{ fontSize: 16, fontWeight: 700, letterSpacing: -0.2 }}>{title}</Text>
         {actions && <div style={{ width: mobile ? "100%" : "auto" }}>{actions}</div>}
-      </div>
+      </Flex>
       <div style={{ padding: 20 }}>{children}</div>
-    </div>
+    </AntCard>
   );
 }
 
-function ActionBar({ children }) {
+function ManagementSection({ kicker, title, actions, summary, children }) {
   const screens = Grid.useBreakpoint();
   const mobile = !screens.md;
   return (
-    <Flex wrap gap={8} justify={mobile ? "flex-start" : "flex-end"} align="center" style={{ width: "100%", minWidth: 0 }}>
-      {React.Children.map(children, child => {
-        if (!React.isValidElement(child)) return child;
-        const isInput = child.type === Input.Search || child.type === DatePicker;
-        return (
-          <div style={{ flex: mobile ? (isInput ? "1 1 100%" : "1 1 auto") : "0 1 auto", minWidth: 0 }}>
-            {React.cloneElement(child, { style: { ...child.props.style, width: mobile ? "100%" : child.props.style?.width } })}
+    <AntCard bordered={false} className="saas-section-card" bodyStyle={{ padding: 0 }}>
+      <div className="saas-section-head">
+        <div className={summary ? "saas-section-summary" : undefined}>
+          <div>
+            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{kicker}</Text>
+            <Text strong className="saas-section-title">{title}</Text>
           </div>
-        );
-      })}
-    </Flex>
+          {summary}
+        </div>
+        {actions ? <div className="saas-toolbar-actions">{actions}</div> : null}
+      </div>
+      <div className={`saas-section-body${mobile ? " mobile" : ""}`}>
+        {children}
+      </div>
+    </AntCard>
   );
 }
 
-function PageTitle({ children }) {
-  return <Text strong style={{ fontSize: 18, margin: 0, lineHeight: 1.35 }}>{children}</Text>;
-}
-
-function SubmitBtn({ loading, disabled, children }) {
-  return (
-    <Button type="primary" htmlType="submit" block size="large" loading={loading} disabled={disabled}
-      style={{ borderRadius: 999, fontWeight: 700, height: 44 }}>
-      {children}
-    </Button>
-  );
+function ToolbarSearch(props) {
+  return <Input.Search allowClear className="saas-toolbar-search" {...props} />;
 }
 
 function InlineActions({ children }) {
@@ -361,7 +394,7 @@ function CardActions({ children }) {
   return (
     <Flex wrap gap={8} align="center">
       {React.Children.map(children, child => child && React.isValidElement(child)
-        ? React.cloneElement(child, { size: "small", style: { ...child.props.style, height: 32, paddingInline: 12, borderRadius: 999, fontSize: 13 } })
+        ? React.cloneElement(child, { size: "small", style: { ...child.props.style, height: 32, paddingInline: 12, borderRadius: 6, fontSize: 13 } })
         : child
       )}
     </Flex>
@@ -383,7 +416,7 @@ function DurationRadio({ purchasedAt, value, onChange }) {
             transition: "all 0.15s"
           }}>
             <Text strong style={{ fontSize: 14, color: selected ? p.primary : undefined }}>{label}</Text>
-            {expiry && <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>到 {formatDate(expiry)}</Text>}
+            {expiry && <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>Expires {formatDate(expiry)}</Text>}
           </div>
         );
       })}
@@ -417,7 +450,7 @@ function CodeViewer({ code, meta, language = "YAML" }) {
   const { message } = AntApp.useApp();
   const [copied, setCopied] = useState(false);
   const lines = String(code || "").split("\n");
-  function handleCopy() { copyText(code || "").then(() => { message.success("已复制"); setCopied(true); setTimeout(() => setCopied(false), 1800); }); }
+  function handleCopy() { copyText(code || "").then(() => { message.success("Copied"); setCopied(true); setTimeout(() => setCopied(false), 1800); }); }
   return (
     <div className="code-viewer">
       <div className="code-viewer-toolbar">
@@ -451,7 +484,7 @@ function BusyOverlay({ busy }) {
       styles={{ content: { borderRadius: 16, padding: "28px 24px 24px" } }}>
       <Flex vertical align="center" gap={16}>
         <Spin size="large" style={{ color: "var(--ant-color-primary)" }} />
-        <Text strong style={{ fontSize: 15 }}>{busy?.label || "处理中..."}</Text>
+        <Text strong style={{ fontSize: 15 }}>{busy?.label || "澶勭悊涓?.."}</Text>
         <div style={{ width: "100%", height: 4, borderRadius: 999, background: "var(--ant-color-fill-secondary)", overflow: "hidden" }}>
           <div style={{ height: "100%", borderRadius: 999, width: `${pct}%`, background: "var(--ant-color-primary)", transition: "width 0.6s ease" }} />
         </div>
@@ -460,7 +493,7 @@ function BusyOverlay({ busy }) {
   );
 }
 
-// ─── Resizable table columns ──────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Resizable table columns 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 const resizableComponents = { header: { cell: ResizableHeaderCell } };
 
@@ -500,12 +533,13 @@ function useResizableCols(columns, key) {
   return { columns: cols, components: resizableComponents, scrollX };
 }
 
-// ─── Theme config ─────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Theme config 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function makeAntTheme(palette, dark) {
   return {
     algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
     token: {
+      // color
       colorPrimary:        palette.primary,
       colorText:           palette.text,
       colorTextSecondary:  palette.textSub,
@@ -519,55 +553,152 @@ function makeAntTheme(palette, dark) {
       colorBgContainer:    palette.surface,
       colorBgElevated:     palette.surfaceElevated,
       colorBgSpotlight:    palette.surfaceElevated,
-      borderRadius:    10,
-      borderRadiusLG: 16,
+      // typography — Inter-style scale: 12/14/16/20/24/32
+      fontFamily: "'Inter', 'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+      fontSize:           14,
+      fontSizeSM:         12,
+      fontSizeLG:         16,
+      fontSizeHeading1:   32,
+      fontSizeHeading2:   24,
+      fontSizeHeading3:   20,
+      fontSizeHeading4:   16,
+      fontSizeHeading5:   14,
+      fontWeightStrong:    600,
+      lineHeight:          1.5,
+      // spacing — 4px base grid
+      sizeUnit:    4,
+      sizeStep:    4,
+      sizeXXS:     4,
+      sizeXS:      8,
+      sizeSM:     12,
+      size:       16,
+      sizeMD:     16,
+      sizeLG:     24,
+      sizeXL:     32,
+      // radius — 6px controls, 8px cards, 12px overlays
+      borderRadiusXS:  4,
       borderRadiusSM:  6,
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif",
-      fontSize: 14, fontSizeHeading3: 20, fontSizeHeading4: 17,
-      fontWeightStrong: 700, lineHeight: 1.5,
+      borderRadius:    8,
+      borderRadiusLG: 12,
+      // motion
       motionDurationMid: "0.16s"
     },
     components: {
-      Layout: { bodyBg: palette.page, headerBg: "transparent", siderBg: "transparent" },
-      Card:   { borderRadiusLG: 16, colorBgContainer: palette.surface, colorBorderSecondary: palette.border },
+      Layout: {
+        bodyBg: palette.page,
+        headerBg: palette.page,
+        siderBg: palette.surface,
+        triggerBg: palette.surface,
+        triggerColor: palette.textSub
+      },
+      Card: {
+        borderRadiusLG: 8,
+        colorBgContainer: palette.surface,
+        colorBorderSecondary: palette.border,
+        boxShadowTertiary: "none"
+      },
       Menu: {
-        itemBorderRadius: 999, itemHeight: 38, fontSize: 14,
-        itemBg: "transparent", itemColor: palette.textSub,
-        itemHoverBg: palette.fill, itemHoverColor: palette.primary,
-        itemSelectedBg: palette.fill, itemSelectedColor: palette.primary,
-        horizontalItemSelectedBg: "transparent", horizontalItemSelectedColor: palette.primary,
-        horizontalItemHoverBg: "transparent", horizontalItemHoverColor: palette.primary,
+        itemBorderRadius: 8,
+        itemHeight: 42,
+        fontSize: 14,
+        itemBg: "transparent",
+        itemColor: palette.textSub,
+        itemHoverBg: palette.fill,
+        itemHoverColor: palette.text,
+        itemSelectedBg: dark ? "rgba(63,124,236,0.12)" : palette.fillMid,
+        itemSelectedColor: palette.text,
+        horizontalItemSelectedBg: "transparent",
+        horizontalItemSelectedColor: palette.text,
+        horizontalItemHoverBg: "transparent",
+        horizontalItemHoverColor: palette.text,
+        popupBg: palette.surfaceElevated,
         activeBarHeight: 0, activeBarWidth: 0
       },
       Table: {
-        headerBg: palette.fillLight, headerColor: palette.textSub,
-        rowHoverBg: palette.surfaceHover, borderColor: palette.border,
-        colorBgContainer: palette.surface, cellPaddingBlock: 12, cellPaddingInline: 14,
-        fontSize: 13, borderRadius: 0
+        headerBg: palette.surfaceElevated,
+        headerColor: palette.textSub,
+        rowHoverBg: palette.surfaceHover,
+        borderColor: palette.border,
+        colorBgContainer: palette.surface,
+        cellPaddingBlock: 12,
+        cellPaddingInline: 14,
+        fontSize: 13,
+        borderRadius: 0
       },
       Button: {
-        fontWeight: 600, controlHeight: 36, controlHeightLG: 42,
-        borderRadius: 999, borderRadiusLG: 999,
-        colorPrimary: palette.primary, colorPrimaryHover: palette.primaryDark,
+        fontWeight: 600,
+        controlHeight: 36,
+        controlHeightLG: 42,
+        borderRadius: 6,
+        borderRadiusLG: 6,
+        colorPrimary: palette.primary,
+        colorPrimaryHover: palette.primaryDark,
+        colorPrimaryActive: palette.primaryDark,
         primaryColor: "#fff",
-        defaultBg: palette.surface, defaultColor: palette.text,
+        defaultBg: palette.surfaceElevated,
+        defaultColor: palette.text,
         defaultBorderColor: palette.border,
-        defaultHoverBg: palette.fill, defaultHoverColor: palette.primary,
-        defaultHoverBorderColor: palette.primary
+        defaultHoverBg: palette.fill,
+        defaultHoverColor: palette.text,
+        defaultHoverBorderColor: palette.border,
+        defaultActiveBg: palette.fillMid,
+        defaultActiveBorderColor: palette.border,
+        defaultActiveColor: palette.text,
+        textHoverBg: palette.fill,
+        textActiveBg: palette.fillMid,
+        colorLink: palette.primary,
+        colorLinkHover: palette.primaryDark
       },
-      Input:      { controlHeight: 36, borderRadius: 10, colorBgContainer: palette.surface },
-      Select:     { controlHeight: 36, borderRadius: 10, optionSelectedBg: palette.fill, optionActiveBg: palette.fill },
-      DatePicker: { controlHeight: 36, borderRadius: 10, colorBgContainer: palette.surface },
-      Modal:      { borderRadiusLG: 16, headerBg: palette.surface, contentBg: palette.surface },
-      Tag:        { borderRadiusSM: 999 },
+      Input: {
+        controlHeight: 36,
+        borderRadius: 6,
+        colorBgContainer: palette.surfaceElevated,
+        colorText: palette.text,
+        colorIcon: palette.textMuted,
+        hoverBorderColor: palette.border,
+        activeBorderColor: palette.primary,
+        activeShadow: "0 0 0 0 transparent",
+        colorTextPlaceholder: palette.textMuted
+      },
+      Select: {
+        controlHeight: 36,
+        borderRadius: 6,
+        optionSelectedBg: palette.surfaceHover,
+        optionActiveBg: palette.surfaceHover,
+        colorBgContainer: palette.surfaceElevated,
+        colorText: palette.text,
+        hoverBorderColor: palette.border,
+        activeBorderColor: palette.primary,
+        activeOutlineColor: "transparent"
+      },
+      DatePicker: {
+        controlHeight: 36,
+        borderRadius: 6,
+        colorBgContainer: palette.surfaceElevated,
+        colorText: palette.text,
+        hoverBorderColor: palette.border,
+        activeBorderColor: palette.primary,
+        activeShadow: "0 0 0 0 transparent"
+      },
+      Dropdown: {
+        colorBgElevated: palette.surfaceElevated
+      },
+      Breadcrumb: {
+        itemColor: palette.textMuted,
+        lastItemColor: palette.text,
+        separatorColor: palette.textMuted,
+        linkColor: palette.textMuted
+      },
+      Modal: { borderRadiusLG: 12, headerBg: palette.surface, contentBg: palette.surface, colorBgElevated: palette.surface },
+      Tag: { borderRadiusSM: 6, defaultBg: palette.fill, defaultColor: palette.textSub },
       Statistic:  { titleFontSize: 12, contentFontSize: 22 },
-      Drawer:     { colorBgElevated: palette.surfaceElevated },
+      Drawer:     { colorBgElevated: palette.surface, colorBgMask: "rgba(0, 0, 0, 0.48)" },
       Notification: { colorBgElevated: palette.surfaceElevated }
     }
   };
 }
 
-// ─── Auth ─────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Auth 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function RequireAuth({ children }) {
   const [ready, setReady] = useState(false);
@@ -578,8 +709,18 @@ function RequireAuth({ children }) {
   return children;
 }
 
-function LoginPage() {
+function DwellixLogo({ size = 34 }) {
   const p = usePalette();
+  return (
+    <div style={{ width: size, height: size, borderRadius: Math.round(size * 0.29), background: p.primary, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <svg width={size * 0.55} height={size * 0.55} viewBox="0 0 20 18" fill="none">
+        <path d="M10 1L1 8.5V17h6v-5h6v5h6V8.5L10 1Z" fill="#fff" />
+      </svg>
+    </div>
+  );
+}
+
+function LoginPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
@@ -589,87 +730,41 @@ function LoginPage() {
     try {
       const res     = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ ...values, remember: false }) });
       const payload = await res.json();
-      if (!res.ok) return setErr(payload.error || "登录失败");
+      if (!res.ok) return setErr(payload.error || "Sign-in failed");
       navigate("/urls", { replace: true });
-    } catch { setErr("无法连接登录服务"); }
+    } catch { setErr("Unable to reach the login service"); }
     finally  { setLoading(false); }
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: p.page, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ width: "100%", maxWidth: 380, padding: "0 20px" }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ width: 52, height: 52, borderRadius: 14, background: p.primary, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 22, fontWeight: 800, marginBottom: 12 }}>X</div>
-          <Title level={3} style={{ margin: 0, fontWeight: 800 }}>XELA Monitor</Title>
-          <Text type="secondary">订阅中转管理后台</Text>
-        </div>
-        <Card pad={28}>
+    <Flex className="saas-login-shell" align="center" justify="center">
+      <Flex vertical className="saas-login-wrap">
+        <Flex vertical className="saas-login-brand">
+          <Space direction="vertical" size={12} align="center" className="saas-login-brand-stack">
+            <Tag bordered={false} className="saas-login-kicker">管理控制台</Tag>
+            <DwellixLogo size={52} />
+            <Title level={3} style={{ margin: 0, fontWeight: 800, letterSpacing: -0.5 }}>XELA Monitor</Title>
+          </Space>
+          <Text type="secondary" style={{ fontSize: 14 }}>订阅运营控制台</Text>
+        </Flex>
+        <AntCard bordered={false} className="saas-login-card saas-form-shell">
           <Form layout="vertical" onFinish={submit} requiredMark={false}>
             <Form.Item name="account" label="账号" rules={[{ required: true, message: "请输入账号" }]} style={{ marginBottom: 16 }}>
-              <Input autoComplete="username" placeholder="账号" size="large" style={{ borderRadius: 10 }} />
+              <Input autoFocus autoComplete="username" placeholder="账号" size="large" />
             </Form.Item>
             <Form.Item name="password" label="密码" rules={[{ required: true, message: "请输入密码" }]} style={{ marginBottom: 20 }}>
-              <Input.Password autoComplete="current-password" placeholder="密码" size="large" style={{ borderRadius: 10 }} />
+              <Input.Password autoComplete="current-password" placeholder="密码" size="large"  />
             </Form.Item>
-            {err && <Text type="danger" style={{ display: "block", marginBottom: 14, fontSize: 13 }}>{err}</Text>}
-            <Button type="primary" htmlType="submit" block loading={loading} size="large" style={{ borderRadius: 999, fontWeight: 700, height: 44 }}>登录</Button>
+            {err && <Text type="danger" className="saas-login-error">{err}</Text>}
+            <Button type="primary" htmlType="submit" block loading={loading} size="large">登录</Button>
           </Form>
-        </Card>
-      </div>
-    </div>
+        </AntCard>
+      </Flex>
+    </Flex>
   );
 }
 
-// ─── Top navigation ───────────────────────────────────────────────────────────
-
-function TopNav({ selectedKey, onSelect, isMobile, onDrawer, darkMode, toggleTheme, logout, version }) {
-  const p = usePalette();
-  return (
-    <div style={{ display: "flex", alignItems: "center", width: "100%", height: "100%", gap: 16 }}>
-      {/* Logo */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-        {isMobile && <Button type="text" icon={<MenuOutlined />} onClick={onDrawer} style={{ color: p.textSub }} />}
-        <div style={{ width: 34, height: 34, borderRadius: 10, background: p.primary, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 15, letterSpacing: -0.5 }}>X</div>
-        <Text strong style={{ fontSize: 15, letterSpacing: -0.3 }}>XELA</Text>
-      </div>
-
-      {/* Center nav */}
-      {!isMobile && (
-        <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
-          <Menu
-            mode="horizontal"
-            selectedKeys={[selectedKey]}
-            items={NAV_ITEMS}
-            onClick={onSelect}
-            style={{ border: "none", background: "transparent", minWidth: 0, fontSize: 14, fontWeight: 600 }}
-          />
-        </div>
-      )}
-      {isMobile && <div style={{ flex: 1 }} />}
-
-      {/* Right actions */}
-      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>v{version || "--"}</Text>
-        <Button type="text" shape="circle" icon={darkMode ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: p.textSub }} />
-        <Button type="text" shape="circle" icon={<LogoutOutlined />} onClick={logout} style={{ color: p.textSub }} />
-      </div>
-    </div>
-  );
-}
-
-// ─── Dashboard (Summary) ─────────────────────────────────────────────────────
-
-function KpiCard({ label, value, accent = false }) {
-  const p = usePalette();
-  return (
-    <Card pad="18px 20px">
-      <Text style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, color: p.textMuted, display: "block", marginBottom: 8 }}>{label}</Text>
-      <Text style={{ fontSize: 28, fontWeight: 800, lineHeight: 1, color: accent ? p.primary : p.text }}>{value}</Text>
-    </Card>
-  );
-}
-
-function MiniProgressBar({ pct, warn = false }) {
+function MiniProgressBar({ pct }) {
   const p = usePalette();
   const color = pct < 20 ? "#ef4444" : pct < 50 ? "#f59e0b" : p.primary;
   return (
@@ -679,219 +774,170 @@ function MiniProgressBar({ pct, warn = false }) {
   );
 }
 
-function Dashboard() {
+function DonutChart({ pct = 0, size = 120, strokeWidth = 14, label, sublabel, color }) {
   const p = usePalette();
-  const { subscriptions, users, bills } = useData();
-  const screens = Grid.useBreakpoint();
-  const wide = screens.xl;
-
-  // KPI data
-  const counts       = subscriptions.reduce((a, s) => ({ ...a, [s.status]: (a[s.status] || 0) + 1 }), {});
-  const activeBills  = bills.filter(b => !b.reversedAt);
-  const paidTotal    = activeBills.reduce((s, b) => s + (Number(b.amount) || 0), 0);
-  const now          = new Date();
-  const monthPfx     = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const todayPfx     = `${monthPfx}-${String(now.getDate()).padStart(2, "0")}`;
-  const monthIncome  = activeBills.filter(b => (b.occurredAt || "").startsWith(monthPfx)).reduce((s, b) => s + (Number(b.amount) || 0), 0);
-  const todayIncome  = activeBills.filter(b => (b.occurredAt || "").startsWith(todayPfx)).reduce((s, b) => s + (Number(b.amount) || 0), 0);
-  const expiringUsers = users.filter(u => userStatus(u) === "warning");
-
-  // Most critical URL (lowest remaining %)
-  const criticalUrl = [...subscriptions]
-    .filter(s => s.status !== "expired" && s.metrics?.totalBytes)
-    .sort((a, b) => (a.metrics.remainingBytes / a.metrics.totalBytes) - (b.metrics.remainingBytes / b.metrics.totalBytes))[0];
-
-  const recentBills = [...bills].sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)).slice(0, 5);
-
-  const leftCol = (
-    <Flex vertical gap={24} style={{ flex: 1, minWidth: 0 }}>
-      {/* Hero title */}
-      <div>
-        <div style={{ fontSize: wide ? 44 : 32, fontWeight: 900, lineHeight: 1.05, letterSpacing: -1.5, color: p.text }}>订阅中转</div>
-        <div style={{ fontSize: wide ? 44 : 32, fontWeight: 900, lineHeight: 1.05, letterSpacing: -1.5, color: p.textMuted }}>控制台</div>
-      </div>
-
-      {/* Status KPIs */}
-      <div>
-        <SectionLabel>状态监控</SectionLabel>
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${wide ? 4 : 2}, 1fr)`, gap: 10 }}>
-          <KpiCard label="池 URL"     value={subscriptions.length} />
-          <KpiCard label="用户总数"   value={users.length} />
-          <KpiCard label="需关注 URL" value={counts.warning || 0} accent={!!(counts.warning)} />
-          <KpiCard label="即将到期"   value={expiringUsers.length} accent={!!expiringUsers.length} />
-        </div>
-      </div>
-
-      {/* Income KPIs */}
-      <div>
-        <SectionLabel>收入概览</SectionLabel>
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${wide ? 3 : 1}, 1fr)`, gap: 10 }}>
-          <KpiCard label="今日收入" value={formatMoney(todayIncome)} />
-          <KpiCard label="本月收入" value={formatMoney(monthIncome)} />
-          <KpiCard label="累计收款" value={formatMoney(paidTotal)} />
-        </div>
-      </div>
-    </Flex>
-  );
-
-  const rightCol = (
-    <Flex vertical gap={12} style={{ width: wide ? 292 : "100%", flexShrink: 0 }}>
-      {/* Critical URL card */}
-      {criticalUrl && (
-        <Card>
-          <SectionLabel>最需关注 URL</SectionLabel>
-          <Text strong style={{ fontSize: 14, display: "block" }}>{criticalUrl.email || serviceProviderLabel(criticalUrl)}</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>{serviceProviderLabel(criticalUrl)}</Text>
-          {criticalUrl.metrics?.totalBytes && (() => {
-            const pct = Math.round(criticalUrl.metrics.remainingBytes / criticalUrl.metrics.totalBytes * 100);
-            return (
-              <>
-                <Flex justify="space-between" style={{ marginTop: 10 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>剩余流量</Text>
-                  <Text style={{ fontSize: 12 }}>{pct}%</Text>
-                </Flex>
-                <MiniProgressBar pct={pct} />
-                <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 4 }}>
-                  {formatBytes(criticalUrl.metrics.remainingBytes)} / {formatBytes(criticalUrl.metrics.totalBytes)}
-                </Text>
-              </>
-            );
-          })()}
-        </Card>
-      )}
-
-      {/* Expiring users */}
-      {expiringUsers.length > 0 && (
-        <Card>
-          <SectionLabel>即将到期用户</SectionLabel>
-          <Flex vertical gap={10}>
-            {expiringUsers.slice(0, 4).map(u => (
-              <Flex key={u.id} justify="space-between" align="center">
-                <Flex align="center" gap={8}>
-                  <WarningOutlined style={{ color: "#f59e0b", fontSize: 13 }} />
-                  <Text style={{ fontSize: 13 }}>{u.userId}</Text>
-                </Flex>
-                <Text type="secondary" style={{ fontSize: 12 }}>{formatDate(u.expiresAt)}</Text>
-              </Flex>
-            ))}
-            {expiringUsers.length > 4 && <Text type="secondary" style={{ fontSize: 12 }}>+{expiringUsers.length - 4} 更多</Text>}
-          </Flex>
-        </Card>
-      )}
-
-      {/* Recent bills */}
-      {recentBills.length > 0 && (
-        <Card>
-          <SectionLabel>最近账单</SectionLabel>
-          <Flex vertical gap={10}>
-            {recentBills.map(b => (
-              <Flex key={b.id} justify="space-between" align="center">
-                <div style={{ minWidth: 0 }}>
-                  <Text style={{ fontSize: 13, display: "block" }} ellipsis={{ tooltip: b.userLabel }}>{b.userLabel}</Text>
-                  <Text type="secondary" style={{ fontSize: 11 }}>{formatDate(b.occurredAt)}</Text>
-                </div>
-                <Text strong style={{ fontSize: 13, color: b.reversedAt ? p.textMuted : p.primary, flexShrink: 0, marginLeft: 12 }}>{formatMoney(b.amount)}</Text>
-              </Flex>
-            ))}
-          </Flex>
-        </Card>
-      )}
-    </Flex>
-  );
-
+  const c = color || p.primary;
+  const r = (size - strokeWidth) / 2;
+  const circ = 2 * Math.PI * r;
+  const dash = (pct / 100) * circ;
+  const yellowDash = Math.min((pct / 100) * 0.35 * circ, 0.35 * circ);
   return (
-    <div style={{ marginBottom: 32 }}>
-      <Flex gap={28} align="flex-start" vertical={!wide}>
-        {leftCol}
-        {rightCol}
-      </Flex>
-      <div style={{ height: 1, background: p.border, marginTop: 28 }} />
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={p.fillMid} strokeWidth={strokeWidth} />
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={c} strokeWidth={strokeWidth}
+          strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" />
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#E8E84A" strokeWidth={strokeWidth}
+          strokeDasharray={`${yellowDash} ${circ}`} strokeDashoffset={-dash} strokeLinecap="round" />
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1 }}>
+        {label && <span style={{ fontSize: 15, fontWeight: 800, lineHeight: 1, color: p.text }}>{label}</span>}
+        {sublabel && <span style={{ fontSize: 10, color: p.textMuted, fontWeight: 500, textAlign: "center", lineHeight: 1.2 }}>{sublabel}</span>}
+      </div>
     </div>
   );
 }
 
-// ─── App layout ───────────────────────────────────────────────────────────────
+function CircleStatTile({ pct = 0, label, sublabel, size = 80, strokeWidth = 8 }) {
+  const p = usePalette();
+  const r = (size - strokeWidth) / 2;
+  const circ = 2 * Math.PI * r;
+  const dash = (pct / 100) * circ;
+  return (
+    <div style={{ background: p.surface, borderRadius: 16, boxShadow: p.shadow, padding: "16px 20px", display: "flex", alignItems: "center", gap: 16, minWidth: 0 }}>
+      <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+        <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={p.fillMid} strokeWidth={strokeWidth} />
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={p.primary} strokeWidth={strokeWidth}
+            strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" />
+        </svg>
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: p.primary }}>{pct}%</span>
+        </div>
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: p.text, lineHeight: 1.2 }}>{label}</div>
+        {sublabel && <div style={{ fontSize: 12, color: p.textMuted, marginTop: 3 }}>{sublabel}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ReminderItem({ icon, title, subtitle, urgent }) {
+  const p = usePalette();
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 0", borderBottom: `1px solid ${p.border}` }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: p.text, marginBottom: 2 }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 12, color: p.textMuted }}>{subtitle}</div>}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        {urgent && <div style={{ width: 8, height: 8, borderRadius: "50%", background: p.primary }} />}
+        <span style={{ color: p.textMuted, fontSize: 16 }}>›</span>
+      </div>
+    </div>
+  );
+}
+
+// 鈹€鈹€鈹€ App layout 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function AppLayout() {
   const p = usePalette();
   const { darkMode, toggleTheme } = useTheme();
-  const { meta, loading, error, subscriptions, users, bills } = useData();
-  const [drawer, setDrawer]         = useState(false);
-  const navigate  = useNavigate();
-  const location  = useLocation();
-  const screens   = Grid.useBreakpoint();
-  const isMobile  = !screens.lg;
-  const selKey    = location.pathname.startsWith("/urls") ? "/urls" : location.pathname;
-  const isDetail  = /^\/urls\/detail\/[^/]+/.test(location.pathname);
-  const initial   = loading && !subscriptions.length && !users.length && !bills.length;
+  const { meta, loading, error, subscriptions, users, bills, busy } = useData();
+  const [drawer, setDrawer] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.lg;
+  const selKey = location.pathname.startsWith("/urls") ? "/urls" : location.pathname;
+  const isDetail = /^\/urls\/detail\/[^/]+/.test(location.pathname);
+  const initial = loading && !subscriptions.length && !users.length && !bills.length;
 
   async function logout() {
     await apiFetch("/api/auth/logout", { method: "POST" });
     navigate("/login", { replace: true });
   }
 
-  function handleNav({ key }) { navigate(key); setDrawer(false); }
+  function handleNav({ key }) {
+    navigate(key);
+    setDrawer(false);
+  }
 
   return (
-    <AntLayout style={{ minHeight: "100dvh", background: p.page, flexDirection: "column" }}>
-      {/* Top nav bar */}
-      <Header style={{ height: 60, background: p.surface, borderBottom: `1px solid ${p.border}`, padding: "0 24px", lineHeight: 1, position: "sticky", top: 0, zIndex: 100 }}>
-        <TopNav
-          selectedKey={selKey} onSelect={handleNav}
-          isMobile={isMobile}  onDrawer={() => setDrawer(true)}
-          darkMode={darkMode}  toggleTheme={toggleTheme}
-          logout={logout}      version={meta?.version}
-        />
+    <AntLayout className="console-shell" style={{ minHeight: "100dvh", background: p.page }}>
+      <Header className="console-workspace-header" style={{ background: "transparent", padding: 0, lineHeight: 1 }}>
+        <div className="console-workspace-inner console-workspace-inner-top">
+          <HeaderBar
+            selectedKey={selKey}
+            isMobile={isMobile}
+            onDrawer={() => setDrawer(true)}
+            darkMode={darkMode}
+            toggleTheme={toggleTheme}
+            logout={logout}
+            version={meta?.version}
+          />
+        </div>
       </Header>
 
-      <Content style={{
-        padding: isMobile
-          ? "16px calc(16px + env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))"
-          : "24px 32px 48px",
-        minWidth: 0
-      }}>
-        {error && <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 12, padding: "10px 16px", marginBottom: 16 }}><Text type="danger">{error}</Text></div>}
-
-        {initial ? (
-          <Flex vertical gap={16}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-              {[1,2,3,4].map(i => <Card key={i} pad={20}><Skeleton active paragraph={{ rows: 1 }} /></Card>)}
-            </div>
-            <Card><Skeleton active paragraph={{ rows: 6 }} /></Card>
-          </Flex>
-        ) : (
-          <>
-            {!isDetail && <Dashboard />}
-            <Routes>
-              <Route path="/urls"             element={<UrlPoolPage />} />
-              <Route path="/urls/detail/:id"  element={<PoolDetailPage />} />
-              <Route path="/users"            element={<UsersPage />} />
-              <Route path="/bills"            element={<BillsPage />} />
-              <Route path="*"                 element={<Navigate to="/urls" replace />} />
-            </Routes>
-          </>
+      <AntLayout className="console-main-layout" style={{ background: "transparent", minWidth: 0 }}>
+        {!isMobile && (
+          <Sider width={200} className="console-layout-sider">
+            <SidebarNav selectedKey={selKey} onSelect={handleNav} version={meta?.version} />
+          </Sider>
         )}
 
-        <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 24 }}>
-          {loading ? "同步中..." : `Last updated: ${formatDateTime(meta?.updatedAt)}`}
-        </Text>
-      </Content>
+        <Content className="console-workspace-content-shell" style={{ background: "transparent", minWidth: 0 }}>
+          <div className="console-workspace-shell">
+            <div className="console-workspace-inner">
+              <Content className="console-workspace-content" style={{ padding: 0, minWidth: 0 }}>
+                {error && <div className="console-error-banner"><Text type="danger">{error}</Text></div>}
 
-      {/* Mobile drawer */}
-      <Drawer open={drawer} onClose={() => setDrawer(false)} placement="left" width={240}
-        styles={{ header: { padding: "16px 20px" }, body: { padding: "8px 12px" } }}
-        title={<Flex align="center" gap={10}><div style={{ width: 30, height: 30, borderRadius: 8, background: p.primary, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 13 }}>X</div><Text strong>XELA</Text></Flex>}
+                {initial ? (
+                  <Flex vertical gap={16}>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4, 1fr)", gap: 16 }}>
+                      {[1, 2, 3, 4].map(i => <Card key={i} pad={20}><Skeleton active paragraph={{ rows: 1 }} /></Card>)}
+                    </div>
+                    <Card><Skeleton active paragraph={{ rows: 6 }} /></Card>
+                  </Flex>
+                ) : (
+                  <ErrorBoundary>
+                    <Routes>
+                      <Route path="/urls" element={<UrlPoolPage />} />
+                      <Route path="/urls/detail/:id" element={<PoolDetailPage />} />
+                      <Route path="/users" element={<UsersPage />} />
+                      <Route path="/bills" element={<BillsPage />} />
+                      <Route path="*" element={<Navigate to="/urls" replace />} />
+                    </Routes>
+                  </ErrorBoundary>
+                )}
+
+                <Text className="console-workspace-footer">
+                  {loading ? "同步中..." : `最后更新：${formatDateTime(meta?.updatedAt)}`}
+                </Text>
+              </Content>
+            </div>
+          </div>
+        </Content>
+      </AntLayout>
+
+      <Drawer
+        open={drawer}
+        onClose={() => setDrawer(false)}
+        placement="left"
+        width={292}
+        closable={false}
+        styles={{ body: { padding: 0, background: p.surface } }}
       >
-        <Menu mode="inline" selectedKeys={[selKey]} items={NAV_ITEMS} onClick={handleNav}
-          style={{ border: "none", background: "transparent" }} />
+        <SidebarNav selectedKey={selKey} onSelect={handleNav} version={meta?.version} showBrand />
       </Drawer>
 
-      <BusyOverlay busy={useData().busy} />
+      <BusyOverlay busy={busy} />
     </AntLayout>
   );
 }
 
-// ─── DataProvider ─────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ DataProvider 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function DataProvider({ children }) {
   const [state, setState] = useState({ subscriptions: [], users: [], bills: [], meta: null, loading: true, error: "" });
@@ -917,7 +963,7 @@ function DataProvider({ children }) {
 
   useEffect(() => { reload(); }, [reload]);
 
-  const runAsync = useCallback(async (task, label = "处理中...") => {
+  const runAsync = useCallback(async (task, label = "澶勭悊涓?..") => {
     setBusy({ label });
     try { return await task(); } finally { setBusy(null); }
   }, []);
@@ -926,14 +972,14 @@ function DataProvider({ children }) {
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
 
-// ─── Helpers (sub-pages) ──────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Helpers (sub-pages) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function useResponsiveList() {
   const screens = Grid.useBreakpoint();
   return !screens.md;
 }
 
-// ─── URL Pool ─────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ URL Pool 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function UrlText({ value }) {
   return <UrlPill value={value} mono />;
@@ -964,10 +1010,10 @@ function PoolDetailPage() {
   const boundUsers = item ? users.filter(u => u.subscriptionId === item.id) : [];
 
   const userCols = [
-    { title: "用户 ID", dataIndex: "userId" },
-    { title: "微信名", dataIndex: "wechatName", render: v => v || "—" },
-    { title: "到期", render: (_, u) => formatDate(u.expiresAt) },
-    { title: "状态", render: (_, u) => <StatusBadge status={userStatus(u)} /> }
+    { title: "User ID", dataIndex: "userId" },
+    { title: "WeChat", dataIndex: "wechatName", render: v => v || "-" },
+    { title: "Expires", render: (_, u) => formatDate(u.expiresAt) },
+    { title: "Status", render: (_, u) => <StatusBadge status={userStatus(u)} /> }
   ];
   const boundUserTable = useResizableCols(userCols, "url-detail-bound-users");
 
@@ -977,12 +1023,12 @@ function PoolDetailPage() {
     runAsync(async () => {
       const result = await fetchJson(`/api/subscriptions/${item.id}/cache`).catch(e => ({ error: e.message }));
       if (!cancelled) setCache(result);
-    }, "正在读取详情...");
+    }, "Loading details...");
     return () => { cancelled = true; };
   }, [item?.id, runAsync]);
 
   if (!item) return (
-    <PageSection title="URL 详情"><Empty description="没有找到这条池 URL。" /></PageSection>
+    <PageSection title="URL details"><Empty description="未找到该订阅记录。" /></PageSection>
   );
 
   async function refreshTraffic() {
@@ -991,7 +1037,7 @@ function PoolDetailPage() {
       await runAsync(async () => {
         await postJson(`/api/subscriptions/${item.id}/refresh`);
         await reload(["subscriptions"]);
-      }, "正在刷新 URL 数据...");
+      }, "正在刷新订阅数据...");
     } finally { setRefreshingTraffic(false); }
   }
 
@@ -1019,75 +1065,96 @@ function PoolDetailPage() {
     </div>
   );
 
-  const cacheText = cache?.error ? `错误：${cache.error}` : (cache?.body || "（未获取到实时 YAML）");
-  const cacheMeta = cache?.fetchedAt ? `${formatDateTime(cache.fetchedAt)} · ${formatBytes(cache.bodyLength || 0)}${cache.truncated ? "（已截断）" : ""}` : "";
+  const cacheText = cache?.error ? `Error: ${cache.error}` : (cache?.body || "(no YAML fetched)");
+  const cacheMeta = cache?.fetchedAt ? `${formatDateTime(cache.fetchedAt)} - ${formatBytes(cache.bodyLength || 0)}${cache.truncated ? " (truncated)" : ""}` : "";
 
   return (
     <div className="detail-page" style={{ color: p.text }}>
-      <header style={{ padding: isNarrow ? "2px 0 18px" : "4px 0 22px", borderBottom: `1px solid ${borderColor}` }}>
-        <div style={{ height: 1, background: borderColor, margin: isNarrow ? "14px 0 18px" : "18px 0 20px" }} />
-        <div className="detail-hero">
-          <div className="detail-hero-toolbar">
-            <div className="detail-hero-actions">
-              <Button size="small" onClick={() => navigate("/urls")} style={{ height: 32, borderRadius: 6, paddingInline: 12, fontSize: 13 }}>返回 URL 池</Button>
-              <Button className="detail-refresh-button" size="small" icon={<ReloadOutlined />} loading={refreshingTraffic} onClick={refreshTraffic} style={{ height: 32, borderRadius: 6, paddingInline: refreshingTraffic ? 16 : 12 }}>刷新</Button>
-            </div>
-          </div>
-          <div className="detail-hero-main">
-            <Title level={1} style={{ margin: 0, fontSize: isMobile ? 24 : isNarrow ? 26 : 32, lineHeight: 1.25, fontWeight: 600 }}>{item.email || item.name || "池 URL 详情"}</Title>
-            <CopyableUrlPill value={item.url} className="detail-url-copyable" />
-          </div>
+      {/* 鈹€鈹€ Page header: title + back 鈹€鈹€ */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 16, marginBottom: 24 }}>
+        <div>
+          <Button size="small" onClick={() => navigate("/urls")} style={{ marginBottom: 10, borderRadius: 6 }}>返回订阅池</Button>
+          <Title level={2} style={{ margin: 0, fontSize: isMobile ? 26 : 34, fontWeight: 900, letterSpacing: -1, lineHeight: 1.1 }}>
+            订阅池<br />详情
+          </Title>
         </div>
-      </header>
+        {/* Circle stat tiles */}
+        {!isMobile && (
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+            <CircleStatTile pct={trafficPct} label="剩余" sublabel={m.totalBytes ? formatBytes(m.remainingBytes) : "-"} size={76} strokeWidth={7} />
+            <CircleStatTile pct={usedPct} label="已用" sublabel={m.usedBytes ? formatBytes(m.usedBytes) : "-"} size={76} strokeWidth={7} />
+            <CircleStatTile pct={Math.min(100, boundUsers.length * 10)} label="Users" sublabel={`${boundUsers.length} 已绑定`} size={76} strokeWidth={7} />
+          </div>
+        )}
+      </div>
 
-      <main style={{ display: "grid", gridTemplateColumns: singleCol ? "1fr" : "minmax(0,1fr) minmax(300px,380px)", columnGap: singleCol ? 0 : 48 }}>
-        <div style={{ padding: isNarrow ? "22px 0 0" : "28px 0 0", minWidth: 0 }}>
-          <section style={{ padding: isNarrow ? "22px 0 0" : "28px 0 0", borderTop: "none" }}>
-            <Flex justify="space-between" align="center" gap={12} wrap="wrap" style={{ marginBottom: 16 }}>
-              <Title level={3} style={titleStyle}>流量</Title>
-            </Flex>
-            <div className="traffic-visual-panel">
-              <div className="traffic-visual-header">
-                <div>
-                  <Text type="secondary" style={{ display: "block", fontSize: 13 }}>剩余流量比例</Text>
-                  <Text strong style={{ fontSize: 28, lineHeight: 1.2 }}>{trafficPct}%</Text>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <Text type="secondary" style={{ display: "block", fontSize: 13 }}>已用流量比例</Text>
-                  <Text strong style={{ fontSize: 20, lineHeight: 1.35 }}>{usedPct}%</Text>
-                </div>
-              </div>
-              <div className="traffic-bar">
-                <div className="traffic-bar-used" style={{ width: `${usedPct}%` }} />
-                <div className="traffic-bar-remaining" style={{ width: `${trafficPct}%` }} />
-              </div>
-              <div className="traffic-stat-grid">
-                {[
-                  { label: "剩余流量", value: m.remainingBytes != null ? formatBytes(m.remainingBytes) : "-", tone: "remaining" },
-                  { label: "已用流量", value: m.usedBytes != null ? formatBytes(m.usedBytes) : "-", tone: "used" },
-                  { label: "总流量", value: m.totalBytes != null ? formatBytes(m.totalBytes) : "-", tone: "total" }
-                ].map(row => (
-                  <div className={`traffic-stat traffic-stat-${row.tone}`} key={row.label}>
-                    <Text type="secondary" style={{ display: "block", fontSize: 13 }}>{row.label}</Text>
-                    <Text strong className="traffic-stat-value">{row.value}</Text>
-                  </div>
-                ))}
+      {/* 鈹€鈹€ Three-column main grid 鈹€鈹€ */}
+      <div style={{ display: "grid", gridTemplateColumns: singleCol ? "1fr" : "minmax(0,1fr) minmax(240px,300px) minmax(240px,280px)", gap: 20, alignItems: "start" }}>
+
+        {/* Column 1: Info card + bound users + YAML */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Info card 鈥?Customer Details style */}
+          <Card>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <Text strong style={{ fontSize: 16, fontWeight: 700 }}>订阅详情</Text>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button size="small" icon={<EditOutlined />} style={{ borderRadius: 6 }}>编辑</Button>
+                <Button size="small" icon={<ReloadOutlined />} loading={refreshingTraffic} onClick={refreshTraffic} style={{ borderRadius: 6 }}>刷新</Button>
               </div>
             </div>
-          </section>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 14 }}>
+              <div style={{ width: 44, height: 44, borderRadius: "50%", background: p.fill, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <ApiOutlined style={{ color: p.primary, fontSize: 20 }} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <Text strong style={{ fontSize: 15, display: "block" }}>{item.email || "无邮箱"}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{serviceProviderLabel(item)}</Text>
+              </div>
+            </div>
+            <CopyableUrlPill value={item.url} className="detail-url-copyable" />
+            <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {[
+                { label: "HTTP 状态", value: item.httpStatus || "-" },
+                { label: "最近检查", value: item.lastCheckedAt ? formatDate(item.lastCheckedAt) : "-" },
+                { label: "到期时间", value: m.expireAt ? formatDate(m.expireAt) : "-" },
+                { label: "绑定用户", value: `${boundUsers.length} users` }
+              ].map(r => (
+                <div key={r.label}>
+                  <Text type="secondary" style={{ fontSize: 11, display: "block" }}>{r.label}</Text>
+                  <Text strong style={{ fontSize: 13 }}>{r.value}</Text>
+                </div>
+              ))}
+            </div>
+            {/* Status + note */}
+            <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <Text type="secondary" style={{ fontSize: 11, display: "block", marginBottom: 3 }}>Status</Text>
+                <StatusBadge status={item.status} />
+              </div>
+              {item.note && (
+                <Text type="secondary" style={{ fontSize: 12, maxWidth: 160, textAlign: "right" }}>{item.note}</Text>
+              )}
+            </div>
+            {item.lastError && (
+              <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(239,68,68,0.07)" }}>
+                <Text type="danger" style={{ fontSize: 12 }}>{item.lastError}</Text>
+              </div>
+            )}
+          </Card>
 
-          <section style={sectionStyle}>
-            <Flex justify="space-between" align="center" gap={12} wrap="wrap" style={{ marginBottom: 16 }}>
-              <Title level={3} style={titleStyle}>绑定用户</Title>
-              <Text style={keyStyle}>{boundUsers.length} 人正在使用</Text>
-            </Flex>
+          {/* Bound users */}
+          <Card>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <Text strong style={{ fontSize: 16, fontWeight: 700 }}>绑定用户</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{boundUsers.length} 活跃用户</Text>
+            </div>
             {boundUsers.length && isMobile ? (
               <div className="detail-user-card-list">
                 {boundUsers.map(u => (
                   <div className="detail-user-card" key={u.id}>
                     <div>
                       <Text strong>{u.userId}</Text>
-                      <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 2 }}>{u.wechatName || "—"}</Text>
+                      <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 2 }}>{u.wechatName || "-"}</Text>
                     </div>
                     <div style={{ textAlign: "right" }}>
                       <Text style={{ display: "block", fontSize: 13 }}>{formatDate(u.expiresAt)}</Text>
@@ -1099,49 +1166,97 @@ function PoolDetailPage() {
             ) : boundUsers.length ? (
               <Table className="plain-detail-table" size="small" rowKey="id" columns={boundUserTable.columns} components={boundUserTable.components} dataSource={boundUsers} pagination={false} scroll={{ x: Math.max(620, boundUserTable.scrollX) }} />
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无绑定用户" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无绑定用户。" />
             )}
-          </section>
-
-          <section style={sectionStyle}>
-            <Flex justify="space-between" align="center" gap={12} wrap="wrap" style={{ marginBottom: 16 }}>
-              <Title level={3} style={titleStyle}>实时 YAML</Title>
-            </Flex>
-            <CodeViewer code={cacheText} meta={cacheMeta} language="YAML" />
-          </section>
+          </Card>
         </div>
 
-        <aside style={{ padding: singleCol ? "24px 0 0" : "28px 0 0 24px", borderLeft: singleCol ? "none" : `1px solid ${borderColor}`, borderTop: singleCol ? `1px solid ${borderColor}` : "none" }}>
-          <section style={{ paddingBottom: 24 }}>
-            <Title level={3} style={{ ...titleStyle, marginBottom: 18 }}>信息</Title>
-            {renderRows([
-              { label: "状态", value: <StatusBadge status={item.status} /> },
-              { label: "到期时间", value: m.expireAt ? formatDateTime(m.expireAt) : "-" },
-              { label: "HTTP 状态", value: item.httpStatus || "-" },
-              { label: "上次检查", value: item.lastCheckedAt ? formatDateTime(item.lastCheckedAt) : "-" }
-            ])}
-          </section>
-          <section style={sectionStyle}>
-            <Title level={3} style={{ ...titleStyle, marginBottom: 18 }}>使用情况</Title>
-            {renderRows([
-              { label: "绑定用户", value: `${boundUsers.length} 人` },
-              { label: "剩余流量比例", value: `${trafficPct}%` },
-              { label: "池 URL ID", value: item.id }
-            ])}
-          </section>
-          {item.lastError && (
-            <section style={sectionStyle}>
-              <Title level={3} style={{ ...titleStyle, marginBottom: 12, color: "var(--ant-color-error)" }}>错误</Title>
-              <Paragraph style={{ margin: 0, fontSize: 13, lineHeight: 1.7 }}>{item.lastError}</Paragraph>
-            </section>
-          )}
-        </aside>
-      </main>
+        {/* Column 2: Green traffic card (Transaction style) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Green traffic card */}
+          <div style={{ background: p.primary, borderRadius: 16, padding: "20px", color: "#fff", boxShadow: "0 4px 20px rgba(13,151,98,0.25)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+              <div>
+                <div style={{ fontSize: 28, fontWeight: 800, lineHeight: 1, marginBottom: 4 }}>
+                  {m.totalBytes ? formatBytes(m.remainingBytes) : "-"}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>剩余流量</div>
+              </div>
+              <div style={{ background: "rgba(255,255,255,0.2)", borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                {trafficPct}%
+              </div>
+            </div>
+            <div style={{ marginTop: 18, fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+              总计 {m.totalBytes ? formatBytes(m.totalBytes) : "-"}
+            </div>
+            {/* Progress bar on green */}
+            <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${trafficPct}%`, borderRadius: 999, background: "#fff", opacity: 0.9 }} />
+            </div>
+          </div>
+
+          {/* Traffic breakdown rows */}
+          {[
+            { label: "已用流量", bytes: m.usedBytes, icon: "↑" },
+            { label: "总流量", bytes: m.totalBytes, icon: "○" }
+          ].map(row => (
+            <Card key={row.label} pad="14px 16px">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: p.fill, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ color: p.primary, fontWeight: 700 }}>{row.icon}</span>
+                  </div>
+                  <div>
+                    <Text strong style={{ fontSize: 14, display: "block" }}>
+                      {row.bytes != null ? formatBytes(row.bytes) : "-"}
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 11 }}>{row.label}</Text>
+                  </div>
+                </div>
+                <span style={{ fontSize: 16, color: p.primary, fontWeight: 700 }}>✓</span>
+              </div>
+            </Card>
+          ))}
+
+          {/* Expire info card */}
+          <Card pad="14px 16px">
+            <Text type="secondary" style={{ fontSize: 11, display: "block", marginBottom: 4 }}>到期时间</Text>
+            <Text strong style={{ fontSize: 16, display: "block" }}>
+              {m.expireAt ? formatDate(m.expireAt) : "-"}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: "block" }}>
+              ID：{item.id}
+            </Text>
+          </Card>
+        </div>
+
+        {/* Column 3: YAML viewer */}
+        {!singleCol && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            <div style={{ marginBottom: 12 }}>
+              <Text strong style={{ fontSize: 16, fontWeight: 700 }}>实时配置</Text>
+              {cacheMeta && <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>{cacheMeta}</Text>}
+            </div>
+            <CodeViewer code={cacheText} meta="" language="YAML" />
+          </div>
+        )}
+      </div>
+
+      {/* YAML for single-col */}
+      {singleCol && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ marginBottom: 12 }}>
+            <Text strong style={{ fontSize: 16, fontWeight: 700 }}>实时配置</Text>
+            {cacheMeta && <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>{cacheMeta}</Text>}
+          </div>
+          <CodeViewer code={cacheText} meta="" language="YAML" />
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── Subscription Form ────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Subscription Form 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function SubscriptionForm({ item, onClose, onSaved }) {
   const { runAsync } = useData();
@@ -1151,44 +1266,143 @@ function SubscriptionForm({ item, onClose, onSaved }) {
       if (item.id) await fetchJson(`/api/subscriptions/${item.id}`, { method: "PUT", body: JSON.stringify(values) });
       else await postJson("/api/subscriptions", values);
       await onSaved();
-    }, item.id ? "正在更新池 URL..." : "正在添加池 URL...");
+    }, item.id ? "Updating URL pool..." : "Creating URL pool...");
   }
   return (
-    <Modal title={item.id ? "编辑池 URL" : "添加池 URL"} open onCancel={onClose} footer={null} destroyOnHidden styles={MODAL_STYLES}>
+    <Modal title={item.id ? "编辑订阅" : "新增订阅"} open onCancel={onClose} footer={null} destroyOnHidden styles={MODAL_STYLES}>
       <Form form={form} layout="vertical" initialValues={{ url: item.url || "", email: item.email || "", note: item.note || "" }} onFinish={submit}>
-        <Flex vertical gap={16}>
-          <div style={FIELD_GROUP}>
-            <Form.Item name="url" label="订阅 URL" rules={[{ required: true, type: "url", message: "请输入正确的 URL" }]} style={FIELD_ITEM}><Input variant="borderless" placeholder="https://" /></Form.Item>
-            <div style={FIELD_SEP} />
-            <Form.Item name="email" label="绑定邮箱" rules={[{ required: true, type: "email", message: "请输入邮箱" }]} style={FIELD_ITEM}><Input variant="borderless" placeholder="user@example.com" /></Form.Item>
-          </div>
-          <div style={{ ...FIELD_GROUP, padding: "10px 16px 12px" }}>
-            <Form.Item name="note" label="备注" style={{ marginBottom: 0 }}><TextArea variant="borderless" rows={3} placeholder="选填" style={{ padding: 0 }} /></Form.Item>
-          </div>
-          <Flex justify="end"><SubmitBtn loading={false}>保存</SubmitBtn></Flex>
+        <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>基本信息</Text></Divider>
+        <Flex gap={16} wrap="wrap">
+          <Form.Item name="url" label="订阅链接" rules={[{ required: true, type: "url", message: "请输入有效的链接" }]} style={{ marginBottom: 0, flex: "1 1 200px" }}>
+            <Input placeholder="https://" />
+          </Form.Item>
+          <Form.Item name="email" label="绑定邮箱" rules={[{ required: true, type: "email", message: "请输入邮箱地址" }]} style={{ marginBottom: 0, flex: "1 1 200px" }}>
+            <Input placeholder="user@example.com" />
+          </Form.Item>
+        </Flex>
+        <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>备注</Text></Divider>
+        <Form.Item name="note" label="备注" style={{ marginBottom: 0 }}>
+          <TextArea rows={4} placeholder="选填" />
+        </Form.Item>
+        <Flex justify="flex-end" gap={10} style={{ marginTop: 24 }}>
+          <Button onClick={onClose}>取消</Button>
+          <Button type="primary" htmlType="submit">保存</Button>
         </Flex>
       </Form>
     </Modal>
   );
 }
 
-// ─── URL Pool Page ────────────────────────────────────────────────────────────
+function SidebarNav({ selectedKey, onSelect, version, showBrand = false }) {
+  const menuItems = Object.entries(NAV_DISPLAY).map(([key, meta]) => {
+    const Icon = meta.icon;
+    return {
+      key,
+      icon: <Icon style={{ fontSize: 15 }} />,
+      label: meta.label
+    };
+  });
+
+  return (
+    <Flex vertical className="console-sidebar">
+      {showBrand && (
+        <Flex className="console-sidebar-brand" align="center">
+          <Flex className="console-sidebar-brandmark" align="center" justify="center">
+            <DwellixLogo size={32} />
+          </Flex>
+          <Flex vertical className="console-sidebar-brandcopy">
+            <Text className="console-sidebar-kicker">管理控制台</Text>
+            <Text strong className="console-sidebar-title">XELA Monitor</Text>
+          </Flex>
+        </Flex>
+      )}
+      <Text className="console-sidebar-group-label">导航</Text>
+      <Menu
+        mode="inline"
+        selectedKeys={[selectedKey]}
+        items={menuItems}
+        className="console-sidebar-menu"
+        onClick={onSelect}
+      />
+    </Flex>
+  );
+}
+
+function HeaderBar({ selectedKey, isMobile, onDrawer, darkMode, toggleTheme, logout, version }) {
+  const p = usePalette();
+  const pageMeta = NAV_DISPLAY[selectedKey] || NAV_DISPLAY["/urls"];
+  const userMenu = {
+    items: [
+      { key: "logout", label: "退出登录", icon: <LogoutOutlined />, danger: true, onClick: logout }
+    ]
+  };
+
+  return (
+    <Flex className="console-header-bar" align="center" justify="space-between">
+      <Flex className="console-header-leading" align="center">
+        {isMobile && (
+          <Button className="console-header-icon" type="default" icon={<MenuOutlined />} onClick={onDrawer} />
+        )}
+        <Flex className="console-header-brand" align="center">
+          <Flex className="console-header-brandmark" align="center" justify="center">
+            <DwellixLogo size={32} />
+          </Flex>
+          <Text strong className="console-header-brandtitle">XELA Monitor</Text>
+        </Flex>
+        <Breadcrumb
+          className="console-header-breadcrumb"
+          separator={<Text className="console-header-slash">/</Text>}
+          items={[
+            { title: <Text className="console-header-path">工作区</Text> },
+            { title: <Text strong className="console-header-title">{pageMeta.label}</Text> }
+          ]}
+        />
+      </Flex>
+
+      <Flex className="console-header-actions" align="center">
+        {!isMobile && (
+          <Input
+            className="console-header-search"
+            prefix={<SearchOutlined />}
+            placeholder="搜索资源..."
+            allowClear
+          />
+        )}
+        <Button className="console-header-icon" type="default" icon={<BellOutlined />} />
+        <Tooltip title={darkMode ? "切换亮色" : "切换暗色"}>
+          <Button className="console-header-icon" type="default" icon={darkMode ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} />
+        </Tooltip>
+        <Dropdown menu={userMenu} trigger={["click"]} placement="bottomRight">
+          <Button className="console-user-button" type="default">
+            <Avatar size={30} icon={<UserOutlined />} style={{ background: p.fillMid, color: p.primary }} />
+            <Flex vertical className="console-user-copy">
+              <Text className="console-user-name">管理员</Text>
+              <Text className="console-user-meta">构建 {version || "--"}</Text>
+            </Flex>
+          </Button>
+        </Dropdown>
+      </Flex>
+    </Flex>
+  );
+}
+
+// 鈹€鈹€鈹€ URL Pool Page 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function PoolCards({ items, actions }) {
   const p = usePalette();
-  if (!items.length) return <Empty description="还没有池 URL。" />;
+  if (!items.length) return <Empty description="暂无订阅。" />;
   return (
     <Flex vertical gap={12}>
       {items.map(item => (
         <Card key={item.id} hover style={{ padding: 16 }}>
           <Flex justify="space-between" gap={12} align="start" style={{ marginBottom: 10 }}>
             <div style={{ minWidth: 0 }}>
-              <Text strong style={{ display: "block", fontSize: 15 }}>{item.email || item.name || "未填写"}</Text>
-              <Text type="secondary" style={{ fontSize: 13 }}>{item.customerCount || 0} 个客户</Text>
+              <Text strong style={{ display: "block", fontSize: 15 }}>{item.email || item.name || "未命名订阅"}</Text>
+              <Text type="secondary" style={{ fontSize: 13 }}>{item.customerCount || 0} 用户</Text>
             </div>
             <StatusBadge status={item.status} />
           </Flex>
-          <div style={{ padding: "10px 0 12px", borderTop: `1px solid ${p.border}`, borderBottom: `1px solid ${p.border}` }}>
+          <div style={{ padding: "10px 0 12px", borderTop: `1px solid ${p.border}`, borderBottom: `1px solid ${p.border}`, marginBottom: 2 }}>
             <UrlPill value={item.url} />
           </div>
           <div style={{ display: "grid", gap: 8, padding: "12px 0" }}>
@@ -1241,8 +1455,8 @@ function UrlPoolPage() {
   async function action(run) {
     await runAsync(async () => {
       try { await run(); await reload(["subscriptions"]); }
-      catch (e) { notification.error({ message: "操作失败", description: e.message, placement: "bottomRight" }); }
-    }, "正在处理 URL 池操作...");
+      catch (e) { notification.error({ message: "Action failed", description: e.message, placement: "bottomRight" }); }
+    }, "Processing subscription...");
   }
 
   const actions = (item, compact = false) => {
@@ -1253,95 +1467,87 @@ function UrlPoolPage() {
         <Button {...bp} icon={<EditOutlined />} onClick={() => setEditing(item)}>编辑</Button>
         <Button {...bp} icon={<ReloadOutlined />} onClick={() => action(() => postJson(`/api/subscriptions/${item.id}/refresh`))}>刷新</Button>
         <Button {...bp} icon={<EyeOutlined />} onClick={() => navigate(`/urls/detail/${item.id}`)}>查看</Button>
-        <Button {...bp} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除池 URL", content: "确定删除吗？", onOk: () => action(() => fetchJson(`/api/subscriptions/${item.id}`, { method: "DELETE" })) })}>删除</Button>
+        <Button {...bp} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除订阅", content: "确认删除？", onOk: () => action(() => fetchJson(`/api/subscriptions/${item.id}`, { method: "DELETE" })) })}>删除</Button>
       </Wrap>
     );
   };
 
   const columns = [
     { title: "#", render: (_, __, i) => i + 1, width: 64 },
-    { title: "邮箱", render: (_, item) => item.email || item.name || "未填写", width: 160 },
-    { title: "池 URL", dataIndex: "url", render: v => <UrlText value={v} />, width: 320 },
-    { title: "客户数", dataIndex: "customerCount", render: v => v || 0, width: 82 },
+    { title: "邮箱", render: (_, item) => item.email || item.name || "未命名订阅", width: 160 },
+    { title: "URL", dataIndex: "url", render: v => <UrlText value={v} />, width: 320 },
+    { title: "用户", dataIndex: "customerCount", render: v => v || 0, width: 82 },
     { title: "剩余流量", render: (_, item) => {
       if (item.status === "expired" || !item.metrics?.totalBytes) return <span>{formatBytes(item.metrics?.remainingBytes)}</span>;
       const pct = Math.round(item.metrics.remainingBytes / item.metrics.totalBytes * 100);
       return <Flex vertical gap={2} style={{ minWidth: 90 }}><Progress percent={pct} size="small" strokeColor={pct < 20 ? "#ff4d4f" : pct < 50 ? "#faad14" : "#52c41a"} showInfo={false} /><Text style={{ fontSize: 11 }}>{formatBytes(item.metrics.remainingBytes)} / {formatBytes(item.metrics.totalBytes)}</Text></Flex>;
     }, width: 140 },
-    { title: "到期", render: (_, item) => item.status === "expired" ? "-" : formatDate(item.metrics?.expireAt), width: 120 },
+    { title: "到期时间", render: (_, item) => item.status === "expired" ? "-" : formatDate(item.metrics?.expireAt), width: 120 },
     { title: "状态", dataIndex: "status", render: v => <StatusBadge status={v} />, width: 90 },
     { title: "操作", render: (_, item) => actions(item, true), width: 300 }
   ].map(col => ({ ...col, onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }), onCell: () => ({ style: { whiteSpace: "nowrap" } }) }));
   const poolTable = useResizableCols(columns, "url-pool");
 
   return (
-    <section className="flat-list-section">
-      <div className="flat-list-header">
-        <PageTitle>URL 池</PageTitle>
-        <ActionBar>
-          <Input.Search allowClear placeholder="搜索 URL、邮箱或备注" style={{ width: 210 }} onSearch={setKeyword} onChange={e => setKeyword(e.target.value)} />
-          <Button onClick={() => setShowExpired(v => !v)}>{showExpired ? "隐藏已到期" : "显示已到期"}</Button>
-          <Button icon={<PlusOutlined />} onClick={() => setEditing({})}>添加 URL</Button>
-        </ActionBar>
-      </div>
-      {mobile
-        ? <PoolCards items={visible} actions={actions} />
-        : <Table className="plain-detail-table user-flat-table" size="middle" rowKey="id" columns={poolTable.columns} components={poolTable.components} dataSource={visible} pagination={tablePag} scroll={{ x: Math.max(1520, poolTable.scrollX) }} />
-      }
-      {editing && <SubscriptionForm item={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["subscriptions"]); }} />}
-    </section>
+    <div className="console-page-stack">
+      <ConsoleOverview />
+      <ManagementSection
+        kicker="订阅池"
+        title="订阅管理"
+        actions={
+          <>
+            <ToolbarSearch placeholder="搜索订阅..." style={{ width: 220 }} onSearch={setKeyword} onChange={e => setKeyword(e.target.value)} />
+            <Button onClick={() => setShowExpired(v => !v)} style={{ borderRadius: 6 }}>
+              {showExpired ? "隐藏已过期" : "显示已过期"}
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>
+              新增订阅
+            </Button>
+          </>
+        }
+      >
+        <div>
+          {mobile
+            ? <PoolCards items={visible} actions={actions} />
+            : <Table className="plain-detail-table user-flat-table saas-data-table" size="middle" rowKey="id" columns={poolTable.columns} components={poolTable.components} dataSource={visible} pagination={tablePag} scroll={{ x: Math.max(1520, poolTable.scrollX) }} />
+          }
+        </div>
+        {editing && <SubscriptionForm item={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["subscriptions"]); }} />}
+      </ManagementSection>
+    </div>
   );
 }
 
 
-// ─── Subconverter Panel ───────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Subconverter Panel 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function SubconverterPanel() {
   return (
-    <div style={FIELD_GROUP}>
-      <div style={{ padding: "10px 16px 0" }}>
-        <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>Subconverter 参数</Text>
-      </div>
-      <Row gutter={0}>
-        <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-          <Form.Item name={["subconverterConfig", "target"]} label="输出格式" style={FIELD_ITEM}>
-            <Select {...inModalSelectProps} variant="borderless" allowClear placeholder="target" options={SC_TARGETS} style={{ marginLeft: -11 }} />
-          </Form.Item>
-        </Col>
-        <Col xs={24} md={16}>
-          <Form.Item name={["subconverterConfig", "config"]} label="远程配置 URL" style={FIELD_ITEM}>
-            <Input variant="borderless" placeholder="选填，https://..." />
-          </Form.Item>
-        </Col>
-      </Row>
-      <div style={FIELD_SEP} />
-      <Row gutter={0}>
-        <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-          <Form.Item name={["subconverterConfig", "include"]} label="include" style={FIELD_ITEM}>
-            <Input variant="borderless" placeholder="节点过滤正则" />
-          </Form.Item>
-        </Col>
-        <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-          <Form.Item name={["subconverterConfig", "exclude"]} label="exclude" style={FIELD_ITEM}>
-            <Input variant="borderless" placeholder="节点排除正则" />
-          </Form.Item>
-        </Col>
-        <Col xs={24} md={8}>
-          <Form.Item name={["subconverterConfig", "rename"]} label="rename" style={{ ...FIELD_ITEM, paddingBottom: 4 }}>
-            <Input variant="borderless" placeholder="旧名@新名" />
-          </Form.Item>
-        </Col>
-      </Row>
-      <div style={FIELD_SEP} />
-      <div style={{ padding: "10px 16px 12px" }}>
-        <Flex gap={16} wrap="wrap" align="center">
-          <Form.Item name={["subconverterConfig", "emoji"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>Emoji</Checkbox></Form.Item>
-          <Form.Item name={["subconverterConfig", "udp"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>UDP</Checkbox></Form.Item>
-          <Form.Item name={["subconverterConfig", "scv"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>跳过 TLS 验证</Checkbox></Form.Item>
-          <Form.Item name={["subconverterConfig", "sort"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>排序节点</Checkbox></Form.Item>
-        </Flex>
-      </div>
-    </div>
+    <>
+      <Flex gap={16} wrap="wrap">
+        <Form.Item name={["subconverterConfig", "target"]} label="输出目标" style={{ marginBottom: 0, flex: "1 1 160px" }}>
+          <Select {...inModalSelectProps} allowClear placeholder="target" options={SC_TARGETS} />
+        </Form.Item>
+        <Form.Item name={["subconverterConfig", "config"]} label="远程配置 URL" style={{ marginBottom: 0, flex: "1 1 160px" }}>
+          <Input placeholder="选填，https://..." />
+        </Form.Item>
+        <Form.Item name={["subconverterConfig", "include"]} label="include" style={{ marginBottom: 0, flex: "1 1 160px" }}>
+          <Input placeholder="节点包含规则" />
+        </Form.Item>
+        <Form.Item name={["subconverterConfig", "exclude"]} label="exclude" style={{ marginBottom: 0, flex: "1 1 160px" }}>
+          <Input placeholder="节点排除规则" />
+        </Form.Item>
+        <Form.Item name={["subconverterConfig", "rename"]} label="rename" style={{ marginBottom: 0, flex: "1 1 160px" }}>
+          <Input placeholder="old-name@new-name" />
+        </Form.Item>
+      </Flex>
+      <Flex gap={16} wrap="wrap" align="center" style={{ marginTop: 16 }}>
+        <Form.Item name={["subconverterConfig", "emoji"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>Emoji</Checkbox></Form.Item>
+        <Form.Item name={["subconverterConfig", "udp"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>UDP</Checkbox></Form.Item>
+        <Form.Item name={["subconverterConfig", "scv"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>跳过 TLS 验证</Checkbox></Form.Item>
+        <Form.Item name={["subconverterConfig", "sort"]} valuePropName="checked" style={{ marginBottom: 0 }}><Checkbox>节点排序</Checkbox></Form.Item>
+      </Flex>
+    </>
   );
 }
 
@@ -1371,34 +1577,31 @@ function OutputModeSection({ form, initialOutputMode, subscriptions, recommended
   const useSubconverter = (outputMode || initialOutputMode) === "subconverter";
   return (
     <>
-      <div style={FIELD_GROUP}>
-        <div style={{ padding: "10px 16px 0" }}>
-          <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>输出方式</Text>
-        </div>
-        <Form.Item name="outputMode" style={{ ...FIELD_ITEM, paddingBottom: 4 }}>
-          <Radio.Group optionType="button" buttonStyle="solid" style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
-            <Radio.Button value="subconverter" style={{ textAlign: "center" }}>A. Subconverter</Radio.Button>
-            <Radio.Button value="direct" style={{ textAlign: "center" }}>B. 池 URL</Radio.Button>
-          </Radio.Group>
-        </Form.Item>
-        <div style={FIELD_SEP} />
-        {showRecommendation && (
-          <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
-            <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12 }}>
-              {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配池 URL，请手动选择")}
-            </Text>
-          </div>
-        )}
-        <Form.Item name="subscriptionId" label={useSubconverter ? "绑定池 URL" : "使用池 URL"} rules={[{ required: true, message: "请选择池 URL" }]} style={{ ...FIELD_ITEM, paddingBottom: 4 }}>
-          <Select virtual={false} variant="borderless" options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} style={{ marginLeft: -11 }} />
-        </Form.Item>
-      </div>
-      {useSubconverter && <SubconverterPanel />}
+      <Form.Item name="outputMode" style={{ marginBottom: 12 }}>
+        <Radio.Group optionType="button" buttonStyle="solid" style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+          <Radio.Button value="subconverter" style={{ textAlign: "center" }}>A. 订阅转换</Radio.Button>
+          <Radio.Button value="direct" style={{ textAlign: "center" }}>B. 直链</Radio.Button>
+        </Radio.Group>
+      </Form.Item>
+      {showRecommendation && (
+        <Text type={recommended ? "secondary" : "warning"} style={{ fontSize: 12, display: "block", marginBottom: 12 }}>
+          {recommended ? `推荐：${subscriptionLabel(recommended)}` : (recommendReason || "无匹配订阅池，请手动选择")}
+        </Text>
+      )}
+      <Form.Item name="subscriptionId" label={useSubconverter ? "绑定订阅池" : "当前订阅池"} rules={[{ required: true, message: "请选择订阅池" }]} style={{ marginBottom: 0 }}>
+        <Select virtual={false} options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} />
+      </Form.Item>
+      {useSubconverter && (
+        <>
+          <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>订阅转换设置</Text></Divider>
+          <SubconverterPanel />
+        </>
+      )}
     </>
   );
 }
 
-// ─── User Form ────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ User Form 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function UserForm({ item, subscriptions, onClose, onSaved }) {
   const { runAsync, busy } = useData();
@@ -1444,72 +1647,54 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
       if (item.id) await fetchJson(`/api/users/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
       else await postJson("/api/users", payload);
       await onSaved();
-    }, item.id ? "正在更新用户..." : "正在添加用户...");
+    }, item.id ? "Updating user..." : "Creating user...");
   }
 
   const fallbackLogs = Array.isArray(item.fallbackLogs) ? item.fallbackLogs : [];
   const fbCols = [
-    { title: "时间", dataIndex: "at", render: v => formatDateTime(v), width: 150 },
-    { title: "原因", dataIndex: "reasonText", render: v => v || "-", width: 150 },
-    { title: "原池 URL", dataIndex: "fromSubscriptionLabel", ellipsis: true },
-    { title: "新池 URL", dataIndex: "toSubscriptionLabel", ellipsis: true }
+    { title: "Time", dataIndex: "at", render: v => formatDateTime(v), width: 150 },
+    { title: "Reason", dataIndex: "reasonText", render: v => v || "-", width: 150 },
+    { title: "Previous URL", dataIndex: "fromSubscriptionLabel", ellipsis: true },
+    { title: "Current URL", dataIndex: "toSubscriptionLabel", ellipsis: true }
   ];
   const fbTable = useResizableCols(fbCols, "user-fallback-logs");
 
   return (
-    <Modal title={item.id ? "编辑用户" : "添加用户"} open onCancel={onClose} footer={null} destroyOnHidden width={720} styles={MODAL_STYLES}>
+    <Modal title={item.id ? "编辑用户" : "新建用户"} open onCancel={onClose} footer={null} destroyOnHidden width={760} styles={MODAL_STYLES}>
       <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageId: item.imessageId || "", purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, subconverterConfig: initialSubconverterConfig(item) }} onValuesChange={handleChange} onFinish={submit}>
-        <Flex vertical gap={12}>
-          <div style={FIELD_GROUP}>
-            <div style={{ padding: "10px 16px 0" }}><Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>基本信息</Text></div>
-            <Row gutter={0}>
-              <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-                <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={FIELD_ITEM}><Input variant="borderless" placeholder="必填" /></Form.Item>
-              </Col>
-              <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-                <Form.Item name="wechatName" label="微信名" style={FIELD_ITEM}><Input variant="borderless" placeholder="选填" /></Form.Item>
-              </Col>
-              <Col xs={24} md={8}>
-                <Form.Item name="imessageId" label="iMessage ID" style={{ ...FIELD_ITEM, paddingBottom: 4 }}><Input variant="borderless" placeholder="选填" /></Form.Item>
-              </Col>
-            </Row>
-          </div>
-          <div style={FIELD_GROUP}>
-            <div style={{ padding: "10px 16px 0" }}><Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>套餐信息</Text></div>
-            <Row gutter={0}>
-              <Col xs={24} sm={12} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-                <Form.Item name="purchasedAt" label="购买时间" rules={[{ required: true, message: "请选择购买时间" }]} style={FIELD_ITEM}>
-                  <DatePicker {...inModalPickerProps} variant="borderless" style={{ width: "100%", paddingLeft: 0 }} />
-                </Form.Item>
-              </Col>
-              <Col xs={24} sm={12} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-                <Form.Item name="expiresAt" label="到期时间" rules={[{ required: true, message: "请选择到期时间" }]} style={FIELD_ITEM}>
-                  <DatePicker {...inModalPickerProps} variant="borderless" style={{ width: "100%", paddingLeft: 0 }} />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={8}>
-                <Form.Item name="actualPaid" label="实付款" rules={[{ required: true, message: "请输入" }]} style={{ ...FIELD_ITEM, paddingBottom: 4 }}>
-                  <Input variant="borderless" type="number" min="0" step="0.01" placeholder="0.00" style={{ paddingLeft: 0 }} />
-                </Form.Item>
-              </Col>
-            </Row>
-            <div style={FIELD_SEP} />
-            <Form.Item name="duration" label="购买时长" style={{ ...FIELD_ITEM, paddingBottom: 4 }}>
-              <DurationRadio purchasedAt={purchasedAt} />
-            </Form.Item>
-          </div>
-          <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation={!item.id} />
-          {fallbackLogs.length > 0 && (
-            <div style={FIELD_GROUP}>
-              <div style={{ padding: "10px 16px 8px" }}><Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>自动换池日志</Text></div>
-              <div style={FIELD_SEP} />
-              <div style={{ padding: "10px 16px 12px" }}>
-                <Table size="small" rowKey="id" columns={fbTable.columns} components={fbTable.components} dataSource={fallbackLogs} pagination={false} scroll={{ x: Math.max(620, fbTable.scrollX) }} />
-              </div>
-            </div>
-          )}
-          <Button htmlType="submit" block size="large" loading={!!busy} disabled={!!busy} style={{ borderRadius: 999, fontWeight: 700, background: "var(--dw-primary)", borderColor: "var(--dw-primary)", color: "#fff" }}>
-            {item.id ? "保存" : "添加用户"}
+        <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>身份信息</Text></Divider>
+        <Flex gap={16} wrap="wrap">
+          <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="必填" /></Form.Item>
+          <Form.Item name="wechatName" label="微信名" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
+          <Form.Item name="imessageId" label="iMessage ID" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
+        </Flex>
+        <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>订阅信息</Text></Divider>
+        <Flex gap={16} wrap="wrap">
+          <Form.Item name="purchasedAt" label="购买日期" rules={[{ required: true, message: "请选择购买日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="expiresAt" label="到期日期" rules={[{ required: true, message: "请选择到期日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="actualPaid" label="实付金额" rules={[{ required: true, message: "请输入实付金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <Input type="number" min="0" step="0.01" placeholder="0.00" />
+          </Form.Item>
+        </Flex>
+        <Form.Item name="duration" label="套餐时长" style={{ marginTop: 16, marginBottom: 0 }}>
+          <DurationRadio purchasedAt={purchasedAt} />
+        </Form.Item>
+        <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>投递模式</Text></Divider>
+        <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation={!item.id} />
+        {fallbackLogs.length > 0 && (
+          <>
+            <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>历史记录</Text></Divider>
+            <Table className="saas-data-table" size="small" rowKey="id" columns={fbTable.columns} components={fbTable.components} dataSource={fallbackLogs} pagination={false} scroll={{ x: Math.max(620, fbTable.scrollX) }} />
+          </>
+        )}
+        <Flex justify="flex-end" gap={10} style={{ marginTop: 24 }}>
+          <Button onClick={onClose}>取消</Button>
+          <Button type="primary" htmlType="submit" loading={!!busy} disabled={!!busy}>
+            {item.id ? "保存修改" : "创建用户"}
           </Button>
         </Flex>
       </Form>
@@ -1517,7 +1702,7 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
   );
 }
 
-// ─── Renew Form ───────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Renew Form 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function RenewForm({ user, subscriptions, onClose, onSaved }) {
   const { runAsync } = useData();
@@ -1548,45 +1733,40 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
       delete payload.outputMode;
       await postJson(`/api/users/${user.id}/renew`, payload);
       await onSaved();
-    }, "正在续费用户...");
+    }, "Renewing user...");
   }
 
   return (
-    <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden width={720} styles={MODAL_STYLES}>
+    <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden width={760} styles={MODAL_STYLES}>
       <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, subconverterConfig: initialSubconverterConfig(user) }} onValuesChange={changed => { if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true; }} onFinish={submit}>
-        <Flex vertical gap={12}>
-          <div style={FIELD_GROUP}>
-            <div style={{ padding: "10px 16px 0" }}><Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>续费信息</Text></div>
-            <Row gutter={0}>
-              <Col xs={24} md={8} style={{ borderRight: "1px solid var(--ant-color-border-secondary)" }}>
-                <Form.Item name="purchasedAt" label="续费时间" rules={[{ required: true, message: "请选择续费时间" }]} style={FIELD_ITEM}>
-                  <DatePicker {...inModalPickerProps} variant="borderless" style={{ width: "100%", paddingLeft: 0 }} />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={16}>
-                <Form.Item name="actualPaid" label="实付款" rules={[{ required: true, message: "请输入" }]} style={FIELD_ITEM}>
-                  <Input variant="borderless" type="number" min="0" step="0.01" placeholder="0.00" style={{ paddingLeft: 0 }} />
-                </Form.Item>
-              </Col>
-            </Row>
-            <div style={FIELD_SEP} />
-            <Form.Item name="duration" label="续费时长" style={{ ...FIELD_ITEM, paddingBottom: 4 }}>
-              <DurationRadio purchasedAt={user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt} />
-            </Form.Item>
-          </div>
-          <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation />
-          <Button type="primary" htmlType="submit" block size="large" style={{ borderRadius: 999, fontWeight: 700 }}>确认续费</Button>
+        <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>续费详情</Text></Divider>
+        <Flex gap={16} wrap="wrap">
+          <Form.Item name="purchasedAt" label="续费日期" rules={[{ required: true, message: "请选择续费日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="actualPaid" label="实付金额" rules={[{ required: true, message: "请输入实付金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <Input type="number" min="0" step="0.01" placeholder="0.00" />
+          </Form.Item>
+        </Flex>
+        <Form.Item name="duration" label="续费时长" style={{ marginTop: 16, marginBottom: 0 }}>
+          <DurationRadio purchasedAt={user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt} />
+        </Form.Item>
+        <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>投递模式</Text></Divider>
+        <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation />
+        <Flex justify="flex-end" gap={10} style={{ marginTop: 24 }}>
+          <Button onClick={onClose}>取消</Button>
+          <Button type="primary" htmlType="submit">确认续费</Button>
         </Flex>
       </Form>
     </Modal>
   );
 }
 
-// ─── Users Page ───────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Users Page 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function UserCards({ users: list, actions }) {
   const p = usePalette();
-  if (!list.length) return <Empty description="还没有匹配的用户。" />;
+  if (!list.length) return <Empty description="无匹配用户。" />;
   return (
     <Flex vertical gap={12}>
       {list.map(user => (
@@ -1599,7 +1779,7 @@ function UserCards({ users: list, actions }) {
             <UrlPill value={userClientSubscriptionUrl(user)} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "12px 0" }}>
-            {[["到期", formatDate(user.expiresAt)], ["时长", durationLabels[user.duration] || "未知"], ["总付款", formatMoney(user.actualPaid)], ["购买时间", formatDate(user.purchasedAt)]].map(([label, value]) => (
+            {[["到期", formatDate(user.expiresAt)], ["时长", durationLabels[user.duration] || "Unknown"], ["实付", formatMoney(user.actualPaid)], ["购买", formatDate(user.purchasedAt)]].map(([label, value]) => (
               <div key={label}>
                 <Text type="secondary" style={{ fontSize: 12, display: "block" }}>{label}</Text>
                 <Text strong style={{ fontSize: 13 }}>{value}</Text>
@@ -1626,8 +1806,8 @@ function UsersPage() {
   async function mutate(run) {
     await runAsync(async () => {
       try { await run(); await reload(["users", "bills"]); }
-      catch (e) { notification.error({ message: "操作失败", description: e.message, placement: "bottomRight" }); }
-    }, "正在处理用户操作...");
+      catch (e) { notification.error({ message: "Action failed", description: e.message, placement: "bottomRight" }); }
+    }, "Processing user action...");
   }
 
   const actions = (user, compact = false) => {
@@ -1637,7 +1817,7 @@ function UsersPage() {
       <Wrap>
         <Button {...bp} icon={<RetweetOutlined />} onClick={() => setRenewing(user)}>续费</Button>
         <Button {...bp} icon={<EditOutlined />} onClick={() => setEditing(user)}>编辑</Button>
-        <Button {...bp} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除用户", content: "确定删除吗？", onOk: () => mutate(() => fetchJson(`/api/users/${user.id}`, { method: "DELETE" })) })}>删除</Button>
+        <Button {...bp} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除用户", content: "确认删除该用户？", onOk: () => mutate(() => fetchJson(`/api/users/${user.id}`, { method: "DELETE" })) })}>删除</Button>
       </Wrap>
     );
   };
@@ -1646,46 +1826,52 @@ function UsersPage() {
     { title: "#", render: (_, __, i) => i + 1, width: 48 },
     { title: "用户 ID", dataIndex: "userId", width: 120 },
     { title: "状态", render: (_, u) => <StatusBadge status={userStatus(u)} />, width: 76 },
-    { title: "到期", render: (_, u) => formatDate(u.expiresAt), width: 104 },
-    { title: "时长", render: (_, u) => durationLabels[u.duration] || "未知", width: 72 },
-    { title: "总付款", render: (_, u) => formatMoney(u.actualPaid), width: 88 },
-    { title: "客户订阅 URL", render: (_, u) => <UrlText value={userClientSubscriptionUrl(u)} />, width: 560 },
+    { title: "到期时间", render: (_, u) => formatDate(u.expiresAt), width: 104 },
+    { title: "时长", render: (_, u) => durationLabels[u.duration] || "Unknown", width: 72 },
+    { title: "实付金额", render: (_, u) => formatMoney(u.actualPaid), width: 88 },
+    { title: "客户端链接", render: (_, u) => <UrlText value={userClientSubscriptionUrl(u)} />, width: 560 },
     { title: "绑定邮箱", render: (_, u) => u.subscription?.email || "", width: 220 },
-    { title: "购买时间", render: (_, u) => formatDate(u.purchasedAt), width: 104 },
+    { title: "购买日期", render: (_, u) => formatDate(u.purchasedAt), width: 104 },
     { title: "操作", render: (_, u) => actions(u, true), width: 190 }
   ].map(col => ({ ...col, onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }), onCell: () => ({ style: { whiteSpace: "nowrap" } }) }));
   const userTable = useResizableCols(columns, "users-v2");
 
   return (
-    <section className="flat-list-section">
-      <div className="flat-list-header">
-        <PageTitle>用户管理</PageTitle>
-        <ActionBar>
-          <Input.Search allowClear placeholder="搜索用户、邮箱或 URL" style={{ minWidth: 240 }} onSearch={setKeyword} onChange={e => setKeyword(e.target.value)} />
-          <Button icon={<PlusOutlined />} onClick={() => setEditing({})}>添加用户</Button>
-        </ActionBar>
-      </div>
-      {mobile
-        ? <UserCards users={visible} actions={actions} />
-        : <Table className="plain-detail-table user-flat-table" size="middle" rowKey="id" columns={userTable.columns} components={userTable.components} dataSource={visible} pagination={tablePag} scroll={{ x: Math.max(1380, userTable.scrollX) }} />
+    <ManagementSection
+      kicker="用户管理"
+      title="用户列表"
+      actions={
+        <>
+          <ToolbarSearch placeholder="搜索用户、邮箱或链接" style={{ width: 220 }} onSearch={setKeyword} onChange={e => setKeyword(e.target.value)} />
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>
+            新建用户
+          </Button>
+        </>
       }
+    >
+      <div>
+        {mobile
+          ? <UserCards users={visible} actions={actions} />
+          : <Table className="plain-detail-table user-flat-table saas-data-table" size="middle" rowKey="id" columns={userTable.columns} components={userTable.components} dataSource={visible} pagination={tablePag} scroll={{ x: Math.max(1380, userTable.scrollX) }} />
+        }
+      </div>
       {editing && <UserForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["users", "bills"]); }} />}
       {renewing && <RenewForm user={renewing} subscriptions={subscriptions} onClose={() => setRenewing(null)} onSaved={async () => { setRenewing(null); await reload(["users", "bills"]); }} />}
-    </section>
+    </ManagementSection>
   );
 }
 
-// ─── Bills Page ───────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Bills Page 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function BillCards({ bills, actions, total }) {
   const p = usePalette();
   return (
     <Flex vertical gap={12}>
-      <Card style={{ padding: 16 }}>
-        <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>筛选合计</Text>
-        <Text strong style={{ fontSize: 20 }}>{formatMoney(total)}</Text>
-      </Card>
-      {!bills.length && <Empty description="还没有匹配的账单。" />}
+        <Card style={{ padding: 16 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>筛选合计</Text>
+          <Text strong style={{ fontSize: 20 }}>{formatMoney(total)}</Text>
+        </Card>
+      {!bills.length && <Empty description="无匹配账单。" />}
       {bills.map(bill => (
         <Card key={bill.id} hover style={{ padding: 16 }}>
           <Flex justify="space-between" gap={12} align="start" style={{ marginBottom: 10 }}>
@@ -1696,7 +1882,7 @@ function BillCards({ bills, actions, total }) {
             <Text type={Number(bill.amount) < 0 ? "danger" : "success"} strong style={{ fontSize: 16, flex: "0 0 auto" }}>{formatMoney(bill.amount)}</Text>
           </Flex>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "10px 0 12px", borderTop: `1px solid ${p.border}`, borderBottom: `1px solid ${p.border}` }}>
-            {[["类型", billTypeLabels[bill.type] || bill.type], ["状态", bill.reversedAt ? "已撤销" : "有效"], ["时长", durationLabels[bill.duration] || bill.duration || "-"], ["到期变化", bill.type === "renewal" ? `${formatDate(bill.beforeExpiresAt)} → ${formatDate(bill.afterExpiresAt)}` : formatDate(bill.afterExpiresAt)]].map(([label, value]) => (
+            {[["类型", billTypeLabels[bill.type] || bill.type], ["状态", bill.reversedAt ? "已冲销" : "有效"], ["时长", durationLabels[bill.duration] || bill.duration || "-"], ["到期变更", bill.type === "renewal" ? `${formatDate(bill.beforeExpiresAt)} -> ${formatDate(bill.afterExpiresAt)}` : formatDate(bill.afterExpiresAt)]].map(([label, value]) => (
               <div key={label}>
                 <Text type="secondary" style={{ fontSize: 12, display: "block" }}>{label}</Text>
                 <Text strong style={{ fontSize: 13 }}>{value}</Text>
@@ -1727,8 +1913,8 @@ function BillsPage() {
   async function mutate(run) {
     await runAsync(async () => {
       try { await run(); await reload(["bills", "users"]); }
-      catch (e) { notification.error({ message: "操作失败", description: e.message, placement: "bottomRight" }); }
-    }, "正在处理账单操作...");
+      catch (e) { notification.error({ message: "Action failed", description: e.message, placement: "bottomRight" }); }
+    }, "Processing billing action...");
   }
 
   const actions = (bill, compact = false) => {
@@ -1736,59 +1922,294 @@ function BillsPage() {
     const bp = compact ? { size: "small", style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy } : { style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy };
     return (
       <Wrap>
-        {!bill.reversedAt && <Button {...bp} onClick={() => mutate(() => postJson(`/api/bills/${bill.id}/reverse`))}>撤销</Button>}
-        <Button {...bp} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除账单", content: "确定删除这笔账单吗？", onOk: () => mutate(() => fetchJson(`/api/bills/${bill.id}`, { method: "DELETE" })) })}>删除</Button>
+        {!bill.reversedAt && <Button {...bp} onClick={() => mutate(() => postJson(`/api/bills/${bill.id}/reverse`))}>冲销</Button>}
+        <Button {...bp} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除账单", content: "确认删除该账单？", onOk: () => mutate(() => fetchJson(`/api/bills/${bill.id}`, { method: "DELETE" })) })}>删除</Button>
       </Wrap>
     );
   };
 
   const columns = [
     { title: "#", render: (_, __, i) => i + 1, width: 64 },
-    { title: "账单时间", render: (_, b) => formatDateTime(b.occurredAt) },
+    { title: "发生时间", render: (_, b) => formatDateTime(b.occurredAt) },
     { title: "用户", dataIndex: "userLabel" },
     { title: "类型", render: (_, b) => billTypeLabels[b.type] || b.type },
     { title: "金额", render: (_, b) => <Text type={Number(b.amount) < 0 ? "danger" : "success"} strong>{formatMoney(b.amount)}</Text> },
     { title: "时长", render: (_, b) => durationLabels[b.duration] || b.duration || "-" },
-    { title: "到期变化", render: (_, b) => b.type === "renewal" ? `${formatDate(b.beforeExpiresAt)} 延至 ${formatDate(b.afterExpiresAt)}` : formatDate(b.afterExpiresAt) },
-    { title: "状态", render: (_, b) => b.reversedAt ? <Tag>已撤销</Tag> : <Tag color="success">有效</Tag> },
+    { title: "到期变更", render: (_, b) => b.type === "renewal" ? `${formatDate(b.beforeExpiresAt)} to ${formatDate(b.afterExpiresAt)}` : formatDate(b.afterExpiresAt) },
+    { title: "状态", render: (_, b) => b.reversedAt ? <Tag>已冲销</Tag> : <Tag color="success">有效</Tag> },
     { title: "操作", render: (_, b) => actions(b, true), width: 170 }
   ].map(col => ({ ...col, onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }), onCell: () => ({ style: { whiteSpace: "nowrap" } }) }));
   const billTable = useResizableCols(columns, "bills");
 
   return (
-    <section className="flat-list-section">
-      <div className="flat-list-header">
-        <PageTitle>账单管理</PageTitle>
-        <ActionBar>
-          <DatePicker picker="month" value={month} onChange={setMonth} placeholder="筛选月份" style={{ minWidth: 150 }} />
-          <Input.Search allowClear placeholder="搜索用户、类型或备注" style={{ minWidth: 240 }} onSearch={setKeyword} onChange={e => setKeyword(e.target.value)} />
-        </ActionBar>
-      </div>
-      {mobile
-        ? <BillCards bills={visible} actions={actions} total={total} />
-        : <Table className="plain-detail-table user-flat-table" size="middle" rowKey="id" columns={billTable.columns} components={billTable.components} dataSource={visible} pagination={tablePag} scroll={{ x: Math.max(1100, billTable.scrollX) }}
-            summary={() => (
-              <Table.Summary fixed>
-                <Table.Summary.Row>
-                  <Table.Summary.Cell index={0} colSpan={4}>筛选合计</Table.Summary.Cell>
-                  <Table.Summary.Cell index={4}><Text strong>{formatMoney(total)}</Text></Table.Summary.Cell>
-                  <Table.Summary.Cell index={5} colSpan={4}>{visible.length} 笔账单</Table.Summary.Cell>
-                </Table.Summary.Row>
-              </Table.Summary>
-            )}
-          />
+    <ManagementSection
+      kicker="财务"
+      title="账单管理"
+      summary={
+        <div className="saas-summary-pill">
+          <span>{formatMoney(total)}</span>
+          <small>合计</small>
+        </div>
       }
-    </section>
+      actions={
+        <>
+          <DatePicker picker="month" value={month} onChange={setMonth} placeholder="筛选月份" style={{ width: 140, borderRadius: 8 }} />
+          <ToolbarSearch placeholder="搜索账单" style={{ width: 200 }} onSearch={setKeyword} onChange={e => setKeyword(e.target.value)} />
+        </>
+      }
+    >
+      <div>
+        {mobile
+          ? <BillCards bills={visible} actions={actions} total={total} />
+          : <Table className="plain-detail-table user-flat-table saas-data-table" size="middle" rowKey="id" columns={billTable.columns} components={billTable.components} dataSource={visible} pagination={tablePag} scroll={{ x: Math.max(1100, billTable.scrollX) }}
+              summary={() => (
+                <Table.Summary fixed>
+                  <Table.Summary.Row>
+                    <Table.Summary.Cell index={0} colSpan={4}>筛选合计</Table.Summary.Cell>
+                    <Table.Summary.Cell index={4}><Text strong>{formatMoney(total)}</Text></Table.Summary.Cell>
+                    <Table.Summary.Cell index={5} colSpan={4}>{visible.length} 条记录</Table.Summary.Cell>
+                  </Table.Summary.Row>
+                </Table.Summary>
+              )}
+            />
+        }
+      </div>
+    </ManagementSection>
   );
 }
 
-// ─── App root ─────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€ App root 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+function ConsoleOverview() {
+  const p = usePalette();
+  const navigate = useNavigate();
+  const { subscriptions, users, bills } = useData();
+  const screens = Grid.useBreakpoint();
+  const wide = screens.xl;
+  const md = screens.md;
+
+  const counts = subscriptions.reduce((acc, item) => ({ ...acc, [item.status]: (acc[item.status] || 0) + 1 }), {});
+  const activeBills = bills.filter(item => !item.reversedAt);
+  const paidTotal = activeBills.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const now = new Date();
+  const monthPfx = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const todayPfx = `${monthPfx}-${String(now.getDate()).padStart(2, "0")}`;
+  const monthIncome = activeBills.filter(item => (item.occurredAt || "").startsWith(monthPfx)).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const todayIncome = activeBills.filter(item => (item.occurredAt || "").startsWith(todayPfx)).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const expiringUsers = users.filter(item => userStatus(item) === "warning");
+  const activeUrls = subscriptions.filter(item => item.status === "ok").length;
+  const totalUrls = subscriptions.length;
+  const activeUrlPct = totalUrls ? Math.round((activeUrls / totalUrls) * 100) : 0;
+  const warningPct = totalUrls ? Math.round(((counts.warning || 0) / totalUrls) * 100) : 0;
+  const goalPct = paidTotal > 0 ? Math.min(100, Math.round((monthIncome / paidTotal) * 100)) : 0;
+
+  const criticalUrl = [...subscriptions]
+    .filter(item => item.status !== "expired" && item.metrics?.totalBytes)
+    .sort((a, b) => (a.metrics.remainingBytes / a.metrics.totalBytes) - (b.metrics.remainingBytes / b.metrics.totalBytes))[0];
+
+  const spotlightPools = [...subscriptions]
+    .sort((a, b) => (b.customerCount || 0) - (a.customerCount || 0))
+    .slice(0, wide ? 4 : md ? 3 : 2);
+
+  const recentBills = [...bills]
+    .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt))
+    .slice(0, 5);
+
+  const placeholderPools = [
+    { title: "主订阅池", meta: "订阅来源", domain: "添加第一个订阅链接", status: "待配置" },
+    { title: "备用池", meta: "故障切换来源", domain: "添加备用链接", status: "可选" },
+    { title: "续费池", meta: "用户投递", domain: "绑定续费订阅池", status: "推荐" },
+    { title: "自定义中继", meta: "高级路由", domain: "暴露清洁中继端点", status: "高级" }
+  ];
+
+  const overviewCards = [
+    { label: "活跃订阅", value: activeUrls, hint: `${activeUrlPct}% 可用率` },
+    { label: "用户", value: users.length, hint: `${expiringUsers.length} 即将到期` },
+    { label: "本月收入", value: formatMoney(monthIncome), hint: `今日 ${formatMoney(todayIncome)}` },
+    { label: "告警", value: counts.warning || 0, hint: criticalUrl ? "需跟进" : "全部正常", accent: !!(counts.warning || criticalUrl) }
+  ];
+
+  const metricRows = [
+    { label: "订阅可用率", value: `${activeUrlPct}%`, pct: activeUrlPct },
+    { label: "告警占比", value: `${warningPct}%`, pct: warningPct },
+    { label: "收款目标", value: `${goalPct}%`, pct: goalPct }
+  ];
+
+  return (
+    <div className="console-overview">
+      <div className="console-hero">
+        <div className="console-hero-copy">
+          <span className="console-kicker">订阅总览</span>
+          <div className="console-title">订阅工作区</div>
+          <Text type="secondary" className="console-subtitle">
+            查看订阅健康状态、续费风险及近期账单。
+          </Text>
+        </div>
+        <div className="console-hero-actions">
+          <Button onClick={() => navigate("/bills")}>查看账单</Button>
+          <Button type="primary" onClick={() => navigate("/users")}>管理用户</Button>
+        </div>
+      </div>
+
+      <div className="console-overview-grid" style={{ gridTemplateColumns: `repeat(${wide ? 4 : md ? 2 : 1}, minmax(0, 1fr))` }}>
+        {overviewCards.map(item => (
+          <div key={item.label} className="console-overview-card">
+            <div className="console-overview-label">{item.label}</div>
+            <div className={`console-overview-value${item.accent ? " accent" : ""}`} style={{ color: item.accent ? p.primary : p.text }}>
+              {item.value}
+            </div>
+            <div className="console-overview-hint">{item.hint}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="console-main-grid" style={{ gridTemplateColumns: wide ? "minmax(0, 1.55fr) minmax(320px, 0.95fr)" : "1fr" }}>
+        <div className="console-main-column">
+          <Card pad={0}>
+            <div className="console-section-head">
+              <div>
+                <div className="console-section-kicker">订阅总览</div>
+                <div className="console-section-title">优先订阅池</div>
+              </div>
+            </div>
+            <div className="console-app-grid" style={{ gridTemplateColumns: `repeat(${wide ? 2 : 1}, minmax(0, 1fr))` }}>
+              {spotlightPools.length > 0 ? spotlightPools.map(pool => (
+                <div key={pool.id} className="console-app-card">
+                  <div className="console-app-head">
+                    <div className="console-app-title">{pool.email || serviceProviderLabel(pool)}</div>
+                    <StatusBadge status={pool.status} />
+                  </div>
+                  <div className="console-app-runtime">{serviceProviderLabel(pool)}</div>
+                  <div className="console-app-domain">{pool.url || "暂无链接"}</div>
+                  <div className="console-app-foot">
+                    <span>{pool.customerCount || 0} users</span>
+                    <span>{formatDate(pool.metrics?.expireAt)}</span>
+                  </div>
+                </div>
+              )) : placeholderPools.slice(0, wide ? 4 : md ? 2 : 1).map(pool => (
+                <div key={pool.title} className="console-app-card placeholder">
+                  <div className="console-app-head">
+                    <div className="console-app-title">{pool.title}</div>
+                    <span className="console-app-status-placeholder">{pool.status}</span>
+                  </div>
+                  <div className="console-app-runtime">{pool.meta}</div>
+                  <div className="console-app-domain">{pool.domain}</div>
+                  <div className="console-app-foot">
+                    <span>待配置</span>
+                    <span>添加数据</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card pad={0}>
+            <div className="console-section-head">
+              <div>
+                <div className="console-section-kicker">账单</div>
+                <div className="console-section-title">最近记录</div>
+              </div>
+              <Button type="text" onClick={() => navigate("/bills")}>查看全部</Button>
+            </div>
+            <div className="console-table-list">
+              {recentBills.length > 0 ? recentBills.map(item => (
+                <div key={item.id} className="console-table-row">
+                  <div className="console-table-main">
+                    <div className="console-table-title">{item.userLabel}</div>
+                    <div className="console-table-subtitle">{formatDate(item.occurredAt)}</div>
+                  </div>
+                  <div className="console-table-side">
+                    <div className="console-table-title">{formatMoney(item.amount)}</div>
+                    <div className="console-table-subtitle">{item.billType || "付款"}</div>
+                  </div>
+                </div>
+              )) : (
+                <div className="console-empty-row table-like">暂无账单记录。</div>
+              )}
+            </div>
+          </Card>
+        </div>
+
+        <div className="console-side-column">
+          <Card pad={0}>
+            <div className="console-section-head">
+              <div>
+                <div className="console-section-kicker">运营状况</div>
+                <div className="console-section-title">运营快照</div>
+              </div>
+            </div>
+            <div className="console-metric-stack">
+              {metricRows.map(row => (
+                <div key={row.label} className="console-metric-row">
+                  <div className="console-metric-head">
+                    <span>{row.label}</span>
+                    <strong>{row.value}</strong>
+                  </div>
+                  <MiniProgressBar pct={row.pct} />
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card pad={0}>
+            <div className="console-section-head">
+              <div>
+                <div className="console-section-kicker">告警</div>
+                <div className="console-section-title">监控列表</div>
+              </div>
+            </div>
+            <div className="console-watch-list">
+              <ReminderItem
+                title="高危订阅池"
+                subtitle={criticalUrl ? `${serviceProviderLabel(criticalUrl)} 流量即将耗尽` : "当前无高危订阅池"}
+                urgent={!!criticalUrl}
+              />
+              <ReminderItem
+                title="本月账单"
+                subtitle={`${activeBills.filter(item => (item.occurredAt || "").startsWith(monthPfx)).length} 条本月记录`}
+              />
+              <ReminderItem
+                title="用户覆盖"
+                subtitle={`${users.length} 用户绑定了 ${subscriptions.length} 条订阅`}
+              />
+            </div>
+          </Card>
+
+          <Card pad={0}>
+            <div className="console-section-head">
+              <div>
+                <div className="console-section-kicker">续费</div>
+                <div className="console-section-title">待续费用户</div>
+              </div>
+            </div>
+            <div className="console-user-stack">
+              {expiringUsers.length > 0 ? expiringUsers.slice(0, 4).map(user => (
+                <div key={user.id} className="console-user-card">
+                  <div className="console-user-row">
+                    <div>
+                      <div className="console-user-name">{user.userId}</div>
+                      <div className="console-user-meta">{user.subscription?.email || "无绑定链接"}</div>
+                    </div>
+                    <StatusBadge status={userStatus(user)} />
+                  </div>
+                  <div className="console-user-row subtle">
+                    <span>{formatMoney(user.actualPaid)}</span>
+                    <span>{formatDate(user.expiresAt)}</span>
+                  </div>
+                </div>
+              )) : (
+                <div className="console-empty-row">暂无需关注的续费。</div>
+              )}
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function App() {
-  const [darkMode, setDarkMode] = useState(() => {
-    const stored = localStorage.getItem("themeMode");
-    return stored ? stored === "dark" : false;
-  });
+  const [darkMode, setDarkMode] = useState(true);
   const palette = darkMode ? PALETTE.dark : PALETTE.light;
   const toggleTheme = useCallback(() => {
     setDarkMode(cur => {
@@ -1798,6 +2219,10 @@ function App() {
     });
   }, []);
   const ctxValue = useMemo(() => ({ darkMode, toggleTheme, palette }), [darkMode, toggleTheme, palette]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = darkMode ? "dark" : "light";
+  }, [darkMode]);
 
   return (
     <ConfigProvider theme={makeAntTheme(palette, darkMode)}>
@@ -1822,3 +2247,4 @@ function App() {
 }
 
 createRoot(document.getElementById("root")).render(<App />);
+

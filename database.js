@@ -119,9 +119,47 @@ class PostgresDataStore {
   }
 }
 
+class ResilientDataStore {
+  constructor({ dataDir, files, databaseUrl }) {
+    this.kind = databaseUrl ? "postgres" : "json";
+    this.primary = databaseUrl ? new PostgresDataStore({ connectionString: databaseUrl }) : null;
+    this.fallback = new JsonDataStore({ dataDir, files });
+    this.activeStore = this.primary || this.fallback;
+  }
+
+  async init() {
+    if (!this.primary) {
+      await this.fallback.init();
+      this.activeStore = this.fallback;
+      this.kind = this.activeStore.kind;
+      return;
+    }
+
+    try {
+      await this.primary.init();
+      this.activeStore = this.primary;
+      this.kind = this.activeStore.kind;
+    } catch (error) {
+      if (process.env.VERCEL === "1") throw error;
+      console.warn("[data] Postgres unavailable in local development, falling back to JSON storage.");
+      console.warn(`[data] ${error.message}`);
+      await this.fallback.init();
+      this.activeStore = this.fallback;
+      this.kind = this.activeStore.kind;
+    }
+  }
+
+  async loadAll() {
+    return this.activeStore.loadAll();
+  }
+
+  async saveCollection(collection, rows) {
+    return this.activeStore.saveCollection(collection, rows);
+  }
+}
+
 function createDataStore({ dataDir, files, databaseUrl }) {
-  if (databaseUrl) return new PostgresDataStore({ connectionString: databaseUrl });
-  return new JsonDataStore({ dataDir, files });
+  return new ResilientDataStore({ dataDir, files, databaseUrl });
 }
 
 function normalizePostgresUrl(value) {

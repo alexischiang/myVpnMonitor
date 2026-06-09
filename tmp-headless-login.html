@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Headless Login Helper</title>
+  </head>
+  <body>
+    <form id="login-form" action="http://127.0.0.1:3000/api/auth/login" method="post">
+      <input type="hidden" name="account" value="admin" />
+      <input type="hidden" name="password" value="admin" />
+    </form>
+    <script>
+      document.getElementById("login-form").submit();
+    </script>
+  </body>
+</html>
