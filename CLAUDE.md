@@ -25,7 +25,7 @@ Dual-mode abstraction with identical CRUD interface:
 - `JsonDataStore` — local JSON files in `data/` (dev, no `DATABASE_URL`)
 - `PostgresDataStore` — Neon PostgreSQL (production, when `DATABASE_URL` is set)
 
-Collections: `subscriptions`, `users`, `bills`, `customUrls`
+Collections: `subscriptions`, `users`, `bills`, `customUrls`, `vendors`
 
 ### Backend (`server.js`)
 

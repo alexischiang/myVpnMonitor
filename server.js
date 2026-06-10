@@ -30,6 +30,7 @@ const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "subscri
 const DATA_DIR = path.dirname(DATA_FILE);
 const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
 const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
+const VENDORS_FILE = process.env.VENDORS_FILE || path.join(DATA_DIR, "vendors.json");
 
 const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
 const ALERT_STATE_FILE = process.env.ALERT_STATE_FILE || path.join(DATA_DIR, "alert-state.json");
@@ -126,13 +127,15 @@ const REQUEST_PROFILES = [
 let subscriptions = [];
 let users = [];
 let bills = [];
+let vendors = [];
 const dataStore = createDataStore({
   dataDir: DATA_DIR,
   databaseUrl: DATABASE_URL,
   files: {
     subscriptions: DATA_FILE,
     users: USERS_FILE,
-    bills: BILLS_FILE
+    bills: BILLS_FILE,
+    vendors: VENDORS_FILE
   }
 });
 
@@ -149,12 +152,18 @@ async function ensureDataFile() {
   subscriptions = state.subscriptions;
   users = state.users;
   bills = state.bills;
+  vendors = state.vendors || [];
 
   if (state.missing.subscriptions) await saveData();
   if (state.missing.users) await saveUsers();
   if (state.missing.bills) {
     bills = initialBillsFromUsers();
     await saveBills();
+  }
+  if (state.missing.vendors) {
+    const names = [...new Set(subscriptions.map(s => s.serviceProvider).filter(Boolean))];
+    vendors = names.map((name, i) => ({ id: `vendor-${i}`, name }));
+    await saveVendors();
   }
   if (ensureSubscriptionServiceProviders()) await saveData();
   if (ensureUserRelayTokens()) await saveUsers();
@@ -169,6 +178,7 @@ async function loadLatestData({ force = false } = {}) {
   subscriptions = state.subscriptions;
   users = state.users;
   bills = state.bills;
+  vendors = state.vendors || [];
   lastLoadedAt = Date.now();
 }
 
@@ -182,6 +192,10 @@ async function saveUsers() {
 
 async function saveBills() {
   await dataStore.saveCollection("bills", bills);
+}
+
+async function saveVendors() {
+  await dataStore.saveCollection("vendors", vendors);
 }
 
 
@@ -2528,6 +2542,42 @@ async function handleApi(req, res, pathname) {
   }
 
   const match = pathname.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|debug|cache|refresh-cache))?$/);
+
+  if (pathname === "/api/vendors" && req.method === "GET") {
+    sendJson(res, 200, vendors);
+    return;
+  }
+
+  if (pathname === "/api/vendors" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const name = (payload.name || "").trim();
+      if (!name) { sendJson(res, 400, { error: "供应商名称不能为空。" }); return; }
+      if (vendors.find(v => v.name === name)) { sendJson(res, 400, { error: "供应商已存在。" }); return; }
+      const vendor = { id: `vendor-${Date.now()}`, name };
+      vendors.push(vendor);
+      await saveVendors();
+      sendJson(res, 201, vendor);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const vendorMatch = pathname.match(/^\/api\/vendors\/([^/]+)$/);
+  if (vendorMatch) {
+    const vendor = vendors.find(v => v.id === vendorMatch[1]);
+    if (!vendor) { sendJson(res, 404, { error: "没有找到该供应商。" }); return; }
+    if (req.method === "DELETE") {
+      vendors = vendors.filter(v => v.id !== vendorMatch[1]);
+      await saveVendors();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    sendJson(res, 405, { error: "Method not allowed." });
+    return;
+  }
+
   const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew))?$/);
   if (userMatch) {
     const id = userMatch[1];

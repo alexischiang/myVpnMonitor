@@ -971,18 +971,19 @@ function AppLayout() {
 // 鈹€鈹€鈹€ DataProvider 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function DataProvider({ children }) {
-  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], meta: null, loading: true, error: "" });
+  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], vendors: [], meta: null, loading: true, error: "" });
   const [busy, setBusy] = useState(null);
 
   const apis = useMemo(() => ({
     subscriptions: "/api/subscriptions",
     users: "/api/users",
     bills: "/api/bills",
+    vendors: "/api/vendors",
     meta:  "/api/app-meta"
   }), []);
 
   const reload = useCallback(async (collections = null) => {
-    const keys = collections || ["subscriptions", "users", "bills", "meta"];
+    const keys = collections || ["subscriptions", "users", "bills", "vendors", "meta"];
     setState(s => ({ ...s, loading: !collections, error: "" }));
     try {
       const results = await Promise.all(keys.map(k => fetchJson(apis[k])));
@@ -1290,9 +1291,12 @@ function PoolDetailPage() {
 // 鈹€鈹€鈹€ Subscription Form 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function SubscriptionForm({ item, onClose, onSaved }) {
-  const { runAsync } = useData();
+  const { runAsync, vendors, reload } = useData();
   const [form] = Form.useForm();
   const modalCls = useModalCls();
+  const [newVendor, setNewVendor] = useState("");
+  const [addingVendor, setAddingVendor] = useState(false);
+
   async function submit(values) {
     await runAsync(async () => {
       if (item.id) await fetchJson(`/api/subscriptions/${item.id}`, { method: "PUT", body: JSON.stringify(values) });
@@ -1300,9 +1304,24 @@ function SubscriptionForm({ item, onClose, onSaved }) {
       await onSaved();
     }, item.id ? "Updating URL pool..." : "Creating URL pool...");
   }
+
+  async function handleAddVendor() {
+    const name = newVendor.trim();
+    if (!name) return;
+    setAddingVendor(true);
+    try {
+      await postJson("/api/vendors", { name });
+      await reload(["vendors"]);
+      form.setFieldValue("serviceProvider", name);
+      setNewVendor("");
+    } finally {
+      setAddingVendor(false);
+    }
+  }
+
   return (
     <Modal title={item.id ? "编辑订阅" : "新增订阅"} open onCancel={onClose} footer={null} destroyOnHidden styles={MODAL_STYLES} className={modalCls}>
-      <Form form={form} layout="vertical" initialValues={{ url: item.url || "", email: item.email || "", note: item.note || "" }} onFinish={submit}>
+      <Form form={form} layout="vertical" initialValues={{ url: item.url || "", email: item.email || "", note: item.note || "", serviceProvider: item.serviceProvider || "" }} onFinish={submit}>
         <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>基本信息</Text></Divider>
         <Flex gap={16} wrap="wrap">
           <Form.Item name="url" label="订阅链接" rules={[{ required: true, type: "url", message: "请输入有效的链接" }]} style={{ marginBottom: 0, flex: "1 1 200px" }}>
@@ -1312,8 +1331,33 @@ function SubscriptionForm({ item, onClose, onSaved }) {
             <Input placeholder="user@example.com" />
           </Form.Item>
         </Flex>
+        <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>供应商</Text></Divider>
+        <Form.Item name="serviceProvider" style={{ marginBottom: 0 }}>
+          <Select
+            placeholder="选择供应商"
+            allowClear
+            style={{ width: "100%" }}
+            options={vendors.map(v => ({ label: v.name, value: v.name }))}
+            dropdownRender={menu => (
+              <>
+                {menu}
+                <Divider style={{ margin: "8px 0" }} />
+                <Flex gap={8} style={{ padding: "0 8px 8px" }}>
+                  <Input
+                    placeholder="新增供应商..."
+                    value={newVendor}
+                    onChange={e => setNewVendor(e.target.value)}
+                    onPressEnter={handleAddVendor}
+                  />
+                  <Button loading={addingVendor} onClick={handleAddVendor} icon={<PlusOutlined />} />
+                </Flex>
+              </>
+            )}
+            {...inModalSelectProps}
+          />
+        </Form.Item>
         <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>备注</Text></Divider>
-        <Form.Item name="note" label="备注" style={{ marginBottom: 0 }}>
+        <Form.Item name="note" style={{ marginBottom: 0 }}>
           <TextArea rows={4} placeholder="选填" />
         </Form.Item>
         <Flex justify="flex-end" gap={10} style={{ marginTop: 24 }}>
@@ -1541,6 +1585,9 @@ function UrlPoolPage() {
             <ToolbarSearch placeholder="搜索订阅..." style={{ width: 220 }} onSearch={setKeyword} onChange={e => setKeyword(e.target.value)} />
             <Button onClick={() => setShowExpired(v => !v)} style={{ borderRadius: 6 }}>
               {showExpired ? "隐藏已过期" : "显示已过期"}
+            </Button>
+            <Button icon={<ReloadOutlined />} loading={!!busy} disabled={!!busy} onClick={() => action(() => postJson("/api/subscriptions/cache-refresh", {}))}>
+              全部刷新
             </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>
               新增订阅
