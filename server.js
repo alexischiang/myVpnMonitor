@@ -462,7 +462,16 @@ function durationDays(duration) {
   return values[duration] || null;
 }
 
+// 永久用户的到期日哨兵（须与 src/main.jsx 的 LIFETIME_EXPIRES_AT 一致）
+const LIFETIME_EXPIRES_AT = "9999-12-31T00:00:00.000Z";
+
+// custom：到期由请求的 expiresAt 决定；lifetime：永久
+function isValidDuration(duration) {
+  return Boolean(durationDays(duration)) || duration === "custom" || duration === "lifetime";
+}
+
 function calculateExpiry(purchasedAt, duration) {
+  if (duration === "lifetime") return LIFETIME_EXPIRES_AT;
   const days = durationDays(duration);
   const start = new Date(purchasedAt);
   if (!days || Number.isNaN(start.getTime())) return null;
@@ -560,17 +569,19 @@ function normalizeUser(input, existing = {}, options = {}) {
   const calculatedExpiresAt = calculateExpiry(purchasedAt, duration);
   const requestedExpiresAt = String(input.expiresAt || "").trim();
   const requestedExpiresDate = requestedExpiresAt ? new Date(requestedExpiresAt) : null;
-  const expiresAt = requestedExpiresDate && !Number.isNaN(requestedExpiresDate.getTime())
-    ? requestedExpiresDate.toISOString()
-    : calculatedExpiresAt;
+  const expiresAt = duration === "lifetime"
+    ? LIFETIME_EXPIRES_AT
+    : (requestedExpiresDate && !Number.isNaN(requestedExpiresDate.getTime())
+      ? requestedExpiresDate.toISOString()
+      : calculatedExpiresAt);
   const subscription = options.autoSelectSubscription
     ? findRecommendedSubscriptionForExpiry(expiresAt, { fallbackId: requestedSubscriptionId, ignoredUserId: existing.id || "" })
     : subscriptions.find(item => item.id === requestedSubscriptionId);
 
   if (!userId) throw new Error("请填写用户 ID。");
   if (!subscription) throw new Error("请选择已添加的 URL。");
-  if (!durationDays(duration)) throw new Error("请选择购买时长。");
-  if (!expiresAt) throw new Error("购买时间格式不正确。");
+  if (!isValidDuration(duration)) throw new Error("请选择套餐时长。");
+  if (!expiresAt) throw new Error(duration === "custom" ? "请选择到期日期。" : "购买时间格式不正确。");
   if (requestedExpiresAt && (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime()))) throw new Error("到期时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
 
@@ -683,12 +694,21 @@ function renewUser(user, input) {
   const currentExpiry = user.expiresAt ? new Date(user.expiresAt) : null;
   const previousPaid = Number(user.actualPaid) || 0;
 
-  if (!durationDays(duration)) throw new Error("请选择续费时长。");
+  if (!isValidDuration(duration)) throw new Error("请选择续费时长。");
   if (Number.isNaN(renewedAt.getTime())) throw new Error("续费时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
 
-  const baseTime = currentExpiry && currentExpiry.getTime() > renewedAt.getTime() ? currentExpiry : renewedAt;
-  const expiresAt = calculateExpiry(baseTime.toISOString(), duration);
+  let expiresAt;
+  if (duration === "lifetime") {
+    expiresAt = LIFETIME_EXPIRES_AT;
+  } else if (duration === "custom") {
+    const requestedExpiresDate = input.expiresAt ? new Date(input.expiresAt) : null;
+    if (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime())) throw new Error("请选择到期日期。");
+    expiresAt = requestedExpiresDate.toISOString();
+  } else {
+    const baseTime = currentExpiry && currentExpiry.getTime() > renewedAt.getTime() ? currentExpiry : renewedAt;
+    expiresAt = calculateExpiry(baseTime.toISOString(), duration);
+  }
   const subscription = findRecommendedSubscriptionForExpiry(expiresAt, {
     fallbackId: requestedSubscriptionId,
     ignoredUserId: user.id || ""

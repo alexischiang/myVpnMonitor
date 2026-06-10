@@ -2,7 +2,9 @@ export const durationLabels = {
   monthly: "月付",
   quarterly: "季付",
   half_yearly: "半年付",
-  yearly: "年付"
+  yearly: "年付",
+  custom: "自定义",
+  lifetime: "永久"
 };
 
 export const billTypeLabels = {
@@ -41,6 +43,12 @@ export function formatDate(value) {
     month: "2-digit",
     day: "2-digit"
   });
+}
+
+// 永久用户的到期日存远期哨兵，展示时翻译为「永久」
+export function formatUserExpiry(user) {
+  if (user?.duration === "lifetime") return "永久";
+  return formatDate(user?.expiresAt);
 }
 
 export function formatDateTime(value) {

@@ -102,33 +102,11 @@ html, body {
 }
 
 /* ─── Buttons ───────────────────────────────────────────────────────────────── */
-.ant-btn {
-  box-shadow: none !important;
-}
-
+/* 阴影 → Button.{primary,default,danger}Shadow token；点击波纹 → ConfigProvider wave.disabled */
 .ant-btn:focus,
 .ant-btn:focus-visible,
 .ant-btn:active,
 .ant-btn-focused {
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-.ant-btn::after,
-.ant-btn::before {
-  box-shadow: none !important;
-}
-
-.ant-wave,
-.ant-click-animating-node {
-  display: none !important;
-}
-
-[ant-click-animating-without-extra-node="true"]::after,
-[ant-click-animating-without-extra-node="true"]::before,
-[ant-click-animating-without-extra-node="true"] {
-  animation: none !important;
-  box-shadow: none !important;
   outline: none !important;
 }
 
@@ -138,12 +116,7 @@ html, body {
 }
 
 /* ─── Inputs ────────────────────────────────────────────────────────────────── */
-.ant-input,
-.ant-input-affix-wrapper,
-.ant-select-selector,
-.ant-picker {
-  box-shadow: none !important;
-}
+/* 聚焦阴影 → Input/DatePicker.activeShadow、Select.activeOutlineColor token（无需 CSS 覆写） */
 
 /* ─── Dropdowns ─────────────────────────────────────────────────────────────── */
 .ant-select-dropdown,
@@ -157,24 +130,16 @@ html, body {
   overscroll-behavior: contain;
 }
 
-.ant-select-item-option-active:not(.ant-select-item-option-disabled),
-.ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
-  background: var(--ant-color-fill-tertiary) !important;
-}
+/* 选项高亮 → Select.optionActiveBg / optionSelectedBg token（无需 CSS 覆写） */
 
 /* ─── Modal ─────────────────────────────────────────────────────────────────── */
-.ant-modal-mask {
-  background: rgba(0,0,0,0.35) !important;
-}
-
+/* 遮罩 → colorBgMask token；圆角 → Modal.borderRadiusLG token；仅保留无 token 的阴影 */
 .ant-modal-content {
-  border: none !important;
-  border-radius: var(--jk-radius-lg) !important;
   box-shadow: var(--dw-shadow-modal) !important;
 }
 
-.ant-modal-header {
-  border-radius: var(--jk-radius-lg) var(--jk-radius-lg) 0 0 !important;
+.app-modal-dark .ant-modal-content {
+  border: 1px solid var(--saas-border-strong);
 }
 
 /* ─── Drawer ────────────────────────────────────────────────────────────────── */
@@ -445,24 +410,12 @@ html, body {
 .code-token-comment     { color: #6a737d; font-style: italic; }
 
 /* ─── Radio buttons ─────────────────────────────────────────────────────────── */
-.ant-radio-group-solid .ant-radio-button-wrapper {
-  border-color: var(--ant-color-border-secondary);
-  color: var(--ant-color-text-secondary);
-  background: var(--ant-color-bg-container);
-  box-shadow: none !important;
-}
-
-.ant-radio-group-solid .ant-radio-button-wrapper:hover {
-  color: var(--dw-primary);
-  border-color: var(--dw-primary);
-}
-
+/* 未选中/选中/hover 配色 → Radio.buttonColor / buttonSolidChecked* token；以下仅保留无 token 项 */
 .ant-radio-button-wrapper,
 .ant-radio-button-wrapper:focus,
 .ant-radio-button-wrapper:focus-within,
 .ant-radio-button-wrapper:active {
   outline: none !important;
-  box-shadow: none !important;
 }
 
 .ant-radio-button-wrapper::before {
@@ -471,22 +424,6 @@ html, body {
 
 .ant-radio-button-wrapper-checked::before {
   background: var(--dw-primary) !important;
-}
-
-.ant-radio-group-solid .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled) {
-  color: #fff;
-  background: var(--dw-primary);
-  border-color: var(--dw-primary);
-  box-shadow: none !important;
-}
-
-.ant-radio-group-solid .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled):hover,
-.ant-radio-group-solid .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled):focus,
-.ant-radio-group-solid .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled):active {
-  color: #fff;
-  background: var(--dw-secondary);
-  border-color: var(--dw-secondary);
-  box-shadow: none !important;
 }
 
 /* ─── Tags ──────────────────────────────────────────────────────────────────── */
@@ -665,6 +602,12 @@ html, body {
 .app-card::before {
   content: none;
 }
+
+/* ─── Table ──────────────────────────────────────────────────────────────────── */
+.ant-table-wrapper .ant-table-container::before,
+.ant-table-wrapper .ant-table-container::after { box-shadow: none !important; display: none !important; }
+.ant-table-ping-left .ant-table-container::before,
+.ant-table-ping-right .ant-table-container::after { box-shadow: none !important; display: none !important; }
 
 /* ─── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -1016,9 +959,17 @@ html, body {
   margin-inline-start: 0 !important;
 }
 
-.console-sidebar-menu.ant-menu .ant-menu-item-selected .console-sidebar-tab-icon {
-  background: color-mix(in srgb, var(--ant-color-primary) 14%, transparent);
-  color: var(--ant-color-primary);
+.console-sidebar-menu.ant-menu .ant-menu-item-selected {
+  background: color-mix(in oklab, black 8%, transparent) !important;
+}
+
+:root[data-theme="dark"] .console-sidebar-menu.ant-menu .ant-menu-item-selected {
+  background: color-mix(in oklab, white 10%, transparent) !important;
+}
+
+.console-sidebar-menu.ant-menu .ant-menu-item-selected,
+.console-sidebar-menu.ant-menu .ant-menu-item-selected .ant-menu-title-content {
+  font-weight: 600;
 }
 
 .console-sidebar-tab-icon {
@@ -1556,107 +1507,6 @@ html, body {
   align-items: center;
 }
 
-.saas-login-shell {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 20px;
-  background: #05070b;
-}
-
-.saas-login-wrap {
-  width: 100%;
-  max-width: 420px;
-}
-
-.saas-login-brand {
-  text-align: center;
-  margin-bottom: 28px;
-}
-
-.saas-login-brand-stack {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-
-.saas-login-kicker {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  padding: 0 14px;
-  border-radius: 6px;
-  background: var(--saas-hover-bg);
-  color: var(--ant-color-text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.saas-login-card {
-  background: var(--saas-card-bg-soft);
-  border: 1px solid var(--saas-border-soft);
-  border-radius: 8px;
-  box-shadow: none;
-  padding: 28px;
-  position: relative;
-  z-index: 1;
-}
-
-.saas-login-card .ant-form-item {
-  margin-bottom: 16px;
-}
-
-.saas-login-card .ant-form,
-.saas-login-card .ant-form-item,
-.saas-login-card .ant-form-item-control,
-.saas-login-card .ant-form-item-control-input,
-.saas-login-card .ant-form-item-control-input-content {
-  position: relative;
-  z-index: 2;
-}
-
-.saas-login-card .ant-input,
-.saas-login-card .ant-input-affix-wrapper,
-.saas-login-card .ant-input-password,
-.saas-login-card .ant-input-password .ant-input,
-.saas-login-card .ant-input-password-icon {
-  pointer-events: auto !important;
-}
-
-.saas-login-card .ant-input,
-.saas-login-card .ant-input-affix-wrapper {
-  color: #f8fafc !important;
-  caret-color: #f8fafc !important;
-  background: #090c12 !important;
-}
-
-.saas-login-card .ant-input::placeholder,
-.saas-login-card .ant-input-affix-wrapper input::placeholder {
-  color: rgba(148, 163, 184, 0.38) !important;
-}
-
-.saas-login-card .ant-input-affix-wrapper input {
-  color: #f8fafc !important;
-  caret-color: #f8fafc !important;
-  background: transparent !important;
-}
-
-.saas-login-card .ant-input-affix-wrapper .ant-input-prefix,
-.saas-login-card .ant-input-affix-wrapper .ant-input-suffix,
-.saas-login-card .ant-input-password-icon {
-  color: rgba(148, 163, 184, 0.78) !important;
-}
-
-.saas-login-error {
-  display: block;
-  margin-bottom: 14px;
-  font-size: 13px;
-}
 
 @media (max-width: 991px) {
   .console-sidebar {

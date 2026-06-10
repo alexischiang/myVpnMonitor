@@ -70,6 +70,7 @@ import {
   formatDate,
   formatDateTime,
   formatMoney,
+  formatUserExpiry,
   statusLabels,
   userStatus
 } from "./utils";
@@ -131,6 +132,9 @@ const NAV_DISPLAY = {
 const inModalSelectProps = { virtual: false, getPopupContainer: n => n.parentElement };
 const inModalPickerProps = {};
 const durationDaysMap = { monthly: 30, quarterly: 90, half_yearly: 180, yearly: 360 };
+// 永久用户的到期日哨兵（须与 server.js 的 LIFETIME_EXPIRES_AT 一致）
+const LIFETIME_EXPIRES_AT = "9999-12-31T00:00:00.000Z";
+const isFixedDuration = duration => Object.prototype.hasOwnProperty.call(durationDaysMap, duration);
 
 const FIELD_GROUP = {
   background: "var(--ant-color-bg-container)",
@@ -145,6 +149,11 @@ const MODAL_STYLES = {
   header: { paddingBottom: 16, borderBottom: "1px solid var(--ant-color-border-secondary)", marginBottom: 0 },
   body:   { paddingTop: 20 }
 };
+
+function useModalCls() {
+  const { darkMode } = useContext(ThemeModeContext);
+  return darkMode ? "app-modal app-modal-dark" : "app-modal";
+}
 
 const DEFAULT_PROVIDER = "YKK Cloud";
 const SC_TARGETS = [
@@ -409,6 +418,10 @@ function DurationRadio({ purchasedAt, value, onChange }) {
       {Object.entries(durationLabels).map(([key, label]) => {
         const expiry   = calcExpiry(purchasedAt, key);
         const selected = value === key;
+        const hint     = key === "lifetime" ? "永不到期"
+                       : key === "custom"   ? "由到期日期决定"
+                       : expiry             ? `Expires ${formatDate(expiry)}`
+                       : null;
         return (
           <div key={key} onClick={() => onChange?.(key)} style={{
             padding: "10px 12px", borderRadius: 10, cursor: "pointer",
@@ -417,7 +430,7 @@ function DurationRadio({ purchasedAt, value, onChange }) {
             transition: "all 0.15s"
           }}>
             <Text strong style={{ fontSize: 14, color: selected ? p.primary : undefined }}>{label}</Text>
-            {expiry && <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>Expires {formatDate(expiry)}</Text>}
+            {hint && <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>{hint}</Text>}
           </div>
         );
       })}
@@ -582,7 +595,9 @@ function makeAntTheme(palette, dark) {
       borderRadius:    8,
       borderRadiusLG: 12,
       // motion
-      motionDurationMid: "0.16s"
+      motionDurationMid: "0.16s",
+      // overlay mask (Modal等遮罩) — 取代 .ant-modal-mask 覆写
+      colorBgMask: "rgba(0, 0, 0, 0.35)"
     },
     components: {
       Layout: {
@@ -624,7 +639,8 @@ function makeAntTheme(palette, dark) {
         cellPaddingBlock: 12,
         cellPaddingInline: 14,
         fontSize: 13,
-        borderRadius: 0
+        borderRadius: 0,
+        borderRadiusLG: 0
       },
       Button: {
         fontWeight: 600,
@@ -648,7 +664,11 @@ function makeAntTheme(palette, dark) {
         textHoverBg: palette.fill,
         textActiveBg: palette.fillMid,
         colorLink: palette.primary,
-        colorLinkHover: palette.primaryDark
+        colorLinkHover: palette.primaryDark,
+        // 取代 .ant-btn box-shadow 覆写
+        primaryShadow: "none",
+        defaultShadow: "none",
+        dangerShadow: "none"
       },
       Input: {
         controlHeight: 36,
@@ -664,8 +684,8 @@ function makeAntTheme(palette, dark) {
       Select: {
         controlHeight: 36,
         borderRadius: 6,
-        optionSelectedBg: palette.surfaceHover,
-        optionActiveBg: palette.surfaceHover,
+        optionSelectedBg: palette.fillLight,
+        optionActiveBg: palette.fillLight,
         colorBgContainer: palette.surfaceElevated,
         colorText: palette.text,
         hoverBorderColor: palette.border,
@@ -692,6 +712,14 @@ function makeAntTheme(palette, dark) {
       },
       Modal: { borderRadiusLG: 12, headerBg: palette.surface, contentBg: palette.surface, colorBgElevated: palette.surface },
       Tag: { borderRadiusSM: 6, defaultBg: palette.fill, defaultColor: palette.textSub },
+      Radio: {
+        // 取代 .ant-radio-group-solid 覆写：未选中文字/边框、实心选中态配色
+        buttonColor: palette.textSub,
+        buttonSolidCheckedColor: "#fff",
+        buttonSolidCheckedBg: palette.primary,
+        buttonSolidCheckedHoverBg: palette.primaryDark,
+        buttonSolidCheckedActiveBg: palette.primaryDark
+      },
       Statistic:  { titleFontSize: 12, contentFontSize: 22 },
       Drawer:     { colorBgElevated: palette.surface, colorBgMask: "rgba(0, 0, 0, 0.48)" },
       Notification: { colorBgElevated: palette.surfaceElevated }
@@ -723,6 +751,7 @@ function DwellixLogo({ size = 34 }) {
 
 function LoginPage() {
   const navigate = useNavigate();
+  const p = usePalette();
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
 
@@ -732,31 +761,31 @@ function LoginPage() {
       const res     = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ ...values, remember: false }) });
       const payload = await res.json();
       if (!res.ok) return setErr(payload.error || "Sign-in failed");
-      navigate("/urls", { replace: true });
+      navigate("/dashboard", { replace: true });
     } catch { setErr("Unable to reach the login service"); }
     finally  { setLoading(false); }
   }
 
   return (
-    <Flex className="saas-login-shell" align="center" justify="center">
-      <Flex vertical className="saas-login-wrap">
-        <Flex vertical className="saas-login-brand">
-          <Space direction="vertical" size={12} align="center" className="saas-login-brand-stack">
-            <Tag bordered={false} className="saas-login-kicker">管理控制台</Tag>
+    <Flex align="center" justify="center" style={{ minHeight: "100vh", background: p.page, padding: "32px 20px" }}>
+      <Flex vertical style={{ width: "100%", maxWidth: 420 }}>
+        <Flex vertical align="center" style={{ textAlign: "center", marginBottom: 28 }}>
+          <Space direction="vertical" size={12} align="center">
+            <Tag bordered={false} style={{ background: p.fill, color: p.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", padding: "0 14px", minHeight: 28, display: "inline-flex", alignItems: "center", borderRadius: 6 }}>管理控制台</Tag>
             <DwellixLogo size={52} />
             <Title level={3} style={{ margin: 0, fontWeight: 800, letterSpacing: -0.5 }}>XELA Monitor</Title>
           </Space>
           <Text type="secondary" style={{ fontSize: 14 }}>订阅运营控制台</Text>
         </Flex>
-        <AntCard bordered={false} className="saas-login-card saas-form-shell">
+        <AntCard bordered={false} style={{ background: p.surfaceElevated, border: `1px solid ${p.border}`, borderRadius: 8, padding: 28 }}>
           <Form layout="vertical" onFinish={submit} requiredMark={false}>
             <Form.Item name="account" label="账号" rules={[{ required: true, message: "请输入账号" }]} style={{ marginBottom: 16 }}>
               <Input autoFocus autoComplete="username" placeholder="账号" size="large" />
             </Form.Item>
             <Form.Item name="password" label="密码" rules={[{ required: true, message: "请输入密码" }]} style={{ marginBottom: 20 }}>
-              <Input.Password autoComplete="current-password" placeholder="密码" size="large"  />
+              <Input.Password autoComplete="current-password" placeholder="密码" size="large" />
             </Form.Item>
-            {err && <Text type="danger" className="saas-login-error">{err}</Text>}
+            {err && <Text type="danger" style={{ display: "block", marginBottom: 14, fontSize: 13 }}>{err}</Text>}
             <Button type="primary" htmlType="submit" block loading={loading} size="large">登录</Button>
           </Form>
         </AntCard>
@@ -883,7 +912,7 @@ function AppLayout() {
 
       <AntLayout className="console-main-layout" style={{ background: "transparent", minWidth: 0 }}>
         {!isMobile && (
-          <Sider width={200} className="console-layout-sider">
+          <Sider width={240} className="console-layout-sider">
             <SidebarNav selectedKey={selKey} onSelect={handleNav} version={meta?.version} />
           </Sider>
         )}
@@ -1014,7 +1043,7 @@ function PoolDetailPage() {
   const userCols = [
     { title: "User ID", dataIndex: "userId" },
     { title: "WeChat", dataIndex: "wechatName", render: v => v || "-" },
-    { title: "Expires", render: (_, u) => formatDate(u.expiresAt) },
+    { title: "Expires", render: (_, u) => formatUserExpiry(u) },
     { title: "Status", render: (_, u) => <StatusBadge status={userStatus(u)} /> }
   ];
   const boundUserTable = useResizableCols(userCols, "url-detail-bound-users");
@@ -1159,7 +1188,7 @@ function PoolDetailPage() {
                       <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 2 }}>{u.wechatName || "-"}</Text>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <Text style={{ display: "block", fontSize: 13 }}>{formatDate(u.expiresAt)}</Text>
+                      <Text style={{ display: "block", fontSize: 13 }}>{formatUserExpiry(u)}</Text>
                       <StatusBadge status={userStatus(u)} />
                     </div>
                   </div>
@@ -1263,6 +1292,7 @@ function PoolDetailPage() {
 function SubscriptionForm({ item, onClose, onSaved }) {
   const { runAsync } = useData();
   const [form] = Form.useForm();
+  const modalCls = useModalCls();
   async function submit(values) {
     await runAsync(async () => {
       if (item.id) await fetchJson(`/api/subscriptions/${item.id}`, { method: "PUT", body: JSON.stringify(values) });
@@ -1271,7 +1301,7 @@ function SubscriptionForm({ item, onClose, onSaved }) {
     }, item.id ? "Updating URL pool..." : "Creating URL pool...");
   }
   return (
-    <Modal title={item.id ? "编辑订阅" : "新增订阅"} open onCancel={onClose} footer={null} destroyOnHidden styles={MODAL_STYLES}>
+    <Modal title={item.id ? "编辑订阅" : "新增订阅"} open onCancel={onClose} footer={null} destroyOnHidden styles={MODAL_STYLES} className={modalCls}>
       <Form form={form} layout="vertical" initialValues={{ url: item.url || "", email: item.email || "", note: item.note || "" }} onFinish={submit}>
         <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>基本信息</Text></Divider>
         <Flex gap={16} wrap="wrap">
@@ -1618,6 +1648,7 @@ function OutputModeSection({ form, initialOutputMode, subscriptions, recommended
 function UserForm({ item, subscriptions, onClose, onSaved }) {
   const { runAsync, busy } = useData();
   const [form] = Form.useForm();
+  const modalCls = useModalCls();
   const expiryTouched = useRef(false);
   const subscriptionTouched = useRef(false);
   const initialOutputMode = initialOutputModeForUser(item);
@@ -1646,6 +1677,11 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
   function handleChange(changed, values) {
     if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true;
     if (Object.prototype.hasOwnProperty.call(changed, "expiresAt")) { expiryTouched.current = true; return; }
+    if (Object.prototype.hasOwnProperty.call(changed, "duration")) {
+      // 永久：清空到期日期（由后端补哨兵）；自定义：保留用户手填值，二者均不自动推算
+      if (values.duration === "lifetime") { form.setFieldsValue({ expiresAt: null }); return; }
+      if (values.duration === "custom") return;
+    }
     if (!expiryTouched.current && (Object.prototype.hasOwnProperty.call(changed, "purchasedAt") || Object.prototype.hasOwnProperty.call(changed, "duration"))) {
       const next = calcExpiry(values.purchasedAt, values.duration);
       if (next) form.setFieldsValue({ expiresAt: dayjs(next) });
@@ -1672,7 +1708,7 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
   const fbTable = useResizableCols(fbCols, "user-fallback-logs");
 
   return (
-    <Modal title={item.id ? "编辑用户" : "新建用户"} open onCancel={onClose} footer={null} destroyOnHidden width={760} styles={MODAL_STYLES}>
+    <Modal title={item.id ? "编辑用户" : "新建用户"} open onCancel={onClose} footer={null} destroyOnHidden width={760} styles={MODAL_STYLES} className={modalCls}>
       <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageId: item.imessageId || "", purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, subconverterConfig: initialSubconverterConfig(item) }} onValuesChange={handleChange} onFinish={submit}>
         <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>身份信息</Text></Divider>
         <Flex gap={16} wrap="wrap">
@@ -1685,8 +1721,8 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
           <Form.Item name="purchasedAt" label="购买日期" rules={[{ required: true, message: "请选择购买日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
             <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item name="expiresAt" label="到期日期" rules={[{ required: true, message: "请选择到期日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
-            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+          <Form.Item name="expiresAt" label="到期日期" rules={duration === "lifetime" ? [] : [{ required: true, message: "请选择到期日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} disabled={duration === "lifetime"} placeholder={duration === "lifetime" ? "永久有效" : undefined} />
           </Form.Item>
           <Form.Item name="actualPaid" label="实付金额" rules={[{ required: true, message: "请输入实付金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
             <Input type="number" min="0" step="0.01" placeholder="0.00" />
@@ -1719,13 +1755,22 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
 function RenewForm({ user, subscriptions, onClose, onSaved }) {
   const { runAsync } = useData();
   const [form] = Form.useForm();
+  const modalCls = useModalCls();
   const subscriptionTouched = useRef(false);
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
+  const expiresAt = Form.useWatch("expiresAt", form);
   const initialOutputMode = initialOutputModeForUser(user);
 
-  const renewalBase = user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt;
-  const renewalExpiresAt = renewalBase && duration ? calcExpiry(renewalBase, duration) : "";
+  let renewalExpiresAt = "";
+  if (duration === "lifetime") {
+    renewalExpiresAt = LIFETIME_EXPIRES_AT;
+  } else if (duration === "custom") {
+    renewalExpiresAt = expiresAt ? expiresAt.toISOString() : "";
+  } else {
+    const renewalBase = user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt;
+    renewalExpiresAt = renewalBase && duration ? calcExpiry(renewalBase, duration) : "";
+  }
 
   const { result: recommended, reason: recommendReason } = useSubscriptionRecommendation({
     expiresAt: renewalExpiresAt,
@@ -1742,6 +1787,7 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
   async function submit(values) {
     await runAsync(async () => {
       const payload = { ...values, purchasedAt: values.purchasedAt.format("YYYY-MM-DD"), subconverterConfig: buildSubconverterConfig(values) };
+      if (values.expiresAt && typeof values.expiresAt.toISOString === "function") payload.expiresAt = values.expiresAt.toISOString();
       delete payload.outputMode;
       await postJson(`/api/users/${user.id}/renew`, payload);
       await onSaved();
@@ -1749,7 +1795,7 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden width={760} styles={MODAL_STYLES}>
+    <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden width={760} styles={MODAL_STYLES} className={modalCls}>
       <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, subconverterConfig: initialSubconverterConfig(user) }} onValuesChange={changed => { if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true; }} onFinish={submit}>
         <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>续费详情</Text></Divider>
         <Flex gap={16} wrap="wrap">
@@ -1763,6 +1809,11 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
         <Form.Item name="duration" label="续费时长" style={{ marginTop: 16, marginBottom: 0 }}>
           <DurationRadio purchasedAt={user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt} />
         </Form.Item>
+        {duration === "custom" && (
+          <Form.Item name="expiresAt" label="到期日期" rules={[{ required: true, message: "请选择到期日期" }]} style={{ marginTop: 16, marginBottom: 0 }}>
+            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+          </Form.Item>
+        )}
         <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>投递模式</Text></Divider>
         <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation />
         <Flex justify="flex-end" gap={10} style={{ marginTop: 24 }}>
@@ -1791,7 +1842,7 @@ function UserCards({ users: list, actions }) {
             <UrlPill value={userClientSubscriptionUrl(user)} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "12px 0" }}>
-            {[["到期", formatDate(user.expiresAt)], ["时长", durationLabels[user.duration] || "Unknown"], ["实付", formatMoney(user.actualPaid)], ["购买", formatDate(user.purchasedAt)]].map(([label, value]) => (
+            {[["到期", formatUserExpiry(user)], ["时长", durationLabels[user.duration] || "Unknown"], ["实付", formatMoney(user.actualPaid)], ["购买", formatDate(user.purchasedAt)]].map(([label, value]) => (
               <div key={label}>
                 <Text type="secondary" style={{ fontSize: 12, display: "block" }}>{label}</Text>
                 <Text strong style={{ fontSize: 13 }}>{value}</Text>
@@ -1838,7 +1889,7 @@ function UsersPage() {
     { title: "#", render: (_, __, i) => i + 1, width: 48 },
     { title: "用户 ID", dataIndex: "userId", width: 120 },
     { title: "状态", render: (_, u) => <StatusBadge status={userStatus(u)} />, width: 76 },
-    { title: "到期时间", render: (_, u) => formatDate(u.expiresAt), width: 104 },
+    { title: "到期时间", render: (_, u) => formatUserExpiry(u), width: 104 },
     { title: "时长", render: (_, u) => durationLabels[u.duration] || "Unknown", width: 72 },
     { title: "实付金额", render: (_, u) => formatMoney(u.actualPaid), width: 88 },
     { title: "客户端链接", render: (_, u) => <UrlText value={userClientSubscriptionUrl(u)} />, width: 560 },
@@ -2207,7 +2258,7 @@ function ConsoleOverview() {
                   </div>
                   <div className="console-user-row subtle">
                     <span>{formatMoney(user.actualPaid)}</span>
-                    <span>{formatDate(user.expiresAt)}</span>
+                    <span>{formatUserExpiry(user)}</span>
                   </div>
                 </div>
               )) : (
@@ -2238,7 +2289,7 @@ function App() {
   }, [darkMode]);
 
   return (
-    <ConfigProvider theme={makeAntTheme(palette, darkMode)}>
+    <ConfigProvider theme={makeAntTheme(palette, darkMode)} wave={{ disabled: true }}>
       <ThemeModeContext.Provider value={ctxValue}>
         <AntApp>
           <BrowserRouter>
