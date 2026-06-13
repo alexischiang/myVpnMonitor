@@ -15,11 +15,8 @@ export const billTypeLabels = {
 
 export const statusLabels = {
   ok: "正常",
-  warning: "需关注",
-  error: "异常",
-  expired: "已到期",
-  depleted: "流量耗尽",
-  unknown: "未检查"
+  warning: "即将到期",
+  expired: "已到期"
 };
 
 export function formatBytes(bytes) {

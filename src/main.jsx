@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, usePa
 import {
   App as AntApp,
   Avatar,
+  Badge,
   Card as AntCard,
   Button,
   Breadcrumb,
@@ -29,6 +30,7 @@ import {
   Skeleton,
   Spin,
   Space,
+  Steps,
   Table,
   Tag,
   Tooltip,
@@ -38,6 +40,7 @@ import {
 import {
   ApiOutlined,
   BellOutlined,
+  CloseOutlined,
   DashboardOutlined,
   CheckOutlined,
   CopyOutlined,
@@ -48,6 +51,7 @@ import {
   LogoutOutlined,
   MenuOutlined,
   MoonOutlined,
+  NodeIndexOutlined,
   PlusOutlined,
   ReloadOutlined,
   RetweetOutlined,
@@ -60,7 +64,7 @@ import {
 import dayjs from "dayjs";
 import "antd/dist/reset.css";
 import "./styles.css";
-import { apiFetch, fetchJson, postJson } from "./api";
+import { apiFetch, fetchJson, postJson, putJson, deleteJson } from "./api";
 import {
   absoluteUrl,
   billTypeLabels,
@@ -124,9 +128,10 @@ const PALETTE = {
 
 const NAV_DISPLAY = {
   "/dashboard": { label: "Dashboard", icon: DashboardOutlined },
-  "/urls":  { label: "订阅池", icon: ApiOutlined },
-  "/users": { label: "用户", icon: TeamOutlined },
-  "/bills": { label: "账单", icon: DollarOutlined }
+  "/urls":  { label: "Pool", icon: ApiOutlined },
+  "/users": { label: "Users", icon: TeamOutlined },
+  "/bills": { label: "Bills", icon: DollarOutlined },
+  "/subconverter": { label: "Subconverter", icon: NodeIndexOutlined }
 };
 
 const inModalSelectProps = { virtual: false, getPopupContainer: n => n.parentElement };
@@ -150,9 +155,37 @@ const MODAL_STYLES = {
   body:   { paddingTop: 20 }
 };
 
+const FORM_MODAL_STYLES = {
+  header: { display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 12, borderBottom: "1px solid var(--ant-color-border-secondary)", marginBottom: 0 },
+  body:   { paddingTop: 20 }
+};
+
 function useModalCls() {
   const { darkMode } = useContext(ThemeModeContext);
   return darkMode ? "app-modal app-modal-dark" : "app-modal";
+}
+
+function FormModal({ children, title, onCancel, ...props }) {
+  const modalCls = useModalCls();
+  return (
+    <Modal
+      footer={null}
+      destroyOnHidden
+      closable={false}
+      title={
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+          <span>{title}</span>
+          <Button type="text" icon={<CloseOutlined />} onClick={onCancel} style={{ width: 32, height: 32, padding: 0, borderRadius: 6 }} />
+        </div>
+      }
+      onCancel={onCancel}
+      styles={FORM_MODAL_STYLES}
+      className={`${modalCls} form-modal`}
+      {...props}
+    >
+      {children}
+    </Modal>
+  );
 }
 
 const DEFAULT_PROVIDER = "YKK Cloud";
@@ -200,6 +233,8 @@ function recommendationDate(v) {
 }
 
 function initialOutputModeForUser(user) {
+  if (user?.scMode === "vendor") return "subconverter";
+  if (user?.scMode === "custom") return user.subconverterConfig?.target ? "subconverter" : "direct";
   return user?.id ? (user.subconverterConfig?.target ? "subconverter" : "direct") : "subconverter";
 }
 
@@ -225,8 +260,30 @@ function buildSubconverterConfig(values) {
     : null;
 }
 
+function initialScMode(user, vendors) {
+  if (user?.scMode) return user.scMode;
+  if (!user?.id) return "vendor";
+  if (user.subconverterConfig) return "custom";
+  return "vendor";
+}
+
+function initialVendorId(user, vendors, subscriptions) {
+  if (user?.vendorId) return user.vendorId;
+  if (!user?.id) {
+    const sub = subscriptions?.find(s => s.id === user?.subscriptionId);
+    const v = sub ? vendors.find(v => v.name === sub.serviceProvider) : null;
+    return v?.id || (vendors.length ? vendors[0].id : null);
+  }
+  const sub = subscriptions?.find(s => s.id === user.subscriptionId);
+  const v = sub ? vendors.find(v => v.name === sub.serviceProvider) : null;
+  return v?.id || null;
+}
+
 function userClientSubscriptionUrl(user) {
-  if ((user?.subconverterConfig?.target ? "subconverter" : "direct") === "subconverter") {
+  const usesSc = user?.scMode === "vendor" || user?.scMode === "custom"
+    ? (user.scMode === "vendor" || user.subconverterConfig?.target)
+    : Boolean(user?.subconverterConfig?.target);
+  if (usesSc) {
     return user.relayPath ? absoluteUrl(user.relayPath) : "自定义链接不可用";
   }
   return user.subscription?.url || "关联链接不可用";
@@ -294,18 +351,39 @@ function Card({ children, style, pad = 20, hover = false, onClick }) {
   );
 }
 
-const STATUS_BADGE_CLASS = {
-  ok:      "dw-badge dw-badge-ok",
-  warning: "dw-badge dw-badge-warning",
-  error:   "dw-badge dw-badge-error",
-  expired: "dw-badge dw-badge-expired",
-  depleted:"dw-badge dw-badge-depleted",
-  unknown: "dw-badge dw-badge-unknown"
+function SectionCard({ title, extra, children, style }) {
+  const p = usePalette();
+  return (
+    <AntCard
+      bordered={false}
+      title={title}
+      extra={extra}
+      style={{ background: p.surface, border: `1px solid ${p.border}`, borderRadius: 15, boxShadow: p.shadowSm, ...style }}
+      styles={{ header: { padding: "16px 20px", minHeight: 48 }, body: { padding: "16px 20px" } }}
+    >
+      {children}
+    </AntCard>
+  );
+}
+
+const STATUS_BADGE_MAP = {
+  ok:       "success",
+  warning:  "warning",
+  error:    "error",
+  expired:  "default",
+  depleted: "error",
+  unknown:  "processing"
 };
 
 function StatusBadge({ status }) {
-  const cls = STATUS_BADGE_CLASS[status] || "dw-badge dw-badge-expired";
-  return <Tag bordered={false} className={cls}>{statusLabels[status] || "Unknown"}</Tag>;
+  return <Badge status={STATUS_BADGE_MAP[status] || "default"} text={statusLabels[status] || status || "未知"} />;
+}
+
+const VIP_COLORS = { vip3: "#eb2f96", vip2: "#faad14", vip1: "#13c2c2" };
+function VipTag({ level }) {
+  const bg = VIP_COLORS[level] || VIP_COLORS.vip1;
+  const num = level.replace("vip", "");
+  return <Tag style={{ background: bg, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 11, lineHeight: "18px", padding: "0 6px", marginLeft: 6 }}>VIP {num}</Tag>;
 }
 
 function CopyButton({ value, size = "small" }) {
@@ -371,24 +449,22 @@ function PageSection({ title, actions, children }) {
   );
 }
 
-function ManagementSection({ kicker, title, actions, summary, children }) {
+function ManagementSection({ title, actions, summary, children }) {
   const screens = Grid.useBreakpoint();
   const mobile = !screens.md;
   return (
-    <AntCard bordered={false} className="saas-section-card" bodyStyle={{ padding: 0 }}>
-      <div className="saas-section-head">
-        <div className={summary ? "saas-section-summary" : undefined}>
-          <div>
-            <Text strong className="saas-section-title">{title}</Text>
-          </div>
+    <div className="mgmt-section">
+      <div className="mgmt-section-head">
+        <div className="mgmt-section-title-group">
+          <Text className="mgmt-section-title">{title}</Text>
           {summary}
         </div>
-        {actions ? <div className="saas-toolbar-actions">{actions}</div> : null}
+        {actions && <div className="mgmt-section-actions">{actions}</div>}
       </div>
-      <div className={`saas-section-body${mobile ? " mobile" : ""}`}>
+      <div className={`mgmt-section-body${mobile ? " mobile" : ""}`}>
         {children}
       </div>
-    </AntCard>
+    </div>
   );
 }
 
@@ -568,7 +644,7 @@ function makeAntTheme(palette, dark) {
       colorBgElevated:     palette.surfaceElevated,
       colorBgSpotlight:    palette.surfaceElevated,
       // typography — Inter-style scale: 12/14/16/20/24/32
-      fontFamily: "'Inter', 'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+      fontFamily: "'Manrope', 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif",
       fontSize:           14,
       fontSizeSM:         12,
       fontSizeLG:         16,
@@ -673,11 +749,11 @@ function makeAntTheme(palette, dark) {
       Input: {
         controlHeight: 36,
         borderRadius: 6,
-        colorBgContainer: palette.surfaceElevated,
+        colorBgContainer: "transparent",
         colorText: palette.text,
         colorIcon: palette.textMuted,
-        hoverBorderColor: palette.border,
-        activeBorderColor: palette.primary,
+        hoverBorderColor: palette.text,
+        activeBorderColor: palette.text,
         activeShadow: "0 0 0 0 transparent",
         colorTextPlaceholder: palette.textMuted
       },
@@ -686,19 +762,19 @@ function makeAntTheme(palette, dark) {
         borderRadius: 6,
         optionSelectedBg: palette.fillLight,
         optionActiveBg: palette.fillLight,
-        colorBgContainer: palette.surfaceElevated,
+        colorBgContainer: "transparent",
         colorText: palette.text,
-        hoverBorderColor: palette.border,
-        activeBorderColor: palette.primary,
+        hoverBorderColor: palette.text,
+        activeBorderColor: palette.text,
         activeOutlineColor: "transparent"
       },
       DatePicker: {
         controlHeight: 36,
         borderRadius: 6,
-        colorBgContainer: palette.surfaceElevated,
+        colorBgContainer: "transparent",
         colorText: palette.text,
-        hoverBorderColor: palette.border,
-        activeBorderColor: palette.primary,
+        hoverBorderColor: palette.text,
+        activeBorderColor: palette.text,
         activeShadow: "0 0 0 0 transparent"
       },
       Dropdown: {
@@ -730,11 +806,6 @@ function makeAntTheme(palette, dark) {
 // 鈹€鈹€鈹€ Auth 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function RequireAuth({ children }) {
-  const [ready, setReady] = useState(false);
-  const [ok, setOk]       = useState(false);
-  useEffect(() => { fetchJson("/api/auth/me").then(() => setOk(true)).catch(() => setOk(false)).finally(() => setReady(true)); }, []);
-  if (!ready) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}><Spin size="large" /></div>;
-  if (!ok)    return <Navigate to="/login" replace />;
   return children;
 }
 
@@ -773,7 +844,7 @@ function LoginPage() {
           <Space direction="vertical" size={12} align="center">
             <Tag bordered={false} style={{ background: p.fill, color: p.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", padding: "0 14px", minHeight: 28, display: "inline-flex", alignItems: "center", borderRadius: 6 }}>管理控制台</Tag>
             <DwellixLogo size={52} />
-            <Title level={3} style={{ margin: 0, fontWeight: 800, letterSpacing: -0.5 }}>XELA Monitor</Title>
+            <Title level={3} style={{ margin: 0, fontWeight: 800, letterSpacing: -0.5 }}>Monitor</Title>
           </Space>
           <Text type="secondary" style={{ fontSize: 14 }}>订阅运营控制台</Text>
         </Flex>
@@ -896,24 +967,26 @@ function AppLayout() {
 
   return (
     <AntLayout className="console-shell" style={{ minHeight: "100dvh", background: p.page }}>
-      <Header className="console-workspace-header" style={{ padding: 0, lineHeight: 1 }}>
-        <div className="console-workspace-inner console-workspace-inner-top">
-          <HeaderBar
-            selectedKey={selKey}
-            isMobile={isMobile}
-            onDrawer={() => setDrawer(true)}
-            darkMode={darkMode}
-            toggleTheme={toggleTheme}
-            logout={logout}
-            version={meta?.version}
-          />
-        </div>
-      </Header>
+      {isMobile && (
+        <Header className="console-workspace-header" style={{ padding: 0, lineHeight: 1 }}>
+          <div className="console-workspace-inner console-workspace-inner-top">
+            <Flex align="center" justify="space-between" style={{ minHeight: 56, padding: "8px 0" }}>
+              <Button className="console-header-icon" type="default" icon={<MenuOutlined />} onClick={() => setDrawer(true)} />
+              <Flex align="center" gap={8}>
+                <Tooltip title={darkMode ? "切换亮色" : "切换暗色"}>
+                  <Button className="console-header-icon" type="default" icon={darkMode ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} />
+                </Tooltip>
+                <Button className="console-header-icon" type="default" icon={<LogoutOutlined />} onClick={logout} danger />
+              </Flex>
+            </Flex>
+          </div>
+        </Header>
+      )}
 
       <AntLayout className="console-main-layout" style={{ background: "transparent", minWidth: 0 }}>
         {!isMobile && (
           <Sider width={240} className="console-layout-sider">
-            <SidebarNav selectedKey={selKey} onSelect={handleNav} version={meta?.version} />
+            <SidebarNav selectedKey={selKey} onSelect={handleNav} version={meta?.version} darkMode={darkMode} toggleTheme={toggleTheme} logout={logout} />
           </Sider>
         )}
 
@@ -938,13 +1011,14 @@ function AppLayout() {
                       <Route path="/urls/detail/:id" element={<PoolDetailPage />} />
                       <Route path="/users" element={<UsersPage />} />
                       <Route path="/bills" element={<BillsPage />} />
+                      <Route path="/subconverter" element={<SubconverterPage />} />
                       <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>
                   </ErrorBoundary>
                 )}
 
                 <Text className="console-workspace-footer">
-                  {loading ? "同步中..." : `最后更新：${formatDateTime(meta?.updatedAt)}`}
+                  {loading ? "同步中..." : `最后更新：${formatDateTime(meta?.updatedAt)}`} · v{meta?.version || "1.0.0"}
                 </Text>
               </Content>
             </div>
@@ -960,7 +1034,7 @@ function AppLayout() {
         closable={false}
         styles={{ body: { padding: 0, background: p.surface } }}
       >
-        <SidebarNav selectedKey={selKey} onSelect={handleNav} version={meta?.version} showBrand />
+        <SidebarNav selectedKey={selKey} onSelect={handleNav} version={meta?.version} darkMode={darkMode} toggleTheme={toggleTheme} logout={logout} />
       </Drawer>
 
       <BusyOverlay busy={busy} />
@@ -971,7 +1045,8 @@ function AppLayout() {
 // 鈹€鈹€鈹€ DataProvider 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function DataProvider({ children }) {
-  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], vendors: [], meta: null, loading: true, error: "" });
+  const nav = useNavigate();
+  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], vendors: [], placeholderNodes: [], meta: null, loading: true, error: "" });
   const [busy, setBusy] = useState(null);
 
   const apis = useMemo(() => ({
@@ -979,11 +1054,12 @@ function DataProvider({ children }) {
     users: "/api/users",
     bills: "/api/bills",
     vendors: "/api/vendors",
+    placeholderNodes: "/api/placeholder-nodes",
     meta:  "/api/app-meta"
   }), []);
 
   const reload = useCallback(async (collections = null) => {
-    const keys = collections || ["subscriptions", "users", "bills", "vendors", "meta"];
+    const keys = collections || ["subscriptions", "users", "bills", "vendors", "placeholderNodes", "meta"];
     setState(s => ({ ...s, loading: !collections, error: "" }));
     try {
       const results = await Promise.all(keys.map(k => fetchJson(apis[k])));
@@ -993,7 +1069,10 @@ function DataProvider({ children }) {
     }
   }, [apis]);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    fetchJson("/api/auth/me").catch(() => nav("/login", { replace: true }));
+    reload();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runAsync = useCallback(async (task, label = "澶勭悊涓?..") => {
     setBusy({ label });
@@ -1293,7 +1372,6 @@ function PoolDetailPage() {
 function SubscriptionForm({ item, onClose, onSaved }) {
   const { runAsync, vendors, reload } = useData();
   const [form] = Form.useForm();
-  const modalCls = useModalCls();
   const [newVendor, setNewVendor] = useState("");
   const [addingVendor, setAddingVendor] = useState(false);
 
@@ -1320,7 +1398,7 @@ function SubscriptionForm({ item, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={item.id ? "编辑订阅" : "新增订阅"} open onCancel={onClose} footer={null} destroyOnHidden styles={MODAL_STYLES} className={modalCls}>
+    <FormModal title={item.id ? "编辑订阅" : "新增订阅"} open onCancel={onClose}>
       <Form form={form} layout="vertical" initialValues={{ url: item.url || "", email: item.email || "", note: item.note || "", serviceProvider: item.serviceProvider || "" }} onFinish={submit}>
         <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>基本信息</Text></Divider>
         <Flex gap={16} wrap="wrap">
@@ -1360,16 +1438,16 @@ function SubscriptionForm({ item, onClose, onSaved }) {
         <Form.Item name="note" style={{ marginBottom: 0 }}>
           <TextArea rows={4} placeholder="选填" />
         </Form.Item>
-        <Flex justify="flex-end" gap={10} style={{ marginTop: 24 }}>
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" htmlType="submit">保存</Button>
-        </Flex>
+        <div style={{ marginTop: 24 }}>
+          <Button type="primary" htmlType="submit" block>保存</Button>
+        </div>
       </Form>
-    </Modal>
+    </FormModal>
   );
 }
 
-function SidebarNav({ selectedKey, onSelect, version, showBrand = false }) {
+function SidebarNav({ selectedKey, onSelect, version, darkMode, toggleTheme, logout }) {
+  const p = usePalette();
   const menuItems = Object.entries(NAV_DISPLAY).map(([key, meta]) => {
     const Icon = meta.icon;
     return {
@@ -1379,19 +1457,23 @@ function SidebarNav({ selectedKey, onSelect, version, showBrand = false }) {
     };
   });
 
+  const userMenu = {
+    items: [
+      { key: "logout", label: "退出登录", icon: <LogoutOutlined />, danger: true, onClick: logout }
+    ]
+  };
+
   return (
     <Flex vertical className="console-sidebar">
-      {showBrand && (
-        <Flex className="console-sidebar-brand" align="center">
-          <Flex className="console-sidebar-brandmark" align="center" justify="center">
-            <DwellixLogo size={32} />
-          </Flex>
-          <Flex vertical className="console-sidebar-brandcopy">
-            <Text className="console-sidebar-kicker">管理控制台</Text>
-            <Text strong className="console-sidebar-title">XELA Monitor</Text>
-          </Flex>
+      <Flex className="console-sidebar-brand" align="center">
+        <Flex className="console-sidebar-brandmark" align="center" justify="center">
+          <DwellixLogo size={32} />
         </Flex>
-      )}
+        <Flex vertical className="console-sidebar-brandcopy">
+          <Text className="console-sidebar-kicker">管理控制台</Text>
+          <Text strong className="console-sidebar-title">Monitor</Text>
+        </Flex>
+      </Flex>
       <Text className="console-sidebar-group-label">导航</Text>
       <Menu
         mode="inline"
@@ -1400,6 +1482,20 @@ function SidebarNav({ selectedKey, onSelect, version, showBrand = false }) {
         className="console-sidebar-menu"
         onClick={onSelect}
       />
+      <Flex className="console-sidebar-footer" align="center" justify="space-between">
+        <Dropdown menu={userMenu} trigger={["click"]} placement="topRight">
+          <Button className="console-user-button" type="default">
+            <Avatar size={28} icon={<UserOutlined />} style={{ background: p.fillMid, color: p.primary }} />
+            <Flex vertical className="console-user-copy">
+              <Text className="console-user-name">管理员</Text>
+              <Text className="console-user-meta">构建 {version || "--"}</Text>
+            </Flex>
+          </Button>
+        </Dropdown>
+        <Tooltip title={darkMode ? "切换亮色" : "切换暗色"}>
+          <Button className="console-header-icon" type="default" icon={darkMode ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} />
+        </Tooltip>
+      </Flex>
     </Flex>
   );
 }
@@ -1424,7 +1520,7 @@ function HeaderBar({ selectedKey, isMobile, onDrawer, darkMode, toggleTheme, log
               <Flex className="console-header-brandmark" align="center" justify="center">
                 <DwellixLogo size={32} />
               </Flex>
-              <Text strong className="console-header-brandtitle">XELA Monitor</Text>
+              <Text strong className="console-header-brandtitle">Monitor</Text>
             </Flex>
             <Breadcrumb
               className="console-header-breadcrumb"
@@ -1475,9 +1571,9 @@ function PoolCards({ items, actions }) {
   const p = usePalette();
   if (!items.length) return <Empty description="暂无订阅。" />;
   return (
-    <Flex vertical gap={12}>
+    <Flex vertical gap={0}>
       {items.map(item => (
-        <Card key={item.id} hover style={{ padding: 16 }}>
+        <div key={item.id} style={{ padding: 16, borderBottom: `1px solid ${p.border}` }}>
           <Flex justify="space-between" gap={12} align="start" style={{ marginBottom: 10 }}>
             <div style={{ minWidth: 0 }}>
               <Text strong style={{ display: "block", fontSize: 15 }}>{item.email || item.name || "未命名订阅"}</Text>
@@ -1511,7 +1607,7 @@ function PoolCards({ items, actions }) {
             ))}
           </div>
           <div style={{ paddingTop: 2 }}>{actions(item)}</div>
-        </Card>
+        </div>
       ))}
     </Flex>
   );
@@ -1519,6 +1615,73 @@ function PoolCards({ items, actions }) {
 
 function DashboardPage() {
   return <ConsoleOverview />;
+}
+
+function VendorPresetModal({ vendor, onClose, onSaved }) {
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+  const raw = vendor.defaultSubconverterConfig || {};
+  const sc = raw.subconverterConfig ? { ...raw.subconverterConfig, target: raw.subconverterConfig.target || raw.target } : raw;
+
+  const scFields = { target: sc.target || DEFAULT_SC_TARGET, config: sc.config || "", include: sc.include || "", exclude: sc.exclude || "", rename: sc.rename || "", emoji: sc.emoji !== false, udp: sc.udp !== false, scv: Boolean(sc.scv), sort: Boolean(sc.sort) };
+
+  useEffect(() => {
+    form.setFieldsValue({ subconverterConfig: scFields });
+  }, [vendor.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function submit(values) {
+    setSaving(true);
+    try {
+      await fetchJson(`/api/vendors/${vendor.id}`, { method: "PUT", body: JSON.stringify({ defaultSubconverterConfig: values.subconverterConfig }) });
+      await onSaved();
+      onClose();
+    } finally { setSaving(false); }
+  }
+
+  function handleClear() {
+    fetchJson(`/api/vendors/${vendor.id}`, { method: "PUT", body: JSON.stringify({ defaultSubconverterConfig: null }) })
+      .then(onSaved).then(onClose);
+  }
+
+  return (
+    <FormModal title={`预设：${vendor.name}`} open onCancel={onClose}>
+      <Form form={form} layout="vertical"
+        initialValues={{ subconverterConfig: scFields }}
+        onFinish={submit}>
+        <SubconverterPanel />
+        <Flex vertical gap={10} style={{ marginTop: 24 }}>
+          <Button type="primary" htmlType="submit" block loading={saving}>保存</Button>
+          <Button danger block onClick={handleClear}>清除预设</Button>
+        </Flex>
+      </Form>
+    </FormModal>
+  );
+}
+
+function VendorPresetSection() {
+  const { vendors, reload } = useData();
+  const [editing, setEditing] = useState(null);
+  const p = usePalette();
+
+  return (
+    <SectionCard title="转换预设管理">
+      {vendors.length === 0
+        ? <Text type="secondary">暂无供应商，请在新增订阅时添加。</Text>
+        : <Flex gap={12} wrap="wrap">
+            {vendors.map(v => (
+              <AntCard key={v.id} style={{ minWidth: 180, background: p.card, border: `1px solid ${p.border}`, borderRadius: 10 }} styles={{ header: { padding: "8px 16px", minHeight: 40 }, body: { padding: "12px 16px" } }}
+                extra={<Button size="small" type="link" onClick={() => setEditing(v)}>编辑预设</Button>}
+                title={<Text strong>{v.name}</Text>}>
+                {v.defaultSubconverterConfig
+                  ? <Text type="secondary" style={{ fontSize: 12 }}>{v.defaultSubconverterConfig.target}{v.defaultSubconverterConfig.exclude ? ` · exclude: ${v.defaultSubconverterConfig.exclude}` : ""}</Text>
+                  : <Text type="secondary" style={{ fontSize: 12 }}>未设置预设</Text>}
+              </AntCard>
+            ))}
+          </Flex>
+      }
+      {editing && <VendorPresetModal vendor={editing} onClose={() => setEditing(null)} onSaved={() => reload(["vendors"])} />}
+    </SectionCard>
+  );
 }
 
 function UrlPoolPage() {
@@ -1578,8 +1741,7 @@ function UrlPoolPage() {
   return (
     <div className="console-page-stack">
       <ManagementSection
-        kicker="订阅池"
-        title="订阅管理"
+        title="Pool"
         actions={
           <>
             <ToolbarSearch placeholder="搜索订阅..." style={{ width: 220 }} onSearch={setKeyword} onChange={e => setKeyword(e.target.value)} />
@@ -1661,9 +1823,12 @@ function useSubscriptionRecommendation({ expiresAt, purchasedAt, duration, ignor
   return state;
 }
 
-function OutputModeSection({ form, initialOutputMode, subscriptions, recommended, recommendReason, showRecommendation }) {
+function OutputModeSection({ form, initialOutputMode, subscriptions, recommended, recommendReason, showRecommendation, vendors }) {
   const outputMode = Form.useWatch("outputMode", form);
+  const scMode = Form.useWatch("scMode", form);
   const useSubconverter = (outputMode || initialOutputMode) === "subconverter";
+  const vendorOptions = (vendors || []).filter(v => v.defaultSubconverterConfig).map(v => ({ value: v.id, label: v.name }));
+
   return (
     <>
       <Form.Item name="outputMode" style={{ marginBottom: 12 }}>
@@ -1683,7 +1848,19 @@ function OutputModeSection({ form, initialOutputMode, subscriptions, recommended
       {useSubconverter && (
         <>
           <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>订阅转换设置</Text></Divider>
-          <SubconverterPanel />
+          <Form.Item name="scMode" label="配置来源" style={{ marginBottom: 12 }}>
+            <Radio.Group optionType="button" buttonStyle="solid" style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+              <Radio.Button value="vendor" style={{ textAlign: "center" }}>跟随供应商预设</Radio.Button>
+              <Radio.Button value="custom" style={{ textAlign: "center" }}>自定义配置</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          {scMode === "vendor" ? (
+            <Form.Item name="vendorId" label="供应商预设" rules={[{ required: true, message: "请选择供应商" }]} style={{ marginBottom: 0 }}>
+              <Select {...inModalSelectProps} options={vendorOptions} placeholder="选择供应商" />
+            </Form.Item>
+          ) : (
+            <SubconverterPanel />
+          )}
         </>
       )}
     </>
@@ -1693,9 +1870,9 @@ function OutputModeSection({ form, initialOutputMode, subscriptions, recommended
 // 鈹€鈹€鈹€ User Form 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function UserForm({ item, subscriptions, onClose, onSaved }) {
-  const { runAsync, busy } = useData();
+  const { runAsync, busy, vendors } = useData();
   const [form] = Form.useForm();
-  const modalCls = useModalCls();
+  const [step, setStep] = useState(0);
   const expiryTouched = useRef(false);
   const subscriptionTouched = useRef(false);
   const initialOutputMode = initialOutputModeForUser(item);
@@ -1722,7 +1899,14 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
   const initialExpiresAt = item.expiresAt ? dayjs(item.expiresAt) : dayjs(calcExpiry(initialPurchasedAt, initialDuration));
 
   function handleChange(changed, values) {
-    if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true;
+    if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) {
+      subscriptionTouched.current = true;
+      const sub = subscriptions.find(s => s.id === changed.subscriptionId);
+      const v = (vendors || []).find(v => v.name === sub?.serviceProvider);
+      if (v?.id && values.scMode === "vendor") {
+        form.setFieldsValue({ vendorId: v.id });
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(changed, "expiresAt")) { expiryTouched.current = true; return; }
     if (Object.prototype.hasOwnProperty.call(changed, "duration")) {
       // 永久：清空到期日期（由后端补哨兵）；自定义：保留用户手填值，二者均不自动推算
@@ -1737,7 +1921,17 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
 
   async function submit(values) {
     await runAsync(async () => {
-      const payload = { ...values, purchasedAt: values.purchasedAt ? values.purchasedAt.format("YYYY-MM-DD") : "", expiresAt: values.expiresAt ? values.expiresAt.toISOString() : "", subconverterConfig: buildSubconverterConfig(values) };
+      const scMode = values.outputMode === "subconverter" ? (values.scMode || "vendor") : "custom";
+      const payload = {
+        ...values,
+        purchasedAt: values.purchasedAt ? values.purchasedAt.format("YYYY-MM-DD") : "",
+        expiresAt: values.expiresAt ? values.expiresAt.toISOString() : "",
+        scMode,
+        vendorId: scMode === "vendor" ? (values.vendorId || null) : null,
+        subconverterConfig: scMode === "custom" ? buildSubconverterConfig(values) : null,
+        placeholderTag: values.placeholderTag || null,
+        useDefaultPlaceholder: values.useDefaultPlaceholder !== false
+      };
       delete payload.outputMode;
       if (item.id) await fetchJson(`/api/users/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
       else await postJson("/api/users", payload);
@@ -1755,54 +1949,74 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
   const fbTable = useResizableCols(fbCols, "user-fallback-logs");
 
   return (
-    <Modal title={item.id ? "编辑用户" : "新建用户"} open onCancel={onClose} footer={null} destroyOnHidden width={760} styles={MODAL_STYLES} className={modalCls}>
-      <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageId: item.imessageId || "", purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, subconverterConfig: initialSubconverterConfig(item) }} onValuesChange={handleChange} onFinish={submit}>
-        <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>身份信息</Text></Divider>
-        <Flex gap={16} wrap="wrap">
-          <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="必填" /></Form.Item>
-          <Form.Item name="wechatName" label="微信名" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
-          <Form.Item name="imessageId" label="iMessage ID" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
-        </Flex>
-        <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>订阅信息</Text></Divider>
-        <Flex gap={16} wrap="wrap">
-          <Form.Item name="purchasedAt" label="购买日期" rules={[{ required: true, message: "请选择购买日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
-            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+    <FormModal title={item.id ? "编辑用户" : "新建用户"} open onCancel={onClose} width={760}>
+      <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageId: item.imessageId || "", purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, subconverterConfig: initialSubconverterConfig(item), scMode: initialScMode(item, vendors || []), vendorId: initialVendorId(item, vendors || [], subscriptions), placeholderTag: item.placeholderTag || "", showUserInfo: item.showUserInfo !== false, useDefaultPlaceholder: item.useDefaultPlaceholder !== false, blockUserinfo: item.blockUserinfo !== false, group: item.group || "pro", isBusiness: Boolean(item.isBusiness) }} onValuesChange={handleChange} onFinish={submit}>
+        <Steps current={step} size="small" style={{ marginBottom: 24 }} items={[{ title: "身份信息" }, { title: "订阅信息" }, { title: "投递模式" }, { title: "高级设置" }]} />
+        <div style={{ display: step === 0 ? "block" : "none" }}>
+          <Flex gap={16} wrap="wrap">
+            <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="必填" /></Form.Item>
+            <Form.Item name="wechatName" label="微信名" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
+            <Form.Item name="imessageId" label="iMessage ID" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
+          </Flex>
+          <Flex gap={16} wrap="wrap" align="center" style={{ marginTop: 16 }}>
+            <Form.Item name="group" label="套餐" style={{ marginBottom: 0 }}>
+              <Radio.Group optionType="button" buttonStyle="solid">
+                <Radio.Button value="basic">Basic</Radio.Button>
+                <Radio.Button value="pro">Pro</Radio.Button>
+                <Radio.Button value="ultra">Ultra</Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+            <Form.Item name="isBusiness" valuePropName="checked" style={{ marginBottom: 0, alignSelf: "flex-end" }}>
+              <Checkbox>企业用户</Checkbox>
+            </Form.Item>
+          </Flex>
+        </div>
+        <div style={{ display: step === 1 ? "block" : "none" }}>
+          <Flex gap={16} wrap="wrap">
+            <Form.Item name="purchasedAt" label="购买日期" rules={[{ required: true, message: "请选择购买日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+              <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+            </Form.Item>
+            <Form.Item name="expiresAt" label="到期日期" rules={duration === "lifetime" ? [] : [{ required: true, message: "请选择到期日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+              <DatePicker {...inModalPickerProps} style={{ width: "100%" }} disabled={duration === "lifetime"} placeholder={duration === "lifetime" ? "永久有效" : undefined} />
+            </Form.Item>
+            <Form.Item name="actualPaid" label="实付金额" rules={[{ required: true, message: "请输入实付金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+              <Input type="number" min="0" step="0.01" placeholder="0.00" />
+            </Form.Item>
+          </Flex>
+          <Form.Item name="duration" label="套餐时长" style={{ marginTop: 16, marginBottom: 0 }}>
+            <DurationRadio purchasedAt={purchasedAt} />
           </Form.Item>
-          <Form.Item name="expiresAt" label="到期日期" rules={duration === "lifetime" ? [] : [{ required: true, message: "请选择到期日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
-            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} disabled={duration === "lifetime"} placeholder={duration === "lifetime" ? "永久有效" : undefined} />
+        </div>
+        <div style={{ display: step === 2 ? "block" : "none" }}>
+          <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation={!item.id} vendors={vendors} />
+        </div>
+        <div style={{ display: step === 3 ? "block" : "none" }}>
+          <PlaceholderTagSelect />
+          <Form.Item name="blockUserinfo" valuePropName="checked" style={{ marginTop: 12, marginBottom: 0 }}>
+            <Checkbox>屏蔽原 userinfo</Checkbox>
           </Form.Item>
-          <Form.Item name="actualPaid" label="实付金额" rules={[{ required: true, message: "请输入实付金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
-            <Input type="number" min="0" step="0.01" placeholder="0.00" />
-          </Form.Item>
-        </Flex>
-        <Form.Item name="duration" label="套餐时长" style={{ marginTop: 16, marginBottom: 0 }}>
-          <DurationRadio purchasedAt={purchasedAt} />
-        </Form.Item>
-        <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>投递模式</Text></Divider>
-        <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation={!item.id} />
-        {fallbackLogs.length > 0 && (
-          <>
-            <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>历史记录</Text></Divider>
-            <Table className="saas-data-table" size="small" rowKey="id" columns={fbTable.columns} components={fbTable.components} dataSource={fallbackLogs} pagination={false} scroll={{ x: Math.max(620, fbTable.scrollX) }} />
-          </>
-        )}
-        <Flex justify="flex-end" gap={10} style={{ marginTop: 24 }}>
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" htmlType="submit" loading={!!busy} disabled={!!busy}>
-            {item.id ? "保存修改" : "创建用户"}
-          </Button>
+          {fallbackLogs.length > 0 && (
+            <>
+              <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>历史记录</Text></Divider>
+              <Table className="saas-data-table" size="small" rowKey="id" columns={fbTable.columns} components={fbTable.components} dataSource={fallbackLogs} pagination={false} scroll={{ x: Math.max(620, fbTable.scrollX) }} />
+            </>
+          )}
+        </div>
+        <Flex gap={12} style={{ marginTop: 24 }}>
+          {step > 0 && <Button block onClick={() => setStep(step - 1)}>上一步</Button>}
+          {step < 3 && <Button type="primary" block onClick={() => form.validateFields(step === 0 ? ["userId"] : step === 1 ? ["purchasedAt", "actualPaid"] : ["subscriptionId"]).then(() => setStep(step + 1))}>下一步</Button>}
+          {step === 3 && <Button type="primary" htmlType="submit" block loading={!!busy} disabled={!!busy}>{item.id ? "保存修改" : "创建用户"}</Button>}
         </Flex>
       </Form>
-    </Modal>
+    </FormModal>
   );
 }
 
 // 鈹€鈹€鈹€ Renew Form 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function RenewForm({ user, subscriptions, onClose, onSaved }) {
-  const { runAsync } = useData();
+  const { runAsync, vendors } = useData();
   const [form] = Form.useForm();
-  const modalCls = useModalCls();
   const subscriptionTouched = useRef(false);
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
@@ -1833,7 +2047,14 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
 
   async function submit(values) {
     await runAsync(async () => {
-      const payload = { ...values, purchasedAt: values.purchasedAt.format("YYYY-MM-DD"), subconverterConfig: buildSubconverterConfig(values) };
+      const scMode = values.outputMode === "subconverter" ? (values.scMode || "vendor") : "custom";
+      const payload = {
+        ...values,
+        purchasedAt: values.purchasedAt.format("YYYY-MM-DD"),
+        scMode,
+        vendorId: scMode === "vendor" ? (values.vendorId || null) : null,
+        subconverterConfig: scMode === "custom" ? buildSubconverterConfig(values) : null
+      };
       if (values.expiresAt && typeof values.expiresAt.toISOString === "function") payload.expiresAt = values.expiresAt.toISOString();
       delete payload.outputMode;
       await postJson(`/api/users/${user.id}/renew`, payload);
@@ -1842,8 +2063,8 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} footer={null} destroyOnHidden width={760} styles={MODAL_STYLES} className={modalCls}>
-      <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, subconverterConfig: initialSubconverterConfig(user) }} onValuesChange={changed => { if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true; }} onFinish={submit}>
+    <FormModal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} width={760}>
+      <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, subconverterConfig: initialSubconverterConfig(user), scMode: initialScMode(user, vendors || []), vendorId: initialVendorId(user, vendors || [], subscriptions) }} onValuesChange={changed => { if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true; }} onFinish={submit}>
         <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>续费详情</Text></Divider>
         <Flex gap={16} wrap="wrap">
           <Form.Item name="purchasedAt" label="续费日期" rules={[{ required: true, message: "请选择续费日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
@@ -1862,13 +2083,12 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
           </Form.Item>
         )}
         <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>投递模式</Text></Divider>
-        <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation />
-        <Flex justify="flex-end" gap={10} style={{ marginTop: 24 }}>
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" htmlType="submit">确认续费</Button>
-        </Flex>
+        <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation vendors={vendors} />
+        <div style={{ marginTop: 24 }}>
+          <Button type="primary" htmlType="submit" block>确认续费</Button>
+        </div>
       </Form>
-    </Modal>
+    </FormModal>
   );
 }
 
@@ -1878,9 +2098,9 @@ function UserCards({ users: list, actions }) {
   const p = usePalette();
   if (!list.length) return <Empty description="无匹配用户。" />;
   return (
-    <Flex vertical gap={12}>
+    <Flex vertical gap={0}>
       {list.map(user => (
-        <Card key={user.id} hover style={{ padding: 16 }}>
+        <div key={user.id} style={{ padding: 16, borderBottom: `1px solid ${p.border}` }}>
           <Flex justify="space-between" gap={12} align="center" style={{ marginBottom: 10 }}>
             <Text strong style={{ fontSize: 15 }}>{user.userId}</Text>
             <StatusBadge status={userStatus(user)} />
@@ -1897,7 +2117,7 @@ function UserCards({ users: list, actions }) {
             ))}
           </div>
           <div style={{ paddingTop: 2 }}>{actions(user)}</div>
-        </Card>
+        </div>
       ))}
     </Flex>
   );
@@ -1909,9 +2129,17 @@ function UsersPage() {
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(null);
   const [renewing, setRenewing] = useState(null);
+  const [vipFilter, setVipFilter] = useState(null);
+  const [statusFilter, setStatusFilter] = useState(null);
+  const [page, setPage] = useState(1);
   const mobile = useResponsiveList();
 
-  const visible = users.filter(u => `${u.userId || ""} ${u.wechatName || ""} ${u.imessageId || ""} ${u.subscription?.url || ""}`.toLowerCase().includes(keyword.toLowerCase()));
+  const visible = users.filter(u => {
+    if (keyword && !`${u.userId || ""} ${u.wechatName || ""} ${u.imessageId || ""} ${u.subscription?.url || ""}`.toLowerCase().includes(keyword.toLowerCase())) return false;
+    if (vipFilter) { const lvl = u.level || (u.actualPaid <= 300 ? "vip1" : u.actualPaid <= 1000 ? "vip2" : "vip3"); if (lvl !== vipFilter) return false; }
+    if (statusFilter && userStatus(u) !== statusFilter) return false;
+    return true;
+  });
 
   async function mutate(run) {
     await runAsync(async () => {
@@ -1932,9 +2160,10 @@ function UsersPage() {
     );
   };
 
+  const pageSize = 20;
   const columns = [
-    { title: "#", render: (_, __, i) => i + 1, width: 48 },
-    { title: "用户 ID", dataIndex: "userId", width: 120 },
+    { title: "#", render: (_, __, i) => (page - 1) * pageSize + i + 1, width: 48 },
+    { title: "用户 ID", dataIndex: "userId", width: 120, render: (v, u) => { const lvl = u.level || (u.actualPaid <= 300 ? "vip1" : u.actualPaid <= 1000 ? "vip2" : "vip3"); return <><span style={{ fontWeight: 600 }}>{v}</span> <VipTag level={lvl} /></>; } },
     { title: "状态", render: (_, u) => <StatusBadge status={userStatus(u)} />, width: 76 },
     { title: "到期时间", render: (_, u) => formatUserExpiry(u), width: 104 },
     { title: "时长", render: (_, u) => durationLabels[u.duration] || "Unknown", width: 72 },
@@ -1948,11 +2177,12 @@ function UsersPage() {
 
   return (
     <ManagementSection
-      kicker="用户管理"
-      title="用户列表"
+      title="Users"
       actions={
         <>
-          <ToolbarSearch placeholder="搜索用户、邮箱或链接" style={{ width: 220 }} onSearch={setKeyword} onChange={e => setKeyword(e.target.value)} />
+          <ToolbarSearch placeholder="搜索用户、邮箱或链接" style={{ width: 220 }} onSearch={setKeyword} onChange={e => { setKeyword(e.target.value); setPage(1); }} />
+          <Select allowClear placeholder="VIP 等级" style={{ width: 110 }} value={vipFilter} onChange={v => { setVipFilter(v || null); setPage(1); }} options={[{ value: "vip1", label: "VIP 1" }, { value: "vip2", label: "VIP 2" }, { value: "vip3", label: "VIP 3" }]} />
+          <Select allowClear placeholder="状态" style={{ width: 110 }} value={statusFilter} onChange={v => { setStatusFilter(v || null); setPage(1); }} options={[{ value: "ok", label: "正常" }, { value: "warning", label: "即将到期" }, { value: "expired", label: "已到期" }]} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>
             新建用户
           </Button>
@@ -1962,7 +2192,7 @@ function UsersPage() {
       <div>
         {mobile
           ? <UserCards users={visible} actions={actions} />
-          : <Table className="plain-detail-table user-flat-table saas-data-table" size="middle" rowKey="id" columns={userTable.columns} components={userTable.components} dataSource={visible} pagination={tablePag} scroll={{ x: Math.max(1380, userTable.scrollX) }} />
+          : <Table className="plain-detail-table user-flat-table saas-data-table" size="middle" rowKey="id" columns={userTable.columns} components={userTable.components} dataSource={visible} pagination={{ pageSize, current: page, onChange: setPage, showSizeChanger: false }} scroll={{ x: Math.max(1380, userTable.scrollX) }} />
         }
       </div>
       {editing && <UserForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["users", "bills"]); }} />}
@@ -1976,14 +2206,14 @@ function UsersPage() {
 function BillCards({ bills, actions, total }) {
   const p = usePalette();
   return (
-    <Flex vertical gap={12}>
-        <Card style={{ padding: 16 }}>
+    <Flex vertical gap={0}>
+        <div style={{ padding: 16, borderBottom: `1px solid ${p.border}` }}>
           <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>筛选合计</Text>
           <Text strong style={{ fontSize: 20 }}>{formatMoney(total)}</Text>
-        </Card>
+        </div>
       {!bills.length && <Empty description="无匹配账单。" />}
       {bills.map(bill => (
-        <Card key={bill.id} hover style={{ padding: 16 }}>
+        <div key={bill.id} style={{ padding: 16, borderBottom: `1px solid ${p.border}` }}>
           <Flex justify="space-between" gap={12} align="start" style={{ marginBottom: 10 }}>
             <div style={{ minWidth: 0 }}>
               <Text strong style={{ display: "block", fontSize: 15 }}>{bill.userLabel}</Text>
@@ -2000,7 +2230,7 @@ function BillCards({ bills, actions, total }) {
             ))}
           </div>
           <div style={{ paddingTop: 10 }}>{actions(bill)}</div>
-        </Card>
+        </div>
       ))}
     </Flex>
   );
@@ -2053,8 +2283,7 @@ function BillsPage() {
 
   return (
     <ManagementSection
-      kicker="财务"
-      title="账单管理"
+      title="Bills"
       summary={
         <div className="saas-summary-pill">
           <span>{formatMoney(total)}</span>
@@ -2089,6 +2318,153 @@ function BillsPage() {
 }
 
 // 鈹€鈹€鈹€ App root 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+function PlaceholderTagSelect() {
+  const { placeholderNodes } = useData();
+  const options = placeholderNodes
+    .filter(p => p.tag !== "default")
+    .map(p => ({ label: `${p.tag}（${p.nodes.length}个节点）`, value: p.tag }));
+  return (
+    <Flex vertical gap={8}>
+      <Form.Item name="showUserInfo" valuePropName="checked" style={{ marginBottom: 0 }}>
+        <Checkbox>显示用户信息</Checkbox>
+      </Form.Item>
+      <Form.Item name="useDefaultPlaceholder" valuePropName="checked" style={{ marginBottom: 0 }}>
+        <Checkbox>使用默认占位节点（default）</Checkbox>
+      </Form.Item>
+      <Form.Item name="placeholderTag" style={{ marginBottom: 0 }}>
+        <Select placeholder="额外占位节点标签（选填）" allowClear options={options} {...inModalSelectProps} />
+      </Form.Item>
+    </Flex>
+  );
+}
+
+function SubconverterPage() {
+  return (
+    <Flex vertical gap={24}>
+      <VendorPresetSection />
+      <PlaceholderNodesSection />
+    </Flex>
+  );
+}
+
+function PlaceholderNodesSection() {
+  const { placeholderNodes, reload, runAsync, busy } = useData();
+  const { notification } = AntApp.useApp();
+  const mobile = useResponsiveList();
+  const [editing, setEditing] = useState(null);
+
+  async function mutate(run) {
+    await runAsync(async () => {
+      try { await run(); await reload(["placeholderNodes"]); }
+      catch (e) { notification.error({ message: "操作失败", description: e.message, placement: "bottomRight" }); }
+    }, "处理中...");
+  }
+
+  function handleDelete(item) {
+    Modal.confirm({
+      title: "删除占位节点组",
+      content: `确认删除标签「${item.tag}」及其所有节点？`,
+      onOk: () => mutate(() => deleteJson(`/api/placeholder-nodes/${item.id}`))
+    });
+  }
+
+  const columns = [
+    { title: "标签", dataIndex: "tag", key: "tag", width: 150 },
+    {
+      title: "节点列表", dataIndex: "nodes", key: "nodes",
+      render: nodes => (
+        <Flex wrap gap={4}>
+          {(nodes || []).map((n, i) => <Tag key={i}>{n}</Tag>)}
+          {(!nodes || !nodes.length) && <Text type="secondary">无节点</Text>}
+        </Flex>
+      )
+    },
+    {
+      title: "操作", key: "actions", width: 140,
+      render: (_, record) => (
+        <InlineActions>
+          <Button size="small" icon={<EditOutlined />} onClick={() => setEditing(record)} disabled={!!busy}>编辑</Button>
+          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record)} disabled={!!busy}>删除</Button>
+        </InlineActions>
+      )
+    }
+  ];
+
+  return (
+    <SectionCard title="占位节点" extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => setEditing({})}>新增</Button>}>
+      {mobile
+        ? <Flex vertical gap={12}>
+            {placeholderNodes.map(item => (
+              <Card key={item.id} pad={12}>
+                <Flex vertical gap={8}>
+                  <Flex justify="space-between" align="center">
+                    <Text strong>{item.tag}</Text>
+                    <InlineActions>
+                      <Button size="small" icon={<EditOutlined />} onClick={() => setEditing(item)} disabled={!!busy} />
+                      <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(item)} disabled={!!busy} />
+                    </InlineActions>
+                  </Flex>
+                  <Flex wrap gap={4}>
+                    {(item.nodes || []).map((n, i) => <Tag key={i}>{n}</Tag>)}
+                  </Flex>
+                </Flex>
+              </Card>
+            ))}
+            {!placeholderNodes.length && <Empty description="暂无占位节点组" />}
+          </Flex>
+        : <Table dataSource={placeholderNodes} columns={columns} rowKey="id" pagination={false} size="small" />
+      }
+      {editing !== null && (
+        <PlaceholderNodeFormModal
+          item={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); reload(["placeholderNodes"]); }}
+          mutate={mutate}
+        />
+      )}
+    </SectionCard>
+  );
+}
+
+function PlaceholderNodeFormModal({ item, onClose, onSaved, mutate }) {
+  const [form] = Form.useForm();
+  const isEdit = Boolean(item.id);
+
+  async function submit(values) {
+    const nodes = (values.nodesText || "").split("\n").map(s => s.trim()).filter(Boolean);
+    const payload = { tag: values.tag, nodes };
+    await mutate(async () => {
+      if (isEdit) {
+        await putJson(`/api/placeholder-nodes/${item.id}`, payload);
+      } else {
+        await postJson("/api/placeholder-nodes", payload);
+      }
+    });
+    onSaved();
+  }
+
+  return (
+    <FormModal title={isEdit ? "编辑占位节点组" : "新增占位节点组"} open onCancel={onClose}>
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{ tag: item.tag || "", nodesText: (item.nodes || []).join("\n") }}
+        onFinish={submit}
+      >
+        <Form.Item name="tag" label="标签名" rules={[{ required: true, message: "请输入标签名" }]}>
+          <Input placeholder="如：vip、notice、ads" />
+        </Form.Item>
+        <Form.Item name="nodesText" label="节点名称（每行一个）" rules={[{ required: true, message: "请至少填写一个节点名" }]}>
+          <TextArea rows={6} placeholder={"广告位A\n续费提醒\n通知节点"} />
+        </Form.Item>
+        <div style={{ marginTop: 24 }}>
+          <Button type="primary" htmlType="submit" block>保存</Button>
+        </div>
+      </Form>
+    </FormModal>
+  );
+}
 
 function ConsoleOverview() {
   const p = usePalette();
@@ -2320,7 +2696,7 @@ function ConsoleOverview() {
 }
 
 function App() {
-  const [darkMode, setDarkMode] = useState(true);
+  const [darkMode, setDarkMode] = useState(() => { const v = localStorage.getItem("themeMode"); return v ? v === "dark" : false; });
   const palette = darkMode ? PALETTE.dark : PALETTE.light;
   const toggleTheme = useCallback(() => {
     setDarkMode(cur => {

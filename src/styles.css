@@ -59,6 +59,11 @@ html, body, #root {
   width: 100%;
   overflow-x: hidden;
   background: var(--ant-color-bg-layout, var(--dw-page));
+  font-weight: 500;
+}
+
+b, strong {
+  font-weight: 800;
 }
 
 html, body {
@@ -131,6 +136,14 @@ html, body {
 }
 
 /* 选项高亮 → Select.optionActiveBg / optionSelectedBg token（无需 CSS 覆写） */
+
+/* ─── Form modal ───────────────────────────────────────────────────────────── */
+.form-modal .ant-modal-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  width: 100%;
+}
 
 /* ─── Modal ─────────────────────────────────────────────────────────────────── */
 /* 遮罩 → colorBgMask token；圆角 → Modal.borderRadiusLG token；仅保留无 token 的阴影 */
@@ -711,7 +724,43 @@ html, body {
   .code-viewer-line-number { padding-right: 10px; }
 }
 
-/* SaaS component polish inspired by the screenshots */
+/* ─── Management section (flat layout) ─────────────────────────────────────── */
+.mgmt-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.mgmt-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.mgmt-section-title-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.mgmt-section-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--ant-color-text);
+  line-height: 1.2;
+}
+
+.mgmt-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ─── SaaS component polish inspired by the screenshots */
 .saas-toolbar {
   display: flex;
   align-items: center;
@@ -759,7 +808,7 @@ html, body {
 }
 
 .saas-section-body {
-  padding: 0;
+  padding: 20px;
 }
 
 .saas-section-body.mobile {
@@ -788,7 +837,6 @@ html, body {
   min-height: 40px;
   border: 1px solid var(--saas-border-soft) !important;
   border-radius: 6px !important;
-  background: var(--saas-input-bg) !important;
 }
 
 .saas-form-shell textarea.ant-input {
@@ -857,6 +905,13 @@ html, body {
   background: var(--ant-color-bg-layout);
 }
 
+@media (min-width: 992px) {
+  .console-shell,
+  .console-shell.ant-layout {
+    flex-direction: row;
+  }
+}
+
 .console-sidebar {
   width: 100%;
   min-width: 0;
@@ -867,6 +922,12 @@ html, body {
   padding: 16px 12px 12px;
   background: var(--ant-color-bg-container);
   box-shadow: none;
+}
+
+.console-sidebar-footer {
+  margin-top: auto;
+  padding: 12px 8px;
+  border-top: 1px solid var(--ant-color-border-secondary);
 }
 
 .console-sidebar-brand {
@@ -969,7 +1030,7 @@ html, body {
 
 .console-sidebar-menu.ant-menu .ant-menu-item-selected,
 .console-sidebar-menu.ant-menu .ant-menu-item-selected .ant-menu-title-content {
-  font-weight: 600;
+  font-weight: 800;
 }
 
 .console-sidebar-tab-icon {
@@ -996,7 +1057,7 @@ html, body {
 
 .console-sidebar-tab-label {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.25;
   margin: 0 !important;
 }
@@ -1027,12 +1088,19 @@ html, body {
 
 .console-layout-sider,
 .console-layout-sider.ant-layout-sider {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100dvh;
+  overflow-y: auto;
+  z-index: 100;
   background: var(--ant-color-bg-container) !important;
   border-right: 1px solid var(--ant-color-border-secondary);
 }
 
 .console-workspace-content-shell {
   min-width: 0;
+  margin-left: 240px;
   background: transparent !important;
 }
 
@@ -1049,7 +1117,7 @@ html, body {
   gap: 24px;
   width: 100%;
   min-width: 0;
-  max-width: 1248px;
+  max-width: none;
   margin: 0 auto;
   padding: 24px 28px 36px 24px;
 }
@@ -1509,6 +1577,24 @@ html, body {
 
 
 @media (max-width: 991px) {
+  .console-layout-sider,
+  .console-layout-sider.ant-layout-sider {
+    position: static;
+    height: auto;
+    width: 100% !important;
+    min-width: 0;
+    max-width: none !important;
+  }
+
+  .console-workspace,
+  .console-workspace.ant-layout {
+    margin-left: 0;
+  }
+
+  .console-workspace-content-shell {
+    margin-left: 0;
+  }
+
   .console-sidebar {
     width: 100%;
     min-width: 0;

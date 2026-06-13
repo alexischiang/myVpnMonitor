@@ -5,6 +5,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const { createDataStore } = require("./database");
+const yaml = require("js-yaml");
 const notifier = require("./notifier");
 const packageJson = require("./package.json");
 
@@ -31,6 +32,7 @@ const DATA_DIR = path.dirname(DATA_FILE);
 const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
 const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
 const VENDORS_FILE = process.env.VENDORS_FILE || path.join(DATA_DIR, "vendors.json");
+const PLACEHOLDER_NODES_FILE = process.env.PLACEHOLDER_NODES_FILE || path.join(DATA_DIR, "placeholderNodes.json");
 
 const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
 const ALERT_STATE_FILE = process.env.ALERT_STATE_FILE || path.join(DATA_DIR, "alert-state.json");
@@ -128,6 +130,7 @@ let subscriptions = [];
 let users = [];
 let bills = [];
 let vendors = [];
+let placeholderNodes = [];
 const dataStore = createDataStore({
   dataDir: DATA_DIR,
   databaseUrl: DATABASE_URL,
@@ -135,7 +138,8 @@ const dataStore = createDataStore({
     subscriptions: DATA_FILE,
     users: USERS_FILE,
     bills: BILLS_FILE,
-    vendors: VENDORS_FILE
+    vendors: VENDORS_FILE,
+    placeholderNodes: PLACEHOLDER_NODES_FILE
   }
 });
 
@@ -153,6 +157,7 @@ async function ensureDataFile() {
   users = state.users;
   bills = state.bills;
   vendors = state.vendors || [];
+  placeholderNodes = state.placeholderNodes || [];
 
   if (state.missing.subscriptions) await saveData();
   if (state.missing.users) await saveUsers();
@@ -165,21 +170,27 @@ async function ensureDataFile() {
     vendors = names.map((name, i) => ({ id: `vendor-${i}`, name }));
     await saveVendors();
   }
+  if (state.missing.placeholderNodes) await savePlaceholderNodes();
   if (ensureSubscriptionServiceProviders()) await saveData();
   if (ensureUserRelayTokens()) await saveUsers();
 }
 
 let lastLoadedAt = 0;
+let _loadingPromise = null;
 const DATA_CACHE_TTL_MS = Number(process.env.DATA_CACHE_TTL_MS || 30000);
 
 async function loadLatestData({ force = false } = {}) {
   if (!force && Date.now() - lastLoadedAt < DATA_CACHE_TTL_MS) return;
-  const state = await dataStore.loadAll();
-  subscriptions = state.subscriptions;
-  users = state.users;
-  bills = state.bills;
-  vendors = state.vendors || [];
-  lastLoadedAt = Date.now();
+  if (_loadingPromise) return _loadingPromise;
+  _loadingPromise = dataStore.loadAll().then(state => {
+    subscriptions = state.subscriptions;
+    users = state.users;
+    bills = state.bills;
+    vendors = state.vendors || [];
+    placeholderNodes = state.placeholderNodes || [];
+    lastLoadedAt = Date.now();
+  }).finally(() => { _loadingPromise = null; });
+  return _loadingPromise;
 }
 
 async function saveData() {
@@ -196,6 +207,10 @@ async function saveBills() {
 
 async function saveVendors() {
   await dataStore.saveCollection("vendors", vendors);
+}
+
+async function savePlaceholderNodes() {
+  await dataStore.saveCollection("placeholderNodes", placeholderNodes);
 }
 
 
@@ -599,6 +614,10 @@ function normalizeUser(input, existing = {}, options = {}) {
   if (requestedExpiresAt && (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime()))) throw new Error("到期时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
 
+  const group = ["basic", "pro", "ultra"].includes(input.group) ? input.group : (existing.group || "pro");
+  const isBusiness = input.isBusiness !== undefined ? Boolean(input.isBusiness) : Boolean(existing.isBusiness);
+  const level = actualPaid <= 300 ? "vip1" : (actualPaid <= 1000 ? "vip2" : "vip3");
+
   return {
     ...existing,
     userId,
@@ -607,21 +626,29 @@ function normalizeUser(input, existing = {}, options = {}) {
     purchasedAt: new Date(purchasedAt).toISOString(),
     duration,
     actualPaid,
+    group,
+    level,
+    isBusiness,
     subscriptionId: subscription.id,
     subscriptionToken: existing.subscriptionToken || relayToken(),
     expiresAt,
+    placeholderTag: String(input.placeholderTag ?? existing.placeholderTag ?? "").trim() || null,
+    showUserInfo: input.showUserInfo !== undefined
+      ? input.showUserInfo !== false
+      : (existing.showUserInfo !== undefined ? existing.showUserInfo !== false : true),
+    useDefaultPlaceholder: input.useDefaultPlaceholder !== undefined
+      ? input.useDefaultPlaceholder !== false
+      : (existing.useDefaultPlaceholder !== undefined ? existing.useDefaultPlaceholder !== false : true),
     updatedAt: new Date().toISOString()
   };
 }
 
 function normalizeSubconverterConfig(input) {
   if (!input) return null;
-  const target = String(input.target || DEFAULT_SUBCONVERTER_TARGET).trim();
+  const flat = input.subconverterConfig || input;
+  const target = String(flat.target || DEFAULT_SUBCONVERTER_TARGET).trim();
   if (!target) return null;
-  return {
-    ...input,
-    target
-  };
+  return { ...flat, target };
 }
 
 function normalizePaymentAmount(value) {
@@ -1649,6 +1676,57 @@ function yamlString(value) {
   return JSON.stringify(String(value));
 }
 
+function buildUserInfoNodes(user) {
+  const nodes = [];
+  const expires = user.expiresAt ? new Date(user.expiresAt) : null;
+  if (expires && !Number.isNaN(expires.getTime())) {
+    const remaining = Math.max(0, Math.ceil((expires.getTime() - Date.now()) / 86400000));
+    nodes.push(`到期: ${expires.toISOString().slice(0, 10)} | 剩余 ${remaining} 天`);
+  }
+  const level = user.level || (Number(user.actualPaid) <= 300 ? "VIP 1" : Number(user.actualPaid) <= 1000 ? "VIP 2" : "VIP 3");
+  const group = (user.group || "pro").toUpperCase();
+  nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group}`);
+  return nodes;
+}
+
+function injectPlaceholderNodes(bodyBuffer, user) {
+  const useDefault = user.useDefaultPlaceholder !== false;
+  const showUserInfo = user.showUserInfo !== false;
+  const defaultGroup = useDefault ? placeholderNodes.find(p => p.tag === "default") : null;
+  const customGroup = user.placeholderTag && user.placeholderTag !== "default"
+    ? placeholderNodes.find(p => p.tag === user.placeholderTag) : null;
+  const defaultNodes = defaultGroup?.nodes?.length ? defaultGroup.nodes : [];
+  const customNodes = customGroup?.nodes?.length ? customGroup.nodes : [];
+  const userInfoNodes = showUserInfo ? buildUserInfoNodes(user) : [];
+  if (!defaultNodes.length && !customNodes.length && !userInfoNodes.length) return bodyBuffer;
+  try {
+    const text = bodyBuffer.toString("utf8");
+    const doc = yaml.load(text);
+    if (!doc || typeof doc !== "object") return bodyBuffer;
+    if (!Array.isArray(doc.proxies)) doc.proxies = [];
+    const allNames = [...userInfoNodes, ...defaultNodes, ...customNodes];
+    const allProxies = allNames.map(nodeName => ({
+      name: nodeName,
+      type: "ss",
+      server: "127.0.0.1",
+      port: 1,
+      cipher: "aes-128-gcm",
+      password: "placeholder"
+    }));
+    doc.proxies.unshift(...allProxies);
+    if (Array.isArray(doc["proxy-groups"])) {
+      for (const pg of doc["proxy-groups"]) {
+        if (Array.isArray(pg.proxies)) {
+          pg.proxies.unshift(...allNames);
+        }
+      }
+    }
+    return Buffer.from(yaml.dump(doc, { lineWidth: -1, noRefs: true }), "utf8");
+  } catch {
+    return bodyBuffer;
+  }
+}
+
 function placeholderSubscription(user, nodeName) {
   return {
     contentType: "application/yaml; charset=utf-8",
@@ -1741,7 +1819,8 @@ function copyUpstreamHeaders(response) {
   const headers = {
     "cache-control": "no-store, max-age=0",
     "pragma": "no-cache",
-    "expires": "0"
+    "expires": "0",
+    "content-disposition": "attachment; filename*=UTF-8''NEXORA"
   };
   for (const name of ["content-type", "subscription-userinfo", "profile-update-interval"]) {
     const value = response.headers.get(name);
@@ -1870,7 +1949,26 @@ async function handleRelaySubscription(req, res, token) {
   }
 
   let subscription = subscriptions.find(item => item.id === user.subscriptionId);
-  const sc = user.subconverterConfig;
+  const sc = (() => {
+    let raw;
+    if (user.scMode === "custom") {
+      raw = user.subconverterConfig || null;
+    } else if (user.scMode === "vendor" && user.vendorId) {
+      const v = vendors.find(v => v.id === user.vendorId);
+      raw = v?.defaultSubconverterConfig || null;
+    } else {
+      // 兼容旧数据（无 scMode）
+      if (user.subconverterConfig) {
+        raw = user.subconverterConfig;
+      } else {
+        const sub = subscriptions.find(s => s.id === user.subscriptionId);
+        const v = vendors.find(v => v.name === sub?.serviceProvider);
+        raw = v?.defaultSubconverterConfig || null;
+      }
+    }
+    if (!raw) return null;
+    return raw.subconverterConfig ? { ...raw.subconverterConfig, target: raw.subconverterConfig.target || raw.target } : raw;
+  })();
   let precheckedLiveConfig = null;
   const initialFallbackReason = !subscription?.url ? "pool-missing" : (sc?.target ? poolMetricUnavailableReason(subscription) : "");
   relayLog("current-pool-selected", {
@@ -2061,22 +2159,24 @@ async function handleRelaySubscription(req, res, token) {
         return;
       }
       const body = Buffer.from(await response.arrayBuffer());
+      const finalBody = injectPlaceholderNodes(body, user);
       relayLog("response-subconverter-ok", {
         relayRequestId,
         userId: user.id,
         status: response.status,
         contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
-        bodyLength: body.length,
-        bodyPreview: bodyPreview(body.toString("utf8"))
+        bodyLength: finalBody.length,
+        bodyPreview: bodyPreview(finalBody.toString("utf8"))
       });
       res.writeHead(response.status, {
         "content-type": response.headers.get("content-type") || "text/plain; charset=utf-8",
+        "content-disposition": "attachment; filename*=UTF-8''NEXORA",
         "cache-control": "no-store, max-age=0",
         "pragma": "no-cache",
         "expires": "0",
-        ...(liveConfig.subscriptionUserinfo ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
+        ...(liveConfig.subscriptionUserinfo && user.blockUserinfo === false ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
       });
-      res.end(body);
+      res.end(finalBody);
     } catch (error) {
       relayLog("subconverter-request-error", {
         relayRequestId,
@@ -2436,13 +2536,22 @@ async function handleApi(req, res, pathname) {
         createdAt: new Date().toISOString()
       };
       const normalized = normalizeUser(payload, item, { autoSelectSubscription: true });
-      if (payload.subconverterConfig !== undefined) {
-        const subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
-        if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
-          sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
-          return;
+      const scMode = payload.scMode === "custom" ? "custom" : "vendor";
+      normalized.scMode = scMode;
+      normalized.blockUserinfo = payload.blockUserinfo !== false;
+      if (scMode === "vendor") {
+        normalized.vendorId = payload.vendorId || null;
+        normalized.subconverterConfig = null;
+      } else {
+        normalized.vendorId = null;
+        if (payload.subconverterConfig !== undefined) {
+          const subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
+          if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
+            sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
+            return;
+          }
+          normalized.subconverterConfig = subconverterConfig;
         }
-        normalized.subconverterConfig = subconverterConfig;
       }
       users.unshift(normalized);
       bills.unshift(makeBill({
@@ -2568,9 +2677,72 @@ async function handleApi(req, res, pathname) {
   if (vendorMatch) {
     const vendor = vendors.find(v => v.id === vendorMatch[1]);
     if (!vendor) { sendJson(res, 404, { error: "没有找到该供应商。" }); return; }
+    if (req.method === "PUT") {
+      const payload = await readJson(req);
+      const name = (payload.name || "").trim();
+      if (name && name !== vendor.name && vendors.find(v => v.name === name)) {
+        sendJson(res, 400, { error: "供应商名称已存在。" }); return;
+      }
+      if (name) vendor.name = name;
+      vendor.defaultSubconverterConfig = payload.defaultSubconverterConfig
+        ? normalizeSubconverterConfig(payload.defaultSubconverterConfig) : null;
+      await saveVendors();
+      sendJson(res, 200, vendor);
+      return;
+    }
     if (req.method === "DELETE") {
       vendors = vendors.filter(v => v.id !== vendorMatch[1]);
       await saveVendors();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    sendJson(res, 405, { error: "Method not allowed." });
+    return;
+  }
+
+  if (pathname === "/api/placeholder-nodes" && req.method === "GET") {
+    sendJson(res, 200, placeholderNodes);
+    return;
+  }
+
+  if (pathname === "/api/placeholder-nodes" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const tag = (payload.tag || "").trim();
+      const nodes = Array.isArray(payload.nodes) ? payload.nodes.map(n => String(n).trim()).filter(Boolean) : [];
+      if (!tag) { sendJson(res, 400, { error: "标签名不能为空。" }); return; }
+      if (placeholderNodes.find(p => p.tag === tag)) { sendJson(res, 400, { error: "标签名已存在。" }); return; }
+      const item = { id: `ph-${Date.now()}`, tag, nodes };
+      placeholderNodes.push(item);
+      await savePlaceholderNodes();
+      sendJson(res, 201, item);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const placeholderNodeMatch = pathname.match(/^\/api\/placeholder-nodes\/([^/]+)$/);
+  if (placeholderNodeMatch) {
+    const item = placeholderNodes.find(p => p.id === placeholderNodeMatch[1]);
+    if (!item) { sendJson(res, 404, { error: "没有找到该占位节点组。" }); return; }
+    if (req.method === "PUT") {
+      const payload = await readJson(req);
+      const tag = (payload.tag || "").trim();
+      if (tag && tag !== item.tag && placeholderNodes.find(p => p.tag === tag)) {
+        sendJson(res, 400, { error: "标签名已存在。" }); return;
+      }
+      if (tag) item.tag = tag;
+      if (Array.isArray(payload.nodes)) {
+        item.nodes = payload.nodes.map(n => String(n).trim()).filter(Boolean);
+      }
+      await savePlaceholderNodes();
+      sendJson(res, 200, item);
+      return;
+    }
+    if (req.method === "DELETE") {
+      placeholderNodes = placeholderNodes.filter(p => p.id !== placeholderNodeMatch[1]);
+      await savePlaceholderNodes();
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -2591,16 +2763,35 @@ async function handleApi(req, res, pathname) {
     if (action === "renew" && req.method === "POST") {
       try {
         const payload = await readJson(req);
-        let subconverterConfig = item.subconverterConfig || null;
-        if (payload.subconverterConfig !== undefined) {
-          subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
-          if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
-            sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
-            return;
+        const scMode = payload.scMode != null ? (payload.scMode === "custom" ? "custom" : "vendor") : (item.scMode || undefined);
+        if (scMode === "vendor") {
+          item.vendorId = payload.vendorId != null ? payload.vendorId : item.vendorId;
+          item.subconverterConfig = null;
+        } else if (scMode === "custom") {
+          item.vendorId = null;
+          let subconverterConfig = item.subconverterConfig || null;
+          if (payload.subconverterConfig !== undefined) {
+            subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
+            if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
+              sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
+              return;
+            }
           }
+          item.subconverterConfig = subconverterConfig;
+        } else {
+          let subconverterConfig = item.subconverterConfig || null;
+          if (payload.subconverterConfig !== undefined) {
+            subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
+            if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
+              sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
+              return;
+            }
+          }
+          item.subconverterConfig = subconverterConfig;
         }
+        if (scMode) item.scMode = scMode;
+        if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const renewal = renewUser(item, payload);
-        item.subconverterConfig = subconverterConfig;
         bills.unshift(makeBill({
           user: item,
           type: "renewal",
@@ -2628,29 +2819,23 @@ async function handleApi(req, res, pathname) {
     if (req.method === "PUT") {
       try {
         const payload = await readJson(req);
-        const previousPaid = Number(item.actualPaid) || 0;
         Object.assign(item, normalizeUser(payload, item));
-        if (payload.subconverterConfig !== undefined) {
-          const subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
-          if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
-            sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
-            return;
+        const scMode = payload.scMode === "custom" ? "custom" : "vendor";
+        item.scMode = scMode;
+        if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
+        if (scMode === "vendor") {
+          item.vendorId = payload.vendorId || null;
+          item.subconverterConfig = null;
+        } else {
+          item.vendorId = null;
+          if (payload.subconverterConfig !== undefined) {
+            const subconverterConfig = normalizeSubconverterConfig(payload.subconverterConfig);
+            if (subconverterConfig?.target && !SUB_CONVERTER_URL) {
+              sendJson(res, 400, { error: "服务端未配置 SUB_CONVERTER_URL，无法启用订阅转换功能。请联系管理员。" });
+              return;
+            }
+            item.subconverterConfig = subconverterConfig;
           }
-          item.subconverterConfig = subconverterConfig;
-        }
-        const nextPaid = Number(item.actualPaid) || 0;
-        const diff = Math.round((nextPaid - previousPaid) * 100) / 100;
-        if (diff !== 0) {
-          bills.unshift(makeBill({
-            user: item,
-            type: "adjustment",
-            amount: diff,
-            occurredAt: new Date().toISOString(),
-            duration: item.duration,
-            afterExpiresAt: item.expiresAt,
-            description: "用户实付款调整"
-          }));
-          await saveBills();
         }
         await saveUsers();
         sendJson(res, 200, publicUser(item));

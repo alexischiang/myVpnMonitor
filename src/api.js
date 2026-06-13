@@ -1,6 +1,6 @@
 export async function apiFetch(path, options = {}) {
   const response = await fetch(path, {
-    cache: "no-store",
+    cache: "no-cache",
     credentials: "same-origin",
     ...options,
     headers: {
