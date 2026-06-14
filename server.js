@@ -1705,14 +1705,11 @@ function injectPlaceholderNodes(bodyBuffer, user) {
     if (!doc || typeof doc !== "object") return bodyBuffer;
     if (!Array.isArray(doc.proxies)) doc.proxies = [];
     const allNames = [...userInfoNodes, ...defaultNodes, ...customNodes];
-    const allProxies = allNames.map(nodeName => ({
-      name: nodeName,
-      type: "ss",
-      server: "127.0.0.1",
-      port: 1,
-      cipher: "aes-128-gcm",
-      password: "placeholder"
-    }));
+    const firstProxy = doc.proxies[0];
+    const allProxies = allNames.map(nodeName => {
+      if (firstProxy) return { ...firstProxy, name: nodeName };
+      return { name: nodeName, type: "ss", server: "127.0.0.1", port: 1, cipher: "aes-128-gcm", password: "placeholder" };
+    });
     doc.proxies.unshift(...allProxies);
     if (Array.isArray(doc["proxy-groups"])) {
       for (const pg of doc["proxy-groups"]) {

@@ -386,7 +386,7 @@ function VipTag({ level }) {
   return <Tag style={{ background: bg, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 11, lineHeight: "18px", padding: "0 6px", marginLeft: 6 }}>VIP {num}</Tag>;
 }
 
-function CopyButton({ value, size = "small" }) {
+function CopyButton({ value, size = "small", label, buttonProps = {} }) {
   const { message } = AntApp.useApp();
   const [done, setDone] = useState(false);
   function copy() {
@@ -398,12 +398,13 @@ function CopyButton({ value, size = "small" }) {
   }
   return (
     <Button
-      size={size}
       type="text"
+      size={size}
+      {...buttonProps}
       icon={done ? <CheckOutlined style={{ color: "var(--ant-color-primary)" }} /> : <CopyOutlined />}
       onClick={copy}
-      style={{ flexShrink: 0 }}
-    />
+      style={{ flexShrink: 0, ...buttonProps.style }}
+    >{label}</Button>
   );
 }
 
@@ -2101,14 +2102,15 @@ function UserCards({ users: list, actions }) {
     <Flex vertical gap={0}>
       {list.map(user => (
         <div key={user.id} style={{ padding: 16, borderBottom: `1px solid ${p.border}` }}>
-          <Flex justify="space-between" gap={12} align="center" style={{ marginBottom: 10 }}>
-            <Text strong style={{ fontSize: 15 }}>{user.userId}</Text>
+          <Flex justify="space-between" gap={12} align="center" style={{ marginBottom: 4 }}>
+            <Flex align="center" gap={6}>
+              <Text strong style={{ fontSize: 15 }}>{user.userId}</Text>
+              {(() => { const lvl = user.level || (user.actualPaid <= 300 ? "vip1" : user.actualPaid <= 1000 ? "vip2" : "vip3"); return <VipTag level={lvl} />; })()}
+            </Flex>
             <StatusBadge status={userStatus(user)} />
           </Flex>
-          <div style={{ padding: "10px 0 12px", borderTop: `1px solid ${p.border}`, borderBottom: `1px solid ${p.border}` }}>
-            <UrlPill value={userClientSubscriptionUrl(user)} />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "12px 0" }}>
+          <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{userClientSubscriptionUrl(user)}</Text>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "12px 0", borderTop: `1px solid ${p.border}` }}>
             {[["到期", formatUserExpiry(user)], ["时长", durationLabels[user.duration] || "Unknown"], ["实付", formatMoney(user.actualPaid)], ["购买", formatDate(user.purchasedAt)]].map(([label, value]) => (
               <div key={label}>
                 <Text type="secondary" style={{ fontSize: 12, display: "block" }}>{label}</Text>
@@ -2153,6 +2155,7 @@ function UsersPage() {
     const bp = compact ? { size: "small", style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy } : { style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy };
     return (
       <Wrap>
+        {!compact && <Button {...bp} icon={<CopyOutlined />} onClick={() => copyText(userClientSubscriptionUrl(user)).then(() => notification.success({ message: "已复制", placement: "bottomRight" }))}>复制链接</Button>}
         <Button {...bp} icon={<RetweetOutlined />} onClick={() => setRenewing(user)}>续费</Button>
         <Button {...bp} icon={<EditOutlined />} onClick={() => setEditing(user)}>编辑</Button>
         <Button {...bp} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除用户", content: "确认删除该用户？", onOk: () => mutate(() => fetchJson(`/api/users/${user.id}`, { method: "DELETE" })) })}>删除</Button>
@@ -2163,7 +2166,8 @@ function UsersPage() {
   const pageSize = 20;
   const columns = [
     { title: "#", render: (_, __, i) => (page - 1) * pageSize + i + 1, width: 48 },
-    { title: "用户 ID", dataIndex: "userId", width: 120, render: (v, u) => { const lvl = u.level || (u.actualPaid <= 300 ? "vip1" : u.actualPaid <= 1000 ? "vip2" : "vip3"); return <><span style={{ fontWeight: 600 }}>{v}</span> <VipTag level={lvl} /></>; } },
+    { title: "用户 ID", dataIndex: "userId", width: 120, render: (v) => <span style={{ fontWeight: 600 }}>{v}</span> },
+    { title: "VIP", width: 72, render: (_, u) => { const lvl = u.level || (u.actualPaid <= 300 ? "vip1" : u.actualPaid <= 1000 ? "vip2" : "vip3"); return <VipTag level={lvl} />; } },
     { title: "状态", render: (_, u) => <StatusBadge status={userStatus(u)} />, width: 76 },
     { title: "到期时间", render: (_, u) => formatUserExpiry(u), width: 104 },
     { title: "时长", render: (_, u) => durationLabels[u.duration] || "Unknown", width: 72 },
