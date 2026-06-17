@@ -54,6 +54,7 @@ import {
   MenuOutlined,
   MoonOutlined,
   NodeIndexOutlined,
+  PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
   RetweetOutlined,
@@ -133,6 +134,7 @@ const NAV_DISPLAY = {
   "/urls":  { label: "Pool", icon: ApiOutlined },
   "/users": { label: "Users", icon: TeamOutlined },
   "/bills": { label: "Bills", icon: DollarOutlined },
+  "/emby":  { label: "Emby", icon: PlayCircleOutlined },
   "/subconverter": { label: "Subconverter", icon: NodeIndexOutlined }
 };
 
@@ -378,7 +380,7 @@ const STATUS_BADGE_MAP = {
 };
 
 function StatusBadge({ status }) {
-  return <Badge status={STATUS_BADGE_MAP[status] || "default"} text={statusLabels[status] || status || "未知"} />;
+  return <Badge status={STATUS_BADGE_MAP[status] || "default"} text={statusLabels[status] || status || "未知"} style={{ whiteSpace: "nowrap" }} />;
 }
 
 const VIP_COLORS = { vip3: "#eb2f96", vip2: "#faad14", vip1: "#13c2c2" };
@@ -1015,6 +1017,7 @@ function AppLayout() {
                       <Route path="/users" element={<UsersPage />} />
                       <Route path="/users/detail/:id" element={<UserDetailPage />} />
                       <Route path="/bills" element={<BillsPage />} />
+                      <Route path="/emby" element={<EmbyPage />} />
                       <Route path="/subconverter" element={<SubconverterPage />} />
                       <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>
@@ -1050,7 +1053,7 @@ function AppLayout() {
 
 function DataProvider({ children }) {
   const nav = useNavigate();
-  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], vendors: [], placeholderNodes: [], meta: null, loading: true, error: "" });
+  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], vendors: [], placeholderNodes: [], embyUsers: [], meta: null, loading: true, error: "" });
   const [busy, setBusy] = useState(null);
 
   const apis = useMemo(() => ({
@@ -1059,11 +1062,12 @@ function DataProvider({ children }) {
     bills: "/api/bills",
     vendors: "/api/vendors",
     placeholderNodes: "/api/placeholder-nodes",
+    embyUsers: "/api/emby-users",
     meta:  "/api/app-meta"
   }), []);
 
   const reload = useCallback(async (collections = null) => {
-    const keys = collections || ["subscriptions", "users", "bills", "vendors", "placeholderNodes", "meta"];
+    const keys = collections || ["subscriptions", "users", "bills", "vendors", "placeholderNodes", "embyUsers", "meta"];
     setState(s => ({ ...s, loading: !collections, error: "" }));
     try {
       const results = await Promise.all(keys.map(k => fetchJson(apis[k])));
@@ -1120,6 +1124,7 @@ function PoolDetailPage() {
   const { darkMode } = useTheme();
   const { subscriptions, users, reload, runAsync } = useData();
   const [cache, setCache] = useState(null);
+  const [refreshingCache, setRefreshingCache] = useState(false);
   const [refreshingTraffic, setRefreshingTraffic] = useState(false);
   const item = subscriptions.find(e => e.id === id);
   const boundUsers = item ? users.filter(u => u.subscriptionId === item.id) : [];
@@ -1156,32 +1161,20 @@ function PoolDetailPage() {
     } finally { setRefreshingTraffic(false); }
   }
 
+  async function refreshCache() {
+    setRefreshingCache(true);
+    try {
+      const result = await fetchJson(`/api/subscriptions/${item.id}/cache?force=true`).catch(e => ({ error: e.message }));
+      setCache(result);
+    } finally { setRefreshingCache(false); }
+  }
+
   const m = item.metrics || {};
-  const trafficPct = m.totalBytes ? Math.max(0, Math.min(100, Math.round((m.remainingBytes || 0) / m.totalBytes * 100))) : 0;
-  const usedPct = m.totalBytes ? Math.max(0, Math.min(100, Math.round((m.usedBytes || 0) / m.totalBytes * 100))) : 0;
-  const isNarrow = !screens.lg;
   const isMobile = !screens.md;
-  const singleCol = !screens.xl;
-  const borderColor = p.border;
-
-  const sectionStyle = { padding: isNarrow ? "22px 0" : "26px 0", borderTop: `1px solid ${borderColor}` };
-  const titleStyle = { margin: 0, fontSize: 18, fontWeight: 600 };
-  const keyStyle = { color: p.textMuted, fontSize: 14 };
-  const valueStyle = { fontSize: 14, fontWeight: 500 };
-
-  const renderRows = rows => (
-    <div style={{ display: "grid", gap: 15 }}>
-      {rows.map(row => (
-        <div key={row.label} style={{ display: "grid", gridTemplateColumns: "minmax(92px, 0.42fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
-          <Text style={keyStyle}>{row.label}</Text>
-          <div style={{ ...valueStyle, minWidth: 0, textAlign: isNarrow ? "left" : "right", wordBreak: "break-word" }}>{row.value}</div>
-        </div>
-      ))}
-    </div>
-  );
 
   const cacheText = cache?.error ? `Error: ${cache.error}` : (cache?.body || "(no YAML fetched)");
-  const cacheMeta = cache?.fetchedAt ? `${formatDateTime(cache.fetchedAt)} - ${formatBytes(cache.bodyLength || 0)}${cache.truncated ? " (truncated)" : ""}` : "";
+  const cacheSource = cache?.storage === "cached" ? "缓存" : cache?.storage === "live" ? "实时" : "";
+  const cacheMeta = cache?.fetchedAt ? `${cacheSource ? `[${cacheSource}] ` : ""}${formatDateTime(cache.fetchedAt)} - ${formatBytes(cache.bodyLength || 0)}${cache.truncated ? " (truncated)" : ""}` : "";
 
   return (
     <div className="detail-page" style={{ color: p.text }}>
@@ -1193,180 +1186,99 @@ function PoolDetailPage() {
             订阅池<br />详情
           </Title>
         </div>
-        {/* Circle stat tiles */}
-        {!isMobile && (
-          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-            <CircleStatTile pct={trafficPct} label="剩余" sublabel={m.totalBytes ? formatBytes(m.remainingBytes) : "-"} size={76} strokeWidth={7} />
-            <CircleStatTile pct={usedPct} label="已用" sublabel={m.usedBytes ? formatBytes(m.usedBytes) : "-"} size={76} strokeWidth={7} />
-            <CircleStatTile pct={Math.min(100, boundUsers.length * 10)} label="Users" sublabel={`${boundUsers.length} 已绑定`} size={76} strokeWidth={7} />
-          </div>
-        )}
       </div>
 
-      {/* 鈹€鈹€ Three-column main grid 鈹€鈹€ */}
-      <div style={{ display: "grid", gridTemplateColumns: singleCol ? "1fr" : "minmax(0,1fr) minmax(240px,300px) minmax(240px,280px)", gap: 20, alignItems: "start" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {/* Info card */}
+        <Card>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <Text strong style={{ fontSize: 16, fontWeight: 700 }}>订阅详情</Text>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button size="small" icon={<EditOutlined />} style={{ borderRadius: 6 }}>编辑</Button>
+              <Button size="small" icon={<ReloadOutlined />} loading={refreshingTraffic} onClick={refreshTraffic} style={{ borderRadius: 6 }}>刷新</Button>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: "50%", background: p.fill, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <ApiOutlined style={{ color: p.primary, fontSize: 20 }} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <Text strong style={{ fontSize: 15, display: "block" }}>{item.email || "无邮箱"}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{serviceProviderLabel(item)}</Text>
+            </div>
+          </div>
+          <CopyableUrlPill value={item.url} className="detail-url-copyable" />
+          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            {[
+              { label: "HTTP 状态", value: item.httpStatus || "-" },
+              { label: "最近检查", value: item.lastCheckedAt ? formatDate(item.lastCheckedAt) : "-" },
+              { label: "到期时间", value: m.expireAt ? formatDate(m.expireAt) : "-" },
+              { label: "剩余流量", value: m.totalBytes ? `${formatBytes(m.remainingBytes)} / ${formatBytes(m.totalBytes)}` : "-" },
+              { label: "已用流量", value: m.usedBytes ? formatBytes(m.usedBytes) : "-" },
+              { label: "绑定用户", value: `${boundUsers.length} users` }
+            ].map(r => (
+              <div key={r.label}>
+                <Text type="secondary" style={{ fontSize: 11, display: "block" }}>{r.label}</Text>
+                <Text strong style={{ fontSize: 13 }}>{r.value}</Text>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <Text type="secondary" style={{ fontSize: 11, display: "block", marginBottom: 3 }}>Status</Text>
+              <StatusBadge status={item.status} />
+            </div>
+            {item.note && (
+              <Text type="secondary" style={{ fontSize: 12, maxWidth: 160, textAlign: "right" }}>{item.note}</Text>
+            )}
+          </div>
+          {item.lastError && (
+            <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(239,68,68,0.07)" }}>
+              <Text type="danger" style={{ fontSize: 12 }}>{item.lastError}</Text>
+            </div>
+          )}
+        </Card>
 
-        {/* Column 1: Info card + bound users + YAML */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Info card 鈥?Customer Details style */}
-          <Card>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <Text strong style={{ fontSize: 16, fontWeight: 700 }}>订阅详情</Text>
-              <div style={{ display: "flex", gap: 8 }}>
-                <Button size="small" icon={<EditOutlined />} style={{ borderRadius: 6 }}>编辑</Button>
-                <Button size="small" icon={<ReloadOutlined />} loading={refreshingTraffic} onClick={refreshTraffic} style={{ borderRadius: 6 }}>刷新</Button>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 14 }}>
-              <div style={{ width: 44, height: 44, borderRadius: "50%", background: p.fill, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <ApiOutlined style={{ color: p.primary, fontSize: 20 }} />
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <Text strong style={{ fontSize: 15, display: "block" }}>{item.email || "无邮箱"}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>{serviceProviderLabel(item)}</Text>
-              </div>
-            </div>
-            <CopyableUrlPill value={item.url} className="detail-url-copyable" />
-            <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {[
-                { label: "HTTP 状态", value: item.httpStatus || "-" },
-                { label: "最近检查", value: item.lastCheckedAt ? formatDate(item.lastCheckedAt) : "-" },
-                { label: "到期时间", value: m.expireAt ? formatDate(m.expireAt) : "-" },
-                { label: "绑定用户", value: `${boundUsers.length} users` }
-              ].map(r => (
-                <div key={r.label}>
-                  <Text type="secondary" style={{ fontSize: 11, display: "block" }}>{r.label}</Text>
-                  <Text strong style={{ fontSize: 13 }}>{r.value}</Text>
+        {/* Bound users */}
+        <Card>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <Text strong style={{ fontSize: 16, fontWeight: 700 }}>绑定用户</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{boundUsers.length} 活跃用户</Text>
+          </div>
+          {boundUsers.length && isMobile ? (
+            <div className="detail-user-card-list">
+              {boundUsers.map(u => (
+                <div className="detail-user-card" key={u.id}>
+                  <div>
+                    <Text strong>{u.userId}</Text>
+                    <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 2 }}>{u.wechatName || "-"}</Text>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <Text style={{ display: "block", fontSize: 13 }}>{formatUserExpiry(u)}</Text>
+                    <StatusBadge status={userStatus(u)} />
+                  </div>
                 </div>
               ))}
             </div>
-            {/* Status + note */}
-            <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div>
-                <Text type="secondary" style={{ fontSize: 11, display: "block", marginBottom: 3 }}>Status</Text>
-                <StatusBadge status={item.status} />
-              </div>
-              {item.note && (
-                <Text type="secondary" style={{ fontSize: 12, maxWidth: 160, textAlign: "right" }}>{item.note}</Text>
-              )}
-            </div>
-            {item.lastError && (
-              <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(239,68,68,0.07)" }}>
-                <Text type="danger" style={{ fontSize: 12 }}>{item.lastError}</Text>
-              </div>
-            )}
-          </Card>
+          ) : boundUsers.length ? (
+            <Table className="plain-detail-table" size="small" rowKey="id" columns={boundUserTable.columns} components={boundUserTable.components} dataSource={boundUsers} pagination={false} scroll={{ x: Math.max(620, boundUserTable.scrollX) }} />
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无绑定用户。" />
+          )}
+        </Card>
 
-          {/* Bound users */}
-          <Card>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <Text strong style={{ fontSize: 16, fontWeight: 700 }}>绑定用户</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{boundUsers.length} 活跃用户</Text>
-            </div>
-            {boundUsers.length && isMobile ? (
-              <div className="detail-user-card-list">
-                {boundUsers.map(u => (
-                  <div className="detail-user-card" key={u.id}>
-                    <div>
-                      <Text strong>{u.userId}</Text>
-                      <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 2 }}>{u.wechatName || "-"}</Text>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <Text style={{ display: "block", fontSize: 13 }}>{formatUserExpiry(u)}</Text>
-                      <StatusBadge status={userStatus(u)} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : boundUsers.length ? (
-              <Table className="plain-detail-table" size="small" rowKey="id" columns={boundUserTable.columns} components={boundUserTable.components} dataSource={boundUsers} pagination={false} scroll={{ x: Math.max(620, boundUserTable.scrollX) }} />
-            ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无绑定用户。" />
-            )}
-          </Card>
-        </div>
-
-        {/* Column 2: Green traffic card (Transaction style) */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Green traffic card */}
-          <div style={{ background: p.primary, borderRadius: 16, padding: "20px", color: "#fff", boxShadow: "0 4px 20px rgba(13,151,98,0.25)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-              <div>
-                <div style={{ fontSize: 28, fontWeight: 800, lineHeight: 1, marginBottom: 4 }}>
-                  {m.totalBytes ? formatBytes(m.remainingBytes) : "-"}
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.8 }}>剩余流量</div>
-              </div>
-              <div style={{ background: "rgba(255,255,255,0.2)", borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
-                {trafficPct}%
-              </div>
-            </div>
-            <div style={{ marginTop: 18, fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
-              总计 {m.totalBytes ? formatBytes(m.totalBytes) : "-"}
-            </div>
-            {/* Progress bar on green */}
-            <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${trafficPct}%`, borderRadius: 999, background: "#fff", opacity: 0.9 }} />
-            </div>
-          </div>
-
-          {/* Traffic breakdown rows */}
-          {[
-            { label: "已用流量", bytes: m.usedBytes, icon: "↑" },
-            { label: "总流量", bytes: m.totalBytes, icon: "○" }
-          ].map(row => (
-            <Card key={row.label} pad="14px 16px">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 8, background: p.fill, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <span style={{ color: p.primary, fontWeight: 700 }}>{row.icon}</span>
-                  </div>
-                  <div>
-                    <Text strong style={{ fontSize: 14, display: "block" }}>
-                      {row.bytes != null ? formatBytes(row.bytes) : "-"}
-                    </Text>
-                    <Text type="secondary" style={{ fontSize: 11 }}>{row.label}</Text>
-                  </div>
-                </div>
-                <span style={{ fontSize: 16, color: p.primary, fontWeight: 700 }}>✓</span>
-              </div>
-            </Card>
-          ))}
-
-          {/* Expire info card */}
-          <Card pad="14px 16px">
-            <Text type="secondary" style={{ fontSize: 11, display: "block", marginBottom: 4 }}>到期时间</Text>
-            <Text strong style={{ fontSize: 16, display: "block" }}>
-              {m.expireAt ? formatDate(m.expireAt) : "-"}
-            </Text>
-            <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: "block" }}>
-              ID：{item.id}
-            </Text>
-          </Card>
-        </div>
-
-        {/* Column 3: YAML viewer */}
-        {!singleCol && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-            <div style={{ marginBottom: 12 }}>
+        {/* YAML viewer */}
+        <Card>
+          <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
               <Text strong style={{ fontSize: 16, fontWeight: 700 }}>实时配置</Text>
               {cacheMeta && <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>{cacheMeta}</Text>}
             </div>
-            <CodeViewer code={cacheText} meta="" language="YAML" />
-          </div>
-        )}
-      </div>
-
-      {/* YAML for single-col */}
-      {singleCol && (
-        <div style={{ marginTop: 20 }}>
-          <div style={{ marginBottom: 12 }}>
-            <Text strong style={{ fontSize: 16, fontWeight: 700 }}>实时配置</Text>
-            {cacheMeta && <Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 2 }}>{cacheMeta}</Text>}
+            <Button size="small" icon={<ReloadOutlined />} loading={refreshingCache} onClick={refreshCache} style={{ borderRadius: 6 }}>刷新</Button>
           </div>
           <CodeViewer code={cacheText} meta="" language="YAML" />
-        </div>
-      )}
+        </Card>
+      </div>
     </div>
   );
 }
@@ -2011,7 +1923,7 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
             <Form.Item name="expiresAt" label="到期日期" rules={duration === "lifetime" ? [] : [{ required: true, message: "请选择到期日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
               <DatePicker {...inModalPickerProps} style={{ width: "100%" }} disabled={duration === "lifetime"} placeholder={duration === "lifetime" ? "永久有效" : undefined} />
             </Form.Item>
-            <Form.Item name="actualPaid" label="实付金额" rules={[{ required: true, message: "请输入实付金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <Form.Item name="actualPaid" label="总消费金额" rules={[{ required: true, message: "请输入总消费金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
               <Input type="number" min="0" step="0.01" placeholder="0.00" />
             </Form.Item>
           </Flex>
@@ -2102,7 +2014,7 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
           <Form.Item name="purchasedAt" label="续费日期" rules={[{ required: true, message: "请选择续费日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
             <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item name="actualPaid" label="实付金额" rules={[{ required: true, message: "请输入实付金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+          <Form.Item name="actualPaid" label="总消费金额" rules={[{ required: true, message: "请输入总消费金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
             <Input type="number" min="0" step="0.01" placeholder="0.00" />
           </Form.Item>
         </Flex>
@@ -2131,7 +2043,7 @@ function UserDetailPage() {
   const navigate = useNavigate();
   const p = usePalette();
   const screens = Grid.useBreakpoint();
-  const { users, subscriptions } = useData();
+  const { users, subscriptions, bills } = useData();
 
   const user = users.find(u => u.id === id);
   if (!user) return <PageSection title="用户详情"><Empty description="未找到该用户。" /></PageSection>;
@@ -2142,6 +2054,15 @@ function UserDetailPage() {
 
   const keyStyle = { color: p.textMuted, fontSize: 13 };
   const valueStyle = { fontSize: 13, fontWeight: 500 };
+
+  const userBills = bills.filter(b => b.userId === user.id).slice().sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt));
+  const billCols = [
+    { title: "时间", dataIndex: "occurredAt", render: v => formatDateTime(v), width: 160 },
+    { title: "类型", render: (_, b) => billTypeLabels[b.type] || b.type, width: 80 },
+    { title: "金额", render: (_, b) => formatMoney(b.amount), width: 100 },
+    { title: "时长", render: (_, b) => durationLabels[b.duration] || b.duration || "-", width: 100 },
+    { title: "状态", render: (_, b) => b.reversedAt ? "已冲销" : "有效", width: 80 }
+  ];
 
   const fallbackCols = [
     { title: "时间", dataIndex: "at", render: v => formatDateTime(v), width: 160 },
@@ -2161,13 +2082,9 @@ function UserDetailPage() {
             用户详情
           </Title>
         </div>
-        <Flex gap={8} align="center">
-          <VipTag level={lvl} />
-          <StatusBadge status={userStatus(user)} />
-        </Flex>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20, alignItems: "start" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         <Card>
           <Text strong style={{ fontSize: 16, fontWeight: 700, display: "block", marginBottom: 16 }}>基本信息</Text>
           <div style={{ display: "grid", gap: 12 }}>
@@ -2175,10 +2092,12 @@ function UserDetailPage() {
               ["用户 ID", user.userId || "-"],
               ["微信名", user.wechatName || "-"],
               ["iMessage", user.imessageId || "-"],
+              ["VIP 等级", <VipTag key="vip" level={lvl} />],
+              ["状态", <StatusBadge key="status" status={userStatus(user)} />],
               ["到期时间", formatUserExpiry(user)],
               ["时长", durationLabels[user.duration] || "Unknown"],
               ["购买日期", formatDate(user.purchasedAt)],
-              ["实付金额", formatMoney(user.actualPaid)],
+              ["总消费金额", formatMoney(user.actualPaid)],
               ["客户端链接", <UrlText key="url" value={userClientSubscriptionUrl(user)} />]
             ].map(([label, value]) => (
               <div key={label} style={{ display: "grid", gridTemplateColumns: "100px minmax(0,1fr)", gap: 12, alignItems: "start" }}>
@@ -2212,23 +2131,39 @@ function UserDetailPage() {
             <Empty description="未绑定池 URL" />
           )}
         </Card>
-      </div>
 
-      <Card style={{ marginTop: 20 }}>
-        <Text strong style={{ fontSize: 16, fontWeight: 700, display: "block", marginBottom: 16 }}>Fallback 切换日志</Text>
-        {logs.length > 0 ? (
-          <Table
-            size="small"
-            rowKey="id"
-            columns={fallbackCols}
-            dataSource={logs}
-            pagination={logs.length > 10 ? { pageSize: 10 } : false}
-            scroll={{ x: 660 }}
-          />
-        ) : (
-          <Empty description="暂无切换记录" />
-        )}
-      </Card>
+        <Card>
+          <Text strong style={{ fontSize: 16, fontWeight: 700, display: "block", marginBottom: 16 }}>订单记录</Text>
+          {userBills.length > 0 ? (
+            <Table
+              size="small"
+              rowKey="id"
+              columns={billCols}
+              dataSource={userBills}
+              pagination={userBills.length > 10 ? { pageSize: 10 } : false}
+              scroll={{ x: 520 }}
+            />
+          ) : (
+            <Empty description="暂无订单记录" />
+          )}
+        </Card>
+
+        <Card>
+          <Text strong style={{ fontSize: 16, fontWeight: 700, display: "block", marginBottom: 16 }}>Fallback 切换日志</Text>
+          {logs.length > 0 ? (
+            <Table
+              size="small"
+              rowKey="id"
+              columns={fallbackCols}
+              dataSource={logs}
+              pagination={logs.length > 10 ? { pageSize: 10 } : false}
+              scroll={{ x: 660 }}
+            />
+          ) : (
+            <Empty description="暂无切换记录" />
+          )}
+        </Card>
+      </div>
     </div>
   );
 }
@@ -2249,7 +2184,7 @@ function UserCards({ users: list, actions }) {
           </Flex>
           <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{userClientSubscriptionUrl(user)}</Text>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "12px 0", borderTop: `1px solid ${p.border}` }}>
-            {[["到期", formatUserExpiry(user)], ["时长", durationLabels[user.duration] || "Unknown"], ["实付", formatMoney(user.actualPaid)], ["购买", formatDate(user.purchasedAt)]].map(([label, value]) => (
+            {[["到期", formatUserExpiry(user)], ["时长", durationLabels[user.duration] || "Unknown"], ["消费", formatMoney(user.actualPaid)], ["购买", formatDate(user.purchasedAt)]].map(([label, value]) => (
               <div key={label}>
                 <Text type="secondary" style={{ fontSize: 12, display: "block" }}>{label}</Text>
                 <Text strong style={{ fontSize: 13 }}>{value}</Text>
@@ -2311,7 +2246,7 @@ function UsersPage() {
     { title: "状态", render: (_, u) => <StatusBadge status={userStatus(u)} />, width: 76 },
     { title: "到期时间", render: (_, u) => formatUserExpiry(u), width: 104 },
     { title: "时长", render: (_, u) => durationLabels[u.duration] || "Unknown", width: 72 },
-    { title: "实付金额", render: (_, u) => formatMoney(u.actualPaid), width: 88 },
+    { title: "总消费金额", render: (_, u) => formatMoney(u.actualPaid), width: 88 },
     { title: "客户端链接", render: (_, u) => <UrlText value={userClientSubscriptionUrl(u)} />, width: 560 },
     { title: "绑定邮箱", render: (_, u) => u.subscription?.email || "", width: 220 },
     { title: "购买日期", render: (_, u) => formatDate(u.purchasedAt), width: 104 },
@@ -2480,6 +2415,185 @@ function PlaceholderTagSelect() {
         <Select placeholder="额外占位节点标签（选填）" allowClear options={options} {...inModalSelectProps} />
       </Form.Item>
     </Flex>
+  );
+}
+
+function EmbyUserForm({ item, onClose, onSaved }) {
+  const { runAsync } = useData();
+  const [form] = Form.useForm();
+
+  async function submit(values) {
+    await runAsync(async () => {
+      const payload = {
+        customerName: values.customerName,
+        serverUrl: values.serverUrl,
+        username: values.username,
+        password: values.password,
+        purchasedAt: values.purchasedAt ? values.purchasedAt.format("YYYY-MM-DD") : null,
+        expiresAt: values.expiresAt ? values.expiresAt.format("YYYY-MM-DD") : null,
+        cost: values.cost,
+        actualPaid: values.actualPaid,
+        note: values.note || ""
+      };
+      if (item.id) {
+        await putJson(`/api/emby-users/${item.id}`, payload);
+      } else {
+        await postJson("/api/emby-users", payload);
+      }
+      onSaved();
+    }, item.id ? "正在保存..." : "正在创建...");
+  }
+
+  return (
+    <FormModal title={item.id ? "编辑 Emby 用户" : "新建 Emby 用户"} onCancel={onClose} open width={600}>
+      <Form form={form} layout="vertical" initialValues={{
+        customerName: item.customerName || "",
+        serverUrl: item.serverUrl || "",
+        username: item.username || "",
+        password: item.password || "",
+        purchasedAt: item.purchasedAt ? dayjs(item.purchasedAt) : dayjs(),
+        expiresAt: item.expiresAt ? dayjs(item.expiresAt) : null,
+        cost: item.cost ?? "",
+        actualPaid: item.actualPaid ?? "",
+        note: item.note || ""
+      }} onFinish={submit}>
+        <Flex wrap gap={12}>
+          <Form.Item name="customerName" label="客户名称" rules={[{ required: true, message: "请输入客户名称" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="serverUrl" label="服务器地址" rules={[{ required: true, message: "请输入服务器地址" }]} style={{ marginBottom: 0, flex: "1 1 220px" }}>
+            <Input placeholder="http://example.com:8096" />
+          </Form.Item>
+        </Flex>
+        <Flex wrap gap={12} style={{ marginTop: 16 }}>
+          <Form.Item name="username" label="用户名" rules={[{ required: true, message: "请输入用户名" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="password" label="密码" rules={[{ required: true, message: "请输入密码" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <Input.Password />
+          </Form.Item>
+        </Flex>
+        <Flex wrap gap={12} style={{ marginTop: 16 }}>
+          <Form.Item name="purchasedAt" label="购买日期" style={{ marginBottom: 0, flex: "1 1 140px" }}>
+            <DatePicker style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="expiresAt" label="到期时间" style={{ marginBottom: 0, flex: "1 1 140px" }}>
+            <DatePicker style={{ width: "100%" }} />
+          </Form.Item>
+        </Flex>
+        <Flex wrap gap={12} style={{ marginTop: 16 }}>
+          <Form.Item name="cost" label="采购成本" style={{ marginBottom: 0, flex: "1 1 120px" }}>
+            <Input type="number" min={0} step={0.01} />
+          </Form.Item>
+          <Form.Item name="actualPaid" label="客户付款" style={{ marginBottom: 0, flex: "1 1 120px" }}>
+            <Input type="number" min={0} step={0.01} />
+          </Form.Item>
+        </Flex>
+        <Form.Item name="note" label="备注" style={{ marginTop: 16, marginBottom: 0 }}>
+          <Input.TextArea rows={2} />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" block style={{ marginTop: 20 }}>{item.id ? "保存" : "创建"}</Button>
+      </Form>
+    </FormModal>
+  );
+}
+
+function EmbyPage() {
+  const { embyUsers, reload, runAsync, busy } = useData();
+  const { notification } = AntApp.useApp();
+  const [keyword, setKeyword] = useState("");
+  const [editing, setEditing] = useState(null);
+  const mobile = useResponsiveList();
+
+  const visible = embyUsers.filter(u => {
+    const hay = `${u.customerName || ""} ${u.serverUrl || ""} ${u.username || ""} ${u.note || ""}`.toLowerCase();
+    return hay.includes(keyword.toLowerCase());
+  });
+
+  async function mutate(run) {
+    await runAsync(async () => {
+      try { await run(); await reload(["embyUsers"]); }
+      catch (e) { notification.error({ message: "操作失败", description: e.message, placement: "bottomRight" }); }
+    }, "Processing...");
+  }
+
+  function embyUserStatus(u) {
+    if (!u.expiresAt) return "ok";
+    const diff = dayjs(u.expiresAt).diff(dayjs(), "day");
+    if (diff < 0) return "expired";
+    if (diff < 7) return "warning";
+    return "ok";
+  }
+
+  const actions = (item, compact = false) => {
+    const Wrap = compact ? InlineActions : CardActions;
+    const bp = compact ? { size: "small", style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy } : { style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy };
+    return (
+      <Wrap>
+        <Button {...bp} icon={<EditOutlined />} onClick={() => setEditing(item)}>编辑</Button>
+        <Button {...bp} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除 Emby 用户", content: `确认删除「${item.customerName}」？`, onOk: () => mutate(() => fetchJson(`/api/emby-users/${item.id}`, { method: "DELETE" })) })}>删除</Button>
+      </Wrap>
+    );
+  };
+
+  const columns = [
+    { title: "#", render: (_, __, i) => i + 1, width: 48 },
+    { title: "客户", dataIndex: "customerName", width: 120, render: v => <Text strong style={{ fontWeight: 600 }}>{v}</Text> },
+    { title: "服务器", dataIndex: "serverUrl", ellipsis: true, width: 200 },
+    { title: "用户名", dataIndex: "username", width: 120 },
+    { title: "到期时间", render: (_, u) => u.expiresAt ? formatDate(u.expiresAt) : "-", width: 104 },
+    { title: "客户付款", render: (_, u) => formatMoney(u.actualPaid), width: 88 },
+    { title: "状态", render: (_, u) => <StatusBadge status={embyUserStatus(u)} />, width: 80 },
+    { title: "操作", render: (_, u) => actions(u, true), width: 150 }
+  ].map(col => ({ ...col, onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }), onCell: () => ({ style: { whiteSpace: "nowrap" } }) }));
+
+  const embyTable = useResizableCols(columns, "emby-users");
+
+  return (
+    <ManagementSection
+      title="Emby 服务"
+      actions={
+        <Flex gap={8} align="center" wrap>
+          <Input prefix={<SearchOutlined />} placeholder="搜索..." allowClear value={keyword} onChange={e => setKeyword(e.target.value)} style={{ width: 180 }} />
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>添加</Button>
+        </Flex>
+      }
+    >
+      {mobile
+        ? <Flex vertical gap={0}>
+            {!visible.length && <Empty description="暂无 Emby 用户。" />}
+            {visible.map(item => (
+              <div key={item.id} style={{ padding: 16, borderBottom: "1px solid var(--ant-color-border-secondary)" }}>
+                <Flex justify="space-between" gap={12} align="center" style={{ marginBottom: 4 }}>
+                  <Text strong style={{ fontSize: 15 }}>{item.customerName}</Text>
+                  <StatusBadge status={embyUserStatus(item)} />
+                </Flex>
+                <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.serverUrl}</Text>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", padding: "12px 0", borderTop: "1px solid var(--ant-color-border-secondary)" }}>
+                  {[["用户名", item.username], ["到期", item.expiresAt ? formatDate(item.expiresAt) : "-"], ["付款", formatMoney(item.actualPaid)], ["购买", formatDate(item.purchasedAt)]].map(([label, value]) => (
+                    <div key={label}>
+                      <Text type="secondary" style={{ fontSize: 12, display: "block" }}>{label}</Text>
+                      <Text strong style={{ fontSize: 13 }}>{value}</Text>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ paddingTop: 2 }}>{actions(item)}</div>
+              </div>
+            ))}
+          </Flex>
+        : <Table
+            className="plain-detail-table"
+            size="small"
+            rowKey="id"
+            columns={embyTable.columns}
+            components={embyTable.components}
+            dataSource={visible}
+            pagination={visible.length > 20 ? { pageSize: 20 } : false}
+            scroll={{ x: Math.max(910, embyTable.scrollX) }}
+          />
+      }
+      {editing && <EmbyUserForm item={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["embyUsers"]); }} />}
+    </ManagementSection>
   );
 }
 

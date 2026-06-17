@@ -1460,6 +1460,9 @@ html, body {
   font-weight: 700;
   color: var(--ant-color-text);
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .console-app-runtime,

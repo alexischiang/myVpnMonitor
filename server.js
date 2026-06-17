@@ -33,6 +33,7 @@ const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
 const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
 const VENDORS_FILE = process.env.VENDORS_FILE || path.join(DATA_DIR, "vendors.json");
 const PLACEHOLDER_NODES_FILE = process.env.PLACEHOLDER_NODES_FILE || path.join(DATA_DIR, "placeholderNodes.json");
+const EMBY_USERS_FILE = process.env.EMBY_USERS_FILE || path.join(DATA_DIR, "embyUsers.json");
 
 const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
 const ALERT_STATE_FILE = process.env.ALERT_STATE_FILE || path.join(DATA_DIR, "alert-state.json");
@@ -131,6 +132,7 @@ let users = [];
 let bills = [];
 let vendors = [];
 let placeholderNodes = [];
+let embyUsers = [];
 const dataStore = createDataStore({
   dataDir: DATA_DIR,
   databaseUrl: DATABASE_URL,
@@ -139,7 +141,8 @@ const dataStore = createDataStore({
     users: USERS_FILE,
     bills: BILLS_FILE,
     vendors: VENDORS_FILE,
-    placeholderNodes: PLACEHOLDER_NODES_FILE
+    placeholderNodes: PLACEHOLDER_NODES_FILE,
+    embyUsers: EMBY_USERS_FILE
   }
 });
 
@@ -158,6 +161,7 @@ async function ensureDataFile() {
   bills = state.bills;
   vendors = state.vendors || [];
   placeholderNodes = state.placeholderNodes || [];
+  embyUsers = state.embyUsers || [];
 
   if (state.missing.subscriptions) await saveData();
   if (state.missing.users) await saveUsers();
@@ -188,6 +192,7 @@ async function loadLatestData({ force = false } = {}) {
     bills = state.bills;
     vendors = state.vendors || [];
     placeholderNodes = state.placeholderNodes || [];
+    embyUsers = state.embyUsers || [];
     lastLoadedAt = Date.now();
   }).finally(() => { _loadingPromise = null; });
   return _loadingPromise;
@@ -211,6 +216,10 @@ async function saveVendors() {
 
 async function savePlaceholderNodes() {
   await dataStore.saveCollection("placeholderNodes", placeholderNodes);
+}
+
+async function saveEmbyUsers() {
+  await dataStore.saveCollection("embyUsers", embyUsers);
 }
 
 
@@ -2260,6 +2269,7 @@ async function handleRelaySubscription(req, res, token) {
 async function refreshAll() {
   for (const item of subscriptions) {
     await refreshSubscription(item);
+    await refreshPoolConfigCache(item);
   }
   await saveData();
   await runLowTrafficCheck();
@@ -2780,6 +2790,77 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/emby-users" && req.method === "GET") {
+    sendJson(res, 200, embyUsers);
+    return;
+  }
+
+  if (pathname === "/api/emby-users" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const customerName = (payload.customerName || "").trim();
+      const serverUrl = (payload.serverUrl || "").trim();
+      const username = (payload.username || "").trim();
+      const password = (payload.password || "").trim();
+      if (!customerName) { sendJson(res, 400, { error: "客户名称不能为空。" }); return; }
+      if (!serverUrl) { sendJson(res, 400, { error: "服务器地址不能为空。" }); return; }
+      if (!username) { sendJson(res, 400, { error: "用户名不能为空。" }); return; }
+      if (!password) { sendJson(res, 400, { error: "密码不能为空。" }); return; }
+      const item = {
+        id: crypto.randomUUID(),
+        customerName,
+        serverUrl,
+        username,
+        password,
+        expiresAt: payload.expiresAt || null,
+        purchasedAt: payload.purchasedAt || new Date().toISOString().slice(0, 10),
+        cost: Number(payload.cost) || 0,
+        actualPaid: Number(payload.actualPaid) || 0,
+        note: (payload.note || "").trim(),
+        createdAt: new Date().toISOString()
+      };
+      embyUsers.push(item);
+      await saveEmbyUsers();
+      sendJson(res, 201, item);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const embyUserMatch = pathname.match(/^\/api\/emby-users\/([^/]+)$/);
+  if (embyUserMatch) {
+    const item = embyUsers.find(e => e.id === embyUserMatch[1]);
+    if (!item) { sendJson(res, 404, { error: "没有找到该 Emby 用户。" }); return; }
+    if (req.method === "GET") {
+      sendJson(res, 200, item);
+      return;
+    }
+    if (req.method === "PUT") {
+      const payload = await readJson(req);
+      if (payload.customerName !== undefined) item.customerName = (payload.customerName || "").trim();
+      if (payload.serverUrl !== undefined) item.serverUrl = (payload.serverUrl || "").trim();
+      if (payload.username !== undefined) item.username = (payload.username || "").trim();
+      if (payload.password !== undefined) item.password = (payload.password || "").trim();
+      if (payload.expiresAt !== undefined) item.expiresAt = payload.expiresAt;
+      if (payload.purchasedAt !== undefined) item.purchasedAt = payload.purchasedAt;
+      if (payload.cost !== undefined) item.cost = Number(payload.cost) || 0;
+      if (payload.actualPaid !== undefined) item.actualPaid = Number(payload.actualPaid) || 0;
+      if (payload.note !== undefined) item.note = (payload.note || "").trim();
+      await saveEmbyUsers();
+      sendJson(res, 200, item);
+      return;
+    }
+    if (req.method === "DELETE") {
+      embyUsers = embyUsers.filter(e => e.id !== embyUserMatch[1]);
+      await saveEmbyUsers();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    sendJson(res, 405, { error: "Method not allowed." });
+    return;
+  }
+
   const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew))?$/);
   if (userMatch) {
     const id = userMatch[1];
@@ -2911,22 +2992,28 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname.endsWith("/cache") && req.method === "GET") {
+    const url = new URL(`http://x${req.url}`);
+    const force = url.searchParams.get("force") === "true";
+
     try {
-      const liveConfig = await fetchLivePoolConfig(item);
+      const wasFresh = !force && cacheIsFresh(item.cachedConfig);
+      const cache = await refreshPoolConfigCache(item, { force });
+      if (!wasFresh) await saveData();
+      const body = await readPoolCachedBody(item);
       sendJson(res, 200, {
-        status: liveConfig.status || null,
-        client: liveConfig.client || "",
-        score: liveConfig.score || null,
-        attempts: liveConfig.attempts || [],
-        storage: "live",
+        status: cache.status || null,
+        client: cache.client || "",
+        score: cache.score || null,
+        attempts: cache.attempts || [],
+        storage: wasFresh ? "cached" : "live",
         bodyFile: "",
-        fetchedAt: liveConfig.fetchedAt || null,
-        contentType: liveConfig.contentType || "",
-        subscriptionUserinfo: liveConfig.subscriptionUserinfo || "",
-        error: null,
-        body: liveConfig.body.slice(0, 20000),
-        bodyLength: liveConfig.bodyLength || liveConfig.body.length,
-        truncated: liveConfig.body.length > 20000
+        fetchedAt: cache.fetchedAt || null,
+        contentType: cache.contentType || "",
+        subscriptionUserinfo: cache.subscriptionUserinfo || "",
+        error: cache.error || null,
+        body: body.slice(0, 20000),
+        bodyLength: cache.bodyLength || body.length,
+        truncated: body.length > 20000
       });
     } catch (error) {
       sendJson(res, 502, {
