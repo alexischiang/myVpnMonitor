@@ -41,7 +41,7 @@ const DATABASE_URL = process.env.DATABASE_URL || "";
 const DIST_DIR = path.join(__dirname, "dist");
 const PUBLIC_DIR = fsSync.existsSync(path.join(DIST_DIR, "index.html")) ? DIST_DIR : path.join(__dirname, "public");
 const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "build-meta.json");
-const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30 * 60 * 1000);
+const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 2 * 60 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 50 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
 const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 10);
@@ -2388,13 +2388,45 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/health" && req.method === "GET") {
-    await loadLatestData();
+    const services = {};
+
+    // Database check
+    try {
+      if (dataStore.kind === "postgres" && dataStore.pool) {
+        const t0 = Date.now();
+        await dataStore.pool.query("SELECT 1");
+        services.database = { status: "ok", latency: Date.now() - t0 };
+      } else {
+        services.database = { status: "ok", kind: "json" };
+      }
+    } catch (e) {
+      services.database = { status: "error", message: e.message };
+    }
+
+    // Subconverter check
+    if (SUB_CONVERTER_URL) {
+      try {
+        const t0 = Date.now();
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5000);
+        const resp = await fetch(`${SUB_CONVERTER_URL}/version`, { signal: ctrl.signal });
+        clearTimeout(timer);
+        services.subconverter = { status: resp.ok ? "ok" : "error", latency: Date.now() - t0, url: SUB_CONVERTER_URL };
+      } catch (e) {
+        services.subconverter = { status: "error", message: e.message, url: SUB_CONVERTER_URL };
+      }
+    } else {
+      services.subconverter = { status: "unconfigured" };
+    }
+
+    const allOk = Object.values(services).every(s => s.status === "ok" || s.status === "unconfigured");
     sendJson(res, 200, {
-      ok: true,
+      ok: allOk,
       dataStore: dataStore.kind,
       subscriptions: subscriptions.length,
       users: users.length,
-      refreshedEveryMs: REFRESH_INTERVAL_MS
+      refreshedEveryMs: REFRESH_INTERVAL_MS,
+      services
     });
     return;
   }
@@ -2475,7 +2507,8 @@ async function handleApi(req, res, pathname) {
       };
       const normalized = normalizeSubscription(payload, item);
       subscriptions.unshift(normalized);
-      await refreshSubscription(normalized);
+      // 不在此处同步抓取订阅指标：抓取需请求外部链接、可能耗时数十秒，会阻塞创建请求。
+      // 改为保存后由前端显式调用 /refresh 实时拉取流量/到期信息。
       await saveData();
       sendJson(res, 201, publicItem(normalized));
     } catch (error) {
@@ -2909,7 +2942,15 @@ async function handleApi(req, res, pathname) {
       const payload = await readJson(req);
       const previousUrl = item.url;
       Object.assign(item, normalizeSubscription(payload, item));
-      if (item.url !== previousUrl) await refreshSubscription(item);
+      if (item.url !== previousUrl) {
+        // 订阅链接已变更：旧 metrics/状态属于上一个链接，清空避免展示陈旧信息。
+        // 实时重新拉取由前端保存后显式调用 /refresh 完成，避免保存请求长时间阻塞。
+        item.metrics = null;
+        item.lastCheckedAt = null;
+        item.lastError = null;
+        item.httpStatus = null;
+        item.lastRefreshResults = null;
+      }
       await saveData();
       sendJson(res, 200, publicItem(item));
     } catch (error) {
@@ -3033,5 +3074,8 @@ module.exports = Object.assign(requestHandler, {
   calculateExpiry,
   extractClashConfigBody,
   statusFor,
-  toBytes
+  toBytes,
+  poolMetricUnavailableReason,
+  fallbackCandidateRank,
+  startOfUtcDate
 });

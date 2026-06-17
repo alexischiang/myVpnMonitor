@@ -102,11 +102,22 @@ class PostgresDataStore {
     try {
       await client.query("BEGIN");
       await client.query("DELETE FROM app_records WHERE collection = $1", [collection]);
-      for (const [index, row] of rows.entries()) {
+      if (rows.length) {
+        // 批量写入：用 UNNEST 一次性插入所有行，避免逐行 await 造成 N 次远端往返
+        // （Neon 等远端 PG 单次往返延迟较高，逐行写 18 行曾导致保存耗时 30s+）。
+        const ids = [];
+        const positions = [];
+        const datas = [];
+        rows.forEach((row, index) => {
+          ids.push(row.id || `${collection}-${index}`);
+          positions.push(index);
+          datas.push(JSON.stringify(row));
+        });
         await client.query(
           `INSERT INTO app_records (collection, id, position, data, updated_at)
-           VALUES ($1, $2, $3, $4::jsonb, NOW())`,
-          [collection, row.id || `${collection}-${index}`, index, JSON.stringify(row)]
+           SELECT $1, u.id, u.position, u.data::jsonb, NOW()
+           FROM UNNEST($2::text[], $3::int[], $4::text[]) AS u(id, position, data)`,
+          [collection, ids, positions, datas]
         );
       }
       await client.query("COMMIT");

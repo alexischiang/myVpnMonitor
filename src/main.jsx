@@ -40,6 +40,8 @@ import {
 import {
   ApiOutlined,
   BellOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
   CloseOutlined,
   DashboardOutlined,
   CheckOutlined,
@@ -1011,6 +1013,7 @@ function AppLayout() {
                       <Route path="/urls" element={<UrlPoolPage />} />
                       <Route path="/urls/detail/:id" element={<PoolDetailPage />} />
                       <Route path="/users" element={<UsersPage />} />
+                      <Route path="/users/detail/:id" element={<UserDetailPage />} />
                       <Route path="/bills" element={<BillsPage />} />
                       <Route path="/subconverter" element={<SubconverterPage />} />
                       <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -1377,11 +1380,26 @@ function SubscriptionForm({ item, onClose, onSaved }) {
   const [addingVendor, setAddingVendor] = useState(false);
 
   async function submit(values) {
+    const editingExisting = !!item.id;
+    const urlChanged = editingExisting && String(values.url || "").trim() !== String(item.url || "").trim();
+    let savedId = item.id;
     await runAsync(async () => {
-      if (item.id) await fetchJson(`/api/subscriptions/${item.id}`, { method: "PUT", body: JSON.stringify(values) });
-      else await postJson("/api/subscriptions", values);
+      if (editingExisting) {
+        const updated = await fetchJson(`/api/subscriptions/${item.id}`, { method: "PUT", body: JSON.stringify(values) });
+        if (updated?.id) savedId = updated.id;
+      } else {
+        const created = await postJson("/api/subscriptions", values);
+        if (created?.id) savedId = created.id;
+      }
       await onSaved();
-    }, item.id ? "Updating URL pool..." : "Creating URL pool...");
+    }, editingExisting ? "Saving URL pool..." : "Creating URL pool...");
+    // 编辑了订阅链接、或新建订阅：保存后实时拉取该 URL 的流量/到期信息并刷新列表。
+    if ((urlChanged || !editingExisting) && savedId) {
+      await runAsync(async () => {
+        await postJson(`/api/subscriptions/${savedId}/refresh`);
+        await reload(["subscriptions"]);
+      }, "正在刷新订阅数据...");
+    }
   }
 
   async function handleAddVendor() {
@@ -1703,6 +1721,17 @@ function UrlPoolPage() {
       return tb - ta;
     });
 
+  const lastRefreshedAt = useMemo(() => {
+    let latest = 0;
+    for (const item of subscriptions) {
+      if (item.lastCheckedAt) {
+        const t = new Date(item.lastCheckedAt).getTime();
+        if (t > latest) latest = t;
+      }
+    }
+    return latest ? formatDateTime(new Date(latest).toISOString()) : null;
+  }, [subscriptions]);
+
   async function action(run) {
     await runAsync(async () => {
       try { await run(); await reload(["subscriptions"]); }
@@ -1726,6 +1755,7 @@ function UrlPoolPage() {
   const columns = [
     { title: "#", render: (_, __, i) => i + 1, width: 64 },
     { title: "邮箱", render: (_, item) => item.email || item.name || "未命名订阅", width: 160 },
+    { title: "供应商", render: (_, item) => serviceProviderLabel(item), width: 110 },
     { title: "URL", dataIndex: "url", render: v => <UrlText value={v} />, width: 320 },
     { title: "用户", dataIndex: "customerCount", render: v => v || 0, width: 82 },
     { title: "剩余流量", render: (_, item) => {
@@ -1758,6 +1788,7 @@ function UrlPoolPage() {
           </>
         }
       >
+        {lastRefreshedAt && <Text type="secondary" style={{ fontSize: 12, marginBottom: 8, display: "block" }}>最后刷新时间：{lastRefreshedAt}</Text>}
         <div>
           {mobile
             ? <PoolCards items={visible} actions={actions} />
@@ -2095,6 +2126,113 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
 
 // 鈹€鈹€鈹€ Users Page 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+function UserDetailPage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const p = usePalette();
+  const screens = Grid.useBreakpoint();
+  const { users, subscriptions } = useData();
+
+  const user = users.find(u => u.id === id);
+  if (!user) return <PageSection title="用户详情"><Empty description="未找到该用户。" /></PageSection>;
+
+  const subscription = subscriptions.find(s => s.id === user.subscriptionId);
+  const lvl = user.level || (user.actualPaid <= 300 ? "vip1" : user.actualPaid <= 1000 ? "vip2" : "vip3");
+  const isMobile = !screens.md;
+
+  const keyStyle = { color: p.textMuted, fontSize: 13 };
+  const valueStyle = { fontSize: 13, fontWeight: 500 };
+
+  const fallbackCols = [
+    { title: "时间", dataIndex: "at", render: v => formatDateTime(v), width: 160 },
+    { title: "原池", dataIndex: "fromSubscriptionLabel", ellipsis: true, width: 160 },
+    { title: "新池", dataIndex: "toSubscriptionLabel", ellipsis: true, width: 160 },
+    { title: "原因", dataIndex: "reasonText", width: 180 }
+  ];
+
+  const logs = (user.fallbackLogs || []).slice().sort((a, b) => new Date(b.at) - new Date(a.at));
+
+  return (
+    <div className="detail-page" style={{ color: p.text }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 16, marginBottom: 24 }}>
+        <div>
+          <Button size="small" onClick={() => navigate("/users")} style={{ marginBottom: 10, borderRadius: 6 }}>返回用户列表</Button>
+          <Title level={2} style={{ margin: 0, fontSize: isMobile ? 26 : 34, fontWeight: 900, letterSpacing: -1, lineHeight: 1.1 }}>
+            用户详情
+          </Title>
+        </div>
+        <Flex gap={8} align="center">
+          <VipTag level={lvl} />
+          <StatusBadge status={userStatus(user)} />
+        </Flex>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20, alignItems: "start" }}>
+        <Card>
+          <Text strong style={{ fontSize: 16, fontWeight: 700, display: "block", marginBottom: 16 }}>基本信息</Text>
+          <div style={{ display: "grid", gap: 12 }}>
+            {[
+              ["用户 ID", user.userId || "-"],
+              ["微信名", user.wechatName || "-"],
+              ["iMessage", user.imessageId || "-"],
+              ["到期时间", formatUserExpiry(user)],
+              ["时长", durationLabels[user.duration] || "Unknown"],
+              ["购买日期", formatDate(user.purchasedAt)],
+              ["实付金额", formatMoney(user.actualPaid)],
+              ["客户端链接", <UrlText key="url" value={userClientSubscriptionUrl(user)} />]
+            ].map(([label, value]) => (
+              <div key={label} style={{ display: "grid", gridTemplateColumns: "100px minmax(0,1fr)", gap: 12, alignItems: "start" }}>
+                <Text style={keyStyle}>{label}</Text>
+                <div style={valueStyle}>{value}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card>
+          <Text strong style={{ fontSize: 16, fontWeight: 700, display: "block", marginBottom: 16 }}>引用池 URL</Text>
+          {subscription ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              {[
+                ["名称", subscription.email || subscription.name || "未命名"],
+                ["供应商", serviceProviderLabel(subscription)],
+                ["URL", <UrlText key="pool-url" value={subscription.url} />],
+                ["到期时间", subscription.metrics?.expireAt ? formatDate(subscription.metrics.expireAt) : "-"],
+                ["剩余流量", formatBytes(subscription.metrics?.remainingBytes)],
+                ["状态", <StatusBadge key="status" status={subscription.status} />]
+              ].map(([label, value]) => (
+                <div key={label} style={{ display: "grid", gridTemplateColumns: "100px minmax(0,1fr)", gap: 12, alignItems: "start" }}>
+                  <Text style={keyStyle}>{label}</Text>
+                  <div style={valueStyle}>{value}</div>
+                </div>
+              ))}
+              <Button size="small" style={{ marginTop: 8, borderRadius: 6, width: "fit-content" }} onClick={() => navigate(`/urls/detail/${subscription.id}`)}>查看池详情</Button>
+            </div>
+          ) : (
+            <Empty description="未绑定池 URL" />
+          )}
+        </Card>
+      </div>
+
+      <Card style={{ marginTop: 20 }}>
+        <Text strong style={{ fontSize: 16, fontWeight: 700, display: "block", marginBottom: 16 }}>Fallback 切换日志</Text>
+        {logs.length > 0 ? (
+          <Table
+            size="small"
+            rowKey="id"
+            columns={fallbackCols}
+            dataSource={logs}
+            pagination={logs.length > 10 ? { pageSize: 10 } : false}
+            scroll={{ x: 660 }}
+          />
+        ) : (
+          <Empty description="暂无切换记录" />
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function UserCards({ users: list, actions }) {
   const p = usePalette();
   if (!list.length) return <Empty description="无匹配用户。" />;
@@ -2128,6 +2266,7 @@ function UserCards({ users: list, actions }) {
 function UsersPage() {
   const { users, subscriptions, reload, runAsync, busy } = useData();
   const { notification } = AntApp.useApp();
+  const navigate = useNavigate();
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(null);
   const [renewing, setRenewing] = useState(null);
@@ -2156,6 +2295,7 @@ function UsersPage() {
     return (
       <Wrap>
         {!compact && <Button {...bp} icon={<CopyOutlined />} onClick={() => copyText(userClientSubscriptionUrl(user)).then(() => notification.success({ message: "已复制", placement: "bottomRight" }))}>复制链接</Button>}
+        <Button {...bp} icon={<EyeOutlined />} onClick={() => navigate(`/users/detail/${user.id}`)}>查看</Button>
         <Button {...bp} icon={<RetweetOutlined />} onClick={() => setRenewing(user)}>续费</Button>
         <Button {...bp} icon={<EditOutlined />} onClick={() => setEditing(user)}>编辑</Button>
         <Button {...bp} danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({ title: "删除用户", content: "确认删除该用户？", onOk: () => mutate(() => fetchJson(`/api/users/${user.id}`, { method: "DELETE" })) })}>删除</Button>
@@ -2470,6 +2610,59 @@ function PlaceholderNodeFormModal({ item, onClose, onSaved, mutate }) {
   );
 }
 
+function ServiceStatusCard() {
+  const p = usePalette();
+  const [services, setServices] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const check = useCallback(async () => {
+    try {
+      const data = await fetchJson("/api/health");
+      setServices(data.services);
+    } catch {
+      setServices({ database: { status: "error", message: "无法连接服务器" }, subconverter: { status: "error", message: "无法连接服务器" } });
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { check(); const t = setInterval(check, 30000); return () => clearInterval(t); }, [check]);
+
+  const items = services ? [
+    { label: "数据库", ...services.database },
+    { label: "Subconverter", ...services.subconverter }
+  ] : [];
+
+  return (
+    <Card pad={0}>
+      <div className="console-section-head">
+        <div>
+          <div className="console-section-kicker">服务</div>
+          <div className="console-section-title">服务状态</div>
+        </div>
+        <Button type="text" size="small" icon={<ReloadOutlined spin={loading} />} onClick={() => { setLoading(true); check(); }} />
+      </div>
+      <div className="console-watch-list">
+        {loading && !services ? (
+          <div style={{ padding: "16px 0", textAlign: "center" }}><Text type="secondary">检测中...</Text></div>
+        ) : items.map(svc => (
+          <div key={svc.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 0", borderBottom: `1px solid ${p.border}` }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: p.text, marginBottom: 2 }}>{svc.label}</div>
+              {svc.latency != null && <div style={{ fontSize: 12, color: p.textMuted }}>{svc.latency}ms</div>}
+              {svc.status === "error" && <div style={{ fontSize: 12, color: p.textMuted }}>{svc.message}</div>}
+              {svc.status === "unconfigured" && <div style={{ fontSize: 12, color: p.textMuted }}>未配置</div>}
+            </div>
+            <div style={{ flexShrink: 0 }}>
+              {svc.status === "ok" && <CheckCircleOutlined style={{ color: "#52c41a", fontSize: 16 }} />}
+              {svc.status === "error" && <CloseCircleOutlined style={{ color: "#ff4d4f", fontSize: 16 }} />}
+              {svc.status === "unconfigured" && <WarningOutlined style={{ color: "#faad14", fontSize: 16 }} />}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function ConsoleOverview() {
   const p = usePalette();
   const navigate = useNavigate();
@@ -2487,6 +2680,8 @@ function ConsoleOverview() {
   const monthIncome = activeBills.filter(item => (item.occurredAt || "").startsWith(monthPfx)).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const todayIncome = activeBills.filter(item => (item.occurredAt || "").startsWith(todayPfx)).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const expiringUsers = users.filter(item => userStatus(item) === "warning");
+  const activeUsers = users.filter(item => userStatus(item) !== "expired");
+  const activeUserPct = users.length ? Math.round((activeUsers.length / users.length) * 100) : 0;
   const activeUrls = subscriptions.filter(item => item.status === "ok").length;
   const totalUrls = subscriptions.length;
   const activeUrlPct = totalUrls ? Math.round((activeUrls / totalUrls) * 100) : 0;
@@ -2515,6 +2710,7 @@ function ConsoleOverview() {
   const overviewCards = [
     { label: "池URL数", value: totalUrls, hint: `${activeUrls} 活跃订阅` },
     { label: "用户", value: users.length, hint: `${expiringUsers.length} 即将到期` },
+    { label: "活跃用户", value: activeUsers.length, hint: `占比 ${activeUserPct}%` },
     { label: "本月收入", value: formatMoney(monthIncome), hint: `今日 ${formatMoney(todayIncome)}` },
     { label: "总收入", value: formatMoney(paidTotal), hint: `共 ${activeBills.length} 笔账单` },
     { label: "告警", value: counts.warning || 0, hint: criticalUrl ? "需跟进" : "全部正常", accent: !!(counts.warning || criticalUrl) }
@@ -2665,6 +2861,8 @@ function ConsoleOverview() {
               />
             </div>
           </Card>
+
+          <ServiceStatusCard />
 
           <Card pad={0}>
             <div className="console-section-head">

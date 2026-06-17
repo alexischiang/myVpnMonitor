@@ -1,0 +1,131 @@
+const assert = require("assert");
+const {
+  poolMetricUnavailableReason,
+  fallbackCandidateRank,
+  startOfUtcDate
+} = require("./server");
+
+// ─── poolMetricUnavailableReason ────────────────────────────────────────
+
+// 池 URL 已到期
+assert.strictEqual(
+  poolMetricUnavailableReason({ metrics: { expireAt: "2020-01-01T00:00:00.000Z" } }),
+  "pool-expired"
+);
+
+// 池 URL 流量耗尽
+assert.strictEqual(
+  poolMetricUnavailableReason({ metrics: { expireAt: "2030-01-01T00:00:00.000Z", remainingBytes: 0 } }),
+  "pool-depleted"
+);
+
+// 池 URL 流量为负数（也算耗尽）
+assert.strictEqual(
+  poolMetricUnavailableReason({ metrics: { expireAt: "2030-01-01T00:00:00.000Z", remainingBytes: -100 } }),
+  "pool-depleted"
+);
+
+// 正常池 URL：未过期且有剩余流量
+assert.strictEqual(
+  poolMetricUnavailableReason({ metrics: { expireAt: "2030-01-01T00:00:00.000Z", remainingBytes: 1000000 } }),
+  ""
+);
+
+// 没有 metrics
+assert.strictEqual(
+  poolMetricUnavailableReason({}),
+  ""
+);
+assert.strictEqual(
+  poolMetricUnavailableReason(null),
+  ""
+);
+
+// 有到期时间但恰好等于 now（边界：过期）
+const nowIso = new Date().toISOString();
+const resultNow = poolMetricUnavailableReason(
+  { metrics: { expireAt: nowIso, remainingBytes: 5000 } },
+  new Date(nowIso).getTime()
+);
+assert.strictEqual(resultNow, "pool-expired");
+
+// 到期时间在 now 之后 1ms（未过期）
+const future = new Date(Date.now() + 1).toISOString();
+assert.strictEqual(
+  poolMetricUnavailableReason({ metrics: { expireAt: future, remainingBytes: 5000 } }),
+  ""
+);
+
+// ─── fallbackCandidateRank ──────────────────────────────────────────────
+
+// 池到期在用户到期之后 5 天 → group 0, distance 5
+const rank1 = fallbackCandidateRank(
+  { metrics: { expireAt: "2026-07-10T00:00:00.000Z" } },
+  { expiresAt: "2026-07-05T00:00:00.000Z" }
+);
+assert.strictEqual(rank1.group, 0);
+assert.strictEqual(rank1.distance, 5);
+
+// 池到期在用户到期之前 3 天 → group 1, distance 3
+const rank2 = fallbackCandidateRank(
+  { metrics: { expireAt: "2026-07-02T00:00:00.000Z" } },
+  { expiresAt: "2026-07-05T00:00:00.000Z" }
+);
+assert.strictEqual(rank2.group, 1);
+assert.strictEqual(rank2.distance, 3);
+
+// 池到期和用户到期同一天 → group 0, distance 0
+const rank3 = fallbackCandidateRank(
+  { metrics: { expireAt: "2026-07-05T00:00:00.000Z" } },
+  { expiresAt: "2026-07-05T00:00:00.000Z" }
+);
+assert.strictEqual(rank3.group, 0);
+assert.strictEqual(rank3.distance, 0);
+
+// 差距超过 10 天 → 不合格，返回 null
+const rank4 = fallbackCandidateRank(
+  { metrics: { expireAt: "2026-07-20T00:00:00.000Z" } },
+  { expiresAt: "2026-07-05T00:00:00.000Z" }
+);
+assert.strictEqual(rank4, null);
+
+const rank5 = fallbackCandidateRank(
+  { metrics: { expireAt: "2026-06-20T00:00:00.000Z" } },
+  { expiresAt: "2026-07-05T00:00:00.000Z" }
+);
+assert.strictEqual(rank5, null);
+
+// 池没有到期时间 → group 2, distance Infinity
+const rank6 = fallbackCandidateRank(
+  { metrics: {} },
+  { expiresAt: "2026-07-05T00:00:00.000Z" }
+);
+assert.strictEqual(rank6.group, 2);
+assert.strictEqual(rank6.distance, Number.POSITIVE_INFINITY);
+
+// 用户没有到期时间 → group 2, distance Infinity
+const rank7 = fallbackCandidateRank(
+  { metrics: { expireAt: "2026-07-10T00:00:00.000Z" } },
+  {}
+);
+assert.strictEqual(rank7.group, 2);
+assert.strictEqual(rank7.distance, Number.POSITIVE_INFINITY);
+
+// ─── startOfUtcDate ─────────────────────────────────────────────────────
+
+// 同一天不同时间应归为同一个 UTC 日起点
+const day1 = startOfUtcDate("2026-07-05T13:45:30.000Z");
+const day2 = startOfUtcDate("2026-07-05T00:00:00.000Z");
+assert.strictEqual(day1, day2);
+
+// 不同天应不同
+const day3 = startOfUtcDate("2026-07-06T00:00:00.000Z");
+assert.notStrictEqual(day1, day3);
+assert.strictEqual(day3 - day1, 86400000);
+
+// 无效日期返回 null
+assert.strictEqual(startOfUtcDate("invalid"), null);
+// null 被 Date 解析为 epoch (1970-01-01)，startOfUtcDate 返回 0 而非 null
+assert.strictEqual(startOfUtcDate(null), 0);
+
+console.log("All fallback logic tests passed.");
