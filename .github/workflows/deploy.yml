@@ -18,7 +18,7 @@ jobs:
 
       - run: npm run build
 
-      - name: Deploy to VPS
+      - name: Deploy dist to VPS
         uses: easingthemes/ssh-deploy@main
         with:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY }}
@@ -26,5 +26,12 @@ jobs:
           REMOTE_USER: ${{ secrets.USER }}
           SOURCE: dist/
           TARGET: ${{ secrets.DEPLOY_PATH }}/dist/
-          SCRIPT_AFTER: |
-            cd ${{ secrets.DEPLOY_PATH }} && pm2 restart nexora --update-env || true
+
+      - name: Pull latest code and restart
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }} && git pull origin production && npm ci --production && pm2 restart nexora --update-env
