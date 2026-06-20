@@ -62,6 +62,7 @@ import {
   SunOutlined,
   TeamOutlined,
   UserOutlined,
+  LoadingOutlined,
   WarningOutlined
 } from "@ant-design/icons";
 import dayjs from "dayjs";
@@ -211,6 +212,21 @@ const DEFAULT_SC_TARGET = "clash";
 
 function serviceProviderLabel(item, fallback = DEFAULT_PROVIDER) {
   return item?.serviceProvider || item?.provider || fallback;
+}
+
+const VENDOR_COLORS = ["blue", "green", "orange", "purple", "cyan", "magenta", "red", "geekblue", "volcano", "gold", "lime"];
+const vendorColorMap = {};
+function getVendorColor(name) {
+  if (!name) return "default";
+  if (!vendorColorMap[name]) {
+    const idx = Object.keys(vendorColorMap).length % VENDOR_COLORS.length;
+    vendorColorMap[name] = VENDOR_COLORS[idx];
+  }
+  return vendorColorMap[name];
+}
+function VendorTag({ name }) {
+  if (!name) return null;
+  return <Tag color={getVendorColor(name)} style={{ marginRight: 4, borderRadius: 4 }}>{name}</Tag>;
 }
 
 function subscriptionLabel(s) {
@@ -578,7 +594,7 @@ function BusyOverlay({ busy }) {
     <Modal open={Boolean(busy)} footer={null} closable={false} centered maskClosable={false} width={300}
       styles={{ content: { borderRadius: 16, padding: "28px 24px 24px" } }}>
       <Flex vertical align="center" gap={16}>
-        <Spin size="large" style={{ color: "var(--ant-color-primary)" }} />
+        <Spin indicator={<LoadingOutlined spin style={{ fontSize: 32 }} />} style={{ color: "var(--ant-color-primary)" }} />
         <Text strong style={{ fontSize: 15 }}>{busy?.label || "澶勭悊涓?.."}</Text>
         <div style={{ width: "100%", height: 4, borderRadius: 999, background: "var(--ant-color-fill-secondary)", overflow: "hidden" }}>
           <div style={{ height: "100%", borderRadius: 999, width: `${pct}%`, background: "var(--ant-color-primary)", transition: "width 0.6s ease" }} />
@@ -1667,7 +1683,7 @@ function UrlPoolPage() {
   const columns = [
     { title: "#", render: (_, __, i) => i + 1, width: 64 },
     { title: "邮箱", render: (_, item) => item.email || item.name || "未命名订阅", width: 160 },
-    { title: "供应商", render: (_, item) => serviceProviderLabel(item), width: 110 },
+    { title: "供应商", render: (_, item) => <VendorTag name={serviceProviderLabel(item)} />, width: 110 },
     { title: "URL", dataIndex: "url", render: v => <UrlText value={v} />, width: 320 },
     { title: "用户", dataIndex: "customerCount", render: v => v || 0, width: 82 },
     { title: "剩余流量", render: (_, item) => {
@@ -1767,11 +1783,25 @@ function useSubscriptionRecommendation({ expiresAt, purchasedAt, duration, ignor
   return state;
 }
 
-function OutputModeSection({ form, initialOutputMode, subscriptions, recommended, recommendReason, showRecommendation, vendors }) {
+function OutputModeSection({ form, initialOutputMode, subscriptions, recommended, recommendReason, showRecommendation, vendors, userExpiresAt }) {
   const outputMode = Form.useWatch("outputMode", form);
   const scMode = Form.useWatch("scMode", form);
   const useSubconverter = (outputMode || initialOutputMode) === "subconverter";
   const vendorOptions = (vendors || []).filter(v => v.defaultSubconverterConfig).map(v => ({ value: v.id, label: v.name }));
+
+  const sortedSubOptions = useMemo(() => {
+    const userExp = userExpiresAt ? new Date(userExpiresAt instanceof Object && userExpiresAt.toDate ? userExpiresAt.toDate() : userExpiresAt).getTime() : null;
+    const list = subscriptions.map(s => {
+      const subExp = s.metrics?.expireAt ? new Date(s.metrics.expireAt).getTime() : 0;
+      const diffDays = userExp && subExp ? Math.round((subExp - userExp) / 86400000) : null;
+      const diffLabel = diffDays !== null ? `${diffDays >= 0 ? "+" : ""}${diffDays}天` : "?天";
+      const vendor = serviceProviderLabel(s);
+      const expLabel = s.metrics?.expireAt ? formatDate(s.metrics.expireAt) : "未知";
+      const email = s.email || "无邮箱";
+      return { value: s.id, label: `${diffLabel} - ${vendor} - ${expLabel} - ${email}`, expireAt: subExp };
+    });
+    return list.sort((a, b) => b.expireAt - a.expireAt);
+  }, [subscriptions, userExpiresAt]);
 
   return (
     <>
@@ -1787,7 +1817,7 @@ function OutputModeSection({ form, initialOutputMode, subscriptions, recommended
         </Text>
       )}
       <Form.Item name="subscriptionId" label={useSubconverter ? "绑定订阅池" : "当前订阅池"} rules={[{ required: true, message: "请选择订阅池" }]} style={{ marginBottom: 0 }}>
-        <Select virtual={false} options={subscriptions.map(s => ({ value: s.id, label: subscriptionLabel(s) }))} />
+        <Select virtual={false} options={sortedSubOptions} />
       </Form.Item>
       {useSubconverter && (
         <>
@@ -1824,12 +1854,12 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
   const duration = Form.useWatch("duration", form);
   const expiresAt = Form.useWatch("expiresAt", form);
 
-  const { result: recommended, reason: recommendReason } = useSubscriptionRecommendation({
+  const { result: recommended, reason: recommendReason, loading: recommendLoading } = useSubscriptionRecommendation({
     expiresAt: expiresAt || calcExpiry(purchasedAt, duration),
     duration,
     ignoredUserId: item.id || "",
     fallbackId: item.subscriptionId || subscriptions[0]?.id || "",
-    enabled: Boolean(purchasedAt && duration)
+    enabled: step >= 2 && Boolean(purchasedAt && duration)
   });
 
   useEffect(() => {
@@ -1932,7 +1962,9 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
           </Form.Item>
         </div>
         <div style={{ display: step === 2 ? "block" : "none" }}>
-          <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation={!item.id} vendors={vendors} />
+          {recommendLoading ? <Flex justify="center" align="center" style={{ padding: "48px 0" }}><Spin indicator={<LoadingOutlined spin />} tip="正在匹配推荐订阅池..." /></Flex> : (
+            <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation={!item.id} vendors={vendors} userExpiresAt={expiresAt || calcExpiry(purchasedAt, duration)} />
+          )}
         </div>
         <div style={{ display: step === 3 ? "block" : "none" }}>
           <PlaceholderTagSelect />
@@ -1977,7 +2009,7 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
     renewalExpiresAt = renewalBase && duration ? calcExpiry(renewalBase, duration) : "";
   }
 
-  const { result: recommended, reason: recommendReason } = useSubscriptionRecommendation({
+  const { result: recommended, reason: recommendReason, loading: recommendLoading } = useSubscriptionRecommendation({
     expiresAt: renewalExpiresAt,
     duration,
     ignoredUserId: user.id,
@@ -2027,7 +2059,9 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
           </Form.Item>
         )}
         <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>投递模式</Text></Divider>
-        <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation vendors={vendors} />
+        {recommendLoading ? <Flex justify="center" align="center" style={{ padding: "48px 0" }}><Spin indicator={<LoadingOutlined spin />} tip="正在匹配推荐订阅池..." /></Flex> : (
+          <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation vendors={vendors} userExpiresAt={renewalExpiresAt} />
+        )}
         <div style={{ marginTop: 24 }}>
           <Button type="primary" htmlType="submit" block>确认续费</Button>
         </div>
@@ -2211,7 +2245,7 @@ function UsersPage() {
   const mobile = useResponsiveList();
 
   const visible = users.filter(u => {
-    if (keyword && !`${u.userId || ""} ${u.wechatName || ""} ${u.imessageId || ""} ${u.subscription?.url || ""}`.toLowerCase().includes(keyword.toLowerCase())) return false;
+    if (keyword && !`${u.userId || ""} ${u.wechatName || ""} ${u.imessageId || ""} ${u.subscription?.url || ""} ${u.subscription?.email || ""}`.toLowerCase().includes(keyword.toLowerCase())) return false;
     if (vipFilter) { const lvl = u.level || (u.actualPaid <= 300 ? "vip1" : u.actualPaid <= 1000 ? "vip2" : "vip3"); if (lvl !== vipFilter) return false; }
     if (statusFilter && userStatus(u) !== statusFilter) return false;
     return true;
@@ -2248,7 +2282,7 @@ function UsersPage() {
     { title: "时长", render: (_, u) => durationLabels[u.duration] || "Unknown", width: 72 },
     { title: "总消费金额", render: (_, u) => formatMoney(u.actualPaid), width: 88 },
     { title: "客户端链接", render: (_, u) => <UrlText value={userClientSubscriptionUrl(u)} />, width: 560 },
-    { title: "绑定邮箱", render: (_, u) => u.subscription?.email || "", width: 220 },
+    { title: "绑定邮箱", render: (_, u) => { const email = u.subscription?.email; const vendor = serviceProviderLabel(u.subscription); return email ? <span><VendorTag name={vendor} />{email}</span> : ""; }, width: 280 },
     { title: "购买日期", render: (_, u) => formatDate(u.purchasedAt), width: 104 },
     { title: "操作", render: (_, u) => actions(u, true), width: 190 }
   ].map(col => ({ ...col, onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }), onCell: () => ({ style: { whiteSpace: "nowrap" } }) }));
