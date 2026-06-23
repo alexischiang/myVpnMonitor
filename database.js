@@ -1,7 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 
-const COLLECTIONS = ["subscriptions", "users", "bills", "vendors", "placeholderNodes", "embyUsers"];
+const COLLECTIONS = ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors"];
 
 class JsonDataStore {
   constructor({ dataDir, files }) {
