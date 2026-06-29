@@ -338,10 +338,13 @@ export function StatusBadge({ status }) {
 }
 
 const VIP_COLORS = { vip3: "#eb2f96", vip2: "#faad14", vip1: "#13c2c2" };
-export function VipTag({ level }) {
+export function VipTag({ level, isFamilyFriend, isBusiness }) {
+  const tagStyle = { color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 11, lineHeight: "18px", padding: "0 6px", marginLeft: 6 };
+  if (isFamilyFriend) return <Tag style={{ ...tagStyle, background: "#722ed1" }}>FNDS</Tag>;
+  if (isBusiness) return <Tag style={{ ...tagStyle, background: "#1677ff" }}>BUS</Tag>;
   const bg = VIP_COLORS[level] || VIP_COLORS.vip1;
   const num = level.replace("vip", "");
-  return <Tag style={{ background: bg, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 11, lineHeight: "18px", padding: "0 6px", marginLeft: 6 }}>VIP {num}</Tag>;
+  return <Tag style={{ ...tagStyle, background: bg }}>VIP {num}</Tag>;
 }
 
 export function CopyButton({ value, size = "small", label, buttonProps = {} }) {
@@ -945,24 +948,24 @@ export function DwellixLogo({ size = 34 }) {
   );
 }
 
-export function useSubscriptionRecommendation({ expiresAt, purchasedAt, duration, ignoredUserId = "", fallbackId = "", enabled = true }) {
+export function useSubscriptionRecommendation({ expiresAt, purchasedAt, duration, ignoredUserId = "", enabled = true }) {
+  const normExpiry = recommendationDate(expiresAt);
+  const normPurchased = recommendationDate(purchasedAt);
   const [state, setState] = useState({ result: null, reason: null, loading: false });
   useEffect(() => {
-    const normExpiry = recommendationDate(expiresAt);
-    const normPurchased = recommendationDate(purchasedAt);
     if (!enabled || (!normExpiry && (!normPurchased || !duration))) {
       setState({ result: null, reason: null, loading: false });
       return;
     }
     let cancelled = false;
     setState(s => ({ ...s, loading: true }));
-    postJson("/api/subscriptions/recommend", { expiresAt: normExpiry, purchasedAt: normPurchased, duration, ignoredUserId, fallbackId })
+    postJson("/api/subscriptions/recommend", { expiresAt: normExpiry, purchasedAt: normPurchased, duration, ignoredUserId })
       .then(payload => {
-        if (!cancelled) setState({ result: payload.subscription || payload.recommended || null, reason: payload.reason || null, loading: false });
+        if (!cancelled) setState({ result: payload.subscription || null, reason: payload.reason || null, loading: false });
       })
       .catch(err => { if (!cancelled) setState({ result: null, reason: err.message, loading: false }); });
     return () => { cancelled = true; };
-  }, [enabled, expiresAt, purchasedAt, duration, ignoredUserId, fallbackId]);
+  }, [enabled, normExpiry, normPurchased, duration, ignoredUserId]);
   return state;
 }
 

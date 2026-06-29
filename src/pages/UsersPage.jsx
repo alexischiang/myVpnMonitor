@@ -111,7 +111,6 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
     expiresAt: expiresAt || calcExpiry(purchasedAt, duration),
     duration,
     ignoredUserId: item.id || "",
-    fallbackId: item.subscriptionId || subscriptions[0]?.id || "",
     enabled: step >= 2 && Boolean(purchasedAt && duration)
   });
 
@@ -167,12 +166,12 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
 
   return (
     <FormModal title={item.id ? "编辑用户" : "新建用户"} open onCancel={onClose} width={760}>
-      <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageId: item.imessageId || "", purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, placeholderTag: item.placeholderTag || "", showUserInfo: item.showUserInfo !== false, useDefaultPlaceholder: item.useDefaultPlaceholder !== false, blockUserinfo: item.blockUserinfo !== false, group: item.group || "pro", isBusiness: Boolean(item.isBusiness) }} onValuesChange={handleChange} onFinish={submit}>
+      <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageId: item.imessageId || "", purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, placeholderTag: item.placeholderTag || "", showUserInfo: item.showUserInfo !== false, useDefaultPlaceholder: item.useDefaultPlaceholder !== false, blockUserinfo: item.blockUserinfo !== false, group: item.group || "pro", isBusiness: Boolean(item.isBusiness), isFamilyFriend: Boolean(item.isFamilyFriend) }} onValuesChange={handleChange} onFinish={submit}>
         <Steps current={step} size="small" style={{ marginBottom: 24 }} items={[{ title: "身份信息" }, { title: "订阅信息" }, { title: "投递模式" }, { title: "高级设置" }]} />
         <div style={{ display: step === 0 ? "block" : "none" }}>
           <Flex gap={16} wrap="wrap">
             <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="必填" /></Form.Item>
-            <Form.Item name="wechatName" label="微信名" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
+            <Form.Item name="wechatName" label="微信号" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
             <Form.Item name="imessageId" label="iMessage ID" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
           </Flex>
           <Flex gap={16} wrap="wrap" align="center" style={{ marginTop: 16 }}>
@@ -186,6 +185,9 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
             <Form.Item name="isBusiness" valuePropName="checked" style={{ marginBottom: 0, alignSelf: "flex-end" }}>
               <Checkbox>企业用户</Checkbox>
             </Form.Item>
+            <Form.Item name="isFamilyFriend" valuePropName="checked" style={{ marginBottom: 0, alignSelf: "flex-end" }}>
+              <Checkbox>亲友账户</Checkbox>
+            </Form.Item>
           </Flex>
         </div>
         <div style={{ display: step === 1 ? "block" : "none" }}>
@@ -196,7 +198,7 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
             <Form.Item name="expiresAt" label="到期日期" rules={duration === "lifetime" ? [] : [{ required: true, message: "请选择到期日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
               <DatePicker {...inModalPickerProps} style={{ width: "100%" }} disabled={duration === "lifetime"} placeholder={duration === "lifetime" ? "永久有效" : undefined} />
             </Form.Item>
-            <Form.Item name="actualPaid" label="总消费金额" rules={[{ required: true, message: "请输入总消费金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+            <Form.Item name="actualPaid" label="本次消费金额" rules={[{ required: true, message: "请输入本次消费金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
               <Input type="number" min="0" step="0.01" placeholder="0.00" />
             </Form.Item>
           </Flex>
@@ -256,7 +258,6 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
     expiresAt: renewalExpiresAt,
     duration,
     ignoredUserId: user.id,
-    fallbackId: user.subscriptionId || subscriptions[0]?.id || "",
     enabled: Boolean(purchasedAt && duration)
   });
 
@@ -284,10 +285,11 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
           <Form.Item name="purchasedAt" label="续费日期" rules={[{ required: true, message: "请选择续费日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
             <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item name="actualPaid" label="总消费金额" rules={[{ required: true, message: "请输入总消费金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+          <Form.Item name="actualPaid" label="本次消费金额" rules={[{ required: true, message: "请输入本次消费金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
             <Input type="number" min="0" step="0.01" placeholder="0.00" />
           </Form.Item>
         </Flex>
+        <Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 12 }}>当前到期日：{user.expiresAt ? formatDate(user.expiresAt) : "未知"}</Text>
         <Form.Item name="duration" label="续费时长" style={{ marginTop: 16, marginBottom: 0 }}>
           <DurationRadio purchasedAt={user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt} />
         </Form.Item>
@@ -362,9 +364,9 @@ function UserDetailPage() {
           <div style={{ display: "grid", gap: 12 }}>
             {[
               ["用户 ID", user.userId || "-"],
-              ["微信名", user.wechatName || "-"],
+              ["微信号", user.wechatName || "-"],
               ["iMessage", user.imessageId || "-"],
-              ["VIP 等级", <VipTag key="vip" level={lvl} />],
+              ["VIP 等级", <VipTag key="vip" level={lvl} isFamilyFriend={user.isFamilyFriend} isBusiness={user.isBusiness} />],
               ["状态", <StatusBadge key="status" status={userStatus(user)} />],
               ["到期时间", formatUserExpiry(user)],
               ["时长", durationLabels[user.duration] || "Unknown"],
@@ -452,7 +454,7 @@ function UserCards({ users: list, actions }) {
           <Flex justify="space-between" gap={12} align="center" style={{ marginBottom: 4 }}>
             <Flex align="center" gap={6}>
               <Text strong style={{ fontSize: 15 }}>{user.userId}</Text>
-              {(() => { const lvl = user.level || (user.actualPaid <= 300 ? "vip1" : user.actualPaid <= 1000 ? "vip2" : "vip3"); return <VipTag level={lvl} />; })()}
+              {(() => { const lvl = user.level || (user.actualPaid <= 300 ? "vip1" : user.actualPaid <= 1000 ? "vip2" : "vip3"); return <VipTag level={lvl} isFamilyFriend={user.isFamilyFriend} isBusiness={user.isBusiness} />; })()}
             </Flex>
             <StatusBadge status={userStatus(user)} />
           </Flex>
@@ -488,7 +490,11 @@ function UsersPage() {
 
   const visible = users.filter(u => {
     if (keyword && !`${u.userId || ""} ${u.wechatName || ""} ${u.imessageId || ""} ${u.subscription?.url || ""} ${u.subscription?.email || ""}`.toLowerCase().includes(keyword.toLowerCase())) return false;
-    if (vipFilter) { const lvl = u.level || (u.actualPaid <= 300 ? "vip1" : u.actualPaid <= 1000 ? "vip2" : "vip3"); if (lvl !== vipFilter) return false; }
+    if (vipFilter) {
+      if (vipFilter === "fnds") { if (!u.isFamilyFriend) return false; }
+      else if (vipFilter === "bus") { if (!u.isBusiness) return false; }
+      else { if (u.isFamilyFriend || u.isBusiness) return false; const lvl = u.level || (u.actualPaid <= 300 ? "vip1" : u.actualPaid <= 1000 ? "vip2" : "vip3"); if (lvl !== vipFilter) return false; }
+    }
     if (statusFilter && userStatus(u) !== statusFilter) return false;
     return true;
   });
@@ -518,7 +524,7 @@ function UsersPage() {
   const columns = [
     { title: "#", render: (_, __, i) => (page - 1) * pageSize + i + 1, width: 48 },
     { title: "用户 ID", dataIndex: "userId", width: 120, render: (v) => <span style={{ fontWeight: 600 }}>{v}</span> },
-    { title: "VIP", width: 72, render: (_, u) => { const lvl = u.level || (u.actualPaid <= 300 ? "vip1" : u.actualPaid <= 1000 ? "vip2" : "vip3"); return <VipTag level={lvl} />; } },
+    { title: "VIP", width: 72, render: (_, u) => { const lvl = u.level || (u.actualPaid <= 300 ? "vip1" : u.actualPaid <= 1000 ? "vip2" : "vip3"); return <VipTag level={lvl} isFamilyFriend={u.isFamilyFriend} isBusiness={u.isBusiness} />; } },
     { title: "状态", render: (_, u) => <StatusBadge status={userStatus(u)} />, width: 76 },
     { title: "到期时间", render: (_, u) => formatUserExpiry(u), width: 104 },
     { title: "时长", render: (_, u) => durationLabels[u.duration] || "Unknown", width: 72 },
@@ -536,7 +542,7 @@ function UsersPage() {
       actions={
         <>
           <ToolbarSearch placeholder="搜索用户、邮箱或链接" style={{ width: 220 }} onSearch={setKeyword} onChange={e => { setKeyword(e.target.value); setPage(1); }} />
-          <Select allowClear placeholder="VIP 等级" style={{ width: 110 }} value={vipFilter} onChange={v => { setVipFilter(v || null); setPage(1); }} options={[{ value: "vip1", label: "VIP 1" }, { value: "vip2", label: "VIP 2" }, { value: "vip3", label: "VIP 3" }]} />
+          <Select allowClear placeholder="VIP 等级" style={{ width: 110 }} value={vipFilter} onChange={v => { setVipFilter(v || null); setPage(1); }} options={[{ value: "vip1", label: "VIP 1" }, { value: "vip2", label: "VIP 2" }, { value: "vip3", label: "VIP 3" }, { value: "fnds", label: "亲友" }, { value: "bus", label: "企业" }]} />
           <Select allowClear placeholder="状态" style={{ width: 110 }} value={statusFilter} onChange={v => { setStatusFilter(v || null); setPage(1); }} options={[{ value: "ok", label: "正常" }, { value: "warning", label: "即将到期" }, { value: "expired", label: "已到期" }]} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>
             新建用户

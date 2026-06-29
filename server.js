@@ -257,8 +257,7 @@ let lastLoadedAt = 0;
 let _loadingPromise = null;
 const DATA_CACHE_TTL_MS = Number(process.env.DATA_CACHE_TTL_MS || 30000);
 
-async function loadLatestData({ force = false } = {}) {
-  if (!force && Date.now() - lastLoadedAt < DATA_CACHE_TTL_MS) return;
+function _doLoad() {
   if (_loadingPromise) return _loadingPromise;
   _loadingPromise = dataStore.loadAll().then(state => {
     subscriptions = state.subscriptions;
@@ -272,6 +271,12 @@ async function loadLatestData({ force = false } = {}) {
     lastLoadedAt = Date.now();
   }).finally(() => { _loadingPromise = null; });
   return _loadingPromise;
+}
+
+async function loadLatestData({ force = false } = {}) {
+  if (!force && Date.now() - lastLoadedAt < DATA_CACHE_TTL_MS) return;
+  if (lastLoadedAt === 0) return _doLoad();
+  _doLoad();
 }
 
 async function saveData() {
@@ -621,11 +626,7 @@ function subscriptionsByLatestExpiry() {
   });
 }
 
-function findRecommendedSubscriptionForExpiry(expiresAt, { fallbackId = "", ignoredUserId = "" } = {}) {
-  return recommendSubscriptionForExpiry(expiresAt, { fallbackId, ignoredUserId }).subscription;
-}
-
-function recommendSubscriptionForExpiry(expiresAt, { fallbackId = "", ignoredUserId = "" } = {}) {
+function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "" } = {}) {
   const userExpiryTime = startOfUtcDate(expiresAt);
   const dayMs = 86400000;
   let noExpiry = 0;
@@ -637,50 +638,41 @@ function recommendSubscriptionForExpiry(expiresAt, { fallbackId = "", ignoredUse
         noExpiry++;
         return null;
       }
-      const customerCount = subscriptionCustomerCount(item.id, ignoredUserId);
       const diffDays = (expireTime - userExpiryTime) / dayMs;
       if (diffDays < -RELAY_BEFORE_EXPIRY_DAYS || diffDays > RELAY_AFTER_EXPIRY_DAYS) {
         outOfWindow++;
         return null;
       }
-      return { item, diffDays, customerCount };
+      return { item, diffDays };
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .map(c => ({ ...c, customerCount: subscriptionCustomerCount(c.item.id, ignoredUserId) }));
 
-  const afterCandidates = candidates
-    .filter(candidate => candidate.diffDays >= 0)
-    .sort((a, b) => a.diffDays - b.diffDays || a.customerCount - b.customerCount);
-  if (afterCandidates.length) {
-    const best = afterCandidates[0];
-    return { subscription: best.item, reason: null, diffDays: best.diffDays, customerCount: best.customerCount, fallback: false };
+  const sorted = candidates.sort((a, b) => {
+    const aAfter = a.diffDays >= 0 ? 0 : 1;
+    const bAfter = b.diffDays >= 0 ? 0 : 1;
+    if (aAfter !== bAfter) return aAfter - bAfter;
+    return Math.abs(a.diffDays) - Math.abs(b.diffDays) || a.customerCount - b.customerCount;
+  });
+
+  if (sorted.length) {
+    return { subscription: sorted[0].item, reason: null };
   }
 
-  const beforeCandidates = candidates
-    .filter(candidate => candidate.diffDays < 0)
-    .sort((a, b) => Math.abs(a.diffDays) - Math.abs(b.diffDays) || a.customerCount - b.customerCount);
-  if (beforeCandidates.length) {
-    const best = beforeCandidates[0];
-    return { subscription: best.item, reason: null, diffDays: best.diffDays, customerCount: best.customerCount, fallback: false };
+  if (outOfWindow > 0) {
+    const latest = subscriptionsByLatestExpiry()[0];
+    if (latest) return { subscription: latest, reason: "用户到期日远超所有池，已推荐最晚到期的池。" };
   }
 
-  const fallback = subscriptions.find(item => item.id === fallbackId) || subscriptionsByLatestExpiry()[0] || null;
   const reason = subscriptions.length === 0
     ? "没有可用的池 URL。"
-    : outOfWindow > 0
-    ? "没有到期时间接近的池 URL，已使用兜底池 URL。"
     : noExpiry > 0
-    ? "池 URL 缺少到期时间，已使用兜底池 URL。"
-    : "没有匹配的池 URL，已使用兜底池 URL。";
-  return {
-    subscription: fallback,
-    reason: fallback ? reason : "没有可用的池 URL。",
-    diffDays: null,
-    customerCount: fallback ? subscriptionCustomerCount(fallback.id, ignoredUserId) : null,
-    fallback: Boolean(fallback)
-  };
+    ? "池 URL 缺少到期时间，请手动选择。"
+    : "没有匹配的池 URL，请手动选择。";
+  return { subscription: null, reason };
 }
 
-function normalizeUser(input, existing = {}, options = {}) {
+function normalizeUser(input, existing = {}) {
   const userId = String(input.userId || existing.userId || "").trim();
   const wechatName = String(input.wechatName || existing.wechatName || "").trim();
   const imessageId = String(input.imessageId || existing.imessageId || "").trim();
@@ -696,9 +688,7 @@ function normalizeUser(input, existing = {}, options = {}) {
     : (requestedExpiresDate && !Number.isNaN(requestedExpiresDate.getTime())
       ? requestedExpiresDate.toISOString()
       : calculatedExpiresAt);
-  const subscription = options.autoSelectSubscription
-    ? findRecommendedSubscriptionForExpiry(expiresAt, { fallbackId: requestedSubscriptionId, ignoredUserId: existing.id || "" })
-    : subscriptions.find(item => item.id === requestedSubscriptionId);
+  const subscription = subscriptions.find(item => item.id === requestedSubscriptionId);
 
   if (!userId) throw new Error("请填写用户 ID。");
   if (!subscription) throw new Error("请选择已添加的 URL。");
@@ -709,6 +699,7 @@ function normalizeUser(input, existing = {}, options = {}) {
 
   const group = ["basic", "pro", "ultra"].includes(input.group) ? input.group : (existing.group || "pro");
   const isBusiness = input.isBusiness !== undefined ? Boolean(input.isBusiness) : Boolean(existing.isBusiness);
+  const isFamilyFriend = input.isFamilyFriend !== undefined ? Boolean(input.isFamilyFriend) : Boolean(existing.isFamilyFriend);
   const level = actualPaid <= 300 ? "vip1" : (actualPaid <= 1000 ? "vip2" : "vip3");
 
   return {
@@ -722,6 +713,7 @@ function normalizeUser(input, existing = {}, options = {}) {
     group,
     level,
     isBusiness,
+    isFamilyFriend,
     subscriptionId: subscription.id,
     subscriptionToken: existing.subscriptionToken || relayToken(),
     expiresAt,
@@ -835,10 +827,7 @@ function renewUser(user, input) {
     const baseTime = currentExpiry && currentExpiry.getTime() > renewedAt.getTime() ? currentExpiry : renewedAt;
     expiresAt = calculateExpiry(baseTime.toISOString(), duration);
   }
-  const subscription = findRecommendedSubscriptionForExpiry(expiresAt, {
-    fallbackId: requestedSubscriptionId,
-    ignoredUserId: user.id || ""
-  });
+  const subscription = subscriptions.find(item => item.id === requestedSubscriptionId);
   if (!expiresAt) throw new Error("续费时间格式不正确。");
   if (!subscription) throw new Error("请选择已添加的 URL。");
 
@@ -2612,18 +2601,11 @@ async function handleApi(req, res, pathname) {
       return;
     }
     const recommendation = recommendSubscriptionForExpiry(expiresAt, {
-      ignoredUserId: payload.ignoredUserId || "",
-      fallbackId: payload.fallbackId || ""
+      ignoredUserId: payload.ignoredUserId || ""
     });
-    const recommended = recommendation.subscription;
     sendJson(res, 200, {
-      expiresAt,
-      subscription: recommended ? publicItem(recommended) : null,
-      recommended: recommended ? publicItem(recommended) : null,
-      reason: recommendation.reason,
-      diffDays: recommendation.diffDays,
-      customerCount: recommendation.customerCount,
-      fallback: recommendation.fallback
+      subscription: recommendation.subscription ? publicItem(recommendation.subscription) : null,
+      reason: recommendation.reason
     });
     return;
   }
@@ -2646,7 +2628,7 @@ async function handleApi(req, res, pathname) {
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString()
       };
-      const normalized = normalizeUser(payload, item, { autoSelectSubscription: true });
+      const normalized = normalizeUser(payload, item);
       normalized.outputMode = payload.outputMode === "direct" ? "direct" : "subconverter";
       normalized.blockUserinfo = payload.blockUserinfo !== false;
       users.unshift(normalized);
