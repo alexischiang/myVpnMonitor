@@ -37,6 +37,7 @@ const PLACEHOLDER_NODES_FILE = process.env.PLACEHOLDER_NODES_FILE || path.join(D
 const EMBY_USERS_FILE = process.env.EMBY_USERS_FILE || path.join(DATA_DIR, "embyUsers.json");
 const EMBY_VENDORS_FILE = process.env.EMBY_VENDORS_FILE || path.join(DATA_DIR, "embyVendors.json");
 const PRESETS_FILE = process.env.PRESETS_FILE || path.join(DATA_DIR, "presets.json");
+const PRICING_FILE = process.env.PRICING_FILE || path.join(DATA_DIR, "pricing.json");
 
 const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
 const ALERT_STATE_FILE = process.env.ALERT_STATE_FILE || path.join(DATA_DIR, "alert-state.json");
@@ -54,6 +55,11 @@ const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const DEFAULT_SERVICE_PROVIDER = "YKK Cloud";
+const DEFAULT_PRICING = [
+  { id: "basic", group: "basic", monthly: 39, quarterly: 109, half_yearly: 199, yearly: 369 },
+  { id: "pro",   group: "pro",   monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429 },
+  { id: "ultra", group: "ultra", monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859 }
+];
 const AUTH_COOKIE_NAME = "xela_session";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
@@ -138,6 +144,7 @@ let placeholderNodes = [];
 let presets = [];
 let embyUsers = [];
 let embyVendors = [];
+let pricing = [];
 const dataStore = createDataStore({
   dataDir: DATA_DIR,
   databaseUrl: DATABASE_URL,
@@ -149,7 +156,8 @@ const dataStore = createDataStore({
     presets: PRESETS_FILE,
     placeholderNodes: PLACEHOLDER_NODES_FILE,
     embyUsers: EMBY_USERS_FILE,
-    embyVendors: EMBY_VENDORS_FILE
+    embyVendors: EMBY_VENDORS_FILE,
+    pricing: PRICING_FILE
   }
 });
 
@@ -171,6 +179,8 @@ async function ensureDataFile() {
   placeholderNodes = state.placeholderNodes || [];
   embyUsers = state.embyUsers || [];
   embyVendors = state.embyVendors || [];
+  pricing = state.pricing || [];
+  if (!pricing.length) { pricing = DEFAULT_PRICING.map(r => ({ ...r })); await savePricing(); }
   let embyVendorsMigrated = false;
   for (const v of embyVendors) {
     if (v.serverUrl && !v.servers) {
@@ -255,11 +265,14 @@ async function ensureDataFile() {
 
 let lastLoadedAt = 0;
 let _loadingPromise = null;
+let _writeGen = 0;
 const DATA_CACHE_TTL_MS = Number(process.env.DATA_CACHE_TTL_MS || 30000);
 
 function _doLoad() {
   if (_loadingPromise) return _loadingPromise;
+  const gen = _writeGen;
   _loadingPromise = dataStore.loadAll().then(state => {
+    if (gen !== _writeGen) return;
     subscriptions = state.subscriptions;
     users = state.users;
     bills = state.bills;
@@ -268,6 +281,7 @@ function _doLoad() {
     placeholderNodes = state.placeholderNodes || [];
     embyUsers = state.embyUsers || [];
     embyVendors = state.embyVendors || [];
+    pricing = state.pricing || [];
     lastLoadedAt = Date.now();
   }).finally(() => { _loadingPromise = null; });
   return _loadingPromise;
@@ -279,36 +293,51 @@ async function loadLatestData({ force = false } = {}) {
   _doLoad();
 }
 
+function _markWritten() { _writeGen++; lastLoadedAt = Date.now(); }
+
 async function saveData() {
+  _markWritten();
   await dataStore.saveCollection("subscriptions", subscriptions);
 }
 
 async function saveUsers() {
+  _markWritten();
   await dataStore.saveCollection("users", users);
 }
 
 async function saveBills() {
+  _markWritten();
   await dataStore.saveCollection("bills", bills);
 }
 
 async function saveVendors() {
+  _markWritten();
   await dataStore.saveCollection("vendors", vendors);
 }
 
 async function savePresets() {
+  _markWritten();
   await dataStore.saveCollection("presets", presets);
 }
 
 async function savePlaceholderNodes() {
+  _markWritten();
   await dataStore.saveCollection("placeholderNodes", placeholderNodes);
 }
 
 async function saveEmbyUsers() {
+  _markWritten();
   await dataStore.saveCollection("embyUsers", embyUsers);
 }
 
 async function saveEmbyVendors() {
+  _markWritten();
   await dataStore.saveCollection("embyVendors", embyVendors);
+}
+
+async function savePricing() {
+  _markWritten();
+  await dataStore.saveCollection("pricing", pricing);
 }
 
 
@@ -2800,6 +2829,38 @@ async function handleApi(req, res, pathname) {
       preset.sort = Boolean(payload.sort);
       await savePresets();
       sendJson(res, 200, preset);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  // ── Pricing ──
+  if (pathname === "/api/pricing" && req.method === "GET") {
+    sendJson(res, 200, pricing);
+    return;
+  }
+
+  if (pathname === "/api/pricing" && req.method === "PUT") {
+    try {
+      const payload = await readJson(req);
+      if (!Array.isArray(payload)) { sendJson(res, 400, { error: "payload must be an array." }); return; }
+      const GROUPS = ["basic", "pro", "ultra"];
+      const DURATIONS = ["monthly", "quarterly", "half_yearly", "yearly"];
+      for (const item of payload) {
+        if (!GROUPS.includes(item.group)) continue;
+        let row = pricing.find(r => r.group === item.group);
+        if (!row) { row = { id: item.group, group: item.group }; pricing.push(row); }
+        for (const dur of DURATIONS) {
+          if (item[dur] !== undefined) {
+            const val = Number(item[dur]);
+            if (Number.isNaN(val) || val < 0) { sendJson(res, 400, { error: `${item.group}.${dur} 价格无效。` }); return; }
+            row[dur] = val;
+          }
+        }
+      }
+      await savePricing();
+      sendJson(res, 200, pricing);
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }

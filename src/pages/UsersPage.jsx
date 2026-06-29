@@ -52,6 +52,7 @@ import {
   initialOutputModeForUser,
   InlineActions,
   LIFETIME_EXPIRES_AT,
+  lookupPrice,
   ManagementSection,
   OutputModeSection,
   PageSection,
@@ -97,15 +98,17 @@ function PlaceholderTagSelect() {
 // ─── User Form ────────────────────────────────────────────────────────────────
 
 function UserForm({ item, subscriptions, onClose, onSaved }) {
-  const { runAsync, busy } = useData();
+  const { runAsync, busy, pricing } = useData();
   const [form] = Form.useForm();
   const [step, setStep] = useState(0);
   const expiryTouched = useRef(false);
   const subscriptionTouched = useRef(false);
+  const paidTouched = useRef(Boolean(item.id));
   const initialOutputMode = initialOutputModeForUser(item);
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
   const expiresAt = Form.useWatch("expiresAt", form);
+  const group = Form.useWatch("group", form);
 
   const { result: recommended, reason: recommendReason, loading: recommendLoading } = useSubscriptionRecommendation({
     expiresAt: expiresAt || calcExpiry(purchasedAt, duration),
@@ -120,6 +123,12 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
     }
   }, [form, item.id, recommended?.id]);
 
+  useEffect(() => {
+    if (paidTouched.current) return;
+    const price = lookupPrice(pricing, group, duration);
+    if (price !== undefined) form.setFieldsValue({ actualPaid: String(price) });
+  }, [group, duration, pricing, form]);
+
   const initialPurchasedAt = item.purchasedAt ? dayjs(item.purchasedAt) : dayjs();
   const initialDuration = item.duration || "monthly";
   const initialExpiresAt = item.expiresAt ? dayjs(item.expiresAt) : dayjs(calcExpiry(initialPurchasedAt, initialDuration));
@@ -128,9 +137,10 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
     if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) {
       subscriptionTouched.current = true;
     }
+    if (Object.prototype.hasOwnProperty.call(changed, "actualPaid")) { paidTouched.current = true; }
+    if (Object.prototype.hasOwnProperty.call(changed, "group") || Object.prototype.hasOwnProperty.call(changed, "duration")) { paidTouched.current = false; }
     if (Object.prototype.hasOwnProperty.call(changed, "expiresAt")) { expiryTouched.current = true; return; }
     if (Object.prototype.hasOwnProperty.call(changed, "duration")) {
-      // 永久：清空到期日期（由后端补哨兵）；自定义：保留用户手填值，二者均不自动推算
       if (values.duration === "lifetime") { form.setFieldsValue({ expiresAt: null }); return; }
       if (values.duration === "custom") return;
     }
@@ -236,9 +246,10 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
 // ─── Renew Form ───────────────────────────────────────────────────────────────
 
 function RenewForm({ user, subscriptions, onClose, onSaved }) {
-  const { runAsync } = useData();
+  const { runAsync, pricing } = useData();
   const [form] = Form.useForm();
   const subscriptionTouched = useRef(false);
+  const paidTouched = useRef(false);
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
   const expiresAt = Form.useWatch("expiresAt", form);
@@ -265,6 +276,12 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
     if (recommended?.id && !subscriptionTouched.current) form.setFieldsValue({ subscriptionId: recommended.id });
   }, [form, recommended?.id]);
 
+  useEffect(() => {
+    if (paidTouched.current) return;
+    const price = lookupPrice(pricing, user.group, duration);
+    if (price !== undefined) form.setFieldsValue({ actualPaid: String(price) });
+  }, [duration, pricing, user.group, form]);
+
   async function submit(values) {
     await runAsync(async () => {
       const payload = {
@@ -279,7 +296,7 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
 
   return (
     <FormModal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} width={760}>
-      <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode }} onValuesChange={changed => { if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true; }} onFinish={submit}>
+      <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode }} onValuesChange={changed => { if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true; if (Object.prototype.hasOwnProperty.call(changed, "actualPaid")) paidTouched.current = true; if (Object.prototype.hasOwnProperty.call(changed, "duration")) paidTouched.current = false; }} onFinish={submit}>
         <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>续费详情</Text></Divider>
         <Flex gap={16} wrap="wrap">
           <Form.Item name="purchasedAt" label="续费日期" rules={[{ required: true, message: "请选择续费日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>

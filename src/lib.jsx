@@ -254,6 +254,12 @@ export function useData()      { return useContext(DataContext); }
 export function useTheme()     { return useContext(ThemeModeContext); }
 export function usePalette()   { return useContext(ThemeModeContext).palette; }
 
+export function lookupPrice(pricing, group, duration) {
+  if (!pricing || !group || !duration) return undefined;
+  const row = pricing.find(r => r.group === group);
+  return row && typeof row[duration] === "number" ? row[duration] : undefined;
+}
+
 export function useResponsiveList() {
   const screens = Grid.useBreakpoint();
   return !screens.md;
@@ -820,7 +826,7 @@ export function FormModal({ children, title, onCancel, ...props }) {
 
 export function DataProvider({ children }) {
   const nav = useNavigate();
-  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], vendors: [], presets: [], placeholderNodes: [], embyUsers: [], embyVendors: [], meta: null, loading: true, error: "" });
+  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], vendors: [], presets: [], placeholderNodes: [], embyUsers: [], embyVendors: [], pricing: [], meta: null, loading: true, error: "" });
   const [busy, setBusy] = useState(null);
 
   const apis = useMemo(() => ({
@@ -832,11 +838,12 @@ export function DataProvider({ children }) {
     placeholderNodes: "/api/placeholder-nodes",
     embyUsers: "/api/emby-users",
     embyVendors: "/api/emby-vendors",
+    pricing: "/api/pricing",
     meta:  "/api/app-meta"
   }), []);
 
   const reload = useCallback(async (collections = null) => {
-    const keys = collections || ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "meta"];
+    const keys = collections || ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "meta"];
     setState(s => ({ ...s, loading: !collections, error: "" }));
     try {
       const results = await Promise.all(keys.map(k => fetchJson(apis[k])));

@@ -9,6 +9,7 @@ import {
   Flex,
   Form,
   Input,
+  InputNumber,
   Modal,
   Select,
   Table,
@@ -26,6 +27,7 @@ import {
 } from "@ant-design/icons";
 
 import { fetchJson, postJson, putJson, deleteJson } from "../api";
+import { formatMoney } from "../utils";
 import {
   Card,
   FormModal,
@@ -346,9 +348,78 @@ function ServiceStatusCard() {
   );
 }
 
+const PRICING_GROUPS = ["basic", "pro", "ultra"];
+const PRICING_DURATIONS = [
+  { key: "monthly", label: "月付" },
+  { key: "quarterly", label: "季付" },
+  { key: "half_yearly", label: "半年付" },
+  { key: "yearly", label: "年付" }
+];
+
+function PricingSection() {
+  const { pricing, reload } = useData();
+  const { notification } = AntApp.useApp();
+  const [editing, setEditing] = useState(false);
+  const [form] = Form.useForm();
+
+  function handleEdit() {
+    const vals = {};
+    for (const row of pricing) {
+      for (const d of PRICING_DURATIONS) vals[`${row.group}_${d.key}`] = row[d.key];
+    }
+    form.setFieldsValue(vals);
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    const values = form.getFieldsValue();
+    const payload = PRICING_GROUPS.map(group => {
+      const row = { group };
+      for (const d of PRICING_DURATIONS) row[d.key] = Number(values[`${group}_${d.key}`]) || 0;
+      return row;
+    });
+    try {
+      await putJson("/api/pricing", payload);
+      await reload(["pricing"]);
+      setEditing(false);
+      notification.success({ message: "定价已更新", placement: "bottomRight" });
+    } catch (e) {
+      notification.error({ message: "保存失败", description: e.message, placement: "bottomRight" });
+    }
+  }
+
+  const dataSource = PRICING_GROUPS.map(g => {
+    const row = pricing.find(r => r.group === g) || {};
+    return { key: g, group: g, ...row };
+  });
+
+  return (
+    <SectionCard
+      title="套餐定价"
+      extra={editing
+        ? <Flex gap={8}><Button size="small" onClick={() => setEditing(false)}>取消</Button><Button size="small" type="primary" onClick={handleSave}>保存</Button></Flex>
+        : <Button size="small" type="link" icon={<EditOutlined />} onClick={handleEdit}>编辑</Button>
+      }
+    >
+      <Form form={form}>
+        <Table size="small" pagination={false} dataSource={dataSource} columns={[
+          { title: "套餐", dataIndex: "group", width: 80, render: v => <Text strong style={{ textTransform: "capitalize" }}>{v}</Text> },
+          ...PRICING_DURATIONS.map(d => ({
+            title: d.label, dataIndex: d.key, width: 120,
+            render: (val, record) => editing
+              ? <Form.Item name={`${record.group}_${d.key}`} style={{ marginBottom: 0 }}><InputNumber min={0} step={1} style={{ width: 100 }} /></Form.Item>
+              : <Text>{formatMoney(val)}</Text>
+          }))
+        ]} />
+      </Form>
+    </SectionCard>
+  );
+}
+
 function SubconverterPage() {
   return (
     <Flex vertical gap={24}>
+      <PricingSection />
       <VendorPresetSection />
       <PlaceholderNodesSection />
     </Flex>
