@@ -7,6 +7,7 @@ import {
   Button,
   Breadcrumb,
   Card as AntCard,
+  Checkbox,
   ConfigProvider,
   Divider,
   Drawer,
@@ -103,9 +104,14 @@ import {
 // ─── Lazy-loaded page components ──────────────────────────────────────────────
 
 const LazyUsersPage = React.lazy(() => import("./pages/UsersPage"));
+const LazyUserDetailPage = React.lazy(() => import("./pages/UsersPage").then(module => ({ default: module.UserDetailPage })));
 const LazyBillsPage = React.lazy(() => import("./pages/BillsPage"));
 const LazyEmbyPage = React.lazy(() => import("./pages/EmbyPage"));
 const LazySubconverterPage = React.lazy(() => import("./pages/SubconverterPage"));
+
+function shouldHidePoolMetrics(item) {
+  return item?.status === "invalid";
+}
 
 // ─── Suspense fallback ────────────────────────────────────────────────────────
 
@@ -128,7 +134,7 @@ function LoginPage() {
   async function submit(values) {
     setLoading(true); setErr("");
     try {
-      const res     = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ ...values, remember: false }) });
+      const res     = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify(values) });
       const payload = await res.json();
       if (!res.ok) return setErr(payload.error || "Sign-in failed");
       navigate("/dashboard", { replace: true });
@@ -148,12 +154,15 @@ function LoginPage() {
           <Text type="secondary" style={{ fontSize: 14 }}>订阅运营控制台</Text>
         </Flex>
         <AntCard bordered={false} style={{ background: p.surfaceElevated, border: `1px solid ${p.border}`, borderRadius: 8, padding: 28 }}>
-          <Form layout="vertical" onFinish={submit} requiredMark={false}>
+          <Form layout="vertical" onFinish={submit} requiredMark={false} initialValues={{ remember: true }}>
             <Form.Item name="account" label="账号" rules={[{ required: true, message: "请输入账号" }]} style={{ marginBottom: 16 }}>
               <Input autoFocus autoComplete="username" placeholder="账号" size="large" />
             </Form.Item>
             <Form.Item name="password" label="密码" rules={[{ required: true, message: "请输入密码" }]} style={{ marginBottom: 20 }}>
               <Input.Password autoComplete="current-password" placeholder="密码" size="large" />
+            </Form.Item>
+            <Form.Item name="remember" valuePropName="checked" style={{ marginBottom: 16 }}>
+              <Checkbox>记住我，30 天内免登录</Checkbox>
             </Form.Item>
             {err && <Text type="danger" style={{ display: "block", marginBottom: 14, fontSize: 13 }}>{err}</Text>}
             <Button type="primary" htmlType="submit" block loading={loading} size="large">登录</Button>
@@ -357,7 +366,7 @@ function AppLayout() {
                         <Route path="/urls" element={<UrlPoolPage />} />
                         <Route path="/urls/detail/:id" element={<PoolDetailPage />} />
                         <Route path="/users" element={<LazyUsersPage />} />
-                        <Route path="/users/detail/:id" element={<LazyUsersPage />} />
+                        <Route path="/users/detail/:id" element={<LazyUserDetailPage />} />
                         <Route path="/bills" element={<LazyBillsPage />} />
                         <Route path="/emby" element={<LazyEmbyPage />} />
                         <Route path="/subconverter" element={<LazySubconverterPage />} />
@@ -408,7 +417,10 @@ function ConsoleOverview() {
   const wide = screens.xl;
   const md = screens.md;
 
-  const counts = subscriptions.reduce((acc, item) => ({ ...acc, [item.status]: (acc[item.status] || 0) + 1 }), {});
+  const counts = subscriptions.reduce((acc, item) => {
+    acc[item.status] = (acc[item.status] || 0) + 1;
+    return acc;
+  }, {});
   const activeBills = bills.filter(item => !item.reversedAt);
   const paidTotal = activeBills.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const now = new Date();
@@ -422,11 +434,12 @@ function ConsoleOverview() {
   const activeUrls = subscriptions.filter(item => item.status === "ok").length;
   const totalUrls = subscriptions.length;
   const activeUrlPct = totalUrls ? Math.round((activeUrls / totalUrls) * 100) : 0;
-  const warningPct = totalUrls ? Math.round(((counts.warning || 0) / totalUrls) * 100) : 0;
+  const poolIssueCount = subscriptions.filter(item => item.status && item.status !== "ok").length;
+  const warningPct = totalUrls ? Math.round((poolIssueCount / totalUrls) * 100) : 0;
   const goalPct = paidTotal > 0 ? Math.min(100, Math.round((monthIncome / paidTotal) * 100)) : 0;
 
   const criticalUrl = [...subscriptions]
-    .filter(item => item.status !== "expired" && item.metrics?.totalBytes)
+    .filter(item => !shouldHidePoolMetrics(item) && item.metrics?.totalBytes)
     .sort((a, b) => (a.metrics.remainingBytes / a.metrics.totalBytes) - (b.metrics.remainingBytes / b.metrics.totalBytes))[0];
 
   const spotlightPools = [...subscriptions]
@@ -450,7 +463,7 @@ function ConsoleOverview() {
     { label: "活跃用户", value: activeUsers.length, hint: `占比 ${activeUserPct}%` },
     { label: "本月收入", value: formatMoney(monthIncome), hint: `今日 ${formatMoney(todayIncome)}` },
     { label: "总收入", value: formatMoney(paidTotal), hint: `共 ${activeBills.length} 笔账单` },
-    { label: "告警", value: counts.warning || 0, hint: criticalUrl ? "需跟进" : "全部正常", accent: !!(counts.warning || criticalUrl) }
+    { label: "告警", value: poolIssueCount, hint: criticalUrl ? "需跟进" : "全部正常", accent: !!(poolIssueCount || criticalUrl) }
   ];
 
   const metricRows = [
@@ -507,7 +520,7 @@ function ConsoleOverview() {
                   <div className="console-app-domain">{pool.url || "暂无链接"}</div>
                   <div className="console-app-foot">
                     <span>{pool.customerCount || 0} users</span>
-                    <span>{formatDate(pool.metrics?.expireAt)}</span>
+                    <span>{shouldHidePoolMetrics(pool) ? "-" : formatDate(pool.metrics?.expireAt)}</span>
                   </div>
                 </div>
               )) : placeholderPools.slice(0, wide ? 4 : md ? 2 : 1).map(pool => (
@@ -840,11 +853,11 @@ function UrlPoolPage() {
     { title: "URL", dataIndex: "url", render: v => <UrlText value={v} />, width: 320 },
     { title: "用户", dataIndex: "customerCount", render: v => v || 0, width: 82 },
     { title: "剩余流量", render: (_, item) => {
-      if (item.status === "expired" || !item.metrics?.totalBytes) return <span>{formatBytes(item.metrics?.remainingBytes)}</span>;
+      if (shouldHidePoolMetrics(item) || !item.metrics?.totalBytes) return <span>-</span>;
       const pct = Math.round(item.metrics.remainingBytes / item.metrics.totalBytes * 100);
       return <Flex vertical gap={2} style={{ minWidth: 90 }}><Progress percent={pct} size="small" strokeColor={pct < 20 ? "#ff4d4f" : pct < 50 ? "#faad14" : "#52c41a"} showInfo={false} /><Text style={{ fontSize: 11 }}>{formatBytes(item.metrics.remainingBytes)} / {formatBytes(item.metrics.totalBytes)}</Text></Flex>;
     }, width: 140 },
-    { title: "到期时间", render: (_, item) => item.status === "expired" ? "-" : formatDate(item.metrics?.expireAt), width: 120 },
+    { title: "到期时间", render: (_, item) => shouldHidePoolMetrics(item) ? "-" : formatDate(item.metrics?.expireAt), width: 120 },
     { title: "状态", dataIndex: "status", render: v => <StatusBadge status={v} />, width: 90 },
     { title: "操作", render: (_, item) => actions(item, true), width: 300 }
   ].map(col => ({ ...col, onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }), onCell: () => ({ style: { whiteSpace: "nowrap" } }) }));
@@ -902,7 +915,7 @@ function PoolCards({ items, actions }) {
             <UrlPill value={item.url} />
           </div>
           <div style={{ display: "grid", gap: 8, padding: "12px 0" }}>
-            {item.status !== "expired" && item.metrics?.totalBytes ? (
+            {!shouldHidePoolMetrics(item) && item.metrics?.totalBytes ? (
               <div>
                 <Flex justify="space-between" align="center" gap={12}>
                   <Text type="secondary" style={{ fontSize: 13, flex: "0 0 auto" }}>剩余流量</Text>
@@ -913,10 +926,10 @@ function PoolCards({ items, actions }) {
             ) : (
               <Flex justify="space-between" align="center" gap={12}>
                 <Text type="secondary" style={{ fontSize: 13, flex: "0 0 auto" }}>剩余流量</Text>
-                <Text strong style={{ fontSize: 13 }}>{item.status === "expired" ? "-" : formatBytes(item.metrics?.remainingBytes)}</Text>
+                <Text strong style={{ fontSize: 13 }}>{shouldHidePoolMetrics(item) ? "-" : formatBytes(item.metrics?.remainingBytes)}</Text>
               </Flex>
             )}
-            {[["到期", item.status === "expired" ? "-" : formatDate(item.metrics?.expireAt)]].map(([label, value]) => (
+            {[["到期", shouldHidePoolMetrics(item) ? "-" : formatDate(item.metrics?.expireAt)]].map(([label, value]) => (
               <Flex justify="space-between" align="center" gap={12} key={label}>
                 <Text type="secondary" style={{ fontSize: 13, flex: "0 0 auto" }}>{label}</Text>
                 <Text strong style={{ fontSize: 13 }}>{value}</Text>
@@ -985,6 +998,7 @@ function PoolDetailPage() {
   }
 
   const m = item.metrics || {};
+  const hideMetrics = shouldHidePoolMetrics(item);
   const isMobile = !screens.md;
 
   const cacheText = cache?.error ? `Error: ${cache.error}` : (cache?.body || "(no YAML fetched)");
@@ -1025,9 +1039,9 @@ function PoolDetailPage() {
             {[
               { label: "HTTP 状态", value: item.httpStatus || "-" },
               { label: "最近检查", value: item.lastCheckedAt ? formatDate(item.lastCheckedAt) : "-" },
-              { label: "到期时间", value: m.expireAt ? formatDate(m.expireAt) : "-" },
-              { label: "剩余流量", value: m.totalBytes ? `${formatBytes(m.remainingBytes)} / ${formatBytes(m.totalBytes)}` : "-" },
-              { label: "已用流量", value: m.usedBytes ? formatBytes(m.usedBytes) : "-" },
+              { label: "到期时间", value: !hideMetrics && m.expireAt ? formatDate(m.expireAt) : "-" },
+              { label: "剩余流量", value: !hideMetrics && m.totalBytes ? `${formatBytes(m.remainingBytes)} / ${formatBytes(m.totalBytes)}` : "-" },
+              { label: "已用流量", value: !hideMetrics && m.usedBytes ? formatBytes(m.usedBytes) : "-" },
               { label: "绑定用户", value: `${boundUsers.length} users` }
             ].map(r => (
               <div key={r.label}>

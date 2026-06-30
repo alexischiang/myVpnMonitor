@@ -15,6 +15,10 @@ export const billTypeLabels = {
 
 export const statusLabels = {
   ok: "正常",
+  expiring: "即将到期",
+  invalid: "无效",
+  low_traffic: "低流量",
+  depleted: "流量已用尽",
   warning: "即将到期",
   expired: "已到期"
 };

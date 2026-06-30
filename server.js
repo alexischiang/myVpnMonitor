@@ -47,7 +47,7 @@ const DIST_DIR = path.join(__dirname, "dist");
 const PUBLIC_DIR = fsSync.existsSync(path.join(DIST_DIR, "index.html")) ? DIST_DIR : path.join(__dirname, "public");
 const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "build-meta.json");
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 2 * 60 * 60 * 1000);
-const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 50 * 1024 * 1024 * 1024);
+const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 10 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
 const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 10);
 const RELAY_AFTER_EXPIRY_DAYS = Number(process.env.RELAY_AFTER_EXPIRY_DAYS || 10);
@@ -626,6 +626,15 @@ function isValidDuration(duration) {
   return Boolean(durationDays(duration)) || duration === "custom" || duration === "lifetime";
 }
 
+function normalizeIdList(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[\n,，;；]+/);
+  return [...new Set(raw.map(item => String(item || "").trim()).filter(Boolean))];
+}
+
+function userImessageIds(user = {}) {
+  return normalizeIdList(user.imessageIds !== undefined ? user.imessageIds : user.imessageId);
+}
+
 function calculateExpiry(purchasedAt, duration) {
   if (duration === "lifetime") return LIFETIME_EXPIRES_AT;
   const days = durationDays(duration);
@@ -704,7 +713,8 @@ function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "" } = {}) 
 function normalizeUser(input, existing = {}) {
   const userId = String(input.userId || existing.userId || "").trim();
   const wechatName = String(input.wechatName || existing.wechatName || "").trim();
-  const imessageId = String(input.imessageId || existing.imessageId || "").trim();
+  const imessageIds = normalizeIdList(input.imessageIds !== undefined ? input.imessageIds : (input.imessageId !== undefined ? input.imessageId : userImessageIds(existing)));
+  const imessageId = imessageIds[0] || "";
   const purchasedAt = String(input.purchasedAt || existing.purchasedAt || new Date().toISOString()).trim();
   const duration = String(input.duration || existing.duration || "monthly").trim();
   const requestedSubscriptionId = String(input.subscriptionId || existing.subscriptionId || "").trim();
@@ -767,7 +777,7 @@ function normalizePaymentAmount(value) {
 
 
 function billUserLabel(user) {
-  return user.userId || user.wechatName || user.imessageId || "未知用户";
+  return user.userId || user.wechatName || userImessageIds(user)[0] || "未知用户";
 }
 
 function makeBill({ user, type, amount, occurredAt, duration, beforeExpiresAt = null, afterExpiresAt = null, description = "" }) {
@@ -780,7 +790,8 @@ function makeBill({ user, type, amount, occurredAt, duration, beforeExpiresAt = 
       id: user.id,
       userId: user.userId || "",
       wechatName: user.wechatName || "",
-      imessageId: user.imessageId || ""
+      imessageId: user.imessageId || "",
+      imessageIds: userImessageIds(user)
     },
     amount: Math.round(Number(amount || 0) * 100) / 100,
     occurredAt,
@@ -1001,22 +1012,18 @@ function toBytes(value, unit) {
 }
 
 function statusFor(item, customerCount = 0) {
-  if (item.metrics?.unavailable) return "expired";
-  if (item.lastError) return "warning";
-  if (!item.metrics) return "unknown";
+  const metrics = item.metrics;
+  if (item.lastError || !metrics || metrics.unavailable) return "invalid";
 
-  const now = Date.now();
-  const expiresAt = item.metrics.expireAt ? new Date(item.metrics.expireAt).getTime() : null;
-  if (expiresAt && expiresAt < now) return "expired";
+  const expiresAt = metrics.expireAt ? new Date(metrics.expireAt).getTime() : NaN;
+  const remaining = Number(metrics.remainingBytes);
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(remaining)) return "invalid";
 
-  const remaining = item.metrics.remainingBytes;
-  if (remaining !== null && remaining !== undefined && remaining <= 0) return "depleted";
+  if (remaining <= 0) return "depleted";
 
-  const daysLeft = expiresAt ? (expiresAt - now) / 86400000 : null;
-  if ((remaining !== null && remaining < LOW_TRAFFIC_BYTES) || (daysLeft !== null && daysLeft < EXPIRING_SOON_DAYS)) {
-    return "warning";
-  }
-  if (customerCount >= 8) return "warning";
+  const daysLeft = (expiresAt - Date.now()) / 86400000;
+  if (daysLeft <= EXPIRING_SOON_DAYS) return "expiring";
+  if (remaining <= LOW_TRAFFIC_BYTES) return "low_traffic";
 
   return "ok";
 }
@@ -1039,20 +1046,42 @@ function metricScore(metrics) {
   return score;
 }
 
-function publicItem(item) {
-  const customerCount = users.filter(user => user.subscriptionId === item.id).length;
+function customerCountBySubscriptionId() {
+  const counts = new Map();
+  for (const user of users) {
+    if (!user.subscriptionId) continue;
+    counts.set(user.subscriptionId, (counts.get(user.subscriptionId) || 0) + 1);
+  }
+  return counts;
+}
+
+function subscriptionById() {
+  return new Map(subscriptions.map(item => [item.id, item]));
+}
+
+function userById() {
+  return new Map(users.map(item => [item.id, item]));
+}
+
+function publicItem(item, customerCount = null) {
+  const resolvedCustomerCount = customerCount ?? users.filter(user => user.subscriptionId === item.id).length;
   return {
     ...item,
     serviceProvider: normalizeServiceProvider({}, item),
-    customerCount,
-    status: statusFor(item, customerCount)
+    customerCount: resolvedCustomerCount,
+    status: statusFor(item, resolvedCustomerCount)
   };
 }
 
-function publicUser(user) {
-  const subscription = subscriptions.find(item => item.id === user.subscriptionId);
+function publicUser(user, subscriptionMap = null) {
+  const subscription = subscriptionMap
+    ? subscriptionMap.get(user.subscriptionId)
+    : subscriptions.find(item => item.id === user.subscriptionId);
   return {
     ...user,
+    userLogs: Array.isArray(user.userLogs)
+      ? user.userLogs
+      : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []),
     relayPath: user.subscriptionToken ? `/sub/${user.subscriptionToken}` : "",
     subscription: subscription ? {
       id: subscription.id,
@@ -1065,8 +1094,10 @@ function publicUser(user) {
   };
 }
 
-function publicBill(bill) {
-  const user = users.find(item => item.id === bill.userId);
+function publicBill(bill, userMap = null) {
+  const user = userMap
+    ? userMap.get(bill.userId)
+    : users.find(item => item.id === bill.userId);
   return {
     ...bill,
     originalUserLabel: bill.userLabel || bill.userSnapshot?.userId || "",
@@ -1076,6 +1107,7 @@ function publicBill(bill) {
       userId: user.userId,
       wechatName: user.wechatName || "",
       imessageId: user.imessageId || "",
+      imessageIds: userImessageIds(user),
       createdAt: user.createdAt || "",
       expiresAt: user.expiresAt
     } : null,
@@ -1497,6 +1529,34 @@ const fallbackReasonText = {
   "pool-missing": "\u539f\u6c60 URL \u4e0d\u5b58\u5728"
 };
 
+const userLogReasonText = {
+  ...fallbackReasonText,
+  "user-expired": "\u7528\u6237\u81ea\u8eab\u5df2\u5230\u671f",
+  "custom-url-disabled": "\u8be5 URL \u672a\u542f\u7528",
+  "subconverter-not-configured": "\u8ba2\u9605\u8f6c\u6362\u670d\u52a1\u672a\u914d\u7f6e",
+  "subconverter-failed": "\u8ba2\u9605\u8f6c\u6362\u5931\u8d25",
+  "subconverter-timeout": "\u8ba2\u9605\u8f6c\u6362\u8d85\u65f6",
+  "subconverter-request-failed": "\u8ba2\u9605\u8f6c\u6362\u8bf7\u6c42\u5931\u8d25",
+  "user-created": "\u7528\u6237\u521b\u5efa",
+  "user-renewed": "\u7528\u6237\u7eed\u8d39",
+  "user-updated": "\u7528\u6237\u8d44\u6599\u66f4\u65b0",
+  "manual-pool-changed": "\u624b\u52a8\u6362\u6c60",
+  "bill-reversed": "\u8d26\u5355\u51b2\u9500",
+  "bill-deleted": "\u8d26\u5355\u5220\u9664",
+  "user-deleted": "\u7528\u6237\u5220\u9664"
+};
+
+const userLogStatusText = {
+  switched: "\u5df2\u81ea\u52a8\u6362\u6c60",
+  no_usable_pool: "\u6682\u65e0\u53ef\u7528\u6c60",
+  blocked: "\u5df2\u62e6\u622a",
+  failed: "\u8bf7\u6c42\u5931\u8d25",
+  kept_current: "\u7ee7\u7eed\u4f7f\u7528\u539f\u6c60",
+  recorded: "\u5df2\u8bb0\u5f55"
+};
+
+const USER_LOG_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+
 function subscriptionLogLabel(item) {
   if (!item) return "";
   return item.email || item.name || item.url || item.id || "";
@@ -1546,6 +1606,226 @@ function poolLogInfo(item) {
     metrics: item?.metrics || null,
     metricUnavailableReason: poolMetricUnavailableReason(item) || ""
   };
+}
+
+function createUserLog({
+  event = "subscription-request",
+  status = "failed",
+  reason = "",
+  fromSubscription = null,
+  toSubscription = null,
+  req = null,
+  target = "",
+  stage = "",
+  message = "",
+  details = null
+} = {}) {
+  const log = {
+    id: crypto.randomUUID(),
+    at: new Date().toISOString(),
+    event,
+    status,
+    statusText: userLogStatusText[status] || status,
+    reason,
+    reasonText: userLogReasonText[reason] || reason,
+    fromSubscriptionId: fromSubscription?.id || "",
+    fromSubscriptionLabel: subscriptionLogLabel(fromSubscription),
+    toSubscriptionId: toSubscription?.id || "",
+    toSubscriptionLabel: subscriptionLogLabel(toSubscription),
+    requestPath: req?.url || "",
+    target
+  };
+  if (stage) log.stage = stage;
+  if (message) log.message = message;
+  if (details) log.details = details;
+  return log;
+}
+
+function dedupeUserLogs(logs = []) {
+  const seen = new Set();
+  return (Array.isArray(logs) ? logs : []).filter(log => {
+    if (!log) return false;
+    const key = log.id || [
+      log.at || "",
+      log.status || "",
+      log.reason || "",
+      log.stage || "",
+      log.fromSubscriptionId || "",
+      log.toSubscriptionId || "",
+      log.requestPath || ""
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function appendUserLogToUser(user, log) {
+  const existingLogs = dedupeUserLogs(Array.isArray(user.userLogs)
+    ? user.userLogs
+    : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []));
+  user.userLogs = dedupeUserLogs([log, ...existingLogs]).slice(0, 100);
+  user.lastUserLogAt = log.at;
+}
+
+async function recordUserLog(user, options = {}) {
+  if (!user) return null;
+  const log = createUserLog(options);
+  const logs = Array.isArray(user.userLogs)
+    ? user.userLogs
+    : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []);
+  const latest = logs[0];
+  const latestAt = latest?.at ? new Date(latest.at).getTime() : NaN;
+  const logAt = new Date(log.at).getTime();
+  const isDuplicate = latest
+    && latest.status === log.status
+    && latest.reason === log.reason
+    && latest.stage === log.stage
+    && latest.fromSubscriptionId === log.fromSubscriptionId
+    && latest.toSubscriptionId === log.toSubscriptionId
+    && latest.requestPath === log.requestPath
+    && Number.isFinite(latestAt)
+    && logAt - latestAt <= USER_LOG_DEDUPE_WINDOW_MS;
+  if (isDuplicate) {
+    latest.repeatCount = Number(latest.repeatCount || 1) + 1;
+    latest.lastSeenAt = log.at;
+    latest.message = log.message || latest.message;
+    user.userLogs = logs;
+    user.lastUserLogAt = log.at;
+    await saveUsers();
+    relayLog("user-log-deduped", {
+      userId: user?.id || "",
+      log: latest
+    });
+    return latest;
+  }
+  appendUserLogToUser(user, log);
+  await saveUsers();
+  relayLog("user-log-saved", {
+    userId: user?.id || "",
+    log
+  });
+  return log;
+}
+
+async function recordUserActionLog(user, options = {}) {
+  if (!user) return null;
+  const log = createUserLog({
+    event: "user-action",
+    status: "recorded",
+    ...options
+  });
+  appendUserLogToUser(user, log);
+  user.updatedAt = log.at;
+  await saveUsers();
+  relayLog("user-action-log-saved", {
+    userId: user?.id || "",
+    log
+  });
+  return log;
+}
+
+function userSnapshotForLog(user = {}) {
+  return {
+    userId: user.userId || "",
+    wechatName: user.wechatName || "",
+    imessageIds: userImessageIds(user),
+    group: user.group || "",
+    isBusiness: Boolean(user.isBusiness),
+    isFamilyFriend: Boolean(user.isFamilyFriend),
+    purchasedAt: user.purchasedAt || "",
+    duration: user.duration || "",
+    actualPaid: Number(user.actualPaid) || 0,
+    expiresAt: user.expiresAt || "",
+    subscriptionId: user.subscriptionId || "",
+    outputMode: user.outputMode || "subconverter",
+    blockUserinfo: user.blockUserinfo !== false,
+    placeholderTag: user.placeholderTag || "",
+    showUserInfo: user.showUserInfo !== false,
+    useDefaultPlaceholder: user.useDefaultPlaceholder !== false
+  };
+}
+
+function summarizeUserChanges(before = {}, after = {}) {
+  const labels = {
+    userId: "\u7528\u6237 ID",
+    wechatName: "\u5fae\u4fe1\u53f7",
+    imessageIds: "iMessage ID",
+    group: "\u5957\u9910",
+    isBusiness: "\u4f01\u4e1a\u7528\u6237",
+    isFamilyFriend: "\u4eb2\u53cb\u8d26\u6237",
+    purchasedAt: "\u8d2d\u4e70\u65e5\u671f",
+    duration: "\u5957\u9910\u65f6\u957f",
+    actualPaid: "\u5b9e\u4ed8\u91d1\u989d",
+    expiresAt: "\u5230\u671f\u65f6\u95f4",
+    subscriptionId: "\u7ed1\u5b9a\u6c60",
+    outputMode: "\u6295\u9012\u6a21\u5f0f",
+    blockUserinfo: "\u5c4f\u853d userinfo",
+    placeholderTag: "\u5360\u4f4d\u8282\u70b9",
+    showUserInfo: "\u663e\u793a\u7528\u6237\u4fe1\u606f",
+    useDefaultPlaceholder: "\u4f7f\u7528\u9ed8\u8ba4\u5360\u4f4d\u8282\u70b9"
+  };
+  return Object.keys(labels).flatMap(key => {
+    const beforeValue = Array.isArray(before[key]) ? before[key].join(", ") : before[key];
+    const afterValue = Array.isArray(after[key]) ? after[key].join(", ") : after[key];
+    if (String(beforeValue ?? "") === String(afterValue ?? "")) return [];
+    return [{
+      field: key,
+      label: labels[key],
+      before: beforeValue ?? "",
+      after: afterValue ?? ""
+    }];
+  });
+}
+
+function userActionMessage(reason, details = {}) {
+  if (reason === "user-created") return "\u521b\u5efa\u7528\u6237";
+  if (reason === "user-renewed") {
+    return `\u7eed\u8d39 ${details.duration || "-"}\uff0c\u91d1\u989d ${Number(details.amount || 0).toFixed(2)}\uff0c\u5230\u671f ${details.beforeExpiresAt || "-"} -> ${details.afterExpiresAt || "-"}`;
+  }
+  if (reason === "manual-pool-changed") {
+    const changeText = (details.changes || [])
+      .map(item => `${item.label}: ${item.before || "-"} -> ${item.after || "-"}`)
+      .join("\uff1b");
+    return `\u624b\u52a8\u6362\u6c60\uff1a${details.fromSubscriptionLabel || "-"} -> ${details.toSubscriptionLabel || "-"}${changeText ? `\uff1b${changeText}` : ""}`;
+  }
+  if (reason === "user-updated") {
+    const changeText = (details.changes || [])
+      .map(item => `${item.label}: ${item.before || "-"} -> ${item.after || "-"}`)
+      .join("\uff1b");
+    return `\u66f4\u65b0\u7528\u6237\u8d44\u6599\uff1a${changeText || "\u65e0\u5b57\u6bb5\u53d8\u5316"}`;
+  }
+  if (reason === "bill-reversed") return `\u51b2\u9500\u8d26\u5355\uff1a${details.billType || "-"} ${Number(details.amount || 0).toFixed(2)}`;
+  if (reason === "bill-deleted") return `\u5220\u9664\u8d26\u5355\uff1a${details.billType || "-"} ${Number(details.amount || 0).toFixed(2)}`;
+  if (reason === "user-deleted") return "\u5220\u9664\u7528\u6237";
+  return "";
+}
+
+function billDetailsForLog(bill = {}) {
+  return {
+    billId: bill.id || "",
+    billType: bill.type || "",
+    amount: Number(bill.amount) || 0,
+    duration: bill.duration || "",
+    occurredAt: bill.occurredAt || "",
+    beforeExpiresAt: bill.beforeExpiresAt || null,
+    afterExpiresAt: bill.afterExpiresAt || null,
+    description: bill.description || ""
+  };
+}
+
+function appendBillActionLog(bill, reason, req) {
+  const user = users.find(entry => entry.id === bill?.userId);
+  if (!user) return;
+  const details = billDetailsForLog(bill);
+  appendUserLogToUser(user, createUserLog({
+    event: "user-action",
+    status: "recorded",
+    reason,
+    req,
+    message: userActionMessage(reason, details),
+    details
+  }));
 }
 
 function fallbackCandidateRank(item, user) {
@@ -1644,23 +1924,21 @@ async function findFallbackSubscription(user, currentSubscription) {
 }
 
 async function switchUserSubscription(user, fromSubscription, toSubscription, reason, req, target = "") {
-  const log = {
-    id: crypto.randomUUID(),
-    at: new Date().toISOString(),
-    fromSubscriptionId: fromSubscription?.id || "",
-    fromSubscriptionLabel: subscriptionLogLabel(fromSubscription),
-    toSubscriptionId: toSubscription.id,
-    toSubscriptionLabel: subscriptionLogLabel(toSubscription),
+  const log = createUserLog({
+    event: "subscription-request",
+    status: "switched",
     reason,
-    reasonText: fallbackReasonText[reason] || reason,
-    requestPath: req?.url || "",
+    fromSubscription,
+    toSubscription,
+    req,
     target
-  };
+  });
   user.subscriptionId = toSubscription.id;
   user.lastFallbackAt = log.at;
   user.lastFallbackFromSubscriptionId = log.fromSubscriptionId;
   user.lastFallbackReason = reason;
-  user.fallbackLogs = [log, ...(Array.isArray(user.fallbackLogs) ? user.fallbackLogs : [])].slice(0, 50);
+  appendUserLogToUser(user, log);
+  user.fallbackLogs = dedupeUserLogs([log, ...(Array.isArray(user.fallbackLogs) ? user.fallbackLogs : [])]).slice(0, 50);
   user.updatedAt = log.at;
   await saveUsers();
   relayLog("fallback-switch-saved", {
@@ -2044,6 +2322,14 @@ async function handleRelaySubscription(req, res, token) {
       relayRequestId,
       userId: user.id
     });
+    await recordUserLog(user, {
+      status: "blocked",
+      reason: "user-expired",
+      fromSubscription: subscriptions.find(item => item.id === user.subscriptionId),
+      req,
+      stage: "user-date-check",
+      message: "\u7528\u6237\u8ba2\u9605\u5df2\u5230\u671f\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
+    });
     sendExpiredPlaceholderSubscription(res, user);
     return;
   }
@@ -2074,11 +2360,36 @@ async function handleRelaySubscription(req, res, token) {
     currentPool: poolLogInfo(subscription),
     initialFallbackReason
   });
+  if (!sc?.target && !subscription?.url) {
+    relayLog("response-placeholder-pool-missing-before-converter", {
+      relayRequestId,
+      userId: user.id,
+      currentPool: poolLogInfo(subscription)
+    });
+    await recordUserLog(user, {
+      status: "no_usable_pool",
+      reason: "pool-missing",
+      fromSubscription: subscription,
+      req,
+      stage: "pool-url-check",
+      message: "\u7528\u6237\u5f53\u524d\u7ed1\u5b9a\u7684\u6c60 URL \u4e0d\u5b58\u5728\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
+    });
+    sendUnavailablePoolPlaceholderSubscription(res, user);
+    return;
+  }
   if (!sc?.target) {
     relayLog("response-placeholder-custom-url-disabled", {
       relayRequestId,
       userId: user.id,
       currentPool: poolLogInfo(subscription)
+    });
+    await recordUserLog(user, {
+      status: "blocked",
+      reason: "custom-url-disabled",
+      fromSubscription: subscription,
+      req,
+      stage: "output-mode-check",
+      message: "\u5f53\u524d\u8ba2\u9605\u94fe\u63a5\u672a\u542f\u7528\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
     });
     sendDisabledCustomUrlPlaceholderSubscription(res, user);
     return;
@@ -2099,6 +2410,15 @@ async function handleRelaySubscription(req, res, token) {
             bodyLength: precheckedLiveConfig.bodyLength,
             subscriptionUserinfo: precheckedLiveConfig.subscriptionUserinfo
           }
+        });
+        await recordUserLog(user, {
+          status: "kept_current",
+          reason: initialFallbackReason,
+          fromSubscription: subscription,
+          req,
+          target: sc?.target || "",
+          stage: "current-pool-live-precheck",
+          message: "\u539f\u6c60\u6307\u6807\u663e\u793a\u4e0d\u53ef\u7528\uff0c\u4f46\u5b9e\u65f6\u83b7\u53d6\u6210\u529f\uff0c\u7ee7\u7eed\u4f7f\u7528\u539f\u6c60\u3002"
         });
       } catch (error) {
         relayLog("current-pool-live-precheck-failed", {
@@ -2121,6 +2441,16 @@ async function handleRelaySubscription(req, res, token) {
           reason: initialFallbackReason,
           fallbackErrors: fallback.errors || []
         });
+        await recordUserLog(user, {
+          status: "no_usable_pool",
+          reason: initialFallbackReason,
+          fromSubscription: subscription,
+          req,
+          target: sc?.target || "",
+          stage: "initial-fallback",
+          message: "\u539f\u6c60\u4e0d\u53ef\u7528\uff0c\u4f46\u672a\u627e\u5230\u53ef\u81ea\u52a8\u5207\u6362\u7684\u5907\u7528\u6c60\u3002",
+          details: { fallbackErrors: fallback.errors || [] }
+        });
         sendUnavailablePoolPlaceholderSubscription(res, user);
         return;
       }
@@ -2140,6 +2470,15 @@ async function handleRelaySubscription(req, res, token) {
       userId: user.id,
       currentPool: poolLogInfo(subscription)
     });
+    await recordUserLog(user, {
+      status: "no_usable_pool",
+      reason: "pool-missing",
+      fromSubscription: subscription,
+      req,
+      target: sc?.target || "",
+      stage: "pool-url-check",
+      message: "\u7528\u6237\u5f53\u524d\u7ed1\u5b9a\u7684\u6c60 URL \u4e0d\u5b58\u5728\u3002"
+    });
     sendSubscriptionMessage(res, 503, "订阅暂时不可用，请联系客服处理。");
     return;
   }
@@ -2150,6 +2489,15 @@ async function handleRelaySubscription(req, res, token) {
       relayRequestId,
       userId: user.id,
       target: sc.target
+    });
+    await recordUserLog(user, {
+      status: "failed",
+      reason: "subconverter-not-configured",
+      fromSubscription: subscription,
+      req,
+      target: sc.target,
+      stage: "subconverter-config-check",
+      message: "\u5df2\u9009\u62e9\u8ba2\u9605\u8f6c\u6362\u6a21\u5f0f\uff0c\u4f46\u670d\u52a1\u7aef\u672a\u914d\u7f6e SUB_CONVERTER_URL\u3002"
     });
     sendSubscriptionMessage(res, 503, "服务端未配置 SUB_CONVERTER_URL，无法进行订阅转换。请联系管理员。");
     return;
@@ -2180,6 +2528,16 @@ async function handleRelaySubscription(req, res, token) {
           stage: "subconverter-live-fetch",
           reason: "pool-fetch-failed",
           fallbackErrors: fallback.errors || []
+        });
+        await recordUserLog(user, {
+          status: "no_usable_pool",
+          reason: "pool-fetch-failed",
+          fromSubscription: subscription,
+          req,
+          target: sc.target,
+          stage: "subconverter-live-fetch",
+          message: "\u539f\u6c60 URL \u5b9e\u65f6\u83b7\u53d6\u5931\u8d25\uff0c\u4e14\u672a\u627e\u5230\u53ef\u81ea\u52a8\u5207\u6362\u7684\u5907\u7528\u6c60\u3002",
+          details: { fallbackErrors: fallback.errors || [] }
         });
         sendUnavailablePoolPlaceholderSubscription(res, user);
         return;
@@ -2250,6 +2608,16 @@ async function handleRelaySubscription(req, res, token) {
           bodyLength: text.length,
           bodyPreview: bodyPreview(text)
         });
+        await recordUserLog(user, {
+          status: "failed",
+          reason: "subconverter-failed",
+          fromSubscription: subscription,
+          req,
+          target: sc.target,
+          stage: "subconverter-response",
+          message: `Subconverter failed (${response.status}).`,
+          details: { status: response.status, bodyPreview: bodyPreview(text) }
+        });
         sendSubscriptionMessage(res, 502, `Subconverter failed (${response.status}): ${text.slice(0, 200)}`);
         return;
       }
@@ -2278,6 +2646,15 @@ async function handleRelaySubscription(req, res, token) {
         userId: user.id,
         errorName: error.name,
         errorMessage: error.message
+      });
+      await recordUserLog(user, {
+        status: "failed",
+        reason: error.name === "AbortError" ? "subconverter-timeout" : "subconverter-request-failed",
+        fromSubscription: subscription,
+        req,
+        target: sc.target,
+        stage: "subconverter-request",
+        message: error.name === "AbortError" ? "Subconverter request timed out." : error.message
       });
       sendSubscriptionMessage(res, 502, error.name === "AbortError"
         ? "Subconverter request timed out. Please retry."
@@ -2335,6 +2712,15 @@ async function handleRelaySubscription(req, res, token) {
         stage: "direct-fallback",
         reason: "pool-fetch-failed",
         fallbackErrors: fallback.errors || []
+      });
+      await recordUserLog(user, {
+        status: "no_usable_pool",
+        reason: "pool-fetch-failed",
+        fromSubscription: subscription,
+        req,
+        stage: "direct-fallback",
+        message: "\u539f\u6c60 URL \u76f4\u8fde\u83b7\u53d6\u5931\u8d25\uff0c\u4e14\u672a\u627e\u5230\u53ef\u81ea\u52a8\u5207\u6362\u7684\u5907\u7528\u6c60\u3002",
+        details: { fallbackErrors: fallback.errors || [] }
       });
       sendUnavailablePoolPlaceholderSubscription(res, user);
       return;
@@ -2589,7 +2975,8 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/subscriptions" && req.method === "GET") {
-    sendJson(res, 200, subscriptions.map(publicItem));
+    const customerCounts = customerCountBySubscriptionId();
+    sendJson(res, 200, subscriptions.map(item => publicItem(item, customerCounts.get(item.id) || 0)));
     return;
   }
 
@@ -2641,12 +3028,14 @@ async function handleApi(req, res, pathname) {
 
 
   if (pathname === "/api/users" && req.method === "GET") {
-    sendJson(res, 200, users.map(publicUser));
+    const subscriptionsById = subscriptionById();
+    sendJson(res, 200, users.map(user => publicUser(user, subscriptionsById)));
     return;
   }
 
   if (pathname === "/api/bills" && req.method === "GET") {
-    sendJson(res, 200, bills.map(publicBill).sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)));
+    const usersById = userById();
+    sendJson(res, 200, bills.map(bill => publicBill(bill, usersById)).sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)));
     return;
   }
 
@@ -2669,6 +3058,20 @@ async function handleApi(req, res, pathname) {
         duration: normalized.duration,
         afterExpiresAt: normalized.expiresAt,
         description: "用户初始购买"
+      }));
+      appendUserLogToUser(normalized, createUserLog({
+        event: "user-action",
+        status: "recorded",
+        reason: "user-created",
+        toSubscription: subscriptions.find(entry => entry.id === normalized.subscriptionId),
+        req,
+        message: userActionMessage("user-created"),
+        details: {
+          snapshot: userSnapshotForLog(normalized),
+          amount: normalized.actualPaid,
+          duration: normalized.duration,
+          afterExpiresAt: normalized.expiresAt
+        }
       }));
       await saveUsers();
       await saveBills();
@@ -2700,9 +3103,11 @@ async function handleApi(req, res, pathname) {
         if (action === "reverse") {
           if (!bill.reversedAt) {
             reverseBill(bill);
+            appendBillActionLog(bill, "bill-reversed", req);
             changed += 1;
           }
         } else {
+          appendBillActionLog(bill, "bill-deleted", req);
           deleteBillRecord(bill);
           changed += 1;
         }
@@ -2726,7 +3131,9 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === "POST") {
+      const wasReversed = Boolean(bill.reversedAt);
       reverseBill(bill);
+      if (!wasReversed) appendBillActionLog(bill, "bill-reversed", req);
       await saveBills();
       await saveUsers();
       sendJson(res, 200, publicBill(bill));
@@ -2746,6 +3153,7 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === "DELETE") {
+      appendBillActionLog(bill, "bill-deleted", req);
       deleteBillRecord(bill);
       await saveBills();
       await saveUsers();
@@ -3068,9 +3476,12 @@ async function handleApi(req, res, pathname) {
     if (action === "renew" && req.method === "POST") {
       try {
         const payload = await readJson(req);
+        const before = userSnapshotForLog(item);
+        const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         if (payload.outputMode !== undefined) item.outputMode = payload.outputMode === "direct" ? "direct" : "subconverter";
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const renewal = renewUser(item, payload);
+        const toSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         bills.unshift(makeBill({
           user: item,
           type: "renewal",
@@ -3080,6 +3491,29 @@ async function handleApi(req, res, pathname) {
           beforeExpiresAt: renewal.beforeExpiresAt,
           afterExpiresAt: renewal.afterExpiresAt,
           description: "用户续费"
+        }));
+        appendUserLogToUser(item, createUserLog({
+          event: "user-action",
+          status: "recorded",
+          reason: "user-renewed",
+          fromSubscription,
+          toSubscription,
+          req,
+          message: userActionMessage("user-renewed", {
+            amount: renewal.amount,
+            duration: item.duration,
+            beforeExpiresAt: renewal.beforeExpiresAt,
+            afterExpiresAt: renewal.afterExpiresAt
+          }),
+          details: {
+            amount: renewal.amount,
+            duration: item.duration,
+            renewedAt: renewal.renewedAt,
+            beforeExpiresAt: renewal.beforeExpiresAt,
+            afterExpiresAt: renewal.afterExpiresAt,
+            before,
+            after: userSnapshotForLog(item)
+          }
         }));
         await saveUsers();
         await saveBills();
@@ -3098,9 +3532,31 @@ async function handleApi(req, res, pathname) {
     if (req.method === "PUT") {
       try {
         const payload = await readJson(req);
+        const before = userSnapshotForLog(item);
+        const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         Object.assign(item, normalizeUser(payload, item));
         if (payload.outputMode !== undefined) item.outputMode = payload.outputMode === "direct" ? "direct" : "subconverter";
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
+        const after = userSnapshotForLog(item);
+        const changes = summarizeUserChanges(before, after);
+        const toSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
+        if (changes.length) {
+          const poolChanged = before.subscriptionId !== after.subscriptionId;
+          appendUserLogToUser(item, createUserLog({
+            event: "user-action",
+            status: "recorded",
+            reason: poolChanged ? "manual-pool-changed" : "user-updated",
+            fromSubscription,
+            toSubscription,
+            req,
+            message: userActionMessage(poolChanged ? "manual-pool-changed" : "user-updated", {
+              changes,
+              fromSubscriptionLabel: subscriptionLogLabel(fromSubscription),
+              toSubscriptionLabel: subscriptionLogLabel(toSubscription)
+            }),
+            details: { changes }
+          }));
+        }
         await saveUsers();
         sendJson(res, 200, publicUser(item));
       } catch (error) {

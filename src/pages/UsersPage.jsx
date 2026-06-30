@@ -29,6 +29,7 @@ import {
   RetweetOutlined
 } from "@ant-design/icons";
 import dayjs from "dayjs";
+import { pinyin } from "pinyin-pro";
 import { fetchJson, postJson } from "../api";
 import {
   billTypeLabels,
@@ -72,6 +73,73 @@ import {
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, "");
+}
+
+function searchVariants(value) {
+  const text = String(value || "");
+  const compactText = normalizeSearchText(text);
+  if (!compactText) return [];
+
+  const fullPinyin = normalizeSearchText(pinyin(text, { toneType: "none", type: "array" }).join(""));
+  const firstLetters = normalizeSearchText(pinyin(text, { pattern: "first", toneType: "none", type: "array" }).join(""));
+  return [compactText, fullPinyin, firstLetters].filter(Boolean);
+}
+
+function userMatchesKeyword(user, query) {
+  const needle = normalizeSearchText(query);
+  if (!needle) return true;
+  return [user.userId, user.wechatName, ...userImessageIds(user)]
+    .flatMap(searchVariants)
+    .some(value => value.includes(needle));
+}
+
+function userImessageIds(user = {}) {
+  const raw = Array.isArray(user.imessageIds)
+    ? user.imessageIds
+    : String(user.imessageId || "").split(/[\n,，;；]+/);
+  return [...new Set(raw.map(item => String(item || "").trim()).filter(Boolean))];
+}
+
+function formatImessageIds(user) {
+  const ids = userImessageIds(user);
+  return ids.length ? ids.join(" / ") : "-";
+}
+
+function userLogs(user = {}) {
+  const logs = Array.isArray(user.userLogs)
+    ? user.userLogs
+    : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []);
+  const seen = new Set();
+  return logs.filter(log => {
+    if (!log) return false;
+    const key = log.id || [
+      log.at || "",
+      log.status || "",
+      log.reason || "",
+      log.stage || "",
+      log.fromSubscriptionId || "",
+      log.toSubscriptionId || "",
+      log.requestPath || ""
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function logMessage(log = {}) {
+  const repeat = Number(log.repeatCount || 0) > 1 ? ` (x${log.repeatCount})` : "";
+  return `${log.message || log.stage || "-"}${repeat}`;
+}
+
+function logStatusText(log = {}) {
+  return log.statusText || (log.toSubscriptionId ? "已自动换池" : "-");
+}
 
 // ─── PlaceholderTagSelect ─────────────────────────────────────────────────────
 
@@ -165,24 +233,28 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
     }, item.id ? "Updating user..." : "Creating user...");
   }
 
-  const fallbackLogs = Array.isArray(item.fallbackLogs) ? item.fallbackLogs : [];
+  const logs = userLogs(item);
   const fbCols = [
-    { title: "Time", dataIndex: "at", render: v => formatDateTime(v), width: 150 },
+    { title: "请求时间", dataIndex: "at", render: v => formatDateTime(v), width: 150 },
+    { title: "Status", render: (_, log) => logStatusText(log), width: 130 },
     { title: "Reason", dataIndex: "reasonText", render: v => v || "-", width: 150 },
-    { title: "Previous URL", dataIndex: "fromSubscriptionLabel", ellipsis: true },
-    { title: "Current URL", dataIndex: "toSubscriptionLabel", ellipsis: true }
+    { title: "Previous URL", dataIndex: "fromSubscriptionLabel", render: v => v || "-", ellipsis: true },
+    { title: "Current URL", dataIndex: "toSubscriptionLabel", render: v => v || "-", ellipsis: true },
+    { title: "Message", render: (_, log) => logMessage(log), ellipsis: true }
   ];
-  const fbTable = useResizableCols(fbCols, "user-fallback-logs");
+  const fbTable = useResizableCols(fbCols, "user-activity-logs");
 
   return (
     <FormModal title={item.id ? "编辑用户" : "新建用户"} open onCancel={onClose} width={760}>
-      <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageId: item.imessageId || "", purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, placeholderTag: item.placeholderTag || "", showUserInfo: item.showUserInfo !== false, useDefaultPlaceholder: item.useDefaultPlaceholder !== false, blockUserinfo: item.blockUserinfo !== false, group: item.group || "pro", isBusiness: Boolean(item.isBusiness), isFamilyFriend: Boolean(item.isFamilyFriend) }} onValuesChange={handleChange} onFinish={submit}>
+      <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageIds: userImessageIds(item), purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, placeholderTag: item.placeholderTag || "", showUserInfo: item.showUserInfo !== false, useDefaultPlaceholder: item.useDefaultPlaceholder !== false, blockUserinfo: item.blockUserinfo !== false, group: item.group || "pro", isBusiness: Boolean(item.isBusiness), isFamilyFriend: Boolean(item.isFamilyFriend) }} onValuesChange={handleChange} onFinish={submit}>
         <Steps current={step} size="small" style={{ marginBottom: 24 }} items={[{ title: "身份信息" }, { title: "订阅信息" }, { title: "投递模式" }, { title: "高级设置" }]} />
         <div style={{ display: step === 0 ? "block" : "none" }}>
           <Flex gap={16} wrap="wrap">
             <Form.Item name="userId" label="用户 ID" rules={[{ required: true, message: "请输入用户 ID" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="必填" /></Form.Item>
             <Form.Item name="wechatName" label="微信号" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
-            <Form.Item name="imessageId" label="iMessage ID" style={{ marginBottom: 0, flex: "1 1 160px" }}><Input placeholder="选填" /></Form.Item>
+            <Form.Item name="imessageIds" label="iMessage ID" style={{ marginBottom: 0, flex: "1 1 240px" }}>
+              <Select mode="tags" tokenSeparators={[",", "，", ";", "；", "\n"]} open={false} placeholder="可填写多个，回车分隔" />
+            </Form.Item>
           </Flex>
           <Flex gap={16} wrap="wrap" align="center" style={{ marginTop: 16 }}>
             <Form.Item name="group" label="套餐" style={{ marginBottom: 0 }}>
@@ -226,10 +298,10 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
           <Form.Item name="blockUserinfo" valuePropName="checked" style={{ marginTop: 12, marginBottom: 0 }}>
             <Checkbox>屏蔽原 userinfo</Checkbox>
           </Form.Item>
-          {fallbackLogs.length > 0 && (
+          {logs.length > 0 && (
             <>
               <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>历史记录</Text></Divider>
-              <Table className="saas-data-table" size="small" rowKey="id" columns={fbTable.columns} components={fbTable.components} dataSource={fallbackLogs} pagination={false} scroll={{ x: Math.max(620, fbTable.scrollX) }} />
+              <Table className="saas-data-table" size="small" rowKey="id" columns={fbTable.columns} components={fbTable.components} dataSource={logs} pagination={false} scroll={{ x: Math.max(760, fbTable.scrollX) }} />
             </>
           )}
         </div>
@@ -340,6 +412,7 @@ function UserDetailPage() {
   if (!user) return <PageSection title="用户详情"><Empty description="未找到该用户。" /></PageSection>;
 
   const subscription = subscriptions.find(s => s.id === user.subscriptionId);
+  const hidePoolMetrics = subscription?.status === "invalid";
   const lvl = user.level || (user.actualPaid <= 300 ? "vip1" : user.actualPaid <= 1000 ? "vip2" : "vip3");
   const isMobile = !screens.md;
 
@@ -356,13 +429,16 @@ function UserDetailPage() {
   ];
 
   const fallbackCols = [
-    { title: "时间", dataIndex: "at", render: v => formatDateTime(v), width: 160 },
-    { title: "原池", dataIndex: "fromSubscriptionLabel", ellipsis: true, width: 160 },
-    { title: "新池", dataIndex: "toSubscriptionLabel", ellipsis: true, width: 160 },
-    { title: "原因", dataIndex: "reasonText", width: 180 }
+    { title: "Status", render: (_, log) => logStatusText(log), width: 130 },
+    { title: "请求时间", dataIndex: "at", render: v => formatDateTime(v), width: 160 },
+    { title: "原池", dataIndex: "fromSubscriptionLabel", render: v => v || "-", ellipsis: true, width: 160 },
+    { title: "新池", dataIndex: "toSubscriptionLabel", render: v => v || "-", ellipsis: true, width: 160 },
+    { title: "原因", dataIndex: "reasonText", render: v => v || "-", width: 180 }
+    ,
+    { title: "Message", render: (_, log) => logMessage(log), ellipsis: true, width: 220 }
   ];
 
-  const logs = (user.fallbackLogs || []).slice().sort((a, b) => new Date(b.at) - new Date(a.at));
+  const logs = userLogs(user).slice().sort((a, b) => new Date(b.at) - new Date(a.at));
 
   return (
     <div className="detail-page" style={{ color: p.text }}>
@@ -382,7 +458,7 @@ function UserDetailPage() {
             {[
               ["用户 ID", user.userId || "-"],
               ["微信号", user.wechatName || "-"],
-              ["iMessage", user.imessageId || "-"],
+              ["iMessage", formatImessageIds(user)],
               ["VIP 等级", <VipTag key="vip" level={lvl} isFamilyFriend={user.isFamilyFriend} isBusiness={user.isBusiness} />],
               ["状态", <StatusBadge key="status" status={userStatus(user)} />],
               ["到期时间", formatUserExpiry(user)],
@@ -407,8 +483,8 @@ function UserDetailPage() {
                 ["名称", subscription.email || subscription.name || "未命名"],
                 ["供应商", serviceProviderLabel(subscription)],
                 ["URL", <UrlText key="pool-url" value={subscription.url} />],
-                ["到期时间", subscription.metrics?.expireAt ? formatDate(subscription.metrics.expireAt) : "-"],
-                ["剩余流量", formatBytes(subscription.metrics?.remainingBytes)],
+                ["到期时间", !hidePoolMetrics && subscription.metrics?.expireAt ? formatDate(subscription.metrics.expireAt) : "-"],
+                ["剩余流量", !hidePoolMetrics ? formatBytes(subscription.metrics?.remainingBytes) : "-"],
                 ["状态", <StatusBadge key="status" status={subscription.status} />]
               ].map(([label, value]) => (
                 <div key={label} style={{ display: "grid", gridTemplateColumns: "100px minmax(0,1fr)", gap: 12, alignItems: "start" }}>
@@ -440,7 +516,7 @@ function UserDetailPage() {
         </Card>
 
         <Card>
-          <Text strong style={{ fontSize: 16, fontWeight: 700, display: "block", marginBottom: 16 }}>Fallback 切换日志</Text>
+          <Text strong style={{ fontSize: 16, fontWeight: 700, display: "block", marginBottom: 16 }}>UserLogs</Text>
           {logs.length > 0 ? (
             <Table
               size="small"
@@ -506,7 +582,7 @@ function UsersPage() {
   const mobile = useResponsiveList();
 
   const visible = users.filter(u => {
-    if (keyword && !`${u.userId || ""} ${u.wechatName || ""} ${u.imessageId || ""} ${u.subscription?.url || ""} ${u.subscription?.email || ""}`.toLowerCase().includes(keyword.toLowerCase())) return false;
+    if (keyword && !userMatchesKeyword(u, keyword)) return false;
     if (vipFilter) {
       if (vipFilter === "fnds") { if (!u.isFamilyFriend) return false; }
       else if (vipFilter === "bus") { if (!u.isBusiness) return false; }

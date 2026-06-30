@@ -12,7 +12,7 @@ function getMailerConfig() {
     host: process.env.ALERT_SMTP_HOST || "smtp.gmail.com",
     port: Number(process.env.ALERT_SMTP_PORT || 465),
     secure: process.env.ALERT_SMTP_SECURE ? process.env.ALERT_SMTP_SECURE === "true" : true,
-    threshold: Number(process.env.ALERT_REMAINING_BYTES || 50 * 1024 * 1024 * 1024),
+    threshold: Number(process.env.ALERT_REMAINING_BYTES || 10 * 1024 * 1024 * 1024),
     cooldownMs: Number(process.env.ALERT_COOLDOWN_MS || 12 * 60 * 60 * 1000)
   };
 }

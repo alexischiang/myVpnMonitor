@@ -644,11 +644,21 @@ html, body {
   }
 
   .ant-input,
+  .ant-input-affix-wrapper,
   .ant-input-affix-wrapper input,
+  .ant-input-number,
+  .ant-input-number input,
   .ant-select-selector,
+  .ant-select-selection-search-input,
+  .ant-select-selection-item,
+  .ant-select-selection-placeholder,
+  .ant-picker,
   .ant-picker-input input,
-  textarea.ant-input {
-    font-size: 16px;
+  textarea.ant-input,
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
   }
 
   .ant-modal {

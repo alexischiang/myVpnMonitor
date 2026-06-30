@@ -240,7 +240,7 @@ export function userClientSubscriptionUrl(user) {
 }
 
 export function statusColor(status) {
-  return { ok: "green", warning: "gold", error: "red", expired: "default", depleted: "red", unknown: "blue" }[status] || "default";
+  return { ok: "green", expiring: "gold", invalid: "red", low_traffic: "orange", warning: "gold", error: "red", expired: "default", depleted: "red", unknown: "blue" }[status] || "default";
 }
 
 // ─── Context hooks ───────────────────────────────────────────────────────────
@@ -332,6 +332,9 @@ export function SectionCard({ title, extra, children, style }) {
 
 const STATUS_BADGE_MAP = {
   ok:       "success",
+  expiring: "warning",
+  invalid:  "error",
+  low_traffic: "warning",
   warning:  "warning",
   error:    "error",
   expired:  "default",
@@ -841,22 +844,28 @@ export function DataProvider({ children }) {
     pricing: "/api/pricing",
     meta:  "/api/app-meta"
   }), []);
+  const initialCollections = useMemo(() => ["subscriptions", "users", "bills", "meta"], []);
+  const deferredCollections = useMemo(() => ["vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing"], []);
 
-  const reload = useCallback(async (collections = null) => {
-    const keys = collections || ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "meta"];
-    setState(s => ({ ...s, loading: !collections, error: "" }));
+  const reload = useCallback(async (collections = null, { silent = false } = {}) => {
+    const keys = collections || initialCollections;
+    setState(s => ({ ...s, loading: !collections && !silent, error: silent ? s.error : "" }));
     try {
       const results = await Promise.all(keys.map(k => fetchJson(apis[k])));
-      setState(s => { const p = {}; keys.forEach((k, i) => { p[k] = results[i]; }); return { ...s, ...p, loading: false, error: "" }; });
+      setState(s => { const p = {}; keys.forEach((k, i) => { p[k] = results[i]; }); return { ...s, ...p, loading: silent ? s.loading : false, error: silent ? s.error : "" }; });
     } catch (err) {
+      if (silent) {
+        console.warn("[data] background reload failed:", err.message);
+        return;
+      }
       setState(s => ({ ...s, loading: false, error: err.message }));
     }
-  }, [apis]);
+  }, [apis, initialCollections]);
 
   useEffect(() => {
     fetchJson("/api/auth/me").catch(() => nav("/login", { replace: true }));
-    reload();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    reload().then(() => reload(deferredCollections, { silent: true }));
+  }, [deferredCollections, nav, reload]);
 
   const runAsync = useCallback(async (task, label = "处理中...") => {
     setBusy({ label });
