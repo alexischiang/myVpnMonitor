@@ -467,9 +467,9 @@ function appMeta() {
   if (cachedAppMeta) return cachedAppMeta;
   const buildMeta = readBuildMeta();
   const updatedAt = process.env.APP_UPDATED_AT
-    || buildMeta.APP_UPDATED_AT
     || process.env.GIT_COMMIT_TIMESTAMP
     || readGitUpdatedAt()
+    || buildMeta.APP_UPDATED_AT
     || readFallbackUpdatedAt();
 
   cachedAppMeta = {

@@ -6,5 +6,6 @@ dist/
 data/subscriptions.json
 data/users.json
 data/bills.json
+data/alert-state.json
 build-meta.json
 design-template/
