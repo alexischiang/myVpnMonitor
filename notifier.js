@@ -1,8 +1,16 @@
 const fs = require("fs/promises");
-const fsSync = require("fs");
 const path = require("path");
+const { ProxyAgent, fetch: undiciFetch } = require("undici");
 
 let cachedTransporter = null;
+const proxyAgents = new Map();
+
+function getAlertConfig() {
+  return {
+    threshold: Number(process.env.ALERT_REMAINING_BYTES || 10 * 1024 * 1024 * 1024),
+    cooldownMs: Number(process.env.ALERT_COOLDOWN_MS || 12 * 60 * 60 * 1000)
+  };
+}
 
 function getMailerConfig() {
   return {
@@ -12,14 +20,33 @@ function getMailerConfig() {
     host: process.env.ALERT_SMTP_HOST || "smtp.gmail.com",
     port: Number(process.env.ALERT_SMTP_PORT || 465),
     secure: process.env.ALERT_SMTP_SECURE ? process.env.ALERT_SMTP_SECURE === "true" : true,
-    threshold: Number(process.env.ALERT_REMAINING_BYTES || 10 * 1024 * 1024 * 1024),
-    cooldownMs: Number(process.env.ALERT_COOLDOWN_MS || 12 * 60 * 60 * 1000)
+    ...getAlertConfig()
   };
 }
 
-function isConfigured() {
+function getTelegramConfig() {
+  return {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || "",
+    chatId: process.env.TELEGRAM_CHAT_ID || "",
+    apiBaseUrl: (process.env.TELEGRAM_API_BASE_URL || "https://api.telegram.org").replace(/\/+$/, ""),
+    proxyUrl: process.env.TELEGRAM_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || "",
+    parseMode: process.env.TELEGRAM_PARSE_MODE || "",
+    ...getAlertConfig()
+  };
+}
+
+function isMailConfigured() {
   const { from, pass } = getMailerConfig();
   return Boolean(from && pass);
+}
+
+function isTelegramConfigured() {
+  const { botToken, chatId } = getTelegramConfig();
+  return Boolean(botToken && chatId);
+}
+
+function isConfigured() {
+  return isMailConfigured() || isTelegramConfigured();
 }
 
 function getTransporter() {
@@ -28,11 +55,11 @@ function getTransporter() {
   try {
     nodemailer = require("nodemailer");
   } catch {
-    throw new Error("缺少 nodemailer 依赖，请先 npm install nodemailer。");
+    throw new Error("Missing nodemailer dependency. Please run npm install nodemailer.");
   }
   const cfg = getMailerConfig();
   if (!cfg.from || !cfg.pass) {
-    throw new Error("未配置 ALERT_EMAIL_FROM / ALERT_EMAIL_PASS。");
+    throw new Error("ALERT_EMAIL_FROM / ALERT_EMAIL_PASS is not configured.");
   }
   cachedTransporter = nodemailer.createTransport({
     host: cfg.host,
@@ -53,6 +80,42 @@ async function sendMail({ subject, text, html }) {
     text,
     html
   });
+}
+
+async function sendTelegram({ text, chatId }) {
+  const cfg = getTelegramConfig();
+  const targetChatId = chatId || cfg.chatId;
+  if (!cfg.botToken || !targetChatId) {
+    throw new Error("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID is not configured.");
+  }
+  const payload = {
+    chat_id: targetChatId,
+    text,
+    disable_web_page_preview: true
+  };
+  if (cfg.parseMode) payload.parse_mode = cfg.parseMode;
+  const fetchOptions = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  };
+  if (cfg.proxyUrl) {
+    if (!proxyAgents.has(cfg.proxyUrl)) proxyAgents.set(cfg.proxyUrl, new ProxyAgent(cfg.proxyUrl));
+    fetchOptions.dispatcher = proxyAgents.get(cfg.proxyUrl);
+  }
+  let response;
+  try {
+    response = await undiciFetch(`${cfg.apiBaseUrl}/bot${cfg.botToken}/sendMessage`, fetchOptions);
+  } catch (error) {
+    const cause = error.cause;
+    const detail = cause?.code || cause?.message || error.message;
+    throw new Error(`Telegram sendMessage request failed: ${detail}`);
+  }
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Telegram sendMessage failed (${response.status}): ${body.slice(0, 300)}`);
+  }
+  return response.json();
 }
 
 function createAlertStore(filePath) {
@@ -108,38 +171,56 @@ function formatBytes(bytes) {
   return `${value.toFixed(2)} ${units[i]}`;
 }
 
-function buildLowTrafficMail(item, remaining, threshold) {
-  const subject = `[XELA] 低流量告警：${item.email || item.name || item.id}`;
-  const label = item.email || item.name || item.id || "(未命名订阅)";
+function escapeHtml(value) {
+  return String(value).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+function buildLowTrafficAlert(item, remaining, threshold) {
+  const label = item.email || item.name || item.id || "(unnamed subscription)";
+  const subject = `[XELA] Low traffic alert: ${label}`;
   const lines = [
-    `订阅 ${label} 的剩余流量已低于阈值。`,
+    `Subscription ${label} remaining traffic is below the alert threshold.`,
     "",
-    `剩余流量：${formatBytes(remaining)}`,
-    `告警阈值：${formatBytes(threshold)}`,
-    `总流量　：${formatBytes(item.metrics?.totalBytes)}`,
-    `已用流量：${formatBytes(item.metrics?.usedBytes)}`,
-    `到期时间：${item.metrics?.expireAt || "-"}`,
-    `URL　　：${item.url || "-"}`,
+    `Remaining: ${formatBytes(remaining)}`,
+    `Threshold: ${formatBytes(threshold)}`,
+    `Total: ${formatBytes(item.metrics?.totalBytes)}`,
+    `Used: ${formatBytes(item.metrics?.usedBytes)}`,
+    `Expires at: ${item.metrics?.expireAt || "-"}`,
+    `URL: ${item.url || "-"}`,
     "",
-    `检测时间：${item.lastCheckedAt || new Date().toISOString()}`
+    `Checked at: ${item.lastCheckedAt || new Date().toISOString()}`
   ];
   const text = lines.join("\n");
-  const html = `<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.6">${
-    lines.join("\n").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))
-  }</pre>`;
+  const html = `<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.6">${escapeHtml(text)}</pre>`;
   return { subject, text, html };
 }
 
+function isExpiredItem(item, now = Date.now()) {
+  const expireAt = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
+  return Number.isFinite(expireAt) && expireAt <= now;
+}
+
 async function checkAndNotifyLowTraffic(items, store, { logger = console } = {}) {
-  if (!isConfigured()) return { sent: 0, skipped: items.length, reason: "未配置邮箱发件账号。" };
-  const cfg = getMailerConfig();
+  const cfg = getAlertConfig();
+  const mailConfigured = isMailConfigured();
+  const telegramConfigured = isTelegramConfigured();
+  if (!mailConfigured && !telegramConfigured) {
+    return { sent: 0, skipped: items.length, reason: "No mail or Telegram alert channel configured." };
+  }
+
   const now = Date.now();
   let sent = 0;
+  const sentByChannel = { mail: 0, telegram: 0 };
 
   for (const item of items) {
     const remaining = item.metrics?.remainingBytes;
     const key = `low:${item.id}`;
     if (remaining === null || remaining === undefined) continue;
+
+    if (isExpiredItem(item, now)) {
+      await store.clear(key);
+      continue;
+    }
 
     if (remaining >= cfg.threshold) {
       await store.clear(key);
@@ -150,23 +231,39 @@ async function checkAndNotifyLowTraffic(items, store, { logger = console } = {})
     if (previous && now - new Date(previous.sentAt).getTime() < cfg.cooldownMs) continue;
 
     try {
-      const mail = buildLowTrafficMail(item, remaining, cfg.threshold);
-      await sendMail(mail);
-      await store.set(key, { sentAt: new Date().toISOString(), remainingBytes: remaining });
+      const alert = buildLowTrafficAlert(item, remaining, cfg.threshold);
+      const channels = [];
+      if (mailConfigured) {
+        await sendMail(alert);
+        sentByChannel.mail++;
+        channels.push("mail");
+      }
+      if (telegramConfigured) {
+        await sendTelegram({ text: alert.text });
+        sentByChannel.telegram++;
+        channels.push("telegram");
+      }
+      await store.set(key, { sentAt: new Date().toISOString(), remainingBytes: remaining, channels });
       sent++;
-      logger.log?.(`[alert] low-traffic mail sent: ${item.email || item.id} remaining=${remaining}`);
+      logger.log?.(`[alert] low-traffic sent: channels=${channels.join(",")} item=${item.email || item.id} remaining=${remaining}`);
     } catch (error) {
       logger.error?.(`[alert] send failed for ${item.id}:`, error.message);
     }
   }
-  return { sent, threshold: cfg.threshold };
+
+  return { sent, sentByChannel, threshold: cfg.threshold };
 }
 
 module.exports = {
   isConfigured,
+  isMailConfigured,
+  isTelegramConfigured,
   getMailerConfig,
+  getTelegramConfig,
   sendMail,
+  sendTelegram,
   createAlertStore,
   checkAndNotifyLowTraffic,
+  isExpiredItem,
   formatBytes
 };

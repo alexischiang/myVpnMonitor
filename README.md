@@ -116,6 +116,17 @@ data/bills.json
 ```text
 DATABASE_URL=postgres://user:password@host:5432/database
 DATABASE_SSL=true
+TELEGRAM_BOT_TOKEN=123456:abcdef
+TELEGRAM_CHAT_ID=123456789
+TELEGRAM_API_BASE_URL=https://api.telegram.org
+TELEGRAM_PROXY_URL=http://127.0.0.1:7890
+TELEGRAM_WEBHOOK_SECRET=change-me
+```
+
+Telegram bot webhook:
+
+```text
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://your-domain.com/api/telegram/webhook/<TELEGRAM_WEBHOOK_SECRET>
 ```
 
 配置后，本地 `npm start` / `npm run dev` 会直接连接 Neon。
