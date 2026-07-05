@@ -60,6 +60,7 @@ const DEFAULT_PRICING = [
   { id: "pro",   group: "pro",   monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429 },
   { id: "ultra", group: "ultra", monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859 }
 ];
+const USER_GROUPS = ["basic", "pro", "ultra"];
 const AUTH_COOKIE_NAME = "xela_session";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
@@ -289,8 +290,7 @@ function _doLoad() {
 
 async function loadLatestData({ force = false } = {}) {
   if (!force && Date.now() - lastLoadedAt < DATA_CACHE_TTL_MS) return;
-  if (lastLoadedAt === 0) return _doLoad();
-  _doLoad();
+  return _doLoad();
 }
 
 function _markWritten() { _writeGen++; lastLoadedAt = Date.now(); }
@@ -635,6 +635,15 @@ function userImessageIds(user = {}) {
   return normalizeIdList(user.imessageIds !== undefined ? user.imessageIds : user.imessageId);
 }
 
+function normalizeUserGroup(value, fallback = "pro") {
+  const group = String(value || "").trim().toLowerCase();
+  return USER_GROUPS.includes(group) ? group : fallback;
+}
+
+function activeUserGroup(user = {}) {
+  return normalizeUserGroup(user.activeGroup || user.group, "pro");
+}
+
 function calculateExpiry(purchasedAt, duration) {
   if (duration === "lifetime") return LIFETIME_EXPIRES_AT;
   const days = durationDays(duration);
@@ -736,7 +745,11 @@ function normalizeUser(input, existing = {}) {
   if (requestedExpiresAt && (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime()))) throw new Error("到期时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
 
-  const group = ["basic", "pro", "ultra"].includes(input.group) ? input.group : (existing.group || "pro");
+  const group = normalizeUserGroup(input.group, existing.activeGroup || existing.group || "pro");
+  const activeGroup = normalizeUserGroup(
+    input.activeGroup !== undefined ? input.activeGroup : input.group,
+    existing.activeGroup || group
+  );
   const isBusiness = input.isBusiness !== undefined ? Boolean(input.isBusiness) : Boolean(existing.isBusiness);
   const isFamilyFriend = input.isFamilyFriend !== undefined ? Boolean(input.isFamilyFriend) : Boolean(existing.isFamilyFriend);
   const level = actualPaid <= 300 ? "vip1" : (actualPaid <= 1000 ? "vip2" : "vip3");
@@ -750,6 +763,7 @@ function normalizeUser(input, existing = {}) {
     duration,
     actualPaid,
     group,
+    activeGroup,
     level,
     isBusiness,
     isFamilyFriend,
@@ -849,6 +863,7 @@ function renewUser(user, input) {
   const actualPaid = normalizePaymentAmount(input.actualPaid ?? "");
   const renewedAt = new Date(input.purchasedAt || new Date().toISOString());
   const requestedSubscriptionId = String(input.subscriptionId || user.subscriptionId || "").trim();
+  const group = normalizeUserGroup(input.group, activeUserGroup(user));
   const currentExpiry = user.expiresAt ? new Date(user.expiresAt) : null;
   const previousPaid = Number(user.actualPaid) || 0;
 
@@ -875,6 +890,8 @@ function renewUser(user, input) {
     purchasedAt: renewedAt.toISOString(),
     duration,
     actualPaid: Math.round((previousPaid + actualPaid) * 100) / 100,
+    group,
+    activeGroup: group,
     subscriptionId: subscription.id,
     subscriptionToken: user.subscriptionToken || relayToken(),
     expiresAt,
@@ -1314,6 +1331,25 @@ function cacheIsFresh(cache, now = Date.now()) {
   return Boolean(cache?.body || cache?.bodyFile) && Number.isFinite(fetchedAt) && now - fetchedAt < POOL_CONFIG_CACHE_TTL_MS;
 }
 
+async function liveConfigFromCachedPoolConfig(item) {
+  if (!cacheIsFresh(item?.cachedConfig)) return null;
+  const body = await readPoolCachedBody(item);
+  if (!body) return null;
+  return {
+    body,
+    status: item.cachedConfig.status || 200,
+    client: `${item.cachedConfig.client || "pool"}-cache`,
+    fetchedAt: item.cachedConfig.fetchedAt,
+    contentType: item.cachedConfig.contentType || "text/plain; charset=utf-8",
+    subscriptionUserinfo: item.cachedConfig.subscriptionUserinfo || "",
+    score: item.cachedConfig.score || clashConfigScore(body),
+    bodyLength: body.length,
+    attempts: item.cachedConfig.attempts || [],
+    error: null,
+    cached: true
+  };
+}
+
 function clashConfigScore(body) {
   const text = String(body || "");
   let score = Math.min(text.length, 100000) / 1000;
@@ -1731,6 +1767,7 @@ function userSnapshotForLog(user = {}) {
     wechatName: user.wechatName || "",
     imessageIds: userImessageIds(user),
     group: user.group || "",
+    activeGroup: activeUserGroup(user),
     isBusiness: Boolean(user.isBusiness),
     isFamilyFriend: Boolean(user.isFamilyFriend),
     purchasedAt: user.purchasedAt || "",
@@ -1752,6 +1789,7 @@ function summarizeUserChanges(before = {}, after = {}) {
     wechatName: "\u5fae\u4fe1\u53f7",
     imessageIds: "iMessage ID",
     group: "\u5957\u9910",
+    activeGroup: "当前生效套餐等级",
     isBusiness: "\u4f01\u4e1a\u7528\u6237",
     isFamilyFriend: "\u4eb2\u53cb\u8d26\u6237",
     purchasedAt: "\u8d2d\u4e70\u65e5\u671f",
@@ -2065,7 +2103,7 @@ function buildUserInfoNodes(user) {
     nodes.push(`到期: ${expires.toISOString().slice(0, 10)} | 剩余 ${remaining} 天`);
   }
   const level = user.level || (Number(user.actualPaid) <= 300 ? "VIP 1" : Number(user.actualPaid) <= 1000 ? "VIP 2" : "VIP 3");
-  const group = (user.group || "pro").toUpperCase();
+  const group = activeUserGroup(user).toUpperCase();
   nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group}`);
   return nodes;
 }
@@ -2191,6 +2229,41 @@ function forwardedSubscriptionHeaders(req) {
     "Pragma": "no-cache"
   };
   return headers;
+}
+
+function isBrowserNavigationRequest(req) {
+  const accept = String(req?.headers?.accept || "");
+  const userAgent = String(req?.headers?.["user-agent"] || "");
+  const secFetchDest = String(req?.headers?.["sec-fetch-dest"] || "");
+  const looksLikeBrowser = /(Mozilla|Chrome|Safari|Firefox|Edg|OPR)\//i.test(userAgent);
+  const looksLikeSubscriptionClient = /(Clash|Stash|Shadowrocket|Quantumult|Surge|sing-box|SFA|VPNSubscriptionMonitor)/i.test(userAgent);
+  return !looksLikeSubscriptionClient && looksLikeBrowser && (
+    /\btext\/html\b/i.test(accept) || secFetchDest === "document"
+  );
+}
+
+function normalizeSubconverterConfigParam(value) {
+  const config = String(value || "").trim();
+  if (/^\/config\//i.test(config)) return config.slice(1);
+  return config;
+}
+
+function defaultSubconverterPreset() {
+  const preset = presets.find(p => p.id === "default") || {};
+  return {
+    target: String(preset.target || DEFAULT_SUBCONVERTER_TARGET).trim() || DEFAULT_SUBCONVERTER_TARGET,
+    config: normalizeSubconverterConfigParam(preset.config),
+    emoji: preset.emoji !== false,
+    udp: preset.udp !== false,
+    scv: Boolean(preset.scv),
+    sort: Boolean(preset.sort)
+  };
+}
+
+function userOutputMode(user = {}) {
+  return String(user.outputMode || "subconverter").trim().toLowerCase() === "direct"
+    ? "direct"
+    : "subconverter";
 }
 
 function copyUpstreamHeaders(response) {
@@ -2335,12 +2408,11 @@ async function handleRelaySubscription(req, res, token) {
   }
 
   let subscription = subscriptions.find(item => item.id === user.subscriptionId);
+  const outputMode = userOutputMode(user);
   const sc = (() => {
     // 用户可显式选择直链模式，绕过订阅转换
-    if (user.outputMode === "direct") return null;
-    const preset = presets.find(p => p.id === "default");
-    if (!preset || !preset.target) return null;
-    const base = { target: preset.target, config: preset.config || "", emoji: preset.emoji !== false, udp: preset.udp !== false, scv: Boolean(preset.scv), sort: Boolean(preset.sort), include: "", exclude: "", rename: "" };
+    if (outputMode === "direct") return null;
+    const base = { ...defaultSubconverterPreset(), include: "", exclude: "", rename: "" };
     const sub = subscriptions.find(s => s.id === user.subscriptionId);
     const v = vendors.find(v => v.name === sub?.serviceProvider);
     if (v) {
@@ -2355,6 +2427,7 @@ async function handleRelaySubscription(req, res, token) {
   relayLog("current-pool-selected", {
     relayRequestId,
     userId: user.id,
+    outputMode,
     useSubconverter: Boolean(sc?.target),
     subconverterConfig: sc || null,
     currentPool: poolLogInfo(subscription),
@@ -2377,10 +2450,11 @@ async function handleRelaySubscription(req, res, token) {
     sendUnavailablePoolPlaceholderSubscription(res, user);
     return;
   }
-  if (!sc?.target) {
+  if (outputMode !== "direct" && !sc?.target) {
     relayLog("response-placeholder-custom-url-disabled", {
       relayRequestId,
       userId: user.id,
+      outputMode,
       currentPool: poolLogInfo(subscription)
     });
     await recordUserLog(user, {
@@ -2520,6 +2594,31 @@ async function handleRelaySubscription(req, res, token) {
         error: error.message,
         attempts: error.attempts || []
       });
+      liveConfig = await liveConfigFromCachedPoolConfig(subscription);
+      if (liveConfig) {
+        relayLog("subconverter-current-cache-fallback-ok", {
+          relayRequestId,
+          userId: user.id,
+          pool: poolLogInfo(subscription),
+          cachedConfig: {
+            client: liveConfig.client,
+            fetchedAt: liveConfig.fetchedAt,
+            score: liveConfig.score,
+            bodyLength: liveConfig.bodyLength,
+            subscriptionUserinfo: liveConfig.subscriptionUserinfo
+          }
+        });
+        await recordUserLog(user, {
+          status: "kept_current",
+          reason: "pool-fetch-failed",
+          fromSubscription: subscription,
+          req,
+          target: sc.target,
+          stage: "subconverter-cache-fallback",
+          message: "\u539f\u6c60 URL \u5b9e\u65f6\u83b7\u53d6\u5931\u8d25\uff0c\u4f46\u5df2\u4f7f\u7528\u65b0\u9c9c\u7f13\u5b58\u7ee7\u7eed\u8f6c\u6362\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
+        });
+      }
+      if (!liveConfig) {
       const fallback = await fallbackToUsableSubscription(user, subscription, "pool-fetch-failed", req, sc.target);
       if (!fallback.subscription) {
         relayLog("response-placeholder-unavailable", {
@@ -2556,6 +2655,7 @@ async function handleRelaySubscription(req, res, token) {
           subscriptionUserinfo: liveConfig.subscriptionUserinfo
         }
       });
+      }
     }
     const liveConfigId = registerLivePoolConfig(liveConfig);
     cleanupLivePoolConfigs();
@@ -2623,22 +2723,30 @@ async function handleRelaySubscription(req, res, token) {
       }
       const body = Buffer.from(await response.arrayBuffer());
       const finalBody = injectPlaceholderNodes(body, user);
+      const browserInline = isBrowserNavigationRequest(req);
       relayLog("response-subconverter-ok", {
         relayRequestId,
         userId: user.id,
         status: response.status,
         contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+        browserInline,
         bodyLength: finalBody.length,
         bodyPreview: bodyPreview(finalBody.toString("utf8"))
       });
-      res.writeHead(response.status, {
-        "content-type": response.headers.get("content-type") || "text/plain; charset=utf-8",
-        "content-disposition": "attachment; filename*=UTF-8''NEXORA",
+      const responseHeaders = {
+        "content-type": browserInline ? "text/plain; charset=utf-8" : (response.headers.get("content-type") || "text/plain; charset=utf-8"),
         "cache-control": "no-store, max-age=0",
         "pragma": "no-cache",
         "expires": "0",
         ...(liveConfig.subscriptionUserinfo && user.blockUserinfo === false ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
-      });
+      };
+      if (browserInline) {
+        responseHeaders["content-disposition"] = "inline; filename*=UTF-8''NEXORA.txt";
+        responseHeaders["x-content-type-options"] = "nosniff";
+      } else {
+        responseHeaders["content-disposition"] = "attachment; filename*=UTF-8''NEXORA";
+      }
+      res.writeHead(response.status, responseHeaders);
       res.end(finalBody);
     } catch (error) {
       relayLog("subconverter-request-error", {
@@ -2757,6 +2865,154 @@ async function runLowTrafficCheck() {
   } catch (error) {
     console.error("Alert check failed:", error.message);
   }
+}
+
+function isLocalRequest(req) {
+  const address = req.socket?.remoteAddress || "";
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address);
+}
+
+async function sendAlertTestMessage() {
+  if (!notifier.isConfigured()) {
+    const error = new Error("No mail or Telegram alert channel configured.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const cfg = notifier.getMailerConfig();
+  const text = `XELA alert test.\nThreshold: ${notifier.formatBytes(cfg.threshold)}`;
+  const sent = [];
+  if (notifier.isMailConfigured()) {
+    await notifier.sendMail({
+      subject: "[XELA] Alert test",
+      text: `${text}\nMail target: ${cfg.to}`
+    });
+    sent.push("mail");
+  }
+  if (notifier.isTelegramConfigured()) {
+    await notifier.sendTelegram({ text });
+    sent.push("telegram");
+  }
+  return { sent, to: cfg.to };
+}
+
+function telegramAuthorizedChat(chatId) {
+  const allowed = String(notifier.getTelegramConfig().chatId || "").trim();
+  return Boolean(allowed) && String(chatId || "") === allowed;
+}
+
+function telegramCommandText(update = {}) {
+  const message = update.message || update.edited_message || null;
+  return {
+    message,
+    chatId: message?.chat?.id,
+    text: String(message?.text || "").trim()
+  };
+}
+
+function telegramHelpText() {
+  return [
+    "XELA monitor bot",
+    "",
+    "Commands:",
+    "/user <keyword> - query VPN user",
+    "/u <keyword> - same as /user",
+    "查询用户 <关键词>",
+    "",
+    "Keyword can be user ID, WeChat name, iMessage ID, or bound pool email."
+  ].join("\n");
+}
+
+function parseTelegramCommand(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return { name: "", query: "" };
+  const normalized = trimmed.replace(/\s+/g, " ");
+  const lower = normalized.toLowerCase();
+  for (const prefix of ["/start", "/help", "help", "帮助"]) {
+    if (lower === prefix || normalized === prefix) return { name: "help", query: "" };
+  }
+  const userMatch = normalized.match(/^(?:\/user|\/u|查询用户|用户)\s+(.+)$/i);
+  if (userMatch) return { name: "user", query: userMatch[1].trim() };
+  return { name: "unknown", query: "" };
+}
+
+function formatTelegramDate(value) {
+  if (!value) return "-";
+  if (value === LIFETIME_EXPIRES_AT) return "Lifetime";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toISOString().slice(0, 10);
+}
+
+function userTelegramStatus(user) {
+  if (isUserExpired(user)) return "expired";
+  const expires = user?.expiresAt ? new Date(user.expiresAt).getTime() : NaN;
+  if (Number.isFinite(expires) && expires - Date.now() <= EXPIRING_SOON_DAYS * 86400000) return "expiring";
+  return "ok";
+}
+
+function findUsersForTelegram(query) {
+  const needle = String(query || "").trim().toLowerCase();
+  if (!needle) return [];
+  const subscriptionMap = subscriptionById();
+  return users
+    .map(user => ({ user, subscription: subscriptionMap.get(user.subscriptionId) || null }))
+    .filter(({ user, subscription }) => {
+      const haystack = [
+        user.userId,
+        user.wechatName,
+        user.imessageId,
+        ...userImessageIds(user),
+        subscription?.email,
+        subscription?.serviceProvider,
+        subscription?.provider,
+        subscription?.url
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(needle);
+    })
+    .slice(0, 5);
+}
+
+function formatTelegramUserResult({ user, subscription }) {
+  return [
+    `User: ${user.userId || user.wechatName || user.id}`,
+    `Status: ${userTelegramStatus(user)}`,
+    `Expires: ${formatTelegramDate(user.expiresAt)}`,
+    `Duration: ${user.duration || "-"}`,
+    `Active group: ${activeUserGroup(user)}`,
+    `Paid: ${user.actualPaid ?? "-"}`,
+    `iMessage: ${userImessageIds(user).join(", ") || "-"}`,
+    `Pool: ${subscription?.email || subscription?.name || "-"}`,
+    `Provider: ${normalizeServiceProvider({}, subscription || {})}`,
+    `Pool expires: ${formatTelegramDate(subscription?.metrics?.expireAt)}`,
+    `Remaining: ${notifier.formatBytes(subscription?.metrics?.remainingBytes)}`,
+    `Mode: ${user.outputMode || "subconverter"}`
+  ].join("\n");
+}
+
+async function handleTelegramCommand(update) {
+  const { chatId, text } = telegramCommandText(update);
+  if (!chatId || !text) return { ignored: true };
+  if (!telegramAuthorizedChat(chatId)) {
+    await notifier.sendTelegram({ chatId, text: "Unauthorized chat." });
+    return { ok: true, unauthorized: true };
+  }
+
+  const command = parseTelegramCommand(text);
+  if (command.name === "help") {
+    await notifier.sendTelegram({ chatId, text: telegramHelpText() });
+    return { ok: true, command: "help" };
+  }
+  if (command.name === "user") {
+    const matches = findUsersForTelegram(command.query);
+    const response = matches.length
+      ? matches.map(formatTelegramUserResult).join("\n\n---\n\n")
+      : `No user matched: ${command.query}`;
+    await notifier.sendTelegram({ chatId, text: response.slice(0, 3900) });
+    return { ok: true, command: "user", matches: matches.length };
+  }
+
+  await notifier.sendTelegram({ chatId, text: telegramHelpText() });
+  return { ok: true, command: "unknown" };
 }
 
 async function handleApi(req, res, pathname) {
@@ -2934,13 +3190,54 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/alerts/test" && req.method === "GET" && isLocalRequest(req)) {
+    try {
+      const result = await sendAlertTestMessage();
+      sendJson(res, 200, { ok: true, localOnly: true, ...result });
+    } catch (error) {
+      sendJson(res, error.statusCode || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const telegramWebhookMatch = pathname.match(/^\/api\/telegram\/webhook\/([^/]+)$/);
+  if (telegramWebhookMatch && req.method === "POST") {
+    const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET || INTERNAL_TOKEN;
+    if (!safeEqual(telegramWebhookMatch[1], expectedSecret)) {
+      sendJson(res, 403, { error: "Forbidden." });
+      return;
+    }
+    try {
+      await loadLatestData();
+      const update = await readJson(req);
+      const result = await handleTelegramCommand(update);
+      sendJson(res, 200, { ok: true, ...result });
+    } catch (error) {
+      console.error("Telegram webhook failed:", error.message);
+      sendJson(res, 200, { ok: false, error: error.message });
+    }
+    return;
+  }
+
   if (!requireAuth(req, res)) return;
   await loadLatestData();
 
   if (pathname === "/api/alerts/status" && req.method === "GET") {
     const cfg = notifier.getMailerConfig();
+    const telegramCfg = notifier.getTelegramConfig();
     sendJson(res, 200, {
       configured: notifier.isConfigured(),
+      channels: {
+        mail: {
+          configured: notifier.isMailConfigured(),
+          to: cfg.to,
+          from: cfg.from ? `${cfg.from.slice(0, 3)}***${cfg.from.slice(cfg.from.indexOf("@"))}` : ""
+        },
+        telegram: {
+          configured: notifier.isTelegramConfigured(),
+          chatId: telegramCfg.chatId ? `${String(telegramCfg.chatId).slice(0, 4)}***` : ""
+        }
+      },
       to: cfg.to,
       from: cfg.from ? `${cfg.from.slice(0, 3)}***${cfg.from.slice(cfg.from.indexOf("@"))}` : "",
       threshold: cfg.threshold,
@@ -2952,18 +3249,10 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/alerts/test" && req.method === "POST") {
     try {
-      if (!notifier.isConfigured()) {
-        sendJson(res, 400, { error: "未配置 ALERT_EMAIL_FROM / ALERT_EMAIL_PASS。" });
-        return;
-      }
-      const cfg = notifier.getMailerConfig();
-      await notifier.sendMail({
-        subject: "[XELA] 告警测试邮件",
-        text: `这是一封测试邮件。告警阈值：${notifier.formatBytes(cfg.threshold)}（剩余流量低于此值时会通知到 ${cfg.to}）。`
-      });
-      sendJson(res, 200, { ok: true, to: cfg.to });
+      const result = await sendAlertTestMessage();
+      sendJson(res, 200, { ok: true, ...result });
     } catch (error) {
-      sendJson(res, 500, { error: error.message });
+      sendJson(res, error.statusCode || 500, { error: error.message });
     }
     return;
   }
@@ -3047,7 +3336,7 @@ async function handleApi(req, res, pathname) {
         createdAt: new Date().toISOString()
       };
       const normalized = normalizeUser(payload, item);
-      normalized.outputMode = payload.outputMode === "direct" ? "direct" : "subconverter";
+      normalized.outputMode = userOutputMode(payload);
       normalized.blockUserinfo = payload.blockUserinfo !== false;
       users.unshift(normalized);
       bills.unshift(makeBill({
@@ -3478,7 +3767,7 @@ async function handleApi(req, res, pathname) {
         const payload = await readJson(req);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
-        if (payload.outputMode !== undefined) item.outputMode = payload.outputMode === "direct" ? "direct" : "subconverter";
+        if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const renewal = renewUser(item, payload);
         const toSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
@@ -3535,7 +3824,7 @@ async function handleApi(req, res, pathname) {
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         Object.assign(item, normalizeUser(payload, item));
-        if (payload.outputMode !== undefined) item.outputMode = payload.outputMode === "direct" ? "direct" : "subconverter";
+        if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const after = userSnapshotForLog(item);
         const changes = summarizeUserChanges(before, after);
@@ -3825,6 +4114,10 @@ module.exports = Object.assign(requestHandler, {
   extractClashConfigBody,
   statusFor,
   toBytes,
+  isBrowserNavigationRequest,
+  normalizeSubconverterConfigParam,
+  defaultSubconverterPreset,
+  userOutputMode,
   poolMetricUnavailableReason,
   fallbackCandidateRank,
   startOfUtcDate

@@ -246,7 +246,7 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
 
   return (
     <FormModal title={item.id ? "编辑用户" : "新建用户"} open onCancel={onClose} width={760}>
-      <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageIds: userImessageIds(item), purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, placeholderTag: item.placeholderTag || "", showUserInfo: item.showUserInfo !== false, useDefaultPlaceholder: item.useDefaultPlaceholder !== false, blockUserinfo: item.blockUserinfo !== false, group: item.group || "pro", isBusiness: Boolean(item.isBusiness), isFamilyFriend: Boolean(item.isFamilyFriend) }} onValuesChange={handleChange} onFinish={submit}>
+      <Form form={form} layout="vertical" initialValues={{ userId: item.userId || "", wechatName: item.wechatName || "", imessageIds: userImessageIds(item), purchasedAt: initialPurchasedAt, actualPaid: item.actualPaid ?? "", duration: initialDuration, expiresAt: initialExpiresAt, subscriptionId: item.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode, placeholderTag: item.placeholderTag || "", showUserInfo: item.showUserInfo !== false, useDefaultPlaceholder: item.useDefaultPlaceholder !== false, blockUserinfo: item.blockUserinfo !== false, group: item.activeGroup || item.group || "pro", isBusiness: Boolean(item.isBusiness), isFamilyFriend: Boolean(item.isFamilyFriend) }} onValuesChange={handleChange} onFinish={submit}>
         <Steps current={step} size="small" style={{ marginBottom: 24 }} items={[{ title: "身份信息" }, { title: "订阅信息" }, { title: "投递模式" }, { title: "高级设置" }]} />
         <div style={{ display: step === 0 ? "block" : "none" }}>
           <Flex gap={16} wrap="wrap">
@@ -318,14 +318,19 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
 // ─── Renew Form ───────────────────────────────────────────────────────────────
 
 function RenewForm({ user, subscriptions, onClose, onSaved }) {
-  const { runAsync, pricing } = useData();
+  const { runAsync, busy, pricing } = useData();
   const [form] = Form.useForm();
+  const [step, setStep] = useState(0);
   const subscriptionTouched = useRef(false);
   const paidTouched = useRef(false);
   const purchasedAt = Form.useWatch("purchasedAt", form);
   const duration = Form.useWatch("duration", form);
   const expiresAt = Form.useWatch("expiresAt", form);
+  const group = Form.useWatch("group", form);
+  const actualPaid = Form.useWatch("actualPaid", form);
   const initialOutputMode = initialOutputModeForUser(user);
+  const groupLabels = { basic: "Basic", pro: "Pro", ultra: "Ultra" };
+  const currentGroup = user.activeGroup || user.group || "pro";
 
   let renewalExpiresAt = "";
   if (duration === "lifetime") {
@@ -341,7 +346,7 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
     expiresAt: renewalExpiresAt,
     duration,
     ignoredUserId: user.id,
-    enabled: Boolean(purchasedAt && duration)
+    enabled: step >= 1 && Boolean(purchasedAt && duration)
   });
 
   useEffect(() => {
@@ -350,9 +355,15 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
 
   useEffect(() => {
     if (paidTouched.current) return;
-    const price = lookupPrice(pricing, user.group, duration);
+    const price = lookupPrice(pricing, group, duration);
     if (price !== undefined) form.setFieldsValue({ actualPaid: String(price) });
-  }, [duration, pricing, user.group, form]);
+  }, [group, duration, pricing, form]);
+
+  function handleChange(changed) {
+    if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true;
+    if (Object.prototype.hasOwnProperty.call(changed, "actualPaid")) paidTouched.current = true;
+    if (Object.prototype.hasOwnProperty.call(changed, "group") || Object.prototype.hasOwnProperty.call(changed, "duration")) paidTouched.current = false;
+  }
 
   async function submit(values) {
     await runAsync(async () => {
@@ -368,39 +379,71 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
 
   return (
     <FormModal title={`${user.userId || "用户"} 续费`} open onCancel={onClose} width={760}>
-      <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode }} onValuesChange={changed => { if (Object.prototype.hasOwnProperty.call(changed, "subscriptionId")) subscriptionTouched.current = true; if (Object.prototype.hasOwnProperty.call(changed, "actualPaid")) paidTouched.current = true; if (Object.prototype.hasOwnProperty.call(changed, "duration")) paidTouched.current = false; }} onFinish={submit}>
-        <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>续费详情</Text></Divider>
-        <Flex gap={16} wrap="wrap">
-          <Form.Item name="purchasedAt" label="续费日期" rules={[{ required: true, message: "请选择续费日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
-            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+      <Form form={form} layout="vertical" initialValues={{ purchasedAt: dayjs(), actualPaid: "", duration: user.duration || "monthly", group: currentGroup, subscriptionId: user.subscriptionId || subscriptions[0]?.id || "", outputMode: initialOutputMode }} onValuesChange={handleChange} onFinish={submit}>
+        <Steps current={step} size="small" style={{ marginBottom: 24 }} items={[{ title: "续费信息" }, { title: "绑定池" }, { title: "确认" }]} />
+        <div style={{ display: step === 0 ? "block" : "none" }}>
+          <Flex gap={16} wrap="wrap" align="end">
+            <Form.Item name="purchasedAt" label="续费日期" rules={[{ required: true, message: "请选择续费日期" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+              <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+            </Form.Item>
+            <Form.Item name="group" label="套餐等级" style={{ marginBottom: 0, flex: "1 1 220px" }}>
+              <Radio.Group optionType="button" buttonStyle="solid">
+                <Radio.Button value="basic">Basic</Radio.Button>
+                <Radio.Button value="pro">Pro</Radio.Button>
+                <Radio.Button value="ultra">Ultra</Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+            <Form.Item name="actualPaid" label="本次消费金额" rules={[{ required: true, message: "请输入本次消费金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
+              <Input type="number" min="0" step="0.01" placeholder="0.00" />
+            </Form.Item>
+          </Flex>
+          <Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 12 }}>
+            当前生效套餐等级：{groupLabels[currentGroup] || currentGroup}，当前到期日：{user.expiresAt ? formatDate(user.expiresAt) : "未知"}
+          </Text>
+          <Form.Item name="duration" label="续费时长" style={{ marginTop: 16, marginBottom: 0 }}>
+            <DurationRadio purchasedAt={user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt} />
           </Form.Item>
-          <Form.Item name="actualPaid" label="本次消费金额" rules={[{ required: true, message: "请输入本次消费金额" }]} style={{ marginBottom: 0, flex: "1 1 160px" }}>
-            <Input type="number" min="0" step="0.01" placeholder="0.00" />
-          </Form.Item>
-        </Flex>
-        <Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 12 }}>当前到期日：{user.expiresAt ? formatDate(user.expiresAt) : "未知"}</Text>
-        <Form.Item name="duration" label="续费时长" style={{ marginTop: 16, marginBottom: 0 }}>
-          <DurationRadio purchasedAt={user.expiresAt && purchasedAt && new Date(user.expiresAt) > purchasedAt.toDate() ? user.expiresAt : purchasedAt} />
-        </Form.Item>
-        {duration === "custom" && (
-          <Form.Item name="expiresAt" label="到期日期" rules={[{ required: true, message: "请选择到期日期" }]} style={{ marginTop: 16, marginBottom: 0 }}>
-            <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
-          </Form.Item>
-        )}
-        <Divider orientation="left" orientationMargin={0}><Text type="secondary" style={{ fontSize: 12 }}>投递模式</Text></Divider>
-        {recommendLoading ? <Flex justify="center" align="center" style={{ padding: "48px 0" }}><Spin indicator={<LoadingOutlined spin />} tip="正在匹配推荐订阅池..." /></Flex> : (
-          <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation userExpiresAt={renewalExpiresAt} />
-        )}
-        <div style={{ marginTop: 24 }}>
-          <Button type="primary" htmlType="submit" block>确认续费</Button>
+          {duration === "custom" && (
+            <Form.Item name="expiresAt" label="到期日期" rules={[{ required: true, message: "请选择到期日期" }]} style={{ marginTop: 16, marginBottom: 0 }}>
+              <DatePicker {...inModalPickerProps} style={{ width: "100%" }} />
+            </Form.Item>
+          )}
+          <Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 12 }}>
+            续费后到期日：{renewalExpiresAt ? formatDate(renewalExpiresAt) : "待计算"}
+          </Text>
         </div>
+        <div style={{ display: step === 1 ? "block" : "none" }}>
+          {recommendLoading ? <Flex justify="center" align="center" style={{ padding: "48px 0" }}><Spin indicator={<LoadingOutlined spin />} tip="正在匹配推荐订阅池..." /></Flex> : (
+            <OutputModeSection form={form} initialOutputMode={initialOutputMode} subscriptions={subscriptions} recommended={recommended} recommendReason={recommendReason} showRecommendation userExpiresAt={renewalExpiresAt} />
+          )}
+        </div>
+        <div style={{ display: step === 2 ? "block" : "none" }}>
+          <Divider orientation="left" orientationMargin={0} style={{ marginTop: 0 }}><Text type="secondary" style={{ fontSize: 12 }}>续费确认</Text></Divider>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px 16px" }}>
+            {[
+              ["套餐等级", groupLabels[group] || group || currentGroup],
+              ["续费时长", durationLabels[duration] || duration || "-"],
+              ["本次消费", formatMoney(actualPaid)],
+              ["续费后到期", renewalExpiresAt ? formatDate(renewalExpiresAt) : "待计算"]
+            ].map(([label, value]) => (
+              <div key={label}>
+                <Text type="secondary" style={{ fontSize: 12, display: "block" }}>{label}</Text>
+                <Text strong>{value}</Text>
+              </div>
+            ))}
+          </div>
+        </div>
+        <Flex gap={12} style={{ marginTop: 24 }}>
+          {step > 0 && <Button block onClick={() => setStep(step - 1)}>上一步</Button>}
+          {step < 2 && <Button type="primary" block onClick={() => form.validateFields(step === 0 ? ["purchasedAt", "group", "actualPaid", ...(duration === "custom" ? ["expiresAt"] : [])] : ["subscriptionId"]).then(() => setStep(step + 1))}>下一步</Button>}
+          {step === 2 && <Button type="primary" htmlType="submit" block loading={!!busy} disabled={!!busy}>确认续费</Button>}
+        </Flex>
       </Form>
     </FormModal>
   );
 }
 
-// ─── User Detail Page ─────────────────────────────────────────────────────────
-
+// User Detail Page
 function UserDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -414,6 +457,8 @@ function UserDetailPage() {
   const subscription = subscriptions.find(s => s.id === user.subscriptionId);
   const hidePoolMetrics = subscription?.status === "invalid";
   const lvl = user.level || (user.actualPaid <= 300 ? "vip1" : user.actualPaid <= 1000 ? "vip2" : "vip3");
+  const activeGroup = user.activeGroup || user.group || "pro";
+  const groupLabels = { basic: "Basic", pro: "Pro", ultra: "Ultra" };
   const isMobile = !screens.md;
 
   const keyStyle = { color: p.textMuted, fontSize: 13 };
@@ -460,6 +505,7 @@ function UserDetailPage() {
               ["微信号", user.wechatName || "-"],
               ["iMessage", formatImessageIds(user)],
               ["VIP 等级", <VipTag key="vip" level={lvl} isFamilyFriend={user.isFamilyFriend} isBusiness={user.isBusiness} />],
+              ["生效套餐", groupLabels[activeGroup] || activeGroup],
               ["状态", <StatusBadge key="status" status={userStatus(user)} />],
               ["到期时间", formatUserExpiry(user)],
               ["时长", durationLabels[user.duration] || "Unknown"],

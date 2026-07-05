@@ -2,6 +2,9 @@ const assert = require("assert");
 const {
   poolMetricUnavailableReason,
   fallbackCandidateRank,
+  isBrowserNavigationRequest,
+  normalizeSubconverterConfigParam,
+  userOutputMode,
   startOfUtcDate
 } = require("./server");
 
@@ -110,6 +113,29 @@ const rank7 = fallbackCandidateRank(
 );
 assert.strictEqual(rank7.group, 2);
 assert.strictEqual(rank7.distance, Number.POSITIVE_INFINITY);
+
+assert.strictEqual(isBrowserNavigationRequest({
+  headers: {
+    accept: "text/html,application/xhtml+xml",
+    "user-agent": "Mozilla/5.0 Chrome/126.0 Safari/537.36",
+    "sec-fetch-dest": "document"
+  }
+}), true);
+
+assert.strictEqual(isBrowserNavigationRequest({
+  headers: {
+    accept: "text/plain, application/yaml, */*",
+    "user-agent": "ClashforWindows/0.20.39"
+  }
+}), false);
+
+assert.strictEqual(normalizeSubconverterConfigParam("/config/ACL4SSR_Mini_AI_Local.ini"), "config/ACL4SSR_Mini_AI_Local.ini");
+assert.strictEqual(normalizeSubconverterConfigParam("https://example.com/config.ini"), "https://example.com/config.ini");
+assert.strictEqual(userOutputMode({ outputMode: "direct" }), "direct");
+assert.strictEqual(userOutputMode({ outputMode: " direct " }), "direct");
+assert.strictEqual(userOutputMode({ outputMode: "DIRECT" }), "direct");
+assert.strictEqual(userOutputMode({ outputMode: "" }), "subconverter");
+assert.strictEqual(userOutputMode({}), "subconverter");
 
 // ─── startOfUtcDate ─────────────────────────────────────────────────────
 
