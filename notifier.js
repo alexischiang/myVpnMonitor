@@ -1,6 +1,5 @@
 const fs = require("fs/promises");
 const path = require("path");
-const { ProxyAgent, fetch: undiciFetch } = require("undici");
 
 let cachedTransporter = null;
 const proxyAgents = new Map();
@@ -29,7 +28,7 @@ function getTelegramConfig() {
     botToken: process.env.TELEGRAM_BOT_TOKEN || "",
     chatId: process.env.TELEGRAM_CHAT_ID || "",
     apiBaseUrl: (process.env.TELEGRAM_API_BASE_URL || "https://api.telegram.org").replace(/\/+$/, ""),
-    proxyUrl: process.env.TELEGRAM_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || "",
+    proxyUrl: process.env.TELEGRAM_PROXY_URL || "",
     parseMode: process.env.TELEGRAM_PARSE_MODE || "",
     ...getAlertConfig()
   };
@@ -99,13 +98,25 @@ async function sendTelegram({ text, chatId }) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload)
   };
+  let fetchImpl = globalThis.fetch;
   if (cfg.proxyUrl) {
+    let ProxyAgent;
+    let undiciFetch;
+    try {
+      ({ ProxyAgent, fetch: undiciFetch } = require("undici"));
+    } catch (error) {
+      throw new Error(`Telegram proxy requires undici, but it could not be loaded: ${error.message}`);
+    }
     if (!proxyAgents.has(cfg.proxyUrl)) proxyAgents.set(cfg.proxyUrl, new ProxyAgent(cfg.proxyUrl));
     fetchOptions.dispatcher = proxyAgents.get(cfg.proxyUrl);
+    fetchImpl = undiciFetch;
+  }
+  if (typeof fetchImpl !== "function") {
+    throw new Error("Telegram sendMessage requires global fetch. Please use Node.js 18+.");
   }
   let response;
   try {
-    response = await undiciFetch(`${cfg.apiBaseUrl}/bot${cfg.botToken}/sendMessage`, fetchOptions);
+    response = await fetchImpl(`${cfg.apiBaseUrl}/bot${cfg.botToken}/sendMessage`, fetchOptions);
   } catch (error) {
     const cause = error.cause;
     const detail = cause?.code || cause?.message || error.message;
