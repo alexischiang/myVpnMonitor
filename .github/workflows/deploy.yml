@@ -34,4 +34,17 @@ jobs:
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            cd ${{ secrets.DEPLOY_PATH }} && git pull origin production && npm ci --production && pm2 restart nexora --update-env
+            cd ${{ secrets.DEPLOY_PATH }}
+            if [ -f data/alert-state.json ]; then
+              cp data/alert-state.json /tmp/nexora-alert-state.json
+            fi
+            if git ls-files --error-unmatch data/alert-state.json >/dev/null 2>&1; then
+              git checkout -- data/alert-state.json
+            fi
+            git pull --ff-only origin production
+            mkdir -p data
+            if [ -f /tmp/nexora-alert-state.json ]; then
+              mv /tmp/nexora-alert-state.json data/alert-state.json
+            fi
+            npm ci --production
+            pm2 restart nexora --update-env
