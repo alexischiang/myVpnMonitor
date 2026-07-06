@@ -141,6 +141,16 @@ function logStatusText(log = {}) {
   return log.statusText || (log.toSubscriptionId ? "已自动换池" : "-");
 }
 
+function logSubscriptionLabel(log = {}, direction, subscriptions = []) {
+  const id = direction === "from" ? log.fromSubscriptionId : log.toSubscriptionId;
+  const savedLabel = direction === "from" ? log.fromSubscriptionLabel : log.toSubscriptionLabel;
+  const subscription = subscriptions.find(item => item.id === id);
+  if (!subscription) return savedLabel || "-";
+  const provider = serviceProviderLabel(subscription);
+  const label = subscription.email || subscription.name || subscription.url || subscription.id || savedLabel || "";
+  return provider && label ? `${provider} - ${label}` : (provider || label || savedLabel || "-");
+}
+
 // ─── PlaceholderTagSelect ─────────────────────────────────────────────────────
 
 function PlaceholderTagSelect() {
@@ -238,8 +248,8 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
     { title: "请求时间", dataIndex: "at", render: v => formatDateTime(v), width: 150 },
     { title: "Status", render: (_, log) => logStatusText(log), width: 130 },
     { title: "Reason", dataIndex: "reasonText", render: v => v || "-", width: 150 },
-    { title: "Previous URL", dataIndex: "fromSubscriptionLabel", render: v => v || "-", ellipsis: true },
-    { title: "Current URL", dataIndex: "toSubscriptionLabel", render: v => v || "-", ellipsis: true },
+    { title: "Previous URL", render: (_, log) => logSubscriptionLabel(log, "from", subscriptions), ellipsis: true },
+    { title: "Current URL", render: (_, log) => logSubscriptionLabel(log, "to", subscriptions), ellipsis: true },
     { title: "Message", render: (_, log) => logMessage(log), ellipsis: true }
   ];
   const fbTable = useResizableCols(fbCols, "user-activity-logs");
@@ -476,8 +486,8 @@ function UserDetailPage() {
   const fallbackCols = [
     { title: "Status", render: (_, log) => logStatusText(log), width: 130 },
     { title: "请求时间", dataIndex: "at", render: v => formatDateTime(v), width: 160 },
-    { title: "原池", dataIndex: "fromSubscriptionLabel", render: v => v || "-", ellipsis: true, width: 160 },
-    { title: "新池", dataIndex: "toSubscriptionLabel", render: v => v || "-", ellipsis: true, width: 160 },
+    { title: "原池", render: (_, log) => logSubscriptionLabel(log, "from", subscriptions), ellipsis: true, width: 220 },
+    { title: "新池", render: (_, log) => logSubscriptionLabel(log, "to", subscriptions), ellipsis: true, width: 220 },
     { title: "原因", dataIndex: "reasonText", render: v => v || "-", width: 180 }
     ,
     { title: "Message", render: (_, log) => logMessage(log), ellipsis: true, width: 220 }
