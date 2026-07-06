@@ -1595,7 +1595,10 @@ const USER_LOG_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 
 function subscriptionLogLabel(item) {
   if (!item) return "";
-  return item.email || item.name || item.url || item.id || "";
+  const provider = normalizeServiceProvider({}, item);
+  const label = item.email || item.name || item.url || item.id || "";
+  if (provider && label) return `${provider} - ${label}`;
+  return provider || label;
 }
 
 function relayLog(event, details = {}) {
