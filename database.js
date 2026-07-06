@@ -2,6 +2,35 @@ const fs = require("fs/promises");
 const path = require("path");
 
 const COLLECTIONS = ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing"];
+const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
+const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryablePgError(error) {
+  const codes = new Set(["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENETUNREACH", "EAI_AGAIN"]);
+  if (codes.has(error?.code)) return true;
+  if (Array.isArray(error?.errors) && error.errors.some(item => codes.has(item?.code))) return true;
+  return /timeout|terminating connection|connection.*closed/i.test(String(error?.message || ""));
+}
+
+async function withPgRetry(operation, label) {
+  let lastError;
+  for (let attempt = 0; attempt <= PG_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= PG_RETRY_ATTEMPTS || !isRetryablePgError(error)) throw error;
+      const waitMs = PG_RETRY_DELAY_MS * (attempt + 1);
+      console.warn(`[data] ${label} failed (${error.code || error.message}); retrying in ${waitMs}ms.`);
+      await sleep(waitMs);
+    }
+  }
+  throw lastError;
+}
 
 class JsonDataStore {
   constructor({ dataDir, files }) {
@@ -13,7 +42,7 @@ class JsonDataStore {
   async init() {
     await fs.mkdir(this.dataDir, { recursive: true });
     if (process.env.VERCEL === "1") {
-      throw new Error("Vercel 部署必须配置 DATABASE_URL，不能使用本地 JSON 文件存储。");
+      throw new Error("Vercel deployment requires DATABASE_URL; local JSON storage is not supported.");
     }
   }
 
@@ -53,7 +82,7 @@ class PostgresDataStore {
     try {
       return require("pg");
     } catch {
-      throw new Error("检测到 DATABASE_URL，但缺少 pg 依赖。请先运行 npm install pg。");
+      throw new Error("DATABASE_URL is configured, but pg is missing. Please run npm install pg.");
     }
   }
 
@@ -63,11 +92,11 @@ class PostgresDataStore {
     this.pool = new Pool({
       connectionString: this.connectionString,
       ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
-      idleTimeoutMillis: 10000,
-      connectionTimeoutMillis: 10000,
-      max: 5
+      idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS || 10000),
+      connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 10000),
+      max: Number(process.env.DATABASE_POOL_MAX || 5)
     });
-    await this.pool.query(`
+    await withPgRetry(() => this.pool.query(`
       CREATE TABLE IF NOT EXISTS app_records (
         collection TEXT NOT NULL,
         id TEXT NOT NULL,
@@ -76,60 +105,66 @@ class PostgresDataStore {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (collection, id)
       )
-    `);
+    `), "postgres init");
   }
 
   async loadCollection(collection) {
-    const result = await this.pool.query(
+    const result = await withPgRetry(() => this.pool.query(
       "SELECT data FROM app_records WHERE collection = $1 ORDER BY position ASC",
       [collection]
-    );
+    ), `load ${collection}`);
     return { rows: result.rows.map(row => row.data), missing: false };
   }
 
   async loadAll() {
-    const results = await Promise.all(COLLECTIONS.map(c => this.loadCollection(c)));
     const result = { missing: {} };
-    for (const [i, collection] of COLLECTIONS.entries()) {
-      result[collection] = results[i].rows;
-      result.missing[collection] = results[i].missing;
+    for (const collection of COLLECTIONS) {
+      result[collection] = [];
+      result.missing[collection] = false;
+    }
+    const query = "SELECT collection, data FROM app_records WHERE collection = ANY($1::text[]) ORDER BY collection ASC, position ASC";
+    const rows = await withPgRetry(() => this.pool.query(query, [COLLECTIONS]), "load all collections");
+    for (const row of rows.rows) {
+      if (Array.isArray(result[row.collection])) result[row.collection].push(row.data);
     }
     return result;
   }
 
   async saveCollection(collection, rows) {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query("DELETE FROM app_records WHERE collection = $1", [collection]);
-      if (rows.length) {
-        // 批量写入：用 UNNEST 一次性插入所有行，避免逐行 await 造成 N 次远端往返
-        // （Neon 等远端 PG 单次往返延迟较高，逐行写 18 行曾导致保存耗时 30s+）。
-        const ids = [];
-        const positions = [];
-        const datas = [];
-        rows.forEach((row, index) => {
-          ids.push(row.id || `${collection}-${index}`);
-          positions.push(index);
-          datas.push(JSON.stringify(row));
-        });
-        await client.query(
-          `INSERT INTO app_records (collection, id, position, data, updated_at)
-           SELECT $1, u.id, u.position, u.data::jsonb, NOW()
-           FROM UNNEST($2::text[], $3::int[], $4::text[]) AS u(id, position, data)`,
-          [collection, ids, positions, datas]
-        );
+    return withPgRetry(async () => {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("DELETE FROM app_records WHERE collection = $1", [collection]);
+        if (rows.length) {
+          const ids = [];
+          const positions = [];
+          const datas = [];
+          rows.forEach((row, index) => {
+            ids.push(row.id || `${collection}-${index}`);
+            positions.push(index);
+            datas.push(JSON.stringify(row));
+          });
+          await client.query(
+            `INSERT INTO app_records (collection, id, position, data, updated_at)
+             SELECT $1, u.id, u.position, u.data::jsonb, NOW()
+             FROM UNNEST($2::text[], $3::int[], $4::text[]) AS u(id, position, data)`,
+            [collection, ids, positions, datas]
+          );
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {}
+        throw error;
+      } finally {
+        client.release();
       }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, `save ${collection}`);
   }
-}
 
+}
 class ResilientDataStore {
   constructor({ dataDir, files, databaseUrl }) {
     this.kind = databaseUrl ? "postgres" : "json";

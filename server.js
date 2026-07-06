@@ -284,6 +284,13 @@ function _doLoad() {
     embyVendors = state.embyVendors || [];
     pricing = state.pricing || [];
     lastLoadedAt = Date.now();
+  }).catch(error => {
+    if (lastLoadedAt > 0) {
+      console.warn(`[data] loadLatestData failed; using cached in-memory data: ${error.message}`);
+      lastLoadedAt = Date.now();
+      return;
+    }
+    throw error;
   }).finally(() => { _loadingPromise = null; });
   return _loadingPromise;
 }
