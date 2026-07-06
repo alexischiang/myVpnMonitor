@@ -442,6 +442,12 @@ function sendJson(res, status, payload, headers = {}) {
   res.end(JSON.stringify(payload));
 }
 
+function requestOrigin(req) {
+  const proto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() || "http";
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+  return host ? `${proto}://${host}` : "";
+}
+
 function readGitUpdatedAt() {
   try {
     return execFileSync("git", ["log", "-1", "--format=%cI"], {
@@ -2960,6 +2966,31 @@ function userTelegramStatus(user) {
   return "ok";
 }
 
+function userVipLevel(user = {}) {
+  return user.level || (Number(user.actualPaid) <= 300 ? "vip1" : Number(user.actualPaid) <= 1000 ? "vip2" : "vip3");
+}
+
+function deliveryTutorials() {
+  return [
+    { platform: "iOS（美区账号密码联系客服）", client: "Shadowrocket", url: "https://pan.baidu.com/s/1EfxrUShiOj5Zmx9TEMIdlw?pwd=nT76" },
+    { platform: "Android", client: "Clash", url: "https://oka.lanzouy.com/iq07G2xbb65e" },
+    { platform: "Windows", client: "Sparkle", url: "https://oka.lanzouu.com/ijFzd39od4sh" },
+    { platform: "macOS", client: "Sparkle", url: "https://oka.lanzouu.com/iVJA93lp0mre" }
+  ];
+}
+
+function publicDeliveryPayload(user, req) {
+  const origin = requestOrigin(req);
+  const token = user.subscriptionToken || "";
+  return {
+    expiresAt: user.expiresAt || "",
+    activeGroup: activeUserGroup(user),
+    vipLevel: userVipLevel(user),
+    subscriptionUrl: `${origin}/sub/${token}`,
+    tutorials: deliveryTutorials()
+  };
+}
+
 function findUsersForTelegram(query) {
   const needle = String(query || "").trim().toLowerCase();
   if (!needle) return [];
@@ -3029,6 +3060,19 @@ async function handleApi(req, res, pathname) {
   const relayApiMatch = pathname.match(/^\/api\/sub\/([^/]+)$/);
   if (relayApiMatch && req.method === "GET") {
     await handleRelaySubscription(req, res, relayApiMatch[1]);
+    return;
+  }
+
+  const publicDeliveryMatch = pathname.match(/^\/api\/public\/delivery\/([^/]+)$/);
+  if (publicDeliveryMatch && req.method === "GET") {
+    await loadLatestData();
+    const token = decodeURIComponent(publicDeliveryMatch[1]);
+    const user = users.find(item => item.subscriptionToken === token);
+    if (!user) {
+      sendJson(res, 404, { error: "订阅不存在或已失效，请联系客服。" });
+      return;
+    }
+    sendJson(res, 200, publicDeliveryPayload(user, req));
     return;
   }
 
@@ -3970,6 +4014,7 @@ async function serveStatic(req, res, pathname) {
   const requestedPath = pathname === "/" ? "/index.html" : pathname;
   const isAppRoute = !path.extname(requestedPath);
   const isLoginRoute = requestedPath === "/login" || requestedPath === "/login.html";
+  const isPublicAppRoute = /^\/delivery\/[^/]+\/?$/.test(requestedPath) || /^\/(?:pricing|buy)\/?$/.test(requestedPath);
   if (requestedPath === "/login.html") {
     res.writeHead(302, {
       "location": "/login",
@@ -3978,7 +4023,7 @@ async function serveStatic(req, res, pathname) {
     res.end();
     return;
   }
-  if ((requestedPath === "/index.html" || isAppRoute) && !isLoginRoute && !currentSession(req)) {
+  if ((requestedPath === "/index.html" || isAppRoute) && !isLoginRoute && !isPublicAppRoute && !currentSession(req)) {
     res.writeHead(302, {
       "location": "/login",
       "cache-control": "no-store, max-age=0"

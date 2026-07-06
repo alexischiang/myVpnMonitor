@@ -32,6 +32,7 @@ import dayjs from "dayjs";
 import { pinyin } from "pinyin-pro";
 import { fetchJson, postJson } from "../api";
 import {
+  absoluteUrl,
   billTypeLabels,
   copyText,
   durationLabels,
@@ -237,9 +238,10 @@ function UserForm({ item, subscriptions, onClose, onSaved }) {
         placeholderTag: values.placeholderTag || null,
         useDefaultPlaceholder: values.useDefaultPlaceholder !== false
       };
-      if (item.id) await fetchJson(`/api/users/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
-      else await postJson("/api/users", payload);
-      await onSaved();
+      const savedUser = item.id
+        ? await fetchJson(`/api/users/${item.id}`, { method: "PUT", body: JSON.stringify(payload) })
+        : await postJson("/api/users", payload);
+      await onSaved(savedUser);
     }, item.id ? "Updating user..." : "Creating user...");
   }
 
@@ -382,8 +384,8 @@ function RenewForm({ user, subscriptions, onClose, onSaved }) {
         purchasedAt: values.purchasedAt.format("YYYY-MM-DD")
       };
       if (values.expiresAt && typeof values.expiresAt.toISOString === "function") payload.expiresAt = values.expiresAt.toISOString();
-      await postJson(`/api/users/${user.id}/renew`, payload);
-      await onSaved();
+      const savedUser = await postJson(`/api/users/${user.id}/renew`, payload);
+      await onSaved(savedUser);
     }, "Renewing user...");
   }
 
@@ -655,12 +657,30 @@ function UsersPage() {
     }, "Processing user action...");
   }
 
+  function deliveryPageUrl(user) {
+    return user.subscriptionToken ? absoluteUrl(`/delivery/${encodeURIComponent(user.subscriptionToken)}`) : "";
+  }
+
+  function copyDeliveryPage(user) {
+    const url = deliveryPageUrl(user);
+    if (!url) return;
+    copyText(url).then(() => notification.success({ message: "\u5df2\u590d\u5236 Delivery \u9875\u9762", placement: "bottomRight" }));
+  }
+
+  async function copyDeliveryPageAfterSave(user) {
+    const url = deliveryPageUrl(user);
+    if (!url) return;
+    await copyText(url);
+    notification.success({ message: "\u5df2\u590d\u5236 D Page\uff0c\u53ef\u76f4\u63a5\u7c98\u8d34\u7ed9\u5ba2\u6237", placement: "bottomRight" });
+  }
+
   const actions = (user, compact = false) => {
     const Wrap = compact ? InlineActions : CardActions;
     const bp = compact ? { size: "small", style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy } : { style: { fontWeight: 400 }, loading: !!busy, disabled: !!busy };
     return (
       <Wrap>
         {!compact && <Button {...bp} icon={<CopyOutlined />} onClick={() => copyText(userClientSubscriptionUrl(user)).then(() => notification.success({ message: "已复制", placement: "bottomRight" }))}>复制链接</Button>}
+        <Button {...bp} icon={<CopyOutlined />} disabled={!!busy || !user.subscriptionToken} onClick={() => copyDeliveryPage(user)}>D Page</Button>
         <Button {...bp} icon={<EyeOutlined />} onClick={() => navigate(`/users/detail/${user.id}`)}>查看</Button>
         <Button {...bp} icon={<RetweetOutlined />} onClick={() => setRenewing(user)}>续费</Button>
         <Button {...bp} icon={<EditOutlined />} onClick={() => setEditing(user)}>编辑</Button>
@@ -681,7 +701,7 @@ function UsersPage() {
     { title: "客户端链接", render: (_, u) => <UrlText value={userClientSubscriptionUrl(u)} />, width: 560 },
     { title: "绑定邮箱", render: (_, u) => { const email = u.subscription?.email; const vendor = serviceProviderLabel(u.subscription); return email ? <span><VendorTag name={vendor} />{email}</span> : ""; }, width: 280 },
     { title: "购买日期", render: (_, u) => formatDate(u.purchasedAt), width: 104 },
-    { title: "操作", render: (_, u) => actions(u, true), width: 190 }
+    { title: "操作", render: (_, u) => actions(u, true), width: 280 }
   ].map(col => ({ ...col, onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }), onCell: () => ({ style: { whiteSpace: "nowrap" } }) }));
   const userTable = useResizableCols(columns, "users-v2");
 
@@ -705,8 +725,8 @@ function UsersPage() {
           : <Table className="plain-detail-table user-flat-table saas-data-table" size="middle" rowKey="id" columns={userTable.columns} components={userTable.components} dataSource={visible} pagination={{ pageSize, current: page, onChange: setPage, showSizeChanger: false }} scroll={{ x: Math.max(1380, userTable.scrollX) }} />
         }
       </div>
-      {editing && <UserForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(["users", "bills"]); }} />}
-      {renewing && <RenewForm user={renewing} subscriptions={subscriptions} onClose={() => setRenewing(null)} onSaved={async () => { setRenewing(null); await reload(["users", "bills"]); }} />}
+      {editing && <UserForm item={editing} subscriptions={subscriptions} onClose={() => setEditing(null)} onSaved={async (savedUser) => { setEditing(null); await reload(["users", "bills"]); if (!editing.id) await copyDeliveryPageAfterSave(savedUser); }} />}
+      {renewing && <RenewForm user={renewing} subscriptions={subscriptions} onClose={() => setRenewing(null)} onSaved={async (savedUser) => { setRenewing(null); await reload(["users", "bills"]); await copyDeliveryPageAfterSave(savedUser); }} />}
     </ManagementSection>
   );
 }

@@ -108,6 +108,8 @@ const LazyUserDetailPage = React.lazy(() => import("./pages/UsersPage").then(mod
 const LazyBillsPage = React.lazy(() => import("./pages/BillsPage"));
 const LazyEmbyPage = React.lazy(() => import("./pages/EmbyPage"));
 const LazySubconverterPage = React.lazy(() => import("./pages/SubconverterPage"));
+const LazyDeliveryPage = React.lazy(() => import("./pages/DeliveryPage"));
+const LazyPricingPage = React.lazy(() => import("./pages/PricingPage"));
 
 function shouldHidePoolMetrics(item) {
   return item?.status === "invalid";
@@ -1133,6 +1135,9 @@ function App() {
           <BrowserRouter>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/delivery/:token" element={<Suspense fallback={<PageSpin />}><LazyDeliveryPage /></Suspense>} />
+              <Route path="/pricing" element={<Suspense fallback={<PageSpin />}><LazyPricingPage /></Suspense>} />
+              <Route path="/buy" element={<Suspense fallback={<PageSpin />}><LazyPricingPage /></Suspense>} />
               <Route path="/*" element={
                 <RequireAuth>
                   <DataProvider>

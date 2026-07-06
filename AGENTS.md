@@ -10,4 +10,9 @@
 
 - Do not merge or push to `production` for every change.
 - Only merge `main` into `production` and push `production` when the user explicitly asks to deploy or go online.
-- Normal development work should be committed and pushed to `main` only, unless the user specifically requests otherwise.
+
+## Git Operation Rules
+
+- Do not stage, commit, or push changes after every edit by default.
+- Only run git actions such as `git add`, `git commit`, `git push`, branch merges, or production deployments when the user explicitly asks for that git operation.
+- Normal development work should remain as local working tree changes until the user asks to commit or push.

@@ -91,7 +91,25 @@ export const { TextArea } = Input;
 
 // ─── Contexts ────────────────────────────────────────────────────────────────
 
-export const DataContext = createContext(null);
+const INITIAL_DATA_STATE = {
+  subscriptions: [],
+  users: [],
+  bills: [],
+  vendors: [],
+  presets: [],
+  placeholderNodes: [],
+  embyUsers: [],
+  embyVendors: [],
+  pricing: [],
+  meta: null,
+  loading: true,
+  error: "",
+  busy: null,
+  reload: async () => {},
+  runAsync: async task => (typeof task === "function" ? task() : undefined)
+};
+
+export const DataContext = createContext(INITIAL_DATA_STATE);
 export const ThemeModeContext = createContext({ darkMode: false, toggleTheme: () => {}, palette: {} });
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
@@ -829,7 +847,20 @@ export function FormModal({ children, title, onCancel, ...props }) {
 
 export function DataProvider({ children }) {
   const nav = useNavigate();
-  const [state, setState] = useState({ subscriptions: [], users: [], bills: [], vendors: [], presets: [], placeholderNodes: [], embyUsers: [], embyVendors: [], pricing: [], meta: null, loading: true, error: "" });
+  const [state, setState] = useState(() => ({
+    subscriptions: INITIAL_DATA_STATE.subscriptions,
+    users: INITIAL_DATA_STATE.users,
+    bills: INITIAL_DATA_STATE.bills,
+    vendors: INITIAL_DATA_STATE.vendors,
+    presets: INITIAL_DATA_STATE.presets,
+    placeholderNodes: INITIAL_DATA_STATE.placeholderNodes,
+    embyUsers: INITIAL_DATA_STATE.embyUsers,
+    embyVendors: INITIAL_DATA_STATE.embyVendors,
+    pricing: INITIAL_DATA_STATE.pricing,
+    meta: INITIAL_DATA_STATE.meta,
+    loading: INITIAL_DATA_STATE.loading,
+    error: INITIAL_DATA_STATE.error
+  }));
   const [busy, setBusy] = useState(null);
 
   const apis = useMemo(() => ({
