@@ -1,7 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { App as AntApp, Button, Input } from "antd";
-import { CheckCircleOutlined, CopyOutlined, QrcodeOutlined } from "@ant-design/icons";
-import { copyText } from "../utils";
+import { CheckCircleOutlined, QrcodeOutlined } from "@ant-design/icons";
 
 const plans = [
   {
@@ -84,7 +82,7 @@ function PlanCard({ plan, selectedId, onSelect }) {
           const unlimited = option.traffic === "无限流量";
           return (
             <button key={option.id} className={`pricing-option ${unlimited ? "pricing-option-unlimited" : ""} ${active ? "pricing-option-active" : ""}`} onClick={() => onSelect(plan, option)}>
-              <span>{option.label}<em>{option.days}</em>{unlimited && <b>无限</b>}</span>
+              <span>{option.label}<em>{option.days}</em>{unlimited && <b>无限流量</b>}</span>
               <strong>¥{option.price}</strong>
               <small>{option.traffic} · {option.devices} 台设备</small>
             </button>
@@ -108,18 +106,6 @@ function PlanCard({ plan, selectedId, onSelect }) {
 export default function PricingPage() {
   const initial = useMemo(findInitialOption, []);
   const [selected, setSelected] = useState(initial);
-  const [contact, setContact] = useState("");
-  const { notification } = AntApp.useApp();
-
-  const paymentNote = useMemo(() => {
-    const suffix = contact.trim() ? `-${contact.trim()}` : "";
-    return `NEXORA-${selected.plan.name}-${selected.option.days}-${selected.option.price}${suffix}`;
-  }, [contact, selected]);
-
-  async function copyNote() {
-    await copyText(paymentNote);
-    notification.success({ message: "已复制付款备注", placement: "bottomRight" });
-  }
 
   return (
     <main className="pricing-page">
@@ -127,7 +113,6 @@ export default function PricingPage() {
         <div>
           <span className="pricing-kicker">NEXORA</span>
           <h1>选择适合你的套餐</h1>
-          <p>付款后请把付款截图和备注发给客服，客服会为你开通或续费，并发送 D Page 查询页面。</p>
         </div>
       </section>
 
@@ -154,23 +139,12 @@ export default function PricingPage() {
               <span>{selected.option.devices} 台设备</span>
             </div>
 
-            <label className="pricing-contact">
-              <span>联系方式或备注</span>
-              <Input value={contact} onChange={event => setContact(event.target.value)} placeholder="微信 / 邮箱 / 用户名" />
-            </label>
-
-            <div className="pricing-note">
-              <span>付款备注</span>
-              <strong>{paymentNote}</strong>
-              <Button icon={<CopyOutlined />} onClick={copyNote}>复制备注</Button>
-            </div>
-
             <div className="pricing-qr">
               <div className="pricing-qr-title"><QrcodeOutlined />支付宝扫码付款</div>
               <img src="/alipay-qr.jpg" alt="支付宝收款码" />
             </div>
 
-            <p className="pricing-help">请按所选金额付款。付款后发送截图和备注给客服，用于核对订单。</p>
+            <p className="pricing-help">请按所选金额通过支付宝扫码付款。付款后截图发送给iMessage客服即可。</p>
           </div>
         </aside>
       </section>
