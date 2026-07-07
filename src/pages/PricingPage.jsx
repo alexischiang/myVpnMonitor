@@ -1,7 +1,19 @@
-import React, { useMemo, useState } from "react";
-import { CheckCircleOutlined, QrcodeOutlined } from "@ant-design/icons";
+import React, { useEffect, useMemo, useState } from "react";
+import { CheckCircleOutlined, LinkOutlined, LoadingOutlined, ReloadOutlined } from "@ant-design/icons";
+import { postJson, fetchJson } from "../api";
 
 const plans = [
+  {
+    id: "test",
+    name: "TEST",
+    title: "支付测试",
+    subtitle: "用于验证支付页面、回调和订单状态，不对应正式套餐。",
+    accent: "#d64b32",
+    perks: ["测试金额 1 元", "用于支付链路验证", "不发放正式权益"],
+    options: [
+      { id: "test-001", label: "测试商品", days: "即时", price: 1, traffic: "测试", devices: 1 }
+    ]
+  },
   {
     id: "basic",
     name: "BASIC",
@@ -106,6 +118,84 @@ function PlanCard({ plan, selectedId, onSelect }) {
 export default function PricingPage() {
   const initial = useMemo(findInitialOption, []);
   const [selected, setSelected] = useState(initial);
+  const [order, setOrder] = useState(null);
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setOrder(null);
+    setError("");
+  }, [selected.option.id]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paymentOrder = params.get("paymentOrder");
+    if (!paymentOrder) return;
+
+    setChecking(true);
+    setError("");
+    fetchJson(`/api/payments/orders/${encodeURIComponent(paymentOrder)}`)
+      .then(nextOrder => {
+        setOrder(nextOrder);
+        if (nextOrder.deliveryUrl) window.location.href = nextOrder.deliveryUrl;
+      })
+      .catch(e => setError(e.message || "查询支付状态失败"))
+      .finally(() => setChecking(false));
+
+    params.delete("paymentOrder");
+    const nextQuery = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`
+    );
+  }, []);
+
+  async function createOrder() {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError("请输入有效邮箱，用于生成你的订阅用户");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const nextOrder = await postJson("/api/payments/orders", {
+        planId: selected.plan.id,
+        planName: selected.plan.name,
+        optionId: selected.option.id,
+        optionLabel: `${selected.plan.name} ${selected.option.label} ${selected.option.days}`,
+        amount: selected.option.price,
+        email: normalizedEmail,
+        returnUrl: window.location.href
+      });
+      setOrder(nextOrder);
+      if (nextOrder.payUrl) window.open(nextOrder.payUrl, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      setError(e.message || "创建支付订单失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function checkOrder() {
+    if (!order?.id) return;
+    setChecking(true);
+    setError("");
+    try {
+      const nextOrder = await fetchJson(`/api/payments/orders/${order.id}`);
+      setOrder(nextOrder);
+      if (nextOrder.deliveryUrl) window.location.href = nextOrder.deliveryUrl;
+    } catch (e) {
+      setError(e.message || "查询支付状态失败");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  const paid = order?.status === "paid";
 
   return (
     <main className="pricing-page">
@@ -139,12 +229,52 @@ export default function PricingPage() {
               <span>{selected.option.devices} 台设备</span>
             </div>
 
-            <div className="pricing-qr">
-              <div className="pricing-qr-title"><QrcodeOutlined />支付宝扫码付款</div>
-              <img src="/alipay-qr.jpg" alt="支付宝收款码" />
-            </div>
+            <label className="pricing-email-field">
+              <span>Email</span>
+              <input
+                type="email"
+                value={email}
+                placeholder="you@example.com"
+                autoComplete="email"
+                onChange={event => setEmail(event.target.value)}
+              />
+            </label>
 
-            <p className="pricing-help">请按所选金额通过支付宝扫码付款。付款后截图发送给iMessage客服即可。</p>
+            <button className="pricing-pay-button" onClick={createOrder} disabled={loading || paid}>
+              {loading ? <LoadingOutlined /> : <LinkOutlined />}
+              {paid ? "已支付成功" : order ? "重新生成支付订单" : "生成支付订单"}
+            </button>
+
+            {order && (
+              <div className={`pricing-order pricing-order-${order.status}`}>
+                <span>平台订单</span>
+                <strong>{order.tid || order.merOrderTid}</strong>
+                <span>支付状态</span>
+                <strong>{paid ? "支付成功" : order.status === "pending" ? "等待支付" : order.statusText}</strong>
+                {order.payUrl && !paid && (
+                  <a className="pricing-pay-link" href={order.payUrl} target="_blank" rel="noreferrer">
+                    打开支付页面
+                  </a>
+                )}
+                {order.deliveryUrl && (
+                  <a className="pricing-pay-link" href={order.deliveryUrl}>
+                    Open D Page
+                  </a>
+                )}
+                {order.fulfillmentStatus === "failed" && (
+                  <p className="pricing-order-note">{order.fulfillmentError || "Fulfillment failed. Please contact support."}</p>
+                )}
+                <button className="pricing-check-button" onClick={checkOrder} disabled={checking}>
+                  <ReloadOutlined spin={checking} />刷新支付状态
+                </button>
+              </div>
+            )}
+
+            {error && <p className="pricing-error">{error}</p>}
+
+            <p className="pricing-help">
+              支付完成后系统会通过平台回调自动更新状态。如果页面没有变化，可以点击刷新支付状态。
+            </p>
           </div>
         </aside>
       </section>

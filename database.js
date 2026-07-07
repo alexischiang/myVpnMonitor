@@ -1,7 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 
-const COLLECTIONS = ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing"];
+const COLLECTIONS = ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "paymentOrders"];
 const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
 const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
 

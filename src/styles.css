@@ -459,6 +459,130 @@
   background: #ffffff;
 }
 
+.pricing-pay-button,
+.pricing-check-button,
+.pricing-pay-link {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pricing-pay-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  color: #ffffff;
+  background: #111827;
+  box-shadow: 0 14px 28px rgba(17, 24, 39, 0.18);
+}
+
+.pricing-email-field {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.pricing-email-field span {
+  color: #344054;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.pricing-email-field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 8px;
+  color: #111827;
+  background: #ffffff;
+  font: inherit;
+  outline: none;
+}
+
+.pricing-email-field input:focus {
+  border-color: rgba(36, 87, 214, 0.55);
+  box-shadow: 0 0 0 3px rgba(36, 87, 214, 0.12);
+}
+
+.pricing-pay-button:disabled,
+.pricing-check-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.pricing-order {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 10px 12px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.pricing-order span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pricing-order strong {
+  min-width: 0;
+  color: #111827;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.pricing-order-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pricing-order-paid {
+  border-color: rgba(22, 163, 74, 0.32);
+  background: #f0fdf4;
+}
+
+.pricing-pay-link,
+.pricing-check-button {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+}
+
+.pricing-pay-link {
+  color: #ffffff;
+  background: #2457d6;
+}
+
+.pricing-check-button {
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  color: #344054;
+  background: #ffffff;
+}
+
+.pricing-error {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #b42318;
+  background: #fff1f0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .pricing-help {
   margin: 12px 0 0;
   color: #667085;

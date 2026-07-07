@@ -10,7 +10,7 @@ const yaml = require("js-yaml");
 const notifier = require("./notifier");
 const packageJson = require("./package.json");
 
-function loadLocalEnv() {
+function loadLocalEnv({ override = false } = {}) {
   const envPath = path.join(__dirname, ".env");
   if (!fsSync.existsSync(envPath)) return;
   const content = fsSync.readFileSync(envPath, "utf8");
@@ -21,7 +21,7 @@ function loadLocalEnv() {
     if (separatorIndex === -1) continue;
     const key = trimmed.slice(0, separatorIndex).trim();
     const value = trimmed.slice(separatorIndex + 1).trim().replace(/^["']|["']$/g, "");
-    if (key && process.env[key] === undefined) process.env[key] = value;
+    if (key && (override || process.env[key] === undefined)) process.env[key] = value;
   }
 }
 
@@ -38,6 +38,7 @@ const EMBY_USERS_FILE = process.env.EMBY_USERS_FILE || path.join(DATA_DIR, "emby
 const EMBY_VENDORS_FILE = process.env.EMBY_VENDORS_FILE || path.join(DATA_DIR, "embyVendors.json");
 const PRESETS_FILE = process.env.PRESETS_FILE || path.join(DATA_DIR, "presets.json");
 const PRICING_FILE = process.env.PRICING_FILE || path.join(DATA_DIR, "pricing.json");
+const PAYMENT_ORDERS_FILE = process.env.PAYMENT_ORDERS_FILE || path.join(DATA_DIR, "paymentOrders.json");
 
 const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
 const ALERT_STATE_FILE = process.env.ALERT_STATE_FILE || path.join(DATA_DIR, "alert-state.json");
@@ -60,6 +61,26 @@ const DEFAULT_PRICING = [
   { id: "pro",   group: "pro",   monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429 },
   { id: "ultra", group: "ultra", monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859 }
 ];
+const PAYMENT_PLAN_OPTIONS = {
+  "test-001": { planId: "test", planName: "TEST", optionLabel: "Payment test 1 yuan", duration: "monthly", group: "pro", fallbackPrice: 1 },
+  "basic-30": { planId: "basic", planName: "BASIC", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "basic", fallbackPrice: 39 },
+  "basic-90": { planId: "basic", planName: "BASIC", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "basic", fallbackPrice: 109 },
+  "basic-180": { planId: "basic", planName: "BASIC", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "basic", fallbackPrice: 199 },
+  "basic-360": { planId: "basic", planName: "BASIC", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "basic", fallbackPrice: 369 },
+  "basic-unlimited-180": { planId: "basic", planName: "BASIC", optionLabel: "半年付 180天 无限流量", duration: "half_yearly", group: "basic", fallbackPrice: 399 },
+  "basic-unlimited-360": { planId: "basic", planName: "BASIC", optionLabel: "年付 360天 无限流量", duration: "yearly", group: "basic", fallbackPrice: 599 },
+  "pro-30": { planId: "pro", planName: "PRO", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "pro", fallbackPrice: 49 },
+  "pro-90": { planId: "pro", planName: "PRO", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "pro", fallbackPrice: 129 },
+  "pro-180": { planId: "pro", planName: "PRO", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "pro", fallbackPrice: 229 },
+  "pro-360": { planId: "pro", planName: "PRO", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "pro", fallbackPrice: 429 },
+  "pro-unlimited-180": { planId: "pro", planName: "PRO", optionLabel: "半年付 180天 无限流量", duration: "half_yearly", group: "pro", fallbackPrice: 439 },
+  "pro-unlimited-360": { planId: "pro", planName: "PRO", optionLabel: "年付 360天 无限流量", duration: "yearly", group: "pro", fallbackPrice: 679 },
+  "ultra-30": { planId: "ultra", planName: "ULTRA", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "ultra", fallbackPrice: 89 },
+  "ultra-90": { planId: "ultra", planName: "ULTRA", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "ultra", fallbackPrice: 239 },
+  "ultra-180": { planId: "ultra", planName: "ULTRA", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "ultra", fallbackPrice: 449 },
+  "ultra-360": { planId: "ultra", planName: "ULTRA", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "ultra", fallbackPrice: 859 }
+};
+const DEFAULT_PAYMENT_API_BASE_URL = "http://RfBseViEKZlMAmu7ArWO.itxt002.xyz";
 const USER_GROUPS = ["basic", "pro", "ultra"];
 const AUTH_COOKIE_NAME = "xela_session";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
@@ -146,6 +167,7 @@ let presets = [];
 let embyUsers = [];
 let embyVendors = [];
 let pricing = [];
+let paymentOrders = [];
 const dataStore = createDataStore({
   dataDir: DATA_DIR,
   databaseUrl: DATABASE_URL,
@@ -158,7 +180,8 @@ const dataStore = createDataStore({
     placeholderNodes: PLACEHOLDER_NODES_FILE,
     embyUsers: EMBY_USERS_FILE,
     embyVendors: EMBY_VENDORS_FILE,
-    pricing: PRICING_FILE
+    pricing: PRICING_FILE,
+    paymentOrders: PAYMENT_ORDERS_FILE
   }
 });
 
@@ -181,6 +204,8 @@ async function ensureDataFile() {
   embyUsers = state.embyUsers || [];
   embyVendors = state.embyVendors || [];
   pricing = state.pricing || [];
+  paymentOrders = state.paymentOrders || [];
+  lastLoadedAt = Date.now();
   if (!pricing.length) { pricing = DEFAULT_PRICING.map(r => ({ ...r })); await savePricing(); }
   let embyVendorsMigrated = false;
   for (const v of embyVendors) {
@@ -205,6 +230,7 @@ async function ensureDataFile() {
     await saveVendors();
   }
   if (state.missing.placeholderNodes) await savePlaceholderNodes();
+  if (state.missing.paymentOrders) await savePaymentOrders();
   if (state.missing.embyVendors) {
     const urls = [...new Set(embyUsers.map(u => u.serverUrl).filter(Boolean))];
     embyVendors = urls.map((url, i) => ({ id: `emby-vendor-${Date.now() + i}`, name: url, website: "", servers: [{ url, label: "" }], note: "" }));
@@ -283,6 +309,7 @@ function _doLoad() {
     embyUsers = state.embyUsers || [];
     embyVendors = state.embyVendors || [];
     pricing = state.pricing || [];
+    paymentOrders = state.paymentOrders || [];
     lastLoadedAt = Date.now();
   }).catch(error => {
     if (lastLoadedAt > 0) {
@@ -345,6 +372,11 @@ async function saveEmbyVendors() {
 async function savePricing() {
   _markWritten();
   await dataStore.saveCollection("pricing", pricing);
+}
+
+async function savePaymentOrders() {
+  _markWritten();
+  await dataStore.saveCollection("paymentOrders", paymentOrders);
 }
 
 
@@ -584,6 +616,374 @@ function readJson(req) {
     });
     req.on("error", reject);
   });
+}
+
+function readText(req, limit = 1_000_000) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk;
+      if (body.length > limit) {
+        req.destroy();
+        reject(new Error("Request body is too large."));
+      }
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+async function readPaymentCallback(req) {
+  const text = await readText(req);
+  if (!text) return {};
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  if (contentType.includes("application/json")) return JSON.parse(text);
+  return Object.fromEntries(new URLSearchParams(text));
+}
+
+function paymentConfig() {
+  loadLocalEnv({ override: false });
+  return {
+    apiBaseUrl: (process.env.PAYMENT_API_BASE_URL || DEFAULT_PAYMENT_API_BASE_URL).replace(/\/+$/, ""),
+    merchantId: process.env.PAYMENT_MERCHANT_ID || "",
+    merchantSecret: process.env.PAYMENT_MERCHANT_SECRET || "",
+    channelCode: process.env.PAYMENT_CHANNEL_CODE || "",
+    notifyUrl: process.env.PAYMENT_NOTIFY_URL || "",
+    returnUrl: process.env.PAYMENT_RETURN_URL || ""
+  };
+}
+
+function paymentSign(params, secret = paymentConfig().merchantSecret) {
+  const pairs = Object.entries(params || {})
+    .filter(([key, value]) => key !== "sign" && value !== undefined && value !== null && String(value) !== "")
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, value]) => `${key}=${String(value)}`);
+  return crypto.createHash("md5").update(`${pairs.join("&")}&${secret}`).digest("hex").toUpperCase();
+}
+
+function verifyPaymentSign(params) {
+  const config = paymentConfig();
+  const actual = String(params?.sign || "").trim().toUpperCase();
+  if (!actual || !config.merchantSecret) return false;
+  return safeEqual(actual, paymentSign(params, config.merchantSecret));
+}
+
+function requirePaymentConfig() {
+  const config = paymentConfig();
+  const missing = [];
+  if (!config.merchantId) missing.push("PAYMENT_MERCHANT_ID");
+  if (!config.merchantSecret) missing.push("PAYMENT_MERCHANT_SECRET");
+  if (!config.channelCode) missing.push("PAYMENT_CHANNEL_CODE");
+  if (missing.length) throw new Error(`Payment config missing: ${missing.join(", ")}`);
+  return config;
+}
+
+function normalizePaymentEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Please enter a valid email address.");
+  return email;
+}
+
+function deliveryUrlForUser(user, req) {
+  return user?.subscriptionToken ? `${requestOrigin(req)}/delivery/${encodeURIComponent(user.subscriptionToken)}` : "";
+}
+
+function publicPaymentOrder(order) {
+  if (!order) return null;
+  return {
+    id: order.id,
+    merOrderTid: order.merOrderTid,
+    tid: order.tid || "",
+    planId: order.planId,
+    planName: order.planName,
+    optionId: order.optionId,
+    optionLabel: order.optionLabel,
+    amount: order.amount,
+    email: order.email || "",
+    payUrl: order.payUrl || "",
+    status: order.status,
+    statusText: paymentStatusText(order.status),
+    userId: order.userId || "",
+    deliveryUrl: order.deliveryUrl || "",
+    fulfillmentStatus: order.fulfillmentStatus || "",
+    fulfillmentError: order.fulfillmentError || "",
+    createdAt: order.createdAt,
+    paidAt: order.paidAt || "",
+    updatedAt: order.updatedAt || order.createdAt
+  };
+}
+
+function paymentStatusText(status) {
+  return ({
+    pending: "pending",
+    paid: "paid",
+    failed: "failed",
+    abnormal: "abnormal",
+    closed: "closed"
+  })[status] || "pending";
+}
+
+function platformStatusToOrderStatus(value) {
+  const status = Number(value);
+  if (status === 1) return "paid";
+  if (status === 2) return "failed";
+  if (status === 3) return "abnormal";
+  if (status === 4) return "closed";
+  return "pending";
+}
+
+function compactPaymentParams(params) {
+  return Object.fromEntries(
+    Object.entries(params || {}).filter(([, value]) => value !== undefined && value !== null && String(value) !== "")
+  );
+}
+
+async function postPaymentForm(endpoint, params, config = paymentConfig()) {
+  const response = await fetch(`${config.apiBaseUrl}${endpoint}`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(compactPaymentParams(params))
+  });
+  const text = await response.text();
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Payment gateway returned non-JSON response (${response.status}).`);
+  }
+  if (!response.ok) throw new Error(payload?.errMsg || `Payment gateway request failed: ${response.status}`);
+  if (payload.status !== 0) throw new Error(payload.errMsg || "Payment gateway rejected the order.");
+  return payload.result || {};
+}
+
+function makePaymentOrderId() {
+  return `vpn${Date.now()}${crypto.randomInt(1000, 9999)}`;
+}
+
+function normalizePaymentAmountForGateway(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Invalid payment amount.");
+  return amount.toFixed(2);
+}
+
+function resolvePaymentPlanOption(optionId) {
+  const option = PAYMENT_PLAN_OPTIONS[String(optionId || "")];
+  if (!option) throw new Error("Unsupported pricing option.");
+  const priceRow = pricing.find(item => item.group === option.planId);
+  const managedPrice = option.priceKey ? Number(priceRow?.[option.priceKey]) : NaN;
+  const amount = Number.isFinite(managedPrice) && managedPrice > 0 ? managedPrice : option.fallbackPrice;
+  return { ...option, amount };
+}
+
+async function fulfillPaymentOrder(order, req) {
+  if (!order || order.status !== "paid" || order.fulfilledAt) return order;
+  const email = normalizePaymentEmail(order.email);
+  const selectedOption = resolvePaymentPlanOption(order.optionId);
+  const purchasedAt = order.paidAt || new Date().toISOString();
+  const expiresAt = calculateExpiry(purchasedAt, selectedOption.duration);
+  const recommendation = recommendSubscriptionForExpiry(expiresAt);
+  if (!recommendation.subscription) throw new Error(recommendation.reason || "No available subscription pool.");
+
+  let user = users.find(item => String(item.userId || "").toLowerCase() === email);
+  if (user) {
+    const renewal = renewUser(user, {
+      purchasedAt,
+      actualPaid: order.amount,
+      duration: selectedOption.duration,
+      group: selectedOption.group,
+      subscriptionId: recommendation.subscription.id
+    });
+    bills.unshift(makeBill({
+      user,
+      type: "renewal",
+      amount: renewal.amount,
+      occurredAt: renewal.renewedAt,
+      duration: user.duration,
+      beforeExpiresAt: renewal.beforeExpiresAt,
+      afterExpiresAt: renewal.afterExpiresAt,
+      description: "Payment order renewal"
+    }));
+    appendUserLogToUser(user, createUserLog({
+      event: "user-action",
+      status: "recorded",
+      reason: "user-renewed",
+      toSubscription: recommendation.subscription,
+      req,
+      message: userActionMessage("user-renewed", {
+        amount: renewal.amount,
+        duration: user.duration,
+        afterExpiresAt: renewal.afterExpiresAt
+      }),
+      details: {
+        paymentOrderId: order.id,
+        merOrderTid: order.merOrderTid,
+        amount: renewal.amount,
+        duration: user.duration,
+        afterExpiresAt: renewal.afterExpiresAt
+      }
+    }));
+  } else {
+    const item = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString()
+    };
+    user = normalizeUser({
+      userId: email,
+      wechatName: "",
+      purchasedAt,
+      actualPaid: order.amount,
+      duration: selectedOption.duration,
+      group: selectedOption.group,
+      activeGroup: selectedOption.group,
+      subscriptionId: recommendation.subscription.id,
+      outputMode: "subconverter",
+      blockUserinfo: true
+    }, item);
+    user.outputMode = "subconverter";
+    user.blockUserinfo = true;
+    users.unshift(user);
+    bills.unshift(makeBill({
+      user,
+      type: "initial",
+      amount: user.actualPaid,
+      occurredAt: user.purchasedAt,
+      duration: user.duration,
+      afterExpiresAt: user.expiresAt,
+      description: "Payment order purchase"
+    }));
+    appendUserLogToUser(user, createUserLog({
+      event: "user-action",
+      status: "recorded",
+      reason: "user-created",
+      toSubscription: recommendation.subscription,
+      req,
+      message: userActionMessage("user-created"),
+      details: {
+        paymentOrderId: order.id,
+        merOrderTid: order.merOrderTid,
+        snapshot: userSnapshotForLog(user),
+        amount: user.actualPaid,
+        duration: user.duration,
+        afterExpiresAt: user.expiresAt
+      }
+    }));
+  }
+
+  order.userId = user.id;
+  order.deliveryUrl = deliveryUrlForUser(user, req);
+  order.fulfilledAt = new Date().toISOString();
+  order.fulfillmentStatus = "fulfilled";
+  await saveUsers();
+  await saveBills();
+  await savePaymentOrders();
+  return order;
+}
+
+function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
+  const base = String(config.returnUrl || fallbackUrl || `${requestOrigin(req)}/pricing`).trim();
+  if (!base || !/^https?:\/\//i.test(base)) return "";
+  const url = new URL(base);
+  url.searchParams.set("paymentOrder", merOrderTid);
+  return url.toString();
+}
+
+async function createPaymentOrder(payload, req) {
+  const config = requirePaymentConfig();
+  const selectedOption = resolvePaymentPlanOption(payload.optionId);
+  const email = normalizePaymentEmail(payload.email);
+  const amount = normalizePaymentAmountForGateway(selectedOption.amount);
+  const merOrderTid = makePaymentOrderId();
+  const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
+  if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
+  const returnUrl = paymentReturnUrl(config, req, merOrderTid, payload.returnUrl);
+
+  const requestParams = {
+    mid: config.merchantId,
+    merOrderTid,
+    money: amount,
+    channelCode: config.channelCode,
+    notifyUrl,
+    clientUserPayRemark: selectedOption.optionLabel,
+    clientUserId: String(payload.clientUserId || "").trim(),
+    clientUserName: String(payload.clientUserName || "").trim(),
+    returnUrl
+  };
+  const compactParams = compactPaymentParams(requestParams);
+  compactParams.sign = paymentSign(compactParams, config.merchantSecret);
+  const result = await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", compactParams, config);
+
+  const now = new Date().toISOString();
+  const order = {
+    id: crypto.randomUUID(),
+    merOrderTid,
+    tid: result.tid || "",
+    planId: selectedOption.planId,
+    planName: selectedOption.planName,
+    optionId: String(payload.optionId || "").trim(),
+    optionLabel: selectedOption.optionLabel,
+    duration: selectedOption.duration,
+    group: selectedOption.group,
+    amount: Number(amount),
+    email,
+    payUrl: result.payUrl || "",
+    status: platformStatusToOrderStatus(result.payOrderStatus),
+    platformStatus: result.payOrderStatus ?? null,
+    requestParams: compactParams,
+    createdAt: now,
+    updatedAt: now
+  };
+  paymentOrders.unshift(order);
+  await savePaymentOrders();
+  return order;
+}
+
+async function refreshPaymentOrder(order) {
+  const config = requirePaymentConfig();
+  const params = {
+    mid: config.merchantId,
+    merOrderTid: order.merOrderTid
+  };
+  params.sign = paymentSign(params, config.merchantSecret);
+  const result = await postPaymentForm("/api/services/app/Api_PayOrder/QueryPayOrder", params, config);
+  order.tid = result.tid || order.tid || "";
+  order.payUrl = result.payUrl || order.payUrl || "";
+  order.platformStatus = result.payOrderStatus ?? order.platformStatus;
+  order.status = platformStatusToOrderStatus(result.payOrderStatus);
+  order.amount = Number(result.money || order.amount || 0);
+  order.updatedAt = new Date().toISOString();
+  if (order.status === "paid" && !order.paidAt) order.paidAt = order.updatedAt;
+  await savePaymentOrders();
+  return order;
+}
+
+async function handlePaymentCallback(req) {
+  const payload = await readPaymentCallback(req);
+  if (!verifyPaymentSign(payload)) return { ok: false, statusCode: 400, body: "invalid sign" };
+  const merOrderTid = String(payload.merOrderTid || "").trim();
+  const order = paymentOrders.find(item => item.merOrderTid === merOrderTid);
+  if (order) {
+    const now = new Date().toISOString();
+    order.tid = String(payload.tid || order.tid || "");
+    order.amount = Number(payload.money || order.amount || 0);
+    order.platformStatus = Number(payload.status);
+    order.status = platformStatusToOrderStatus(payload.status);
+    order.callbackPayload = payload;
+    order.updatedAt = now;
+    if (order.status === "paid" && !order.paidAt) order.paidAt = now;
+    await savePaymentOrders();
+    if (order.status === "paid") {
+      try {
+        await fulfillPaymentOrder(order, req);
+      } catch (error) {
+        order.fulfillmentStatus = "failed";
+        order.fulfillmentError = error.message;
+        order.updatedAt = new Date().toISOString();
+        await savePaymentOrders();
+        console.error(`Payment fulfillment failed for ${order.merOrderTid}:`, error.message);
+      }
+    }
+  }
+  return { ok: true, statusCode: 200, body: "success" };
 }
 
 function normalizeSubscription(input, existing = {}) {
@@ -3254,6 +3654,18 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/payments/config-status" && req.method === "GET" && isLocalRequest(req)) {
+    const config = paymentConfig();
+    sendJson(res, 200, {
+      apiBaseUrl: config.apiBaseUrl,
+      merchantId: Boolean(config.merchantId),
+      merchantSecret: Boolean(config.merchantSecret),
+      channelCode: Boolean(config.channelCode),
+      notifyUrl: config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`
+    });
+    return;
+  }
+
   const telegramWebhookMatch = pathname.match(/^\/api\/telegram\/webhook\/([^/]+)$/);
   if (telegramWebhookMatch && req.method === "POST") {
     const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET || INTERNAL_TOKEN;
@@ -3269,6 +3681,58 @@ async function handleApi(req, res, pathname) {
     } catch (error) {
       console.error("Telegram webhook failed:", error.message);
       sendJson(res, 200, { ok: false, error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/payments/callback" && req.method === "POST") {
+    try {
+      const result = await handlePaymentCallback(req);
+      res.writeHead(result.statusCode, { "content-type": "text/plain; charset=utf-8" });
+      res.end(result.body);
+    } catch (error) {
+      console.error("Payment callback failed:", error.message);
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      res.end("fail");
+    }
+    return;
+  }
+
+  if (pathname === "/api/payments/orders" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const order = await createPaymentOrder(payload, req);
+      sendJson(res, 201, publicPaymentOrder(order));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const publicPaymentOrderMatch = pathname.match(/^\/api\/payments\/orders\/([^/]+)$/);
+  if (publicPaymentOrderMatch && req.method === "GET") {
+    try {
+      const order = paymentOrders.find(item => item.id === publicPaymentOrderMatch[1] || item.merOrderTid === publicPaymentOrderMatch[1]);
+      if (!order) {
+        sendJson(res, 404, { error: "Payment order not found." });
+        return;
+      }
+      const config = paymentConfig();
+      const shouldQueryGateway = order.status === "pending" && config.merchantId && config.merchantSecret;
+      const refreshedOrder = shouldQueryGateway ? await refreshPaymentOrder(order) : order;
+      if (refreshedOrder.status === "paid") {
+        try {
+          await fulfillPaymentOrder(refreshedOrder, req);
+        } catch (error) {
+          refreshedOrder.fulfillmentStatus = "failed";
+          refreshedOrder.fulfillmentError = error.message;
+          refreshedOrder.updatedAt = new Date().toISOString();
+          await savePaymentOrders();
+        }
+      }
+      sendJson(res, 200, publicPaymentOrder(refreshedOrder));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
     }
     return;
   }
