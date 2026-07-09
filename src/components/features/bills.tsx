@@ -4,7 +4,6 @@ import { toast } from "sonner"
 
 import { deleteJson, postJson } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { PageHeader } from "@/components/features/shared"
@@ -88,17 +87,13 @@ export function BillsPage() {
   return (
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="账单" description="收入记录、续费记录与冲正状态。" />
-      <Card>
-        <CardContent>
-          <DataTable
-            columns={columns}
-            data={bills}
-            searchKey="user"
-            searchPlaceholder="搜索账单..."
-            emptyTitle="暂无账单"
-          />
-        </CardContent>
-      </Card>
+      <DataTable
+        columns={columns}
+        data={bills}
+        searchKey="user"
+        searchPlaceholder="搜索账单..."
+        emptyTitle="暂无账单"
+      />
     </div>
   )
 }

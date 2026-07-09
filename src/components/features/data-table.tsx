@@ -99,8 +99,8 @@ export function DataTable<TData, TValue>({
   const pageCount = Math.max(table.getPageCount(), 1)
 
   return (
-    <div className={cn("flex w-full flex-col justify-start gap-6", className)}>
-      <div className="flex flex-col gap-2 px-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+    <div className={cn("flex min-w-0 w-full flex-col justify-start gap-6", className)}>
+      <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         {searchableColumn && (
           <Input
             placeholder={searchPlaceholder}
@@ -109,7 +109,7 @@ export function DataTable<TData, TValue>({
             className="h-8 w-full lg:max-w-sm"
           />
         )}
-        <div className="flex items-center gap-2 lg:ml-auto">
+        <div className="flex min-w-0 items-center gap-2 lg:ml-auto">
           {toolbar}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -138,7 +138,7 @@ export function DataTable<TData, TValue>({
           </DropdownMenu>
         </div>
       </div>
-      <div className="overflow-hidden rounded-lg border">
+      <div className="w-full overflow-x-auto rounded-lg border">
         <Table className="min-w-full table-fixed">
           <colgroup>
             {table.getVisibleLeafColumns().map((column, index) => (
@@ -158,7 +158,7 @@ export function DataTable<TData, TValue>({
                   <TableHead
                     key={header.id}
                     colSpan={header.colSpan}
-                    className="w-40 min-w-40 overflow-hidden px-4 first:w-48 first:min-w-48 first:pl-6"
+                    className="w-40 min-w-40 overflow-hidden px-4 font-semibold first:w-48 first:min-w-48 first:pl-6"
                   >
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                   </TableHead>
@@ -171,7 +171,7 @@ export function DataTable<TData, TValue>({
               table.getRowModel().rows.map(row => (
                 <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
                   {row.getVisibleCells().map(cell => (
-                    <TableCell key={cell.id} className="w-40 min-w-40 overflow-hidden px-4 first:w-48 first:min-w-48 first:pl-6">
+                    <TableCell key={cell.id} className="w-40 min-w-40 overflow-hidden px-4 text-xs first:w-48 first:min-w-48 first:pl-6">
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}
@@ -271,14 +271,17 @@ export function DataTableColumnHeader({
 }) {
   return function Header<TData, TValue>({ column }: { column: import("@tanstack/react-table").Column<TData, TValue> }) {
     if (!column.getCanSort()) {
-      return <div className={className}>{title}</div>
+      return <div className={cn("font-semibold", className)}>{title}</div>
     }
 
     return (
       <Button
         variant="ghost"
         size="sm"
-        className={cn("h-8 w-full justify-start px-0 text-left data-[state=open]:bg-accent", className)}
+        className={cn(
+          "h-8 w-full justify-start gap-1 px-0 text-left font-semibold data-[state=open]:bg-accent has-[>svg]:px-0",
+          className
+        )}
         onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
       >
         <span>{title}</span>

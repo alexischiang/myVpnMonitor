@@ -6,7 +6,6 @@ import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { SimpleFormDialog, type Field, type FormValues } from "@/components/features/simple-form"
@@ -143,24 +142,20 @@ export function UsersPage() {
         title="用户"
         description="客户订阅、到期日、交付链接和账单入口。"
         actions={
-          <Button onClick={() => { setEditing(null); setOpen(true) }}>
+          <Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}>
             <Plus />
             新增用户
           </Button>
         }
       />
 
-      <Card>
-        <CardContent>
-          <DataTable
-            columns={columns}
-            data={users}
-            searchKey="user"
-            searchPlaceholder="搜索用户..."
-            emptyTitle="暂无用户"
-          />
-        </CardContent>
-      </Card>
+      <DataTable
+        columns={columns}
+        data={users}
+        searchKey="user"
+        searchPlaceholder="搜索用户..."
+        emptyTitle="暂无用户"
+      />
 
       <SimpleFormDialog
         open={open}

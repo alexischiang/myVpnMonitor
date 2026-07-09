@@ -5,7 +5,6 @@ import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
@@ -113,19 +112,17 @@ function EmbyUsers() {
   ], [embyVendors])
 
   return (
-    <Card>
-      <CardContent>
-        <DataTable
-          columns={columns}
-          data={embyUsers}
-          searchKey="customer"
-          searchPlaceholder="搜索 Emby 用户..."
-          emptyTitle="暂无 Emby 用户"
-          toolbar={<Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增用户</Button>}
-        />
-      </CardContent>
+    <>
+      <DataTable
+        columns={columns}
+        data={embyUsers}
+        searchKey="customer"
+        searchPlaceholder="搜索 Emby 用户..."
+        emptyTitle="暂无 Emby 用户"
+        toolbar={<Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增用户</Button>}
+      />
       <SimpleFormDialog open={open} title={editing ? "编辑 Emby 用户" : "新增 Emby 用户"} fields={fields} initialValues={editing || { purchasedAt: new Date().toISOString().slice(0, 10) }} onOpenChange={setOpen} onSubmit={save} />
-    </Card>
+    </>
   )
 }
 
@@ -197,18 +194,16 @@ function EmbyVendors() {
   ], [])
 
   return (
-    <Card>
-      <CardContent>
-        <DataTable
-          columns={columns}
-          data={embyVendors}
-          searchKey="name"
-          searchPlaceholder="搜索供应商..."
-          emptyTitle="暂无供应商"
-          toolbar={<Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增供应商</Button>}
-        />
-      </CardContent>
+    <>
+      <DataTable
+        columns={columns}
+        data={embyVendors}
+        searchKey="name"
+        searchPlaceholder="搜索供应商..."
+        emptyTitle="暂无供应商"
+        toolbar={<Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增供应商</Button>}
+      />
       <SimpleFormDialog open={open} title={editing ? "编辑供应商" : "新增供应商"} fields={fields} initialValues={editing ? { ...editing, serversText: editing.servers?.map(item => item.url).join("\n") } : {}} onOpenChange={setOpen} onSubmit={save} />
-    </Card>
+    </>
   )
 }

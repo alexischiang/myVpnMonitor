@@ -6,7 +6,6 @@ import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { SimpleFormDialog, type FormValues } from "@/components/features/simple-form"
@@ -148,11 +147,11 @@ export function SubscriptionsPage() {
         description="管理上游订阅 URL、缓存状态、客户绑定与流量到期指标。"
         actions={
           <>
-            <Button variant="outline" onClick={() => refresh()} disabled={!!busy}>
+            <Button variant="outline" size="sm" onClick={() => refresh()} disabled={!!busy}>
               <RefreshCw />
               全部刷新
             </Button>
-            <Button onClick={() => { setEditing(null); setOpen(true) }}>
+            <Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}>
               <Plus />
               新增订阅
             </Button>
@@ -160,17 +159,13 @@ export function SubscriptionsPage() {
         }
       />
 
-      <Card>
-        <CardContent>
-          <DataTable
-            columns={columns}
-            data={subscriptions}
-            searchKey="subscription"
-            searchPlaceholder="搜索订阅..."
-            emptyTitle="暂无订阅"
-          />
-        </CardContent>
-      </Card>
+      <DataTable
+        columns={columns}
+        data={subscriptions}
+        searchKey="subscription"
+        searchPlaceholder="搜索订阅..."
+        emptyTitle="暂无订阅"
+      />
 
       <SimpleFormDialog
         open={open}

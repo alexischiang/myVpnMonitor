@@ -69,8 +69,8 @@ export function SubscriptionDetailPage() {
         description={item.email || item.serviceProvider || item.url}
         actions={
           <>
-            <Button asChild variant="outline"><Link to="/urls"><ArrowLeft />返回</Link></Button>
-            <Button onClick={refresh}><RefreshCw />刷新</Button>
+            <Button asChild variant="outline" size="sm"><Link to="/urls"><ArrowLeft />返回</Link></Button>
+            <Button size="sm" onClick={refresh}><RefreshCw />刷新</Button>
           </>
         }
       />
@@ -163,7 +163,7 @@ export function UserDetailPage() {
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<Button asChild variant="outline"><Link to="/users"><ArrowLeft />返回</Link></Button>} />
+      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<Button asChild variant="outline" size="sm"><Link to="/users"><ArrowLeft />返回</Link></Button>} />
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>订阅信息</CardTitle></CardHeader>
