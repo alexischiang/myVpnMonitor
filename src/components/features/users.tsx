@@ -8,8 +8,8 @@ import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
-import { SimpleFormDialog, type Field, type FormValues } from "@/components/features/simple-form"
 import { CopyButton, PageHeader, StatusBadge } from "@/components/features/shared"
+import { UserFormDialog, type UserFormValues } from "@/components/features/user-form-dialog"
 import type { User } from "@/types"
 import { absoluteUrl, formatDate, formatMoney, userStatus } from "@/utils"
 
@@ -18,21 +18,7 @@ export function UsersPage() {
   const [editing, setEditing] = React.useState<User | null>(null)
   const [open, setOpen] = React.useState(false)
 
-  const fields: Field[] = [
-    { name: "userId", label: "用户 ID", required: true },
-    { name: "wechatName", label: "微信名" },
-    { name: "imessage", label: "iMessage / 邮箱", type: "email" },
-    { name: "subscriptionId", label: "绑定订阅池", type: "select", required: true, options: subscriptions.map(item => ({ value: item.id, label: `${item.serviceProvider || item.provider || "Provider"} - ${item.email || item.url.slice(-8)}` })) },
-    { name: "activeGroup", label: "套餐", type: "select", options: ["basic", "pro", "ultra"].map(value => ({ value, label: value.toUpperCase() })) },
-    { name: "vipLevel", label: "VIP", type: "select", options: ["vip1", "vip2", "vip3"].map(value => ({ value, label: value.toUpperCase() })) },
-    { name: "duration", label: "周期", type: "select", options: ["monthly", "quarterly", "half_yearly", "yearly", "lifetime", "custom"].map(value => ({ value, label: value })) },
-    { name: "purchasedAt", label: "购买日期", type: "date" },
-    { name: "expiresAt", label: "到期日期", type: "date" },
-    { name: "actualPaid", label: "实付金额", type: "number" },
-    { name: "note", label: "备注", type: "textarea" },
-  ]
-
-  async function save(values: FormValues) {
+  async function save(values: UserFormValues) {
     await runAsync(async () => {
       const payload = {
         ...values,
@@ -157,11 +143,10 @@ export function UsersPage() {
         emptyTitle="暂无用户"
       />
 
-      <SimpleFormDialog
+      <UserFormDialog
         open={open}
-        title={editing ? "编辑用户" : "新增用户"}
-        fields={fields}
-        initialValues={editing || { activeGroup: "pro", vipLevel: "vip1", duration: "monthly", purchasedAt: new Date().toISOString().slice(0, 10) }}
+        user={editing}
+        subscriptions={subscriptions}
         onOpenChange={setOpen}
         onSubmit={save}
       />
