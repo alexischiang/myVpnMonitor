@@ -7,25 +7,64 @@ import { SectionCards } from "@/components/features/section-cards"
 import { EmptyState, StatusBadge } from "@/components/features/shared"
 import { formatDate, userStatus } from "@/utils"
 
+function billIncomeForMonthDays(bills: Array<{ amount?: number; occurredAt?: string }>, date: Date, days: number) {
+  const start = new Date(date.getFullYear(), date.getMonth(), 1)
+  const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()
+  const end = new Date(date.getFullYear(), date.getMonth(), Math.min(days, daysInMonth) + 1)
+
+  return bills.reduce((sum, item) => {
+    if (!item.occurredAt) return sum
+    const occurredAt = new Date(item.occurredAt)
+    if (Number.isNaN(occurredAt.getTime())) return sum
+    if (occurredAt < start || occurredAt >= end) return sum
+    return sum + (Number(item.amount) || 0)
+  }, 0)
+}
+
+function billIncomeForDay(bills: Array<{ amount?: number; occurredAt?: string }>, date: Date) {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const end = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1)
+
+  return bills.reduce((sum, item) => {
+    if (!item.occurredAt) return sum
+    const occurredAt = new Date(item.occurredAt)
+    if (Number.isNaN(occurredAt.getTime())) return sum
+    if (occurredAt < start || occurredAt >= end) return sum
+    return sum + (Number(item.amount) || 0)
+  }, 0)
+}
+
+function growthPercent(current: number, previous: number) {
+  if (previous === 0) return current > 0 ? 100 : 0
+  return ((current - previous) / previous) * 100
+}
+
 export function DashboardPage() {
-  const { subscriptions, users, bills } = useData()
+  const { users, bills } = useData()
   const activeBills = bills.filter(item => !item.reversedAt)
   const totalIncome = activeBills.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
   const activeUsers = users.filter(item => userStatus(item) !== "expired")
   const expiring = users.filter(item => userStatus(item) === "warning")
-  const trafficTotal = subscriptions.reduce((sum, item) => sum + (item.metrics?.remainingBytes || 0), 0)
+  const now = new Date()
+  const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const elapsedDays = now.getDate()
+  const monthlyIncome = billIncomeForMonthDays(activeBills, now, elapsedDays)
+  const dailyIncome = billIncomeForDay(activeBills, now)
+  const previousMonthIncome = billIncomeForMonthDays(activeBills, previousMonth, elapsedDays)
+  const monthlyIncomeGrowth = growthPercent(monthlyIncome, previousMonthIncome)
+  const activeUserRate = users.length ? (activeUsers.length / users.length) * 100 : 0
 
   return (
     <>
       <SectionCards
-        subscriptions={subscriptions.length}
-        healthySubscriptions={subscriptions.filter(item => item.status === "ok").length}
         users={users.length}
         activeUsers={activeUsers.length}
         bills={activeBills.length}
         income={totalIncome}
-        trafficBytes={trafficTotal}
-        expiringUsers={expiring.length}
+        monthlyIncome={monthlyIncome}
+        dailyIncome={dailyIncome}
+        monthlyIncomeGrowth={monthlyIncomeGrowth}
+        activeUserRate={activeUserRate}
       />
 
       <div className="px-4 lg:px-6">
