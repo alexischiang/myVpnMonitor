@@ -69,7 +69,7 @@ function publicPricing() {
   });
 }
 const PAYMENT_PLAN_OPTIONS = {
-  "test-001": { planId: "test", planName: "TEST", optionLabel: "Payment test 1 yuan", duration: "monthly", group: "pro", fallbackPrice: 1 },
+  "pro-test-001": { planId: "pro", planName: "PRO", optionLabel: "支付测试 1 元", duration: "monthly", group: "pro", fallbackPrice: 1 },
   "basic-30": { planId: "basic", planName: "BASIC", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "basic", fallbackPrice: 39 },
   "basic-90": { planId: "basic", planName: "BASIC", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "basic", fallbackPrice: 109 },
   "basic-180": { planId: "basic", planName: "BASIC", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "basic", fallbackPrice: 199 },

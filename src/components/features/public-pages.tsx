@@ -56,12 +56,12 @@ export function PricingPage() {
     }).catch(() => undefined)
   }, [])
 
-  async function createOrder(plan: typeof defaultPlans[number]) {
+  async function createOrder(plan: typeof defaultPlans[number], optionId?: string) {
     const period = periods[periodIndex]
     setLoading(true)
     try {
       const nextOrder = await postJson<Record<string, string>>("/api/payments/orders", {
-        optionId: `${plan.id}-${period.suffix}`,
+        optionId: optionId || `${plan.id}-${period.suffix}`,
         returnUrl: `${window.location.origin}/account/payment/result`,
       })
       setOrder(nextOrder)
@@ -94,7 +94,7 @@ export function PricingPage() {
         <div className="grid gap-4 md:grid-cols-3">
           {plans.map(plan => <Card key={plan.id} className={plan.recommended ? "border-foreground" : undefined}>
             <CardHeader><div className="flex items-center justify-between"><CardTitle>{plan.name}</CardTitle>{plan.recommended ? <Badge>推荐</Badge> : null}</div><p className="text-sm text-muted-foreground">{plan.title}</p><div className="pt-2"><span className="text-4xl font-semibold">￥{plan.prices[periodIndex]}</span><span className="text-sm text-muted-foreground"> / {periods[periodIndex].days}</span></div><p className="min-h-10 text-sm text-muted-foreground">{plan.description}</p></CardHeader>
-            <CardContent className="grid gap-5"><Button variant={plan.recommended ? "default" : "outline"} disabled={loading} onClick={() => inAccount ? createOrder(plan) : undefined} asChild={!inAccount}>{inAccount ? <>{loading ? <Loader2 className="animate-spin" /> : null}选择套餐</> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</Button><Separator /><div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{plan.traffic}</p><p className="flex items-center gap-2"><Check className="size-4" />可绑定 {plan.devices[periodIndex]} 台设备</p>{plan.features.map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}</div></CardContent>
+            <CardContent className="grid gap-5"><Button variant={plan.recommended ? "default" : "outline"} disabled={loading} onClick={() => inAccount ? createOrder(plan) : undefined} asChild={!inAccount}>{inAccount ? <>{loading ? <Loader2 className="animate-spin" /> : null}选择套餐</> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</Button>{plan.id === "pro" && inAccount ? <Button variant="outline" disabled={loading} onClick={() => createOrder(plan, "pro-test-001")}>1 元支付测试</Button> : null}<Separator /><div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{plan.traffic}</p><p className="flex items-center gap-2"><Check className="size-4" />可绑定 {plan.devices[periodIndex]} 台设备</p>{plan.features.map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}</div></CardContent>
           </Card>)}
         </div>
         {order ? <Card className="mx-auto w-full max-w-xl"><CardHeader><CardTitle>支付订单</CardTitle></CardHeader><CardContent className="grid gap-3"><div className="flex justify-between text-sm"><span>订单号</span><strong>{order.tid || order.merOrderTid}</strong></div><div className="flex justify-between text-sm"><span>状态</span><strong>{order.status}</strong></div>{order.payUrl ? <Button asChild><a href={order.payUrl} target="_blank" rel="noreferrer">打开支付页面</a></Button> : null}<Button variant="outline" onClick={checkOrder} disabled={checking}><RefreshCw />刷新支付状态</Button></CardContent></Card> : null}
