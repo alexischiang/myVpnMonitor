@@ -1,6 +1,7 @@
-﻿import * as React from "react"
+import * as React from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { AlertCircle, RefreshCw } from "lucide-react"
+import { useTheme } from "next-themes"
 
 import { apiFetch } from "@/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -11,15 +12,21 @@ import { useData } from "@/components/features/data-provider"
 import { getPageTitle } from "@/components/features/navigation"
 import { SiteHeader } from "@/components/features/site-header"
 
-export function AppShell({ dark, onToggleTheme }: { dark: boolean; onToggleTheme: () => void }) {
+export function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
   const data = useData()
   const pageTitle = getPageTitle(location.pathname)
+  const { resolvedTheme, setTheme, theme } = useTheme()
+  const dark = (theme ?? resolvedTheme) === "dark"
 
   async function logout() {
     await apiFetch("/api/auth/logout", { method: "POST" })
     navigate("/login", { replace: true })
+  }
+
+  function toggleTheme() {
+    setTheme(dark ? "light" : "dark")
   }
 
   return (
@@ -33,7 +40,7 @@ export function AppShell({ dark, onToggleTheme }: { dark: boolean; onToggleTheme
     >
       <AppSidebar variant="inset" onLogout={logout} />
       <SidebarInset className="min-w-0 overflow-x-hidden">
-        <SiteHeader title={pageTitle} dark={dark} onToggleTheme={onToggleTheme} onLogout={logout} />
+        <SiteHeader title={pageTitle} dark={dark} onToggleTheme={toggleTheme} onLogout={logout} />
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="@container/main flex min-w-0 flex-1 flex-col gap-2">
             <div className="flex min-w-0 flex-col gap-4 py-4 md:gap-6 md:py-6">

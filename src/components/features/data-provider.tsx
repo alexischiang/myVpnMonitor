@@ -23,7 +23,7 @@ type DataState = {
   runAsync: <T>(task: () => Promise<T>, label?: string) => Promise<T>
 }
 
-type Collection = Exclude<keyof DataState, "loading" | "error" | "busy" | "reload" | "runAsync">
+type Collection = Exclude<keyof DataState, "account" | "loading" | "error" | "busy" | "reload" | "runAsync">
 
 const apis: Record<Collection, string> = {
   subscriptions: "/api/subscriptions",
@@ -55,6 +55,26 @@ const initialState: Omit<DataState, "reload" | "runAsync"> = {
   busy: "",
 }
 
+const defaultCollections: Collection[] = ["subscriptions", "users", "bills", "meta"]
+const supplementalCollections: Collection[] = ["vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing"]
+const loadedCollections = new Set<Collection>()
+const collectionRequests = new Map<Collection, Promise<unknown>>()
+
+let cachedState: Omit<DataState, "reload" | "runAsync"> | null = null
+let accountLoaded = false
+let accountRequest: Promise<{ account?: string }> | null = null
+
+function fetchCollection(key: Collection) {
+  const existing = collectionRequests.get(key)
+  if (existing) return existing
+
+  const request = fetchJson(apis[key]).finally(() => {
+    collectionRequests.delete(key)
+  })
+  collectionRequests.set(key, request)
+  return request
+}
+
 const DataContext = React.createContext<DataState>({
   ...initialState,
   reload: async () => undefined,
@@ -63,15 +83,40 @@ const DataContext = React.createContext<DataState>({
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
-  const [state, setState] = React.useState(initialState)
+  const mountedRef = React.useRef(true)
+  const [state, setState] = React.useState<Omit<DataState, "reload" | "runAsync">>(() => {
+    if (!cachedState) return initialState
+    return { ...cachedState, loading: false, error: "" }
+  })
   const [busy, setBusy] = React.useState("")
 
+  React.useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  const commitState = React.useCallback((updater: (current: Omit<DataState, "reload" | "runAsync">) => Omit<DataState, "reload" | "runAsync">) => {
+    if (!mountedRef.current) {
+      cachedState = updater(cachedState || initialState)
+      return
+    }
+
+    setState(current => {
+      const next = updater(current)
+      cachedState = next
+      return next
+    })
+  }, [])
+
   const reload = React.useCallback(async (collections?: Collection[], { silent = false } = {}) => {
-    const keys = collections || (["subscriptions", "users", "bills", "meta"] as Collection[])
-    setState(current => ({ ...current, loading: !collections && !silent, error: silent ? current.error : "" }))
+    const keys = collections || defaultCollections
+    commitState(current => ({ ...current, loading: !collections && !silent, error: silent ? current.error : "" }))
     try {
-      const results = await Promise.all(keys.map(key => fetchJson(apis[key])))
-      setState(current => {
+      const results = await Promise.all(keys.map(fetchCollection))
+      keys.forEach(key => loadedCollections.add(key))
+      commitState(current => {
         const patch: Partial<DataState> = {}
         keys.forEach((key, index) => {
           ;(patch as Record<string, unknown>)[key] = results[index]
@@ -81,16 +126,37 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "加载失败"
       if (silent) return
-      setState(current => ({ ...current, loading: false, error: message }))
+      commitState(current => ({ ...current, loading: false, error: message }))
     }
-  }, [])
+  }, [commitState])
 
   React.useEffect(() => {
-    fetchJson<{ account?: string }>("/api/auth/me")
-      .then(me => setState(current => ({ ...current, account: me.account || "" })))
-      .catch(() => navigate("/login", { replace: true }))
-    reload().then(() => reload(["vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing"], { silent: true }))
-  }, [navigate, reload])
+    if (!accountLoaded) {
+      accountRequest = accountRequest || fetchJson<{ account?: string }>("/api/auth/me").finally(() => {
+        accountRequest = null
+      })
+      accountRequest
+        .then(me => {
+          accountLoaded = true
+          commitState(current => ({ ...current, account: me.account || "" }))
+        })
+        .catch(() => navigate("/login", { replace: true }))
+    }
+
+    const hasDefaultData = defaultCollections.every(key => loadedCollections.has(key))
+    const missingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
+
+    if (!hasDefaultData) {
+      reload().then(() => {
+        const nextMissingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
+        if (nextMissingSupplemental.length) void reload(nextMissingSupplemental, { silent: true })
+      })
+      return
+    }
+
+    commitState(current => ({ ...current, loading: false, error: "" }))
+    if (missingSupplemental.length) void reload(missingSupplemental, { silent: true })
+  }, [commitState, navigate, reload])
 
   const runAsync = React.useCallback(async <T,>(task: () => Promise<T>, label = "处理中...") => {
     setBusy(label)

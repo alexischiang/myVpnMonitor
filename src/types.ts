@@ -8,6 +8,7 @@ export type Subscription = {
   provider?: string
   serviceProvider?: string
   note?: string
+  accountStatus?: "unclaimed" | "invited" | "active"
   status?: Status
   httpStatus?: number | string | null
   lastCheckedAt?: string | null
@@ -104,10 +105,20 @@ export type EmbyUser = {
 export type PricingRow = {
   id?: string
   group: string
+  name?: string
+  title?: string
+  description?: string
+  recommended?: boolean
+  traffic?: string
+  features?: string[]
   monthly?: number
   quarterly?: number
   half_yearly?: number
   yearly?: number
+  monthlyDevices?: number
+  quarterlyDevices?: number
+  half_yearlyDevices?: number
+  yearlyDevices?: number
 }
 
 export type AppMeta = {

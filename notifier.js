@@ -69,12 +69,12 @@ function getTransporter() {
   return cachedTransporter;
 }
 
-async function sendMail({ subject, text, html }) {
+async function sendMail({ to, subject, text, html }) {
   const cfg = getMailerConfig();
   const transporter = getTransporter();
   return transporter.sendMail({
     from: `XELA monitor <${cfg.from}>`,
-    to: cfg.to,
+    to: to || cfg.to,
     subject,
     text,
     html

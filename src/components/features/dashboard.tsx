@@ -1,7 +1,7 @@
 import { Users } from "lucide-react"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ChartAreaInteractive } from "@/components/features/chart-area-interactive"
+import { ChartAreaInteractive, DailyIncomeChart, UserGrowthChart } from "@/components/features/chart-area-interactive"
 import { useData } from "@/components/features/data-provider"
 import { SectionCards } from "@/components/features/section-cards"
 import { EmptyState, StatusBadge } from "@/components/features/shared"
@@ -69,6 +69,11 @@ export function DashboardPage() {
 
       <div className="px-4 lg:px-6">
         <ChartAreaInteractive bills={activeBills} />
+      </div>
+
+      <div className="grid gap-4 px-4 lg:grid-cols-2 lg:px-6">
+        <DailyIncomeChart bills={activeBills} />
+        <UserGrowthChart users={users} />
       </div>
 
       <div className="grid gap-4 px-4 lg:px-6">

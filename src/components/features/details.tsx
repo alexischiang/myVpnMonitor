@@ -1,7 +1,8 @@
 import * as React from "react"
 import { Link, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ArrowLeft, RefreshCw } from "lucide-react"
+import { ArrowLeft, MailCheck, RefreshCw } from "lucide-react"
+import { toast } from "sonner"
 
 import { fetchJson, postJson } from "@/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -127,7 +128,7 @@ export function SubscriptionDetailPage() {
 
 export function UserDetailPage() {
   const { id } = useParams()
-  const { users, bills } = useData()
+  const { users, bills, reload, runAsync } = useData()
   const user = users.find(entry => entry.id === id)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
 
@@ -161,9 +162,17 @@ export function UserDetailPage() {
 
   if (!user) return <EmptyState title="未找到用户" />
 
+  async function sendAccountInvite() {
+    await runAsync(async () => {
+      await postJson(`/api/users/${user.id}/account-invite`)
+      await reload(["users"], { silent: true })
+      toast.success("账户认领邮件已发送")
+    }, "发送认领邮件...")
+  }
+
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<Button asChild variant="outline" size="sm"><Link to="/users"><ArrowLeft />返回</Link></Button>} />
+      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex gap-2">{user.accountStatus !== "active" ? <Button size="sm" onClick={sendAccountInvite}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button> : null}<Button asChild variant="outline" size="sm"><Link to="/users"><ArrowLeft />返回</Link></Button></div>} />
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>订阅信息</CardTitle></CardHeader>
@@ -174,6 +183,7 @@ export function UserDetailPage() {
             <Info label="到期" value={formatUserExpiry(user)} />
             <Info label="订阅池" value={user.subscription?.email || user.subscription?.serviceProvider || "-"} />
             <Info label="状态" value={<StatusBadge status={userStatus(user)} />} />
+            <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
           </CardContent>
         </Card>
         <Card>

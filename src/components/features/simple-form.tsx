@@ -1,33 +1,38 @@
 ﻿import * as React from "react"
 
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { cn } from "@/lib/utils"
 
 export type Field =
-  | { name: string; label: string; type?: "text" | "email" | "number" | "date" | "password" | "url"; placeholder?: string; required?: boolean }
-  | { name: string; label: string; type: "textarea"; placeholder?: string; required?: boolean; rows?: number }
-  | { name: string; label: string; type: "select"; placeholder?: string; required?: boolean; options: Array<{ value: string; label: string }> }
+  | { name: string; label: string; type?: "text" | "email" | "number" | "date" | "password" | "url"; placeholder?: string; required?: boolean; className?: string }
+  | { name: string; label: string; type: "textarea"; placeholder?: string; required?: boolean; rows?: number; className?: string }
+  | { name: string; label: string; type: "select"; placeholder?: string; required?: boolean; options: Array<{ value: string; label: string }>; className?: string }
 
 export type FormValues = Record<string, string | number | boolean | undefined>
 
 export function SimpleFormDialog({
   open,
   title,
+  description,
   fields,
   initialValues = {},
   submitLabel = "保存",
+  contentClassName,
   onOpenChange,
   onSubmit,
 }: {
   open: boolean
   title: string
+  description?: string
   fields: Field[]
   initialValues?: FormValues
   submitLabel?: string
+  contentClassName?: string
   onOpenChange: (open: boolean) => void
   onSubmit: (values: FormValues) => Promise<void> | void
 }) {
@@ -51,17 +56,18 @@ export function SimpleFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form onSubmit={submit}>
+      <DialogContent className={contentClassName}>
+        <form className="grid gap-5" onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
+            {description && <DialogDescription>{description}</DialogDescription>}
           </DialogHeader>
-          <div>
+          <FieldGroup className="grid gap-4 sm:grid-cols-2">
             {fields.map(field => {
               const value = values[field.name]
               return (
-                <div key={field.name}>
-                  <Label htmlFor={field.name}>{field.label}</Label>
+                <Field key={field.name} className={cn(field.type === "textarea" && "sm:col-span-2", field.className)}>
+                  <FieldLabel htmlFor={field.name}>{field.label}</FieldLabel>
                   {field.type === "textarea" ? (
                     <Textarea
                       id={field.name}
@@ -90,10 +96,10 @@ export function SimpleFormDialog({
                       onChange={event => setValues(current => ({ ...current, [field.name]: field.type === "number" ? Number(event.target.value) : event.target.value }))}
                     />
                   )}
-                </div>
+                </Field>
               )
             })}
-          </div>
+          </FieldGroup>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               取消

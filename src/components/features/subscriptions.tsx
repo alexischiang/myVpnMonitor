@@ -8,16 +8,16 @@ import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
-import { SimpleFormDialog, type FormValues } from "@/components/features/simple-form"
+import { SimpleFormDialog, type Field, type FormValues } from "@/components/features/simple-form"
 import { PageHeader, StatusBadge, TrafficProgress, UrlCell } from "@/components/features/shared"
 import type { Subscription } from "@/types"
 import { formatDate } from "@/utils"
 
-const fields = [
-  { name: "url", label: "订阅 URL", type: "url" as const, required: true, placeholder: "https://..." },
-  { name: "email", label: "邮箱", type: "email" as const },
-  { name: "serviceProvider", label: "供应商", type: "text" as const, placeholder: "YKK Cloud" },
-  { name: "note", label: "备注", type: "textarea" as const },
+const fields: Field[] = [
+  { name: "url", label: "订阅 URL", type: "url", required: true, placeholder: "https://...", className: "sm:col-span-2" },
+  { name: "email", label: "邮箱", type: "email", placeholder: "customer@example.com" },
+  { name: "serviceProvider", label: "供应商", type: "text", placeholder: "YKK Cloud" },
+  { name: "note", label: "备注", type: "textarea", rows: 3, placeholder: "套餐、来源或其他备注", className: "sm:col-span-2" },
 ]
 
 export function SubscriptionsPage() {
@@ -170,8 +170,11 @@ export function SubscriptionsPage() {
       <SimpleFormDialog
         open={open}
         title={editing ? "编辑订阅" : "新增订阅"}
+        description="粘贴上游订阅地址，保存后会自动刷新一次指标。"
         fields={fields}
         initialValues={editing || {}}
+        submitLabel={editing ? "保存修改" : "保存并刷新"}
+        contentClassName="sm:max-w-2xl"
         onOpenChange={setOpen}
         onSubmit={save}
       />

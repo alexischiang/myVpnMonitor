@@ -39,6 +39,7 @@ const EMBY_VENDORS_FILE = process.env.EMBY_VENDORS_FILE || path.join(DATA_DIR, "
 const PRESETS_FILE = process.env.PRESETS_FILE || path.join(DATA_DIR, "presets.json");
 const PRICING_FILE = process.env.PRICING_FILE || path.join(DATA_DIR, "pricing.json");
 const PAYMENT_ORDERS_FILE = process.env.PAYMENT_ORDERS_FILE || path.join(DATA_DIR, "paymentOrders.json");
+const ACCOUNTS_FILE = process.env.ACCOUNTS_FILE || path.join(DATA_DIR, "accounts.json");
 
 const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
 const ALERT_STATE_FILE = process.env.ALERT_STATE_FILE || path.join(DATA_DIR, "alert-state.json");
@@ -57,10 +58,16 @@ const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, 
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const DEFAULT_SERVICE_PROVIDER = "YKK Cloud";
 const DEFAULT_PRICING = [
-  { id: "basic", group: "basic", monthly: 39, quarterly: 109, half_yearly: 199, yearly: 369 },
-  { id: "pro",   group: "pro",   monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429 },
-  { id: "ultra", group: "ultra", monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859 }
+  { id: "basic", group: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", recommended: false, traffic: "每月 100G", features: ["基础线路", "流媒体支持", "在线客服"], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 39, quarterly: 109, half_yearly: 199, yearly: 369 },
+  { id: "pro", group: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], monthlyDevices: 3, quarterlyDevices: 3, half_yearlyDevices: 5, yearlyDevices: 5, monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429 },
+  { id: "ultra", group: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", recommended: false, traffic: "每月 300G", features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859 }
 ];
+function publicPricing() {
+  return DEFAULT_PRICING.map(defaultRow => {
+    const saved = pricing.find(item => item.group === defaultRow.group) || {};
+    return { ...defaultRow, ...saved, features: Array.isArray(saved.features) ? saved.features : defaultRow.features };
+  });
+}
 const PAYMENT_PLAN_OPTIONS = {
   "test-001": { planId: "test", planName: "TEST", optionLabel: "Payment test 1 yuan", duration: "monthly", group: "pro", fallbackPrice: 1 },
   "basic-30": { planId: "basic", planName: "BASIC", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "basic", fallbackPrice: 39 },
@@ -160,6 +167,7 @@ const REQUEST_PROFILES = [
 
 let subscriptions = [];
 let users = [];
+let accounts = [];
 let bills = [];
 let vendors = [];
 let placeholderNodes = [];
@@ -174,6 +182,7 @@ const dataStore = createDataStore({
   files: {
     subscriptions: DATA_FILE,
     users: USERS_FILE,
+    accounts: ACCOUNTS_FILE,
     bills: BILLS_FILE,
     vendors: VENDORS_FILE,
     presets: PRESETS_FILE,
@@ -197,6 +206,7 @@ async function ensureDataFile() {
   const state = await dataStore.loadAll();
   subscriptions = state.subscriptions;
   users = state.users;
+  accounts = state.accounts || [];
   bills = state.bills;
   vendors = state.vendors || [];
   presets = state.presets || [];
@@ -302,6 +312,7 @@ function _doLoad() {
     if (gen !== _writeGen) return;
     subscriptions = state.subscriptions;
     users = state.users;
+    accounts = state.accounts || [];
     bills = state.bills;
     vendors = state.vendors || [];
     presets = state.presets || [];
@@ -337,6 +348,11 @@ async function saveData() {
 async function saveUsers() {
   _markWritten();
   await dataStore.saveCollection("users", users);
+}
+
+async function saveAccounts() {
+  _markWritten();
+  await dataStore.saveCollection("accounts", accounts);
 }
 
 async function saveBills() {
@@ -546,9 +562,9 @@ function signSession(payload) {
   return crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
 }
 
-function makeSessionToken(account, maxAgeSeconds) {
+function makeSessionToken(session, maxAgeSeconds) {
   const payload = Buffer.from(JSON.stringify({
-    account,
+    ...session,
     exp: Date.now() + maxAgeSeconds * 1000
   })).toString("base64url");
   return `${payload}.${signSession(payload)}`;
@@ -560,8 +576,11 @@ function verifySessionToken(token) {
 
   try {
     const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (session.account !== ADMIN_USERNAME || Date.now() > Number(session.exp)) return null;
-    return session;
+    if (Date.now() > Number(session.exp)) return null;
+    if (!session.role && session.account === ADMIN_USERNAME) return { ...session, role: "admin" };
+    if (session.role === "admin" && session.account === ADMIN_USERNAME) return session;
+    if (session.role === "user" && accounts.some(item => item.id === session.accountId && item.status === "active")) return session;
+    return null;
   } catch {
     return null;
   }
@@ -595,6 +614,68 @@ function requireAuth(req, res) {
   if (currentSession(req)) return true;
   sendJson(res, 401, { error: "请先登录。", loginUrl: "/login" });
   return false;
+}
+
+function requireAdmin(req, res) {
+  const session = currentSession(req);
+  if (session?.role === "admin") return session;
+  sendJson(res, 403, { error: "需要管理员权限。" });
+  return null;
+}
+
+function requireUser(req, res) {
+  const session = currentSession(req);
+  if (session?.role === "user") return session;
+  sendJson(res, 401, { error: "请先登录用户账户。", loginUrl: "/login" });
+  return null;
+}
+
+function normalizeAccountEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("请输入有效邮箱。");
+  return email;
+}
+
+function validateAccountPassword(value) {
+  const password = String(value || "");
+  if (password.length < 8) throw new Error("密码至少需要 8 位。");
+  if (password.length > 128) throw new Error("密码不能超过 128 位。");
+  return password;
+}
+
+function hashAccountPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `scrypt$${salt}$${hash}`;
+}
+
+function verifyAccountPassword(password, stored) {
+  const [method, salt, expected] = String(stored || "").split("$");
+  if (method !== "scrypt" || !salt || !expected) return false;
+  const actual = crypto.scryptSync(String(password || ""), salt, 64).toString("hex");
+  return safeEqual(actual, expected);
+}
+
+function accountBySession(session) {
+  return session?.role === "user" ? accounts.find(item => item.id === session.accountId && item.status === "active") : null;
+}
+
+function tokenHash(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function accountActionUrl(req, pathName, token) {
+  const base = String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "");
+  return `${base}${pathName}?token=${encodeURIComponent(token)}`;
+}
+
+async function sendAccountActionMail({ to, subject, title, url }) {
+  await notifier.sendMail({
+    to,
+    subject,
+    text: `${title}\n\n${url}\n\n链接 30 分钟内有效，且只能使用一次。`,
+    html: `<p>${title}</p><p><a href="${url}">${url}</a></p><p>链接 30 分钟内有效，且只能使用一次。</p>`
+  });
 }
 
 function readJson(req) {
@@ -699,11 +780,11 @@ function publicPaymentOrder(order) {
     optionId: order.optionId,
     optionLabel: order.optionLabel,
     amount: order.amount,
-    email: order.email || "",
     payUrl: order.payUrl || "",
     status: order.status,
     statusText: paymentStatusText(order.status),
     userId: order.userId || "",
+    accountId: order.accountId || "",
     deliveryUrl: order.deliveryUrl || "",
     fulfillmentStatus: order.fulfillmentStatus || "",
     fulfillmentError: order.fulfillmentError || "",
@@ -784,7 +865,10 @@ async function fulfillPaymentOrder(order, req) {
   const recommendation = recommendSubscriptionForExpiry(expiresAt);
   if (!recommendation.subscription) throw new Error(recommendation.reason || "No available subscription pool.");
 
-  let user = users.find(item => String(item.userId || "").toLowerCase() === email);
+  const account = order.accountId ? accounts.find(item => item.id === order.accountId) : null;
+  let user = account?.linkedUserId
+    ? users.find(item => item.id === account.linkedUserId)
+    : users.find(item => String(item.userId || "").toLowerCase() === email);
   if (user) {
     const renewal = renewUser(user, {
       purchasedAt,
@@ -870,6 +954,11 @@ async function fulfillPaymentOrder(order, req) {
   }
 
   order.userId = user.id;
+  if (account && account.linkedUserId !== user.id) {
+    account.linkedUserId = user.id;
+    account.updatedAt = new Date().toISOString();
+    await saveAccounts();
+  }
   order.deliveryUrl = deliveryUrlForUser(user, req);
   order.fulfilledAt = new Date().toISOString();
   order.fulfillmentStatus = "fulfilled";
@@ -887,15 +976,16 @@ function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
   return url.toString();
 }
 
-async function createPaymentOrder(payload, req) {
+async function createPaymentOrder(payload, req, account) {
   const config = requirePaymentConfig();
   const selectedOption = resolvePaymentPlanOption(payload.optionId);
-  const email = normalizePaymentEmail(payload.email);
+  const email = normalizePaymentEmail(account.email);
   const amount = normalizePaymentAmountForGateway(selectedOption.amount);
+  const id = crypto.randomUUID();
   const merOrderTid = makePaymentOrderId();
   const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
   if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
-  const returnUrl = paymentReturnUrl(config, req, merOrderTid, payload.returnUrl);
+  const returnUrl = paymentReturnUrl(config, req, id, payload.returnUrl);
 
   const requestParams = {
     mid: config.merchantId,
@@ -914,7 +1004,7 @@ async function createPaymentOrder(payload, req) {
 
   const now = new Date().toISOString();
   const order = {
-    id: crypto.randomUUID(),
+    id,
     merOrderTid,
     tid: result.tid || "",
     planId: selectedOption.planId,
@@ -925,6 +1015,7 @@ async function createPaymentOrder(payload, req) {
     group: selectedOption.group,
     amount: Number(amount),
     email,
+    accountId: account.id,
     payUrl: result.payUrl || "",
     status: platformStatusToOrderStatus(result.payOrderStatus),
     platformStatus: result.payOrderStatus ?? null,
@@ -949,7 +1040,8 @@ async function refreshPaymentOrder(order) {
   order.payUrl = result.payUrl || order.payUrl || "";
   order.platformStatus = result.payOrderStatus ?? order.platformStatus;
   order.status = platformStatusToOrderStatus(result.payOrderStatus);
-  order.amount = Number(result.money || order.amount || 0);
+  const paidAmount = Number(result.money || order.amount || 0);
+  if (order.status === "paid" && paidAmount !== Number(order.amount)) throw new Error("Payment amount mismatch.");
   order.updatedAt = new Date().toISOString();
   if (order.status === "paid" && !order.paidAt) order.paidAt = order.updatedAt;
   await savePaymentOrders();
@@ -964,9 +1056,14 @@ async function handlePaymentCallback(req) {
   if (order) {
     const now = new Date().toISOString();
     order.tid = String(payload.tid || order.tid || "");
-    order.amount = Number(payload.money || order.amount || 0);
+    const paidAmount = Number(payload.money || order.amount || 0);
     order.platformStatus = Number(payload.status);
     order.status = platformStatusToOrderStatus(payload.status);
+    if (order.status === "paid" && paidAmount !== Number(order.amount)) {
+      order.status = "abnormal";
+      order.fulfillmentStatus = "failed";
+      order.fulfillmentError = "Payment amount mismatch.";
+    }
     order.callbackPayload = payload;
     order.updatedAt = now;
     if (order.status === "paid" && !order.paidAt) order.paidAt = now;
@@ -1509,6 +1606,7 @@ function publicUser(user, subscriptionMap = null) {
     : subscriptions.find(item => item.id === user.subscriptionId);
   return {
     ...user,
+    accountStatus: accounts.find(item => item.linkedUserId === user.id)?.status || "unclaimed",
     userLogs: Array.isArray(user.userLogs)
       ? user.userLogs
       : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []),
@@ -3477,21 +3575,106 @@ async function handleApi(req, res, pathname) {
   }
 
 
+  if (pathname === "/api/auth/register" && req.method === "POST") {
+    try {
+      await loadLatestData();
+      const payload = await readJson(req);
+      const email = normalizeAccountEmail(payload.email);
+      const password = validateAccountPassword(payload.password);
+      if (accounts.some(item => item.email === email)) {
+        sendJson(res, 409, { error: "该邮箱已有账户，请直接登录或重置密码。" });
+        return;
+      }
+      if (users.some(item => String(item.userId || item.email || "").trim().toLowerCase() === email)) {
+        sendJson(res, 409, { error: "该邮箱已有历史订阅，请联系管理员发送账户认领邮件。" });
+        return;
+      }
+      const now = new Date().toISOString();
+      const account = { id: crypto.randomUUID(), email, passwordHash: hashAccountPassword(password), status: "active", linkedUserId: "", createdAt: now, updatedAt: now };
+      accounts.unshift(account);
+      await saveAccounts();
+      const token = makeSessionToken({ role: "user", accountId: account.id, email }, REMEMBER_MAX_AGE_SECONDS);
+      sendJson(res, 201, { ok: true, role: "user", email }, { "set-cookie": authCookie(req, token, REMEMBER_MAX_AGE_SECONDS) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/auth/login" && req.method === "POST") {
     try {
       const payload = await readJson(req);
-      const account = String(payload.account || "").trim();
+      const account = String(payload.account || payload.email || "").trim();
       const password = String(payload.password || "");
-      if (!safeEqual(account, ADMIN_USERNAME) || !safeEqual(password, ADMIN_PASSWORD)) {
-        sendJson(res, 401, { error: "账号或密码不正确。" });
-        return;
-      }
-
       const remember = Boolean(payload.remember);
       const maxAgeSeconds = remember ? REMEMBER_MAX_AGE_SECONDS : SESSION_MAX_AGE_SECONDS;
       const cookieMaxAge = remember ? maxAgeSeconds : null;
-      const token = makeSessionToken(account, maxAgeSeconds);
-      sendJson(res, 200, { ok: true, account }, { "set-cookie": authCookie(req, token, cookieMaxAge) });
+      if (safeEqual(account, ADMIN_USERNAME) && safeEqual(password, ADMIN_PASSWORD)) {
+        const token = makeSessionToken({ role: "admin", account: ADMIN_USERNAME }, maxAgeSeconds);
+        sendJson(res, 200, { ok: true, role: "admin", account: ADMIN_USERNAME }, { "set-cookie": authCookie(req, token, cookieMaxAge) });
+        return;
+      }
+      await loadLatestData();
+      const email = normalizeAccountEmail(account);
+      const userAccount = accounts.find(item => item.email === email && item.status === "active");
+      if (!userAccount || !verifyAccountPassword(password, userAccount.passwordHash)) {
+        sendJson(res, 401, { error: "邮箱或密码不正确。" });
+        return;
+      }
+      const token = makeSessionToken({ role: "user", accountId: userAccount.id, email }, maxAgeSeconds);
+      sendJson(res, 200, { ok: true, role: "user", email }, { "set-cookie": authCookie(req, token, cookieMaxAge) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/auth/forgot-password" && req.method === "POST") {
+    try {
+      await loadLatestData();
+      const payload = await readJson(req);
+      const email = normalizeAccountEmail(payload.email);
+      const account = accounts.find(item => item.email === email && item.status === "active");
+      if (account) {
+        const token = crypto.randomBytes(32).toString("base64url");
+        account.resetTokenHash = tokenHash(token);
+        account.resetTokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+        account.updatedAt = new Date().toISOString();
+        await saveAccounts();
+        try {
+          await sendAccountActionMail({ to: email, subject: "重置账户密码", title: "请点击下面的链接重置密码", url: accountActionUrl(req, "/reset-password", token) });
+        } catch (error) {
+          console.error(`Password reset email failed for ${email}:`, error.message);
+        }
+      }
+      sendJson(res, 200, { ok: true, message: "如果该邮箱存在，重置链接将发送到邮箱。" });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/auth/reset-password" && req.method === "POST") {
+    try {
+      await loadLatestData();
+      const payload = await readJson(req);
+      const password = validateAccountPassword(payload.password);
+      const hash = tokenHash(payload.token);
+      const account = accounts.find(item => (item.resetTokenHash === hash || item.claimTokenHash === hash));
+      const expiresAt = account?.resetTokenHash === hash ? account.resetTokenExpiresAt : account?.claimTokenExpiresAt;
+      if (!account || !expiresAt || new Date(expiresAt).getTime() <= Date.now()) {
+        sendJson(res, 400, { error: "链接无效或已过期。" });
+        return;
+      }
+      account.passwordHash = hashAccountPassword(password);
+      account.status = "active";
+      delete account.resetTokenHash;
+      delete account.resetTokenExpiresAt;
+      delete account.claimTokenHash;
+      delete account.claimTokenExpiresAt;
+      account.updatedAt = new Date().toISOString();
+      await saveAccounts();
+      sendJson(res, 200, { ok: true });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -3573,7 +3756,64 @@ async function handleApi(req, res, pathname) {
       sendJson(res, 401, { error: "请先登录。", loginUrl: "/login" });
       return;
     }
-    sendJson(res, 200, { ok: true, account: session.account });
+    sendJson(res, 200, {
+      ok: true,
+      role: session.role,
+      account: session.role === "admin" ? session.account : session.email,
+      email: session.email || ""
+    });
+    return;
+  }
+
+  if (pathname === "/api/auth/password" && req.method === "PUT") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      const account = accountBySession(session);
+      const payload = await readJson(req);
+      if (!account || !verifyAccountPassword(payload.currentPassword, account.passwordHash)) {
+        sendJson(res, 400, { error: "当前密码不正确。" });
+        return;
+      }
+      account.passwordHash = hashAccountPassword(validateAccountPassword(payload.password));
+      account.updatedAt = new Date().toISOString();
+      await saveAccounts();
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/account/overview" && req.method === "GET") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    await loadLatestData();
+    const account = accountBySession(session);
+    const user = account?.linkedUserId ? users.find(item => item.id === account.linkedUserId) : null;
+    const plan = user ? publicPricing().find(item => item.group === activeUserGroup(user)) : null;
+    sendJson(res, 200, {
+      email: account.email,
+      createdAt: account.createdAt,
+      subscription: user ? {
+        ...publicDeliveryPayload(user, req),
+        id: user.id,
+        status: isUserExpired(user) ? "expired" : "active",
+        purchasedAt: user.purchasedAt || "",
+        duration: user.duration || "",
+        traffic: plan?.traffic || "-",
+        devices: plan?.[`${user.duration}Devices`] || "-"
+      } : null,
+      orders: paymentOrders.filter(item => item.accountId === account.id).slice(0, 5).map(publicPaymentOrder)
+    });
+    return;
+  }
+
+  if (pathname === "/api/account/orders" && req.method === "GET") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    await loadLatestData();
+    sendJson(res, 200, paymentOrders.filter(item => item.accountId === session.accountId).map(publicPaymentOrder));
     return;
   }
 
@@ -3666,6 +3906,12 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/public/pricing" && req.method === "GET") {
+    await loadLatestData();
+    sendJson(res, 200, publicPricing());
+    return;
+  }
+
   const telegramWebhookMatch = pathname.match(/^\/api\/telegram\/webhook\/([^/]+)$/);
   if (telegramWebhookMatch && req.method === "POST") {
     const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET || INTERNAL_TOKEN;
@@ -3699,9 +3945,12 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/payments/orders" && req.method === "POST") {
+    const session = requireUser(req, res);
+    if (!session) return;
     try {
       const payload = await readJson(req);
-      const order = await createPaymentOrder(payload, req);
+      const account = accountBySession(session);
+      const order = await createPaymentOrder(payload, req, account);
       sendJson(res, 201, publicPaymentOrder(order));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -3712,10 +3961,18 @@ async function handleApi(req, res, pathname) {
   const publicPaymentOrderMatch = pathname.match(/^\/api\/payments\/orders\/([^/]+)$/);
   if (publicPaymentOrderMatch && req.method === "GET") {
     try {
-      const order = paymentOrders.find(item => item.id === publicPaymentOrderMatch[1] || item.merOrderTid === publicPaymentOrderMatch[1]);
+      const order = paymentOrders.find(item => item.id === publicPaymentOrderMatch[1]);
       if (!order) {
         sendJson(res, 404, { error: "Payment order not found." });
         return;
+      }
+      if (order.accountId) {
+        const session = requireUser(req, res);
+        if (!session) return;
+        if (order.accountId !== session.accountId) {
+          sendJson(res, 404, { error: "Payment order not found." });
+          return;
+        }
       }
       const config = paymentConfig();
       const shouldQueryGateway = order.status === "pending" && config.merchantId && config.merchantSecret;
@@ -3737,8 +3994,43 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (!requireAuth(req, res)) return;
+  if (!requireAdmin(req, res)) return;
   await loadLatestData();
+
+  const accountInviteMatch = pathname.match(/^\/api\/users\/([^/]+)\/account-invite$/);
+  if (accountInviteMatch && req.method === "POST") {
+    const user = users.find(item => item.id === accountInviteMatch[1]);
+    if (!user) {
+      sendJson(res, 404, { error: "用户不存在。" });
+      return;
+    }
+    try {
+      const email = normalizeAccountEmail(user.userId || user.email);
+      let account = accounts.find(item => item.email === email || item.linkedUserId === user.id);
+      if (account?.status === "active") {
+        sendJson(res, 409, { error: "该用户已经认领账户。" });
+        return;
+      }
+      const now = new Date().toISOString();
+      if (!account) {
+        account = { id: crypto.randomUUID(), email, passwordHash: "", status: "invited", linkedUserId: user.id, createdAt: now, updatedAt: now };
+        accounts.unshift(account);
+      }
+      const token = crypto.randomBytes(32).toString("base64url");
+      account.email = email;
+      account.linkedUserId = user.id;
+      account.status = "invited";
+      account.claimTokenHash = tokenHash(token);
+      account.claimTokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      account.updatedAt = now;
+      await saveAccounts();
+      await sendAccountActionMail({ to: email, subject: "认领你的订阅账户", title: "请点击下面的链接设置密码并认领订阅", url: accountActionUrl(req, "/reset-password", token) });
+      sendJson(res, 200, { ok: true, status: "invited" });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
 
   if (pathname === "/api/alerts/status" && req.method === "GET") {
     const cfg = notifier.getMailerConfig();
@@ -4052,7 +4344,7 @@ async function handleApi(req, res, pathname) {
 
   // ── Pricing ──
   if (pathname === "/api/pricing" && req.method === "GET") {
-    sendJson(res, 200, pricing);
+    sendJson(res, 200, publicPricing());
     return;
   }
 
@@ -4062,6 +4354,7 @@ async function handleApi(req, res, pathname) {
       if (!Array.isArray(payload)) { sendJson(res, 400, { error: "payload must be an array." }); return; }
       const GROUPS = ["basic", "pro", "ultra"];
       const DURATIONS = ["monthly", "quarterly", "half_yearly", "yearly"];
+      const TEXT_FIELDS = ["name", "title", "description", "traffic"];
       for (const item of payload) {
         if (!GROUPS.includes(item.group)) continue;
         let row = pricing.find(r => r.group === item.group);
@@ -4072,10 +4365,19 @@ async function handleApi(req, res, pathname) {
             if (Number.isNaN(val) || val < 0) { sendJson(res, 400, { error: `${item.group}.${dur} 价格无效。` }); return; }
             row[dur] = val;
           }
+          const devicesKey = `${dur}Devices`;
+          if (item[devicesKey] !== undefined) {
+            const devices = Number(item[devicesKey]);
+            if (!Number.isInteger(devices) || devices < 0) { sendJson(res, 400, { error: `${item.group}.${devicesKey} 设备数无效。` }); return; }
+            row[devicesKey] = devices;
+          }
         }
+        for (const field of TEXT_FIELDS) row[field] = String(item[field] ?? "").trim().slice(0, field === "description" ? 120 : 60);
+        row.recommended = Boolean(item.recommended);
+        row.features = Array.isArray(item.features) ? item.features.map(value => String(value).trim()).filter(Boolean).slice(0, 10) : [];
       }
       await savePricing();
-      sendJson(res, 200, pricing);
+      sendJson(res, 200, publicPricing());
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -4477,8 +4779,9 @@ const COMPRESSIBLE_EXTS = new Set([".html", ".css", ".js", ".json", ".svg", ".xm
 async function serveStatic(req, res, pathname) {
   const requestedPath = pathname === "/" ? "/index.html" : pathname;
   const isAppRoute = !path.extname(requestedPath);
-  const isLoginRoute = requestedPath === "/login" || requestedPath === "/login.html";
-  const isPublicAppRoute = /^\/delivery\/[^/]+\/?$/.test(requestedPath) || /^\/(?:pricing|buy)\/?$/.test(requestedPath);
+  const isLoginRoute = /^\/(?:login|register|forgot-password|reset-password)\/?$/.test(requestedPath) || requestedPath === "/login.html";
+  const isPublicAppRoute = /^\/delivery\/[^/]+\/?$/.test(requestedPath) || /^\/(?:pricing|buy)\/?$/.test(requestedPath) || isLoginRoute;
+  const session = currentSession(req);
   if (requestedPath === "/login.html") {
     res.writeHead(302, {
       "location": "/login",
@@ -4487,11 +4790,26 @@ async function serveStatic(req, res, pathname) {
     res.end();
     return;
   }
-  if ((requestedPath === "/index.html" || isAppRoute) && !isLoginRoute && !isPublicAppRoute && !currentSession(req)) {
+  if ((requestedPath === "/index.html" || isAppRoute) && !isPublicAppRoute && !session) {
     res.writeHead(302, {
       "location": "/login",
       "cache-control": "no-store, max-age=0"
     });
+    res.end();
+    return;
+  }
+  if (requestedPath === "/index.html" && session?.role === "user") {
+    res.writeHead(302, { "location": "/account", "cache-control": "no-store, max-age=0" });
+    res.end();
+    return;
+  }
+  if (isAppRoute && requestedPath.startsWith("/account") && session?.role !== "user") {
+    res.writeHead(302, { "location": session?.role === "admin" ? "/dashboard" : "/login", "cache-control": "no-store, max-age=0" });
+    res.end();
+    return;
+  }
+  if (isAppRoute && !isPublicAppRoute && !requestedPath.startsWith("/account") && session?.role === "user") {
+    res.writeHead(302, { "location": "/account", "cache-control": "no-store, max-age=0" });
     res.end();
     return;
   }

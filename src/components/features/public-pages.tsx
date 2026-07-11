@@ -1,6 +1,6 @@
 import * as React from "react"
-import { useParams } from "react-router-dom"
-import { CheckCircle, LinkIcon, Loader2, RefreshCw, Rocket, ShieldCheck } from "lucide-react"
+import { Link, useLocation, useParams } from "react-router-dom"
+import { Check, CheckCircle, LinkIcon, Loader2, RefreshCw, Rocket, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson } from "@/api"
@@ -8,35 +8,61 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Separator } from "@/components/ui/separator"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyButton, EmptyState } from "@/components/features/shared"
+import type { PricingRow } from "@/types"
 import { formatDate } from "@/utils"
 
-const plans = [
-  { id: "basic", name: "BASIC", title: "基本套餐", options: [{ id: "basic-30", label: "月付", days: "30天", price: 39, traffic: "100G/月" }, { id: "basic-360", label: "年付", days: "360天", price: 369, traffic: "100G/月" }] },
-  { id: "pro", name: "PRO", title: "高级套餐", recommended: true, options: [{ id: "pro-30", label: "月付", days: "30天", price: 49, traffic: "200G/月" }, { id: "pro-360", label: "年付", days: "360天", price: 429, traffic: "200G/月" }] },
-  { id: "ultra", name: "ULTRA", title: "极致套餐", options: [{ id: "ultra-30", label: "月付", days: "30天", price: 89, traffic: "300G/月" }, { id: "ultra-360", label: "年付", days: "360天", price: 859, traffic: "300G/月" }] },
+const periods = [
+  { id: "monthly", label: "月付", days: "30天", suffix: "30" },
+  { id: "quarterly", label: "季付", days: "90天", suffix: "90" },
+  { id: "half_yearly", label: "半年付", days: "180天", suffix: "180" },
+  { id: "yearly", label: "年付", days: "360天", suffix: "360" },
+] as const
+
+const defaultPlans = [
+  { id: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", traffic: "每月 100G", devices: [1, 2, 3, 3], prices: [39, 109, 199, 369], features: ["基础线路", "流媒体支持", "在线客服"] },
+  { id: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", devices: [3, 3, 5, 5], prices: [49, 129, 229, 429], features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"] },
+  { id: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", traffic: "每月 300G", devices: [1, 2, 3, 3], prices: [89, 239, 449, 859], features: ["国际内网专线", "独享级带宽体验", "专属客服支持"] },
 ]
 
 export function PricingPage() {
-  const [selected, setSelected] = React.useState({ plan: plans[1], option: plans[1].options[1] })
-  const [email, setEmail] = React.useState("")
+  const location = useLocation()
+  const inAccount = location.pathname.startsWith("/account")
+  const [plans, setPlans] = React.useState(defaultPlans)
+  const [periodIndex, setPeriodIndex] = React.useState(3)
   const [order, setOrder] = React.useState<Record<string, string> | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [checking, setChecking] = React.useState(false)
 
-  async function createOrder() {
-    const normalizedEmail = email.trim().toLowerCase()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) return toast.error("请输入有效邮箱")
+  React.useEffect(() => {
+    fetchJson<PricingRow[]>("/api/public/pricing").then(rows => {
+      setPlans(defaultPlans.map(defaultPlan => {
+        const row = rows.find(item => item.group === defaultPlan.id)
+        if (!row) return defaultPlan
+        return {
+          ...defaultPlan,
+          name: row.name || defaultPlan.name,
+          title: row.title || defaultPlan.title,
+          description: row.description || defaultPlan.description,
+          recommended: Boolean(row.recommended),
+          traffic: row.traffic || defaultPlan.traffic,
+          features: row.features?.length ? row.features : defaultPlan.features,
+          prices: [row.monthly ?? defaultPlan.prices[0], row.quarterly ?? defaultPlan.prices[1], row.half_yearly ?? defaultPlan.prices[2], row.yearly ?? defaultPlan.prices[3]],
+          devices: [row.monthlyDevices ?? defaultPlan.devices[0], row.quarterlyDevices ?? defaultPlan.devices[1], row.half_yearlyDevices ?? defaultPlan.devices[2], row.yearlyDevices ?? defaultPlan.devices[3]],
+        }
+      }))
+    }).catch(() => undefined)
+  }, [])
+
+  async function createOrder(plan: typeof defaultPlans[number]) {
+    const period = periods[periodIndex]
     setLoading(true)
     try {
       const nextOrder = await postJson<Record<string, string>>("/api/payments/orders", {
-        planId: selected.plan.id,
-        planName: selected.plan.name,
-        optionId: selected.option.id,
-        optionLabel: `${selected.plan.name} ${selected.option.label} ${selected.option.days}`,
-        amount: selected.option.price,
-        email: normalizedEmail,
-        returnUrl: window.location.href,
+        optionId: `${plan.id}-${period.suffix}`,
+        returnUrl: `${window.location.origin}/account/payment/result`,
       })
       setOrder(nextOrder)
       if (nextOrder.payUrl) window.open(nextOrder.payUrl, "_blank", "noopener,noreferrer")
@@ -62,48 +88,17 @@ export function PricingPage() {
   }
 
   return (
-    <main className="min-h-svh bg-background p-6 text-foreground">
-      <section className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1fr_360px]">
-        <div className="grid gap-6">
-          <div className="grid gap-2">
-            <Badge className="w-fit">myVpnMonitor</Badge>
-            <h1 className="text-3xl font-semibold tracking-tight">选择适合你的套餐</h1>
-          </div>
-          <div className="grid gap-4 md:grid-cols-3">
-            {plans.map(plan => (
-              <Card key={plan.id}>
-                <CardHeader>
-                  <div><p className="text-sm text-muted-foreground">{plan.name}</p><CardTitle>{plan.title}</CardTitle></div>
-                  {plan.recommended && <Badge>推荐</Badge>}
-                </CardHeader>
-                <CardContent className="grid gap-2">
-                  {plan.options.map(option => (
-                    <Button key={option.id} type="button" variant={selected.option.id === option.id ? "default" : "outline"} onClick={() => setSelected({ plan, option })} className="h-auto justify-between py-3">
-                      <div className="grid text-left"><span>{option.label} / {option.days}</span><strong>￥{option.price}</strong></div>
-                      <p>{option.traffic}</p>
-                    </Button>
-                  ))}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+    <main className={inAccount ? "px-4 lg:px-6" : "min-h-svh bg-background px-4 py-12 text-foreground md:py-20"}>
+      <section className="mx-auto grid max-w-6xl gap-8">
+        <header className="grid justify-items-center gap-4 text-center"><h1 className="text-3xl font-semibold md:text-4xl">简单清晰的套餐价格</h1><p className="text-muted-foreground">选择周期后查看对应价格，支付成功后立即生效。</p><Tabs value={periods[periodIndex].id} onValueChange={value => setPeriodIndex(periods.findIndex(item => item.id === value))}><TabsList>{periods.map(item => <TabsTrigger key={item.id} value={item.id}>{item.label}</TabsTrigger>)}</TabsList></Tabs></header>
+        <div className="grid gap-4 md:grid-cols-3">
+          {plans.map(plan => <Card key={plan.id} className={plan.recommended ? "border-foreground" : undefined}>
+            <CardHeader><div className="flex items-center justify-between"><CardTitle>{plan.name}</CardTitle>{plan.recommended ? <Badge>推荐</Badge> : null}</div><p className="text-sm text-muted-foreground">{plan.title}</p><div className="pt-2"><span className="text-4xl font-semibold">￥{plan.prices[periodIndex]}</span><span className="text-sm text-muted-foreground"> / {periods[periodIndex].days}</span></div><p className="min-h-10 text-sm text-muted-foreground">{plan.description}</p></CardHeader>
+            <CardContent className="grid gap-5"><Button variant={plan.recommended ? "default" : "outline"} disabled={loading} onClick={() => inAccount ? createOrder(plan) : undefined} asChild={!inAccount}>{inAccount ? <>{loading ? <Loader2 className="animate-spin" /> : null}选择套餐</> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</Button><Separator /><div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{plan.traffic}</p><p className="flex items-center gap-2"><Check className="size-4" />可绑定 {plan.devices[periodIndex]} 台设备</p>{plan.features.map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}</div></CardContent>
+          </Card>)}
         </div>
-        <Card>
-          <CardHeader><CardTitle>{selected.plan.name} / {selected.option.label}</CardTitle></CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="text-3xl font-semibold">￥{selected.option.price}</div>
-            <Input type="email" placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)} />
-            <Button onClick={createOrder} disabled={loading}>{loading && <Loader2 />}生成支付订单</Button>
-            {order && (
-              <div className="grid gap-3 rounded-lg border p-3 text-sm">
-                <div className="flex justify-between"><span>订单</span><strong>{order.tid || order.merOrderTid}</strong></div>
-                <div className="flex justify-between"><span>状态</span><strong>{order.status}</strong></div>
-                {order.payUrl && <Button asChild><a href={order.payUrl} target="_blank" rel="noreferrer">打开支付页面</a></Button>}
-                <Button variant="outline" onClick={checkOrder} disabled={checking}><RefreshCw />刷新支付状态</Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {order ? <Card className="mx-auto w-full max-w-xl"><CardHeader><CardTitle>支付订单</CardTitle></CardHeader><CardContent className="grid gap-3"><div className="flex justify-between text-sm"><span>订单号</span><strong>{order.tid || order.merOrderTid}</strong></div><div className="flex justify-between text-sm"><span>状态</span><strong>{order.status}</strong></div>{order.payUrl ? <Button asChild><a href={order.payUrl} target="_blank" rel="noreferrer">打开支付页面</a></Button> : null}<Button variant="outline" onClick={checkOrder} disabled={checking}><RefreshCw />刷新支付状态</Button></CardContent></Card> : null}
+        {!inAccount ? <p className="text-center text-sm text-muted-foreground">所有套餐一经支付不支持退款</p> : null}
       </section>
     </main>
   )
