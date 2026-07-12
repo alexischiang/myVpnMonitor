@@ -2,8 +2,9 @@ import * as React from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Loader2 } from "lucide-react"
 
-import { postJson } from "@/api"
+import { apiFetch, postJson } from "@/api"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
@@ -13,7 +14,7 @@ function AuthLayout({ title, description, children }: { title: string; descripti
   return (
     <main className="grid min-h-svh lg:grid-cols-2">
       <section className="flex flex-col gap-4 p-6 md:p-10">
-        <Link to="/pricing" className="w-fit text-sm font-semibold">myVpnMonitor</Link>
+        <Link to="/pricing" className="w-fit text-sm font-semibold">NEXORA</Link>
         <div className="flex flex-1 items-center justify-center">
           <div className="grid w-full max-w-sm gap-6">
             <header className="grid gap-2 text-center">
@@ -44,15 +45,20 @@ export function LoginPage() {
   const [searchParams] = useSearchParams()
   const [account, setAccount] = React.useState("")
   const [password, setPassword] = React.useState("")
+  const [remember, setRemember] = React.useState(false)
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState("")
+
+  React.useEffect(() => {
+    void apiFetch("/api/health").catch(() => undefined)
+  }, [])
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     setLoading(true)
     setError("")
     try {
-      const result = await postJson<AuthResponse>("/api/auth/login", { account, password, remember: true })
+      const result = await postJson<AuthResponse>("/api/auth/login", { account, password, remember })
       const returnTo = searchParams.get("returnTo")
       navigate(returnTo?.startsWith("/") ? returnTo : result.role === "admin" ? "/dashboard" : "/account", { replace: true })
     } catch (error) {
@@ -70,6 +76,7 @@ export function LoginPage() {
           <div className="flex items-center"><Label htmlFor="password">密码</Label><Link to="/forgot-password" className="ml-auto text-sm underline-offset-4 hover:underline">忘记密码？</Link></div>
           <Input id="password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required />
         </div>
+        <div className="flex items-center gap-2"><Checkbox id="remember" checked={remember} onCheckedChange={checked => setRemember(checked === true)} /><Label htmlFor="remember">记住我，30 天内免登录</Label></div>
         <ErrorText value={error} />
         <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />登录中</> : "登录"}</Button>
         <p className="text-center text-sm">还没有账户？ <Link to="/register" className="underline underline-offset-4">立即注册</Link></p>

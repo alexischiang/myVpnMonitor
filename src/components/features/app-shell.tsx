@@ -3,7 +3,7 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { AlertCircle, RefreshCw } from "lucide-react"
 import { useTheme } from "next-themes"
 
-import { apiFetch } from "@/api"
+import { apiFetch, fetchJson } from "@/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
@@ -12,6 +12,16 @@ import { useData } from "@/components/features/data-provider"
 import { getPageTitle } from "@/components/features/navigation"
 import { SiteHeader } from "@/components/features/site-header"
 
+export type ServiceHealth = { status: string; latency?: number; kind?: string; url?: string; message?: string }
+export type HealthResponse = { services: { database: ServiceHealth; subconverter: ServiceHealth; telegram: ServiceHealth } }
+type HealthContextValue = { services: HealthResponse["services"] | null; checkedAt: string; loading: boolean; error: string; refresh: () => Promise<void> }
+
+const HealthContext = React.createContext<HealthContextValue | null>(null)
+
+export function useServiceHealth() {
+  return React.useContext(HealthContext)!
+}
+
 export function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -19,6 +29,36 @@ export function AppShell() {
   const pageTitle = getPageTitle(location.pathname)
   const { resolvedTheme, setTheme, theme } = useTheme()
   const dark = (theme ?? resolvedTheme) === "dark"
+  const [services, setServices] = React.useState<HealthResponse["services"] | null>(null)
+  const [checkedAt, setCheckedAt] = React.useState("")
+  const [healthLoading, setHealthLoading] = React.useState(false)
+  const [healthError, setHealthError] = React.useState("")
+
+  const refreshHealth = React.useCallback(async () => {
+    setHealthLoading(true)
+    try {
+      const health = await fetchJson<HealthResponse>("/api/health")
+      setServices(health.services)
+      setCheckedAt(new Date().toISOString())
+      setHealthError("")
+    } catch (error) {
+      setHealthError(error instanceof Error ? error.message : "服务检测失败")
+    } finally {
+      setHealthLoading(false)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void refreshHealth()
+    const timer = window.setInterval(refreshHealth, 180_000)
+    return () => window.clearInterval(timer)
+  }, [refreshHealth])
+
+  const failedServices = services ? ([
+    ["数据库", services.database],
+    ["Subconverter", services.subconverter],
+    ["Telegram API", services.telegram],
+  ] as const).filter(([, service]) => service.status === "error") : []
 
   async function logout() {
     await apiFetch("/api/auth/logout", { method: "POST" })
@@ -30,6 +70,7 @@ export function AppShell() {
   }
 
   return (
+    <HealthContext.Provider value={{ services, checkedAt, loading: healthLoading, error: healthError, refresh: refreshHealth }}>
     <SidebarProvider
       style={
         {
@@ -44,6 +85,12 @@ export function AppShell() {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="@container/main flex min-w-0 flex-1 flex-col gap-2">
             <div className="flex min-w-0 flex-col gap-4 py-4 md:gap-6 md:py-6">
+              {(healthError || failedServices.length > 0) && (
+                <div className="grid gap-2 px-4 lg:px-6">
+                  {healthError && <Alert variant="error"><AlertCircle /><AlertDescription>服务监控 API 连接异常：{healthError}</AlertDescription></Alert>}
+                  {failedServices.map(([name, service]) => <Alert key={name} variant="error"><AlertCircle /><AlertDescription>{name} 连接异常{service.message ? `：${service.message}` : ""}</AlertDescription></Alert>)}
+                </div>
+              )}
               {data.error && (
                 <div className="px-4 lg:px-6">
                   <Alert variant="destructive">
@@ -78,5 +125,6 @@ export function AppShell() {
         </div>
       )}
     </SidebarProvider>
+    </HealthContext.Provider>
   )
 }

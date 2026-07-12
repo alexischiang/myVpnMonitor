@@ -15,10 +15,10 @@ import { SubscriptionDetailPage, UserDetailPage } from "@/components/features/de
 import { EmbyPage } from "@/components/features/emby"
 import { PricingSettingsPage } from "@/components/features/pricing-settings"
 import { SubconverterPage } from "@/components/features/subconverter"
-import { DeliveryPage, PricingPage } from "@/components/features/public-pages"
+import { CheckoutPage, DeliveryPage, PricingPage } from "@/components/features/public-pages"
 import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from "@/components/features/auth-pages"
 import { AccountShell } from "@/components/features/account-shell"
-import { AccountOrdersPage, AccountOverviewPage, AccountProfilePage, AccountSecurityPage, AccountSubscriptionPage, PaymentResultPage } from "@/components/features/account-pages"
+import { AccountOrderDetailPage, AccountOrdersPage, AccountOverviewPage, AccountProfilePage, AccountSecurityPage, AccountSubscriptionPage, PaymentResultPage } from "@/components/features/account-pages"
 
 function ProtectedApp() {
   return (
@@ -45,7 +45,9 @@ function App() {
               <Route index element={<AccountOverviewPage />} />
               <Route path="subscription" element={<AccountSubscriptionPage />} />
               <Route path="plans" element={<PricingPage />} />
+              <Route path="plans/checkout" element={<CheckoutPage />} />
               <Route path="orders" element={<AccountOrdersPage />} />
+              <Route path="orders/:id" element={<AccountOrderDetailPage />} />
               <Route path="profile" element={<AccountProfilePage />} />
               <Route path="security" element={<AccountSecurityPage />} />
               <Route path="payment/result" element={<PaymentResultPage />} />

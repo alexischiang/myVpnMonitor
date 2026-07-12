@@ -21,7 +21,7 @@ export function PageHeader({ title, description, actions }: { title: string; des
 
 export function StatusBadge({ status }: { status?: string }) {
   const variant = status === "ok" ? "default" : status === "expired" || status === "invalid" || status === "error" || status === "depleted" ? "destructive" : "secondary"
-  return <Badge variant={variant} className="text-[10px]">{statusLabels[status || "unknown"] || status || "未知"}</Badge>
+  return <Badge variant={variant} className={status === "ok" ? "bg-emerald-600 text-[10px] text-white" : "text-[10px]"}>{statusLabels[status || "unknown"] || status || "未知"}</Badge>
 }
 
 export function EmptyState({ title = "暂无数据", description }: { title?: string; description?: string }) {

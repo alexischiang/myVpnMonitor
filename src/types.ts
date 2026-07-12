@@ -43,6 +43,19 @@ export type User = {
   blockUserinfo?: boolean
   note?: string
   logs?: Array<Record<string, unknown>>
+  userLogs?: UserLog[]
+}
+
+export type UserLog = {
+  id: string
+  at: string
+  status?: string
+  statusText?: string
+  reason?: string
+  reasonText?: string
+  fromSubscriptionLabel?: string
+  toSubscriptionLabel?: string
+  message?: string
 }
 
 export type Bill = {

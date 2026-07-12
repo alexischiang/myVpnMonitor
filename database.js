@@ -116,6 +116,10 @@ class PostgresDataStore {
     return { rows: result.rows.map(row => row.data), missing: false };
   }
 
+  async ping() {
+    await this.pool.query("SELECT 1");
+  }
+
   async loadAll() {
     const result = { missing: {} };
     for (const collection of COLLECTIONS) {
@@ -201,6 +205,10 @@ class ResilientDataStore {
 
   async saveCollection(collection, rows) {
     return this.activeStore.saveCollection(collection, rows);
+  }
+
+  async ping() {
+    if (this.activeStore.kind === "postgres") await this.activeStore.ping();
   }
 }
 

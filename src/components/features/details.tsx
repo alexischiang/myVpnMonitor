@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell } from "@/components/features/shared"
-import type { Bill, User } from "@/types"
+import type { Bill, User, UserLog } from "@/types"
 import { formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, userStatus } from "@/utils"
 
 export function SubscriptionDetailPage() {
@@ -131,6 +131,7 @@ export function UserDetailPage() {
   const { users, bills, reload, runAsync } = useData()
   const user = users.find(entry => entry.id === id)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
+  const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed")
 
   const billColumns = React.useMemo<ColumnDef<Bill>[]>(() => [
     {
@@ -156,6 +157,40 @@ export function UserDetailPage() {
       header: "备注",
       meta: { label: "备注" },
       cell: ({ row }) => row.original.description || "-",
+      enableSorting: false,
+    },
+  ], [])
+
+  const poolLogColumns = React.useMemo<ColumnDef<UserLog>[]>(() => [
+    {
+      accessorKey: "at",
+      header: DataTableColumnHeader({ title: "时间" }),
+      meta: { label: "时间" },
+      cell: ({ row }) => formatDateTime(row.original.at),
+    },
+    {
+      accessorKey: "statusText",
+      header: "类型",
+      meta: { label: "类型" },
+      cell: ({ row }) => row.original.reason === "manual-pool-changed" ? "手动换池" : "自动换池",
+    },
+    {
+      accessorKey: "fromSubscriptionLabel",
+      header: "原池",
+      meta: { label: "原池" },
+      cell: ({ row }) => row.original.fromSubscriptionLabel || "-",
+    },
+    {
+      accessorKey: "toSubscriptionLabel",
+      header: "目标池",
+      meta: { label: "目标池" },
+      cell: ({ row }) => row.original.toSubscriptionLabel || "-",
+    },
+    {
+      accessorKey: "reasonText",
+      header: "原因",
+      meta: { label: "原因" },
+      cell: ({ row }) => row.original.reasonText || row.original.message || "-",
       enableSorting: false,
     },
   ], [])
@@ -195,6 +230,18 @@ export function UserDetailPage() {
               searchKey="description"
               searchPlaceholder="搜索账单..."
               emptyTitle="暂无账单"
+            />
+          </CardContent>
+        </Card>
+        <Card className="lg:col-span-2">
+          <CardHeader><CardTitle>换池日志</CardTitle></CardHeader>
+          <CardContent>
+            <DataTable
+              columns={poolLogColumns}
+              data={poolLogs}
+              searchKey="reasonText"
+              searchPlaceholder="搜索换池原因..."
+              emptyTitle="暂无换池日志"
             />
           </CardContent>
         </Card>

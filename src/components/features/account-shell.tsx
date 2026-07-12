@@ -1,10 +1,12 @@
 import * as React from "react"
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
-import { CreditCard, Gauge, KeyRound, LogOut, ReceiptText, ShieldCheck, UserRound } from "lucide-react"
+import { AlertCircle, ArrowRight, CreditCard, Gauge, KeyRound, LogOut, ReceiptText, ShieldCheck, UserRound } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { apiFetch, fetchJson } from "@/api"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -24,6 +26,7 @@ export function AccountShell() {
   const location = useLocation()
   const { resolvedTheme, setTheme, theme } = useTheme()
   const [email, setEmail] = React.useState("")
+  const [pendingOrderId, setPendingOrderId] = React.useState("")
   const dark = (theme ?? resolvedTheme) === "dark"
   const current = accountNav.find(item => item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)) || accountNav[0]
 
@@ -32,6 +35,20 @@ export function AccountShell() {
       .then(me => me.role === "user" ? setEmail(me.email || "") : navigate("/dashboard", { replace: true }))
       .catch(() => navigate("/login", { replace: true }))
   }, [navigate])
+
+  React.useEffect(() => {
+    if (!email) return
+    const refreshOrders = () => fetchJson<Array<{ id: string; status: string }>>("/api/account/orders")
+      .then(orders => setPendingOrderId(orders.find(order => order.status === "pending")?.id || ""))
+      .catch(() => undefined)
+    void refreshOrders()
+    const timer = window.setInterval(refreshOrders, 180_000)
+    window.addEventListener("payment-order-updated", refreshOrders)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener("payment-order-updated", refreshOrders)
+    }
+  }, [email])
 
   async function logout() {
     await apiFetch("/api/auth/logout", { method: "POST" })
@@ -42,7 +59,7 @@ export function AccountShell() {
     <SidebarProvider style={{ "--sidebar-width": "calc(var(--spacing) * 72)", "--header-height": "calc(var(--spacing) * 12)" } as React.CSSProperties}>
       <Sidebar variant="inset" collapsible="offcanvas">
         <SidebarHeader>
-          <SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild className="data-[slot=sidebar-menu-button]:p-1.5!"><Link to="/account"><ShieldCheck className="size-5" /><span className="text-base font-semibold">myVpnMonitor</span></Link></SidebarMenuButton></SidebarMenuItem></SidebarMenu>
+          <SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild className="data-[slot=sidebar-menu-button]:p-1.5!"><Link to="/account"><ShieldCheck className="size-5" /><span className="text-base font-semibold">NEXORA</span></Link></SidebarMenuButton></SidebarMenuItem></SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup><SidebarGroupContent><SidebarMenu>{accountNav.map(item => (
@@ -56,6 +73,7 @@ export function AccountShell() {
       <SidebarInset className="min-w-0 overflow-x-hidden">
         <SiteHeader title={current.title} dark={dark} onToggleTheme={() => setTheme(dark ? "light" : "dark")} onLogout={logout} />
         <div className="flex min-w-0 flex-1 flex-col py-4 md:py-6">
+          {pendingOrderId && <div className="px-4 pb-4 lg:px-6"><Alert variant="warning"><AlertCircle /><AlertDescription className="flex w-full items-center justify-between gap-4"><span>你有一笔订单等待付款。</span><Button asChild variant="link" size="sm"><Link to={`/account/orders/${encodeURIComponent(pendingOrderId)}`}>去支付<ArrowRight /></Link></Button></AlertDescription></Alert></div>}
           {email ? <Outlet context={{ email }} /> : <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-36" /><Skeleton className="h-72" /></div>}
         </div>
       </SidebarInset>

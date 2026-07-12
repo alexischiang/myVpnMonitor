@@ -61,8 +61,7 @@ const loadedCollections = new Set<Collection>()
 const collectionRequests = new Map<Collection, Promise<unknown>>()
 
 let cachedState: Omit<DataState, "reload" | "runAsync"> | null = null
-let accountLoaded = false
-let accountRequest: Promise<{ account?: string }> | null = null
+let accountRequest: Promise<{ account?: string; role?: string }> | null = null
 
 function fetchCollection(key: Collection) {
   const existing = collectionRequests.get(key)
@@ -131,31 +130,30 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [commitState])
 
   React.useEffect(() => {
-    if (!accountLoaded) {
-      accountRequest = accountRequest || fetchJson<{ account?: string }>("/api/auth/me").finally(() => {
-        accountRequest = null
-      })
-      accountRequest
-        .then(me => {
-          accountLoaded = true
-          commitState(current => ({ ...current, account: me.account || "" }))
+    accountRequest = accountRequest || fetchJson<{ account?: string; role?: string }>("/api/auth/me").finally(() => {
+      accountRequest = null
+    })
+    accountRequest.then(me => {
+      if (me.role !== "admin") {
+        navigate("/account", { replace: true })
+        return
+      }
+      commitState(current => ({ ...current, account: me.account || "" }))
+
+      const hasDefaultData = defaultCollections.every(key => loadedCollections.has(key))
+      const missingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
+
+      if (!hasDefaultData) {
+        reload().then(() => {
+          const nextMissingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
+          if (nextMissingSupplemental.length) void reload(nextMissingSupplemental, { silent: true })
         })
-        .catch(() => navigate("/login", { replace: true }))
-    }
+        return
+      }
 
-    const hasDefaultData = defaultCollections.every(key => loadedCollections.has(key))
-    const missingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
-
-    if (!hasDefaultData) {
-      reload().then(() => {
-        const nextMissingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
-        if (nextMissingSupplemental.length) void reload(nextMissingSupplemental, { silent: true })
-      })
-      return
-    }
-
-    commitState(current => ({ ...current, loading: false, error: "" }))
-    if (missingSupplemental.length) void reload(missingSupplemental, { silent: true })
+      commitState(current => ({ ...current, loading: false, error: "" }))
+      if (missingSupplemental.length) void reload(missingSupplemental, { silent: true })
+    }).catch(() => navigate("/login", { replace: true }))
   }, [commitState, navigate, reload])
 
   const runAsync = React.useCallback(async <T,>(task: () => Promise<T>, label = "处理中...") => {

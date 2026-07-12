@@ -98,6 +98,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto
   .digest("hex");
 const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 const REMEMBER_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+const PAYMENT_ORDER_TTL_MS = 15 * 60 * 1000;
 const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || SESSION_SECRET.slice(0, 32);
 const LIVE_POOL_CONFIG_TTL_MS = Number(process.env.LIVE_POOL_CONFIG_TTL_MS || 60 * 1000);
 const livePoolConfigs = new Map();
@@ -771,6 +772,7 @@ function deliveryUrlForUser(user, req) {
 
 function publicPaymentOrder(order) {
   if (!order) return null;
+  const status = order.status === "pending" && isPaymentOrderExpired(order) ? "closed" : order.status;
   return {
     id: order.id,
     merOrderTid: order.merOrderTid,
@@ -780,15 +782,21 @@ function publicPaymentOrder(order) {
     optionId: order.optionId,
     optionLabel: order.optionLabel,
     amount: order.amount,
+    originalAmount: order.originalAmount ?? order.amount,
+    discountAmount: order.discountAmount || 0,
+    subtotal: order.subtotal ?? order.amount,
+    taxAmount: order.taxAmount || 0,
+    couponCode: order.couponCode || "",
     payUrl: order.payUrl || "",
-    status: order.status,
-    statusText: paymentStatusText(order.status),
+    status,
+    statusText: paymentStatusText(status),
     userId: order.userId || "",
     accountId: order.accountId || "",
     deliveryUrl: order.deliveryUrl || "",
     fulfillmentStatus: order.fulfillmentStatus || "",
     fulfillmentError: order.fulfillmentError || "",
     createdAt: order.createdAt,
+    expiresAt: paymentOrderExpiresAt(order),
     paidAt: order.paidAt || "",
     updatedAt: order.updatedAt || order.createdAt
   };
@@ -796,12 +804,12 @@ function publicPaymentOrder(order) {
 
 function paymentStatusText(status) {
   return ({
-    pending: "pending",
-    paid: "paid",
-    failed: "failed",
-    abnormal: "abnormal",
-    closed: "closed"
-  })[status] || "pending";
+    pending: "待付款",
+    paid: "已支付",
+    failed: "支付失败",
+    abnormal: "支付异常",
+    closed: "已关闭"
+  })[status] || "待付款";
 }
 
 function platformStatusToOrderStatus(value) {
@@ -838,7 +846,17 @@ async function postPaymentForm(endpoint, params, config = paymentConfig()) {
 }
 
 function makePaymentOrderId() {
-  return `vpn${Date.now()}${crypto.randomInt(1000, 9999)}`;
+  return `${Date.now()}${crypto.randomInt(1000, 9999)}`;
+}
+
+function paymentOrderExpiresAt(order) {
+  const createdAt = new Date(order?.createdAt || 0).getTime();
+  return Number.isFinite(createdAt) ? new Date(createdAt + PAYMENT_ORDER_TTL_MS).toISOString() : "";
+}
+
+function isPaymentOrderExpired(order, now = Date.now()) {
+  const expiresAt = new Date(paymentOrderExpiresAt(order)).getTime();
+  return Number.isFinite(expiresAt) && now >= expiresAt;
 }
 
 function normalizePaymentAmountForGateway(value) {
@@ -854,6 +872,50 @@ function resolvePaymentPlanOption(optionId) {
   const managedPrice = option.priceKey ? Number(priceRow?.[option.priceKey]) : NaN;
   const amount = Number.isFinite(managedPrice) && managedPrice > 0 ? managedPrice : option.fallbackPrice;
   return { ...option, amount };
+}
+
+function paymentChannelCode(value) {
+  const channelCode = String(value || "").trim();
+  if (!new Set(["100", "200"]).has(channelCode)) throw new Error("不支持的支付方式。");
+  return channelCode;
+}
+
+function paymentCoupons(value = process.env.PAYMENT_COUPONS || "") {
+  return new Map(String(value).split(",").map(entry => entry.split(":").map(part => part.trim())).filter(([code, percent]) => code && Number(percent) > 0 && Number(percent) < 100).map(([code, percent]) => [code.toUpperCase(), Number(percent)]));
+}
+
+function paymentQuote(optionId, couponCode = "", couponConfig) {
+  const option = resolvePaymentPlanOption(optionId);
+  const code = String(couponCode || "").trim().toUpperCase();
+  const percent = code ? paymentCoupons(couponConfig).get(code) : 0;
+  if (code && !percent) throw new Error("优惠码无效。");
+  const originalAmount = Number(option.amount.toFixed(2));
+  const discountAmount = Number((originalAmount * percent / 100).toFixed(2));
+  const subtotal = Number((originalAmount - discountAmount).toFixed(2));
+  const taxAmount = Number((subtotal * 0.03).toFixed(2));
+  const plan = publicPricing().find(item => item.group === option.planId) || {};
+  const cycles = Object.entries(PAYMENT_PLAN_OPTIONS)
+    .filter(([, item]) => item.planId === option.planId && item.priceKey)
+    .map(([id, item]) => ({ optionId: id, label: item.optionLabel, amount: resolvePaymentPlanOption(id).amount, devices: Number(plan[`${item.priceKey}Devices`] || 0) }));
+  if (!cycles.some(item => item.optionId === String(optionId))) cycles.unshift({ optionId: String(optionId), label: option.optionLabel, amount: originalAmount, devices: 0 });
+  return {
+    ...option,
+    optionId: String(optionId),
+    originalAmount,
+    discountAmount,
+    subtotal,
+    taxRate: 3,
+    taxAmount,
+    amount: Number((subtotal + taxAmount).toFixed(2)),
+    couponCode: code,
+    discountPercent: percent || 0,
+    title: plan.title || option.planName,
+    description: plan.description || "",
+    traffic: plan.traffic || "",
+    features: Array.isArray(plan.features) ? plan.features : [],
+    devices: option.priceKey ? Number(plan[`${option.priceKey}Devices`] || 0) : 0,
+    cycles
+  };
 }
 
 async function fulfillPaymentOrder(order, req) {
@@ -978,7 +1040,8 @@ function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
 
 async function createPaymentOrder(payload, req, account) {
   const config = requirePaymentConfig();
-  const selectedOption = resolvePaymentPlanOption(payload.optionId);
+  const selectedOption = paymentQuote(payload.optionId, payload.couponCode);
+  const channelCode = paymentChannelCode(payload.channelCode || config.channelCode);
   const email = normalizePaymentEmail(account.email);
   const amount = normalizePaymentAmountForGateway(selectedOption.amount);
   const id = crypto.randomUUID();
@@ -991,7 +1054,7 @@ async function createPaymentOrder(payload, req, account) {
     mid: config.merchantId,
     merOrderTid,
     money: amount,
-    channelCode: config.channelCode,
+    channelCode,
     notifyUrl,
     clientUserPayRemark: selectedOption.optionLabel,
     clientUserId: String(payload.clientUserId || "").trim(),
@@ -1013,6 +1076,12 @@ async function createPaymentOrder(payload, req, account) {
     optionLabel: selectedOption.optionLabel,
     duration: selectedOption.duration,
     group: selectedOption.group,
+    originalAmount: selectedOption.originalAmount,
+    discountAmount: selectedOption.discountAmount,
+    subtotal: selectedOption.subtotal,
+    taxAmount: selectedOption.taxAmount,
+    couponCode: selectedOption.couponCode,
+    channelCode,
     amount: Number(amount),
     email,
     accountId: account.id,
@@ -1021,6 +1090,7 @@ async function createPaymentOrder(payload, req, account) {
     platformStatus: result.payOrderStatus ?? null,
     requestParams: compactParams,
     createdAt: now,
+    expiresAt: new Date(Date.now() + PAYMENT_ORDER_TTL_MS).toISOString(),
     updatedAt: now
   };
   paymentOrders.unshift(order);
@@ -1040,6 +1110,7 @@ async function refreshPaymentOrder(order) {
   order.payUrl = result.payUrl || order.payUrl || "";
   order.platformStatus = result.payOrderStatus ?? order.platformStatus;
   order.status = platformStatusToOrderStatus(result.payOrderStatus);
+  if (order.status === "pending" && isPaymentOrderExpired(order)) order.status = "closed";
   const paidAmount = Number(result.money || order.amount || 0);
   if (order.status === "paid" && paidAmount !== Number(order.amount)) throw new Error("Payment amount mismatch.");
   order.updatedAt = new Date().toISOString();
@@ -3827,10 +3898,10 @@ async function handleApi(req, res, pathname) {
 
     // Database check
     try {
-      if (dataStore.kind === "postgres" && dataStore.pool) {
-        const t0 = Date.now();
-        await dataStore.pool.query("SELECT 1");
-        services.database = { status: "ok", latency: Date.now() - t0 };
+      if (dataStore.kind === "postgres") {
+        const startedAt = Date.now();
+        await dataStore.ping();
+        services.database = { status: "ok", latency: Date.now() - startedAt };
       } else {
         services.database = { status: "ok", kind: "json" };
       }
@@ -3852,6 +3923,22 @@ async function handleApi(req, res, pathname) {
       }
     } else {
       services.subconverter = { status: "unconfigured" };
+    }
+
+    if (notifier.isTelegramConfigured()) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const startedAt = Date.now();
+      try {
+        await notifier.checkTelegram({ signal: controller.signal });
+        services.telegram = { status: "ok", latency: Date.now() - startedAt };
+      } catch (error) {
+        services.telegram = { status: "error", message: error.message };
+      } finally {
+        clearTimeout(timer);
+      }
+    } else {
+      services.telegram = { status: "unconfigured" };
     }
 
     const allOk = Object.values(services).every(s => s.status === "ok" || s.status === "unconfigured");
@@ -3952,6 +4039,18 @@ async function handleApi(req, res, pathname) {
       const account = accountBySession(session);
       const order = await createPaymentOrder(payload, req, account);
       sendJson(res, 201, publicPaymentOrder(order));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/payments/quote" && req.method === "POST") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      const payload = await readJson(req);
+      sendJson(res, 200, paymentQuote(payload.optionId, payload.couponCode));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -4957,5 +5056,9 @@ module.exports = Object.assign(requestHandler, {
   userOutputMode,
   poolMetricUnavailableReason,
   fallbackCandidateRank,
-  startOfUtcDate
+  startOfUtcDate,
+  paymentQuote,
+  paymentChannelCode,
+  paymentOrderExpiresAt,
+  isPaymentOrderExpired
 });

@@ -81,23 +81,10 @@ async function sendMail({ to, subject, text, html }) {
   });
 }
 
-async function sendTelegram({ text, chatId }) {
+async function requestTelegram(method, options = {}) {
   const cfg = getTelegramConfig();
-  const targetChatId = chatId || cfg.chatId;
-  if (!cfg.botToken || !targetChatId) {
-    throw new Error("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID is not configured.");
-  }
-  const payload = {
-    chat_id: targetChatId,
-    text,
-    disable_web_page_preview: true
-  };
-  if (cfg.parseMode) payload.parse_mode = cfg.parseMode;
-  const fetchOptions = {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  };
+  if (!cfg.botToken) throw new Error("TELEGRAM_BOT_TOKEN is not configured.");
+  const fetchOptions = { ...options };
   let fetchImpl = globalThis.fetch;
   if (cfg.proxyUrl) {
     let ProxyAgent;
@@ -112,21 +99,40 @@ async function sendTelegram({ text, chatId }) {
     fetchImpl = undiciFetch;
   }
   if (typeof fetchImpl !== "function") {
-    throw new Error("Telegram sendMessage requires global fetch. Please use Node.js 18+.");
+    throw new Error("Telegram API requires global fetch. Please use Node.js 18+.");
   }
-  let response;
   try {
-    response = await fetchImpl(`${cfg.apiBaseUrl}/bot${cfg.botToken}/sendMessage`, fetchOptions);
+    return await fetchImpl(`${cfg.apiBaseUrl}/bot${cfg.botToken}/${method}`, fetchOptions);
   } catch (error) {
     const cause = error.cause;
     const detail = cause?.code || cause?.message || error.message;
-    throw new Error(`Telegram sendMessage request failed: ${detail}`);
+    throw new Error(`Telegram ${method} request failed: ${detail}`);
   }
+}
+
+async function sendTelegram({ text, chatId }) {
+  const cfg = getTelegramConfig();
+  const targetChatId = chatId || cfg.chatId;
+  if (!targetChatId) throw new Error("TELEGRAM_CHAT_ID is not configured.");
+  const payload = { chat_id: targetChatId, text, disable_web_page_preview: true };
+  if (cfg.parseMode) payload.parse_mode = cfg.parseMode;
+  const response = await requestTelegram("sendMessage", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`Telegram sendMessage failed (${response.status}): ${body.slice(0, 300)}`);
   }
   return response.json();
+}
+
+async function checkTelegram({ signal } = {}) {
+  const response = await requestTelegram("getMe", { signal });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) throw new Error(payload.description || `Telegram getMe failed (${response.status}).`);
+  return payload.result;
 }
 
 function createAlertStore(filePath) {
@@ -271,6 +277,7 @@ module.exports = {
   isTelegramConfigured,
   getMailerConfig,
   getTelegramConfig,
+  checkTelegram,
   sendMail,
   sendTelegram,
   createAlertStore,

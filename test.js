@@ -6,7 +6,11 @@ const {
   calculateExpiry,
   extractClashConfigBody,
   statusFor,
-  toBytes
+  toBytes,
+  paymentQuote,
+  paymentChannelCode,
+  paymentOrderExpiresAt,
+  isPaymentOrderExpired
 } = require("./server");
 
 function near(actual, expected, tolerance = 2) {
@@ -52,6 +56,21 @@ assert.strictEqual(calculateExpiry("2026-07-02T00:00:00.000Z", "monthly").slice(
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "quarterly").slice(0, 10), "2026-08-26");
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "half_yearly").slice(0, 10), "2026-11-24");
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "yearly").slice(0, 10), "2027-05-23");
+const discountedQuote = paymentQuote("basic-30", "save10", "SAVE10:10");
+assert.strictEqual(discountedQuote.originalAmount, 39);
+assert.strictEqual(discountedQuote.discountAmount, 3.9);
+assert.strictEqual(discountedQuote.subtotal, 35.1);
+assert.strictEqual(discountedQuote.taxAmount, 1.05);
+assert.strictEqual(discountedQuote.amount, 36.15);
+assert.deepStrictEqual(discountedQuote.cycles.map(cycle => cycle.devices), [1, 2, 3, 3]);
+assert.throws(() => paymentQuote("basic-30", "invalid", "SAVE10:10"), /优惠码无效/);
+assert.strictEqual(paymentChannelCode("100"), "100");
+assert.strictEqual(paymentChannelCode("200"), "200");
+assert.throws(() => paymentChannelCode("300"), /不支持的支付方式/);
+const expiringOrder = { createdAt: "2026-07-12T00:00:00.000Z" };
+assert.strictEqual(paymentOrderExpiresAt(expiringOrder), "2026-07-12T00:15:00.000Z");
+assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T00:14:59.999Z")), false);
+assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T00:15:00.000Z")), true);
 
 const extracted = extractClashConfigBody("prefix\nmixed-port: 7890\nproxies:\n  - name: node\nrules:\n  - MATCH,PROXY\nextra:\n  value: ignored\n");
 assert.ok(extracted.startsWith("mixed-port: 7890"));

@@ -1,6 +1,6 @@
 import * as React from "react"
-import { Link, useOutletContext, useSearchParams } from "react-router-dom"
-import { CheckCircle2, Clock3, Copy, ExternalLink, Loader2, ShieldCheck } from "lucide-react"
+import { Link, useOutletContext, useParams, useSearchParams } from "react-router-dom"
+import { CheckCircle2, Clock3, Copy, ExternalLink, Loader2, RefreshCw, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, putJson } from "@/api"
@@ -9,11 +9,12 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatDate, formatMoney } from "@/utils"
 
-type PaymentOrder = { id: string; merOrderTid: string; planName: string; optionLabel: string; amount: number; status: string; statusText: string; payUrl?: string; createdAt: string; paidAt?: string }
+type PaymentOrder = { id: string; merOrderTid: string; planName: string; optionLabel: string; amount: number; status: string; statusText: string; payUrl?: string; createdAt: string; expiresAt: string; paidAt?: string }
 type Subscription = { status: string; activeGroup: string; expiresAt: string; purchasedAt: string; duration: string; traffic: string; devices: number | string; subscriptionUrl: string }
 type Overview = { email: string; createdAt: string; subscription: Subscription | null; orders: PaymentOrder[] }
 
@@ -75,6 +76,65 @@ export function AccountOrdersPage() {
   return <div className="px-4 lg:px-6"><Card><CardHeader><CardTitle>订单记录</CardTitle><CardDescription>所有购买、续费和换套餐订单</CardDescription></CardHeader><CardContent>{orders.length ? <OrdersTable orders={orders} /> : <p className="text-sm text-muted-foreground">暂无订单</p>}</CardContent></Card></div>
 }
 
+export function AccountOrderDetailPage() {
+  const { id = "" } = useParams()
+  const [order, setOrder] = React.useState<PaymentOrder | null>(null)
+  const [loading, setLoading] = React.useState(false)
+  const [now, setNow] = React.useState(Date.now())
+  async function refresh(showToast = false) {
+    setLoading(true)
+    try {
+      const nextOrder = await fetchJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(id)}`)
+      setOrder(nextOrder)
+      if (nextOrder.status !== "pending") window.dispatchEvent(new Event("payment-order-updated"))
+      if (showToast) nextOrder.status === "paid" ? toast.success("支付成功") : toast.info(`当前状态：${nextOrder.statusText}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "查询订单失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+  React.useEffect(() => { void refresh() }, [id])
+  React.useEffect(() => {
+    if (order?.status !== "pending") return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [order?.status])
+  const remainingSeconds = order?.status === "pending" ? Math.max(0, Math.ceil((new Date(order.expiresAt).getTime() - now) / 1000)) : 0
+  React.useEffect(() => {
+    if (order?.status === "pending" && remainingSeconds === 0) void refresh()
+  }, [order?.status, remainingSeconds])
+  if (!order) return <PageLoading />
+  const countdown = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`
+  return (
+    <div className="grid gap-6 px-4 lg:px-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="grid gap-1">
+          <h2 className="text-2xl font-semibold tracking-tight">订单详情</h2>
+          <p className="font-mono text-sm text-muted-foreground">{order.merOrderTid}</p>
+        </div>
+        <div className="grid justify-items-start gap-2 sm:justify-items-end">
+          <Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge>
+          {order.status === "pending" ? <p className="text-sm text-muted-foreground">请在 <span className="font-mono font-medium text-foreground">{countdown}</span> 内完成付款</p> : null}
+        </div>
+      </div>
+      <Separator />
+      <div className="grid gap-6 sm:grid-cols-2">
+        <Metric label="套餐" value={`${order.planName} / ${order.optionLabel}`} />
+        <Metric label="订单金额" value={formatMoney(order.amount)} />
+        <Metric label="创建时间" value={formatDate(order.createdAt)} />
+        <Metric label="支付时间" value={order.paidAt ? formatDate(order.paidAt) : "-"} />
+      </div>
+      <Separator />
+      <div className="flex flex-wrap gap-2">
+        {order.status === "pending" && order.payUrl ? <Button asChild><a href={order.payUrl} target="_blank" rel="noreferrer">打开支付页面</a></Button> : null}
+        <Button variant="outline" onClick={() => refresh(true)} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}检测支付状态</Button>
+        <Button asChild variant="ghost"><Link to="/account/orders">返回订单列表</Link></Button>
+      </div>
+    </div>
+  )
+}
+
 export function AccountProfilePage() {
   const { email } = useOutletContext<{ email: string }>()
   const { data } = useOverview()
@@ -121,5 +181,5 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function OrdersTable({ orders }: { orders: PaymentOrder[] }) {
-  return <Table><TableHeader><TableRow><TableHead>订单</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{orders.map(order => <TableRow key={order.id}><TableCell className="font-mono text-xs">{order.merOrderTid}</TableCell><TableCell>{order.planName} / {order.optionLabel}</TableCell><TableCell>{formatMoney(order.amount)}</TableCell><TableCell><Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge></TableCell><TableCell>{formatDate(order.createdAt)}</TableCell><TableCell className="text-right">{order.status === "pending" && order.payUrl ? <Button asChild size="sm" variant="outline"><a href={order.payUrl} target="_blank" rel="noreferrer">继续支付</a></Button> : "-"}</TableCell></TableRow>)}</TableBody></Table>
+  return <Table><TableHeader><TableRow><TableHead>订单</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{orders.map(order => <TableRow key={order.id}><TableCell className="font-mono text-xs">{order.merOrderTid}</TableCell><TableCell>{order.planName} / {order.optionLabel}</TableCell><TableCell>{formatMoney(order.amount)}</TableCell><TableCell><Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge></TableCell><TableCell>{formatDate(order.createdAt)}</TableCell><TableCell className="text-right"><Button asChild size="sm" variant="outline"><Link to={`/account/orders/${encodeURIComponent(order.id)}`}>查看详情</Link></Button></TableCell></TableRow>)}</TableBody></Table>
 }

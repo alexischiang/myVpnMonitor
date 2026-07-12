@@ -1,11 +1,14 @@
-import { Users } from "lucide-react"
+import * as React from "react"
+import { RefreshCw, Users } from "lucide-react"
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartAreaInteractive, DailyIncomeChart, UserGrowthChart } from "@/components/features/chart-area-interactive"
+import { useServiceHealth } from "@/components/features/app-shell"
 import { useData } from "@/components/features/data-provider"
 import { SectionCards } from "@/components/features/section-cards"
 import { EmptyState, StatusBadge } from "@/components/features/shared"
-import { formatDate, userStatus } from "@/utils"
+import { formatDate, formatDateTime, userStatus } from "@/utils"
 
 function billIncomeForMonthDays(bills: Array<{ amount?: number; occurredAt?: string }>, date: Date, days: number) {
   const start = new Date(date.getFullYear(), date.getMonth(), 1)
@@ -39,6 +42,12 @@ function growthPercent(current: number, previous: number) {
   return ((current - previous) / previous) * 100
 }
 
+function ServiceMonitor() {
+  const { services, checkedAt, loading, error, refresh } = useServiceHealth()
+
+  return <Card><CardHeader><div className="flex items-center justify-between gap-4"><CardTitle>服务监控</CardTitle><Button variant="outline" size="sm" onClick={refresh} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button></div><CardDescription>{checkedAt ? `最后检测：${formatDateTime(checkedAt)}` : "尚未检测"}</CardDescription></CardHeader><CardContent>{services ? ([{ key: "database", name: "数据库" }, { key: "subconverter", name: "Subconverter" }, { key: "telegram", name: "Telegram API" }] as const).filter(({ key }) => key !== "database" || services.database.kind !== "json").map(({ key, name }) => { const service = services[key]; return <div key={key} className="flex items-center justify-between gap-3 border-b py-3 last:border-b-0"><span className="text-sm font-medium">{name}</span><span className="text-sm font-medium">{service.latency === undefined ? "-" : `${service.latency} ms`}</span></div> }) : <p className="text-sm text-muted-foreground">{error || "正在检测服务..."}</p>}</CardContent></Card>
+}
+
 export function DashboardPage() {
   const { users, bills } = useData()
   const activeBills = bills.filter(item => !item.reversedAt)
@@ -67,8 +76,9 @@ export function DashboardPage() {
         activeUserRate={activeUserRate}
       />
 
-      <div className="px-4 lg:px-6">
-        <ChartAreaInteractive bills={activeBills} />
+      <div className="grid gap-4 px-4 lg:grid-cols-4 lg:px-6">
+        <div className="min-w-0 lg:col-span-3"><ChartAreaInteractive bills={activeBills} /></div>
+        <ServiceMonitor />
       </div>
 
       <div className="grid gap-4 px-4 lg:grid-cols-2 lg:px-6">
