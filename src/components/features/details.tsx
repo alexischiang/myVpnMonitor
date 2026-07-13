@@ -8,6 +8,9 @@ import { fetchJson, postJson } from "@/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell } from "@/components/features/shared"
@@ -130,6 +133,8 @@ export function UserDetailPage() {
   const { id } = useParams()
   const { users, bills, reload, runAsync } = useData()
   const user = users.find(entry => entry.id === id)
+  const [inviteOpen, setInviteOpen] = React.useState(false)
+  const [inviteEmail, setInviteEmail] = React.useState("")
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed")
 
@@ -197,23 +202,39 @@ export function UserDetailPage() {
 
   if (!user) return <EmptyState title="未找到用户" />
 
-  async function sendAccountInvite() {
-    await runAsync(async () => {
-      await postJson(`/api/users/${user.id}/account-invite`)
-      await reload(["users"], { silent: true })
-      toast.success("账户认领邮件已发送")
-    }, "发送认领邮件...")
+  async function sendAccountInvite(event: React.FormEvent) {
+    event.preventDefault()
+    try {
+      await runAsync(async () => {
+        await postJson(`/api/users/${user.id}/account-invite`, { email: inviteEmail })
+        await reload(["users"], { silent: true })
+        setInviteOpen(false)
+        toast.success("账户认领邮件已发送")
+      }, "发送认领邮件...")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "账户认领邮件发送失败")
+    }
   }
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex gap-2">{user.accountStatus !== "active" ? <Button size="sm" onClick={sendAccountInvite}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button> : null}<Button asChild variant="outline" size="sm"><Link to="/users"><ArrowLeft />返回</Link></Button></div>} />
+      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex gap-2">{user.accountStatus !== "active" ? <Button size="sm" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button> : null}<Button asChild variant="outline" size="sm"><Link to="/users"><ArrowLeft />返回</Link></Button></div>} />
+      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+        <DialogContent>
+          <form className="grid gap-4" onSubmit={sendAccountInvite}>
+            <DialogHeader><DialogTitle>发送账户认领邮件</DialogTitle><DialogDescription>用户将通过该邮箱设置密码并认领订阅账户。</DialogDescription></DialogHeader>
+            <div className="grid gap-2"><Label htmlFor="invite-email">收件邮箱</Label><Input id="invite-email" type="email" value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} autoFocus required /></div>
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose><Button type="submit"><MailCheck />发送邮件</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>订阅信息</CardTitle></CardHeader>
           <CardContent className="grid gap-3">
             <Info label="用户 ID" value={user.userId || "-"} />
-            <Info label="iMessage" value={user.imessage || user.email || "-"} />
+            <Info label="邮箱" value={user.email || "-"} />
+            <Info label="iMessage" value={user.imessage || "-"} />
             <Info label="套餐" value={`${user.activeGroup || "-"} / ${user.vipLevel || "-"}`} />
             <Info label="到期" value={formatUserExpiry(user)} />
             <Info label="订阅池" value={user.subscription?.email || user.subscription?.serviceProvider || "-"} />

@@ -14,7 +14,9 @@ function getAlertConfig() {
 function getMailerConfig() {
   return {
     from: process.env.ALERT_EMAIL_FROM || "",
-    pass: process.env.ALERT_EMAIL_PASS || "",
+    pass: String(process.env.ALERT_EMAIL_PASS || "").replace(/\s/g, ""),
+    resendApiKey: process.env.RESEND_API_KEY || "",
+    resendFrom: process.env.RESEND_EMAIL_FROM || "",
     to: process.env.ALERT_EMAIL_TO || "alexischiangg@gmail.com",
     host: process.env.ALERT_SMTP_HOST || "smtp.gmail.com",
     port: Number(process.env.ALERT_SMTP_PORT || 465),
@@ -35,8 +37,8 @@ function getTelegramConfig() {
 }
 
 function isMailConfigured() {
-  const { from, pass } = getMailerConfig();
-  return Boolean(from && pass);
+  const { from, pass, resendApiKey, resendFrom } = getMailerConfig();
+  return Boolean((resendApiKey && resendFrom) || (from && pass));
 }
 
 function isTelegramConfigured() {
@@ -71,9 +73,25 @@ function getTransporter() {
 
 async function sendMail({ to, subject, text, html }) {
   const cfg = getMailerConfig();
+  if (cfg.resendApiKey && cfg.resendFrom) {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { authorization: `Bearer ${cfg.resendApiKey}`, "content-type": "application/json" },
+        body: JSON.stringify({ from: cfg.resendFrom, to: [to || cfg.to], subject, text, html }),
+        signal: AbortSignal.timeout(10000)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || `Resend request failed (${response.status}).`);
+      return result;
+    } catch (error) {
+      if (!cfg.from || !cfg.pass) throw error;
+      console.warn(`[mail] Resend failed; falling back to SMTP: ${error.message}`);
+    }
+  }
   const transporter = getTransporter();
   return transporter.sendMail({
-    from: `XELA monitor <${cfg.from}>`,
+    from: `NEXORA <${cfg.from}>`,
     to: to || cfg.to,
     subject,
     text,

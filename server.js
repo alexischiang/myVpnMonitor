@@ -975,6 +975,7 @@ async function fulfillPaymentOrder(order, req) {
     };
     user = normalizeUser({
       userId: email,
+      email,
       wechatName: "",
       purchasedAt,
       actualPaid: order.amount,
@@ -1303,7 +1304,9 @@ function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "" } = {}) 
 function normalizeUser(input, existing = {}) {
   const userId = String(input.userId || existing.userId || "").trim();
   const wechatName = String(input.wechatName || existing.wechatName || "").trim();
-  const imessageIds = normalizeIdList(input.imessageIds !== undefined ? input.imessageIds : (input.imessageId !== undefined ? input.imessageId : userImessageIds(existing)));
+  const rawEmail = String(input.email !== undefined ? input.email : (existing.email || "")).trim();
+  const email = rawEmail ? normalizeAccountEmail(rawEmail) : "";
+  const imessageIds = normalizeIdList(input.imessageIds !== undefined ? input.imessageIds : (input.imessageId !== undefined ? input.imessageId : (input.imessage !== undefined ? input.imessage : userImessageIds(existing))));
   const imessageId = imessageIds[0] || "";
   const purchasedAt = String(input.purchasedAt || existing.purchasedAt || new Date().toISOString()).trim();
   const duration = String(input.duration || existing.duration || "monthly").trim();
@@ -1339,7 +1342,10 @@ function normalizeUser(input, existing = {}) {
     ...existing,
     userId,
     wechatName,
+    email,
+    imessage: imessageId,
     imessageId,
+    imessageIds,
     purchasedAt: new Date(purchasedAt).toISOString(),
     duration,
     actualPaid,
@@ -3457,23 +3463,23 @@ function isLocalRequest(req) {
   return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address);
 }
 
-async function sendAlertTestMessage() {
+async function sendAlertTestMessage({ mailOnly = false } = {}) {
   if (!notifier.isConfigured()) {
     const error = new Error("No mail or Telegram alert channel configured.");
     error.statusCode = 400;
     throw error;
   }
   const cfg = notifier.getMailerConfig();
-  const text = `XELA alert test.\nThreshold: ${notifier.formatBytes(cfg.threshold)}`;
+  const text = `NEXORA alert test.\nThreshold: ${notifier.formatBytes(cfg.threshold)}`;
   const sent = [];
   if (notifier.isMailConfigured()) {
     await notifier.sendMail({
-      subject: "[XELA] Alert test",
+      subject: "[NEXORA] Alert test",
       text: `${text}\nMail target: ${cfg.to}`
     });
     sent.push("mail");
   }
-  if (notifier.isTelegramConfigured()) {
+  if (!mailOnly && notifier.isTelegramConfigured()) {
     await notifier.sendTelegram({ text });
     sent.push("telegram");
   }
@@ -3705,7 +3711,16 @@ async function handleApi(req, res, pathname) {
       await loadLatestData();
       const payload = await readJson(req);
       const email = normalizeAccountEmail(payload.email);
-      const account = accounts.find(item => item.email === email && item.status === "active");
+      let account = accounts.find(item => item.email === email && item.status === "active");
+      if (!account) {
+        const user = users.find(item => item.email === email);
+        account = user ? accounts.find(item => item.linkedUserId === user.id && item.status === "active") : null;
+        if (account) {
+          account.email = email;
+          account.updatedAt = new Date().toISOString();
+          await saveAccounts();
+        }
+      }
       if (account) {
         const token = crypto.randomBytes(32).toString("base64url");
         account.resetTokenHash = tokenHash(token);
@@ -3941,6 +3956,26 @@ async function handleApi(req, res, pathname) {
       services.telegram = { status: "unconfigured" };
     }
 
+    const mailConfig = notifier.getMailerConfig();
+    if (mailConfig.resendApiKey) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const startedAt = Date.now();
+      try {
+        const response = await fetch("https://api.resend.com/domains", {
+          headers: { authorization: `Bearer ${mailConfig.resendApiKey}` },
+          signal: controller.signal
+        });
+        services.resend = { status: response.status < 500 ? "ok" : "error", latency: Date.now() - startedAt };
+      } catch (error) {
+        services.resend = { status: "error", message: error.message };
+      } finally {
+        clearTimeout(timer);
+      }
+    } else {
+      services.resend = { status: "unconfigured" };
+    }
+
     const allOk = Object.values(services).every(s => s.status === "ok" || s.status === "unconfigured");
     sendJson(res, 200, {
       ok: allOk,
@@ -4104,7 +4139,8 @@ async function handleApi(req, res, pathname) {
       return;
     }
     try {
-      const email = normalizeAccountEmail(user.userId || user.email);
+      const payload = await readJson(req);
+      const email = normalizeAccountEmail(payload.email || user.email || userImessageIds(user).find(value => value.includes("@")) || user.userId);
       let account = accounts.find(item => item.email === email || item.linkedUserId === user.id);
       if (account?.status === "active") {
         sendJson(res, 409, { error: "该用户已经认领账户。" });
@@ -4159,6 +4195,17 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/alerts/test" && req.method === "POST") {
     try {
       const result = await sendAlertTestMessage();
+      sendJson(res, 200, { ok: true, ...result });
+    } catch (error) {
+      sendJson(res, error.statusCode || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/alerts/test-mail" && req.method === "POST") {
+    try {
+      if (!notifier.isMailConfigured()) throw Object.assign(new Error("邮件服务尚未配置。"), { statusCode: 400 });
+      const result = await sendAlertTestMessage({ mailOnly: true });
       sendJson(res, 200, { ok: true, ...result });
     } catch (error) {
       sendJson(res, error.statusCode || 500, { error: error.message });
@@ -4740,6 +4787,7 @@ async function handleApi(req, res, pathname) {
     if (req.method === "PUT") {
       try {
         const payload = await readJson(req);
+        const linkedAccount = accounts.find(account => account.linkedUserId === item.id);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         Object.assign(item, normalizeUser(payload, item));
@@ -4765,7 +4813,14 @@ async function handleApi(req, res, pathname) {
             details: { changes }
           }));
         }
+        const accountEmailChanged = payload.email !== undefined && linkedAccount && linkedAccount.email !== item.email;
+        if (accountEmailChanged) {
+          if (accounts.some(account => account.id !== linkedAccount.id && account.email === item.email)) throw new Error("该邮箱已被其他账户使用。");
+          linkedAccount.email = item.email;
+          linkedAccount.updatedAt = new Date().toISOString();
+        }
         await saveUsers();
+        if (accountEmailChanged) await saveAccounts();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
         sendJson(res, 400, { error: error.message });

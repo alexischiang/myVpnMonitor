@@ -13,7 +13,7 @@ import { getPageTitle } from "@/components/features/navigation"
 import { SiteHeader } from "@/components/features/site-header"
 
 export type ServiceHealth = { status: string; latency?: number; kind?: string; url?: string; message?: string }
-export type HealthResponse = { services: { database: ServiceHealth; subconverter: ServiceHealth; telegram: ServiceHealth } }
+export type HealthResponse = { services: { database: ServiceHealth; subconverter: ServiceHealth; telegram: ServiceHealth; resend: ServiceHealth } }
 type HealthContextValue = { services: HealthResponse["services"] | null; checkedAt: string; loading: boolean; error: string; refresh: () => Promise<void> }
 
 const HealthContext = React.createContext<HealthContextValue | null>(null)
@@ -58,6 +58,7 @@ export function AppShell() {
     ["数据库", services.database],
     ["Subconverter", services.subconverter],
     ["Telegram API", services.telegram],
+    ["Resend", services.resend],
   ] as const).filter(([, service]) => service.status === "error") : []
 
   async function logout() {

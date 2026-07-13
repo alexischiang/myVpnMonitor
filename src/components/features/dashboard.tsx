@@ -1,6 +1,8 @@
 import * as React from "react"
-import { RefreshCw, Users } from "lucide-react"
+import { Mail, RefreshCw, Users } from "lucide-react"
+import { toast } from "sonner"
 
+import { postJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartAreaInteractive, DailyIncomeChart, UserGrowthChart } from "@/components/features/chart-area-interactive"
@@ -44,8 +46,21 @@ function growthPercent(current: number, previous: number) {
 
 function ServiceMonitor() {
   const { services, checkedAt, loading, error, refresh } = useServiceHealth()
+  const [sendingMail, setSendingMail] = React.useState(false)
 
-  return <Card><CardHeader><div className="flex items-center justify-between gap-4"><CardTitle>服务监控</CardTitle><Button variant="outline" size="sm" onClick={refresh} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button></div><CardDescription>{checkedAt ? `最后检测：${formatDateTime(checkedAt)}` : "尚未检测"}</CardDescription></CardHeader><CardContent>{services ? ([{ key: "database", name: "数据库" }, { key: "subconverter", name: "Subconverter" }, { key: "telegram", name: "Telegram API" }] as const).filter(({ key }) => key !== "database" || services.database.kind !== "json").map(({ key, name }) => { const service = services[key]; return <div key={key} className="flex items-center justify-between gap-3 border-b py-3 last:border-b-0"><span className="text-sm font-medium">{name}</span><span className="text-sm font-medium">{service.latency === undefined ? "-" : `${service.latency} ms`}</span></div> }) : <p className="text-sm text-muted-foreground">{error || "正在检测服务..."}</p>}</CardContent></Card>
+  async function sendTestMail() {
+    setSendingMail(true)
+    try {
+      const result = await postJson<{ to: string }>("/api/alerts/test-mail")
+      toast.success(`测试邮件已发送至 ${result.to}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "测试邮件发送失败")
+    } finally {
+      setSendingMail(false)
+    }
+  }
+
+  return <Card><CardHeader><div className="flex items-center justify-between gap-4"><CardTitle>服务监控</CardTitle><Button variant="outline" size="sm" onClick={refresh} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button></div><CardDescription>{checkedAt ? `最后检测：${formatDateTime(checkedAt)}` : "尚未检测"}</CardDescription></CardHeader><CardContent className="grid auto-rows-fr">{services ? ([{ key: "database", name: "数据库" }, { key: "subconverter", name: "Subconverter" }, { key: "telegram", name: "Telegram API" }, { key: "resend", name: "Resend" }] as const).filter(({ key }) => key !== "database" || services.database.kind !== "json").map(({ key, name }) => { const service = services[key]; return <div key={key} className="flex items-center justify-between gap-3 border-b py-3 last:border-b-0"><div className="flex items-center gap-1"><span className="text-sm font-medium">{name}</span>{key === "resend" ? <Button variant="ghost" size="icon-sm" onClick={sendTestMail} disabled={sendingMail} aria-label="发送测试邮件" title="发送测试邮件"><Mail className={sendingMail ? "animate-pulse" : undefined} /></Button> : null}</div><span className="text-sm font-medium">{service.latency === undefined ? "-" : `${service.latency} ms`}</span></div> }) : <p className="text-sm text-muted-foreground">{error || "正在检测服务..."}</p>}</CardContent></Card>
 }
 
 export function DashboardPage() {

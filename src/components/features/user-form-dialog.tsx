@@ -30,6 +30,7 @@ import type { Subscription, User } from "@/types"
 export type UserFormValues = {
   userId?: string
   wechatName?: string
+  email?: string
   imessage?: string
   subscriptionId?: string
   activeGroup?: string
@@ -117,6 +118,7 @@ function toFormValues(user: User | null): UserFormValues {
   return {
     userId: user.userId || "",
     wechatName: user.wechatName || "",
+    email: user.email || "",
     imessage: user.imessage || "",
     subscriptionId: user.subscriptionId || "",
     activeGroup: user.activeGroup || defaultValues.activeGroup,
@@ -312,11 +314,21 @@ export function UserFormDialog({
                     </FieldControl>
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="imessage">iMessage / 邮箱</FieldLabel>
+                    <FieldLabel htmlFor="email">邮箱</FieldLabel>
+                    <FieldControl>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={values.email || ""}
+                        onChange={event => update("email", event.target.value)}
+                      />
+                    </FieldControl>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="imessage">iMessage</FieldLabel>
                     <FieldControl>
                       <Input
                         id="imessage"
-                        type="email"
                         value={values.imessage || ""}
                         onChange={event => update("imessage", event.target.value)}
                       />
