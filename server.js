@@ -794,7 +794,8 @@ function publicPaymentOrder(order) {
     accountId: order.accountId || "",
     deliveryUrl: order.deliveryUrl || "",
     fulfillmentStatus: order.fulfillmentStatus || "",
-    fulfillmentError: order.fulfillmentError || "",
+    fulfillmentError: order.fulfillmentError ? "支付成功，但套餐发放失败，请联系客服处理。" : "",
+    paymentError: order.paymentError || "",
     createdAt: order.createdAt,
     expiresAt: paymentOrderExpiresAt(order),
     paidAt: order.paidAt || "",
@@ -819,6 +820,20 @@ function platformStatusToOrderStatus(value) {
   if (status === 3) return "abnormal";
   if (status === 4) return "closed";
   return "pending";
+}
+
+function paymentStatusError(status) {
+  return ({
+    failed: "支付平台返回支付失败。",
+    abnormal: "支付平台返回支付异常。",
+    closed: "订单已超时关闭。"
+  })[status] || "";
+}
+
+function paymentAmountError(expected, actual) {
+  const paid = Number(actual);
+  if (Number.isFinite(paid) && paid === Number(expected)) return "";
+  return `支付金额校验失败：应付 ¥${Number(expected).toFixed(2)}，平台返回 ${Number.isFinite(paid) ? `¥${paid.toFixed(2)}` : "无效金额"}。`;
 }
 
 function compactPaymentParams(params) {
@@ -1025,6 +1040,7 @@ async function fulfillPaymentOrder(order, req) {
   order.deliveryUrl = deliveryUrlForUser(user, req);
   order.fulfilledAt = new Date().toISOString();
   order.fulfillmentStatus = "fulfilled";
+  order.fulfillmentError = "";
   await saveUsers();
   await saveBills();
   await savePaymentOrders();
@@ -1112,8 +1128,9 @@ async function refreshPaymentOrder(order) {
   order.platformStatus = result.payOrderStatus ?? order.platformStatus;
   order.status = platformStatusToOrderStatus(result.payOrderStatus);
   if (order.status === "pending" && isPaymentOrderExpired(order)) order.status = "closed";
-  const paidAmount = Number(result.money || order.amount || 0);
-  if (order.status === "paid" && paidAmount !== Number(order.amount)) throw new Error("Payment amount mismatch.");
+  const amountError = order.status === "paid" ? paymentAmountError(order.amount, result.money) : "";
+  if (amountError) order.status = "abnormal";
+  order.paymentError = amountError || paymentStatusError(order.status);
   order.updatedAt = new Date().toISOString();
   if (order.status === "paid" && !order.paidAt) order.paidAt = order.updatedAt;
   await savePaymentOrders();
@@ -1122,20 +1139,27 @@ async function refreshPaymentOrder(order) {
 
 async function handlePaymentCallback(req) {
   const payload = await readPaymentCallback(req);
-  if (!verifyPaymentSign(payload)) return { ok: false, statusCode: 400, body: "invalid sign" };
   const merOrderTid = String(payload.merOrderTid || "").trim();
   const order = paymentOrders.find(item => item.merOrderTid === merOrderTid);
+  if (!verifyPaymentSign(payload)) {
+    if (order) {
+      order.paymentError = "支付通知签名验证失败，请点击检测支付状态或联系客服。";
+      order.updatedAt = new Date().toISOString();
+      await savePaymentOrders();
+    }
+    return { ok: false, statusCode: 400, body: "invalid sign" };
+  }
   if (order) {
     const now = new Date().toISOString();
     order.tid = String(payload.tid || order.tid || "");
-    const paidAmount = Number(payload.money || order.amount || 0);
     order.platformStatus = Number(payload.status);
     order.status = platformStatusToOrderStatus(payload.status);
-    if (order.status === "paid" && paidAmount !== Number(order.amount)) {
+    const amountError = order.status === "paid" ? paymentAmountError(order.amount, payload.money) : "";
+    if (amountError) {
       order.status = "abnormal";
       order.fulfillmentStatus = "failed";
-      order.fulfillmentError = "Payment amount mismatch.";
     }
+    order.paymentError = amountError || paymentStatusError(order.status);
     order.callbackPayload = payload;
     order.updatedAt = now;
     if (order.status === "paid" && !order.paidAt) order.paidAt = now;
@@ -5114,6 +5138,8 @@ module.exports = Object.assign(requestHandler, {
   startOfUtcDate,
   paymentQuote,
   paymentChannelCode,
+  paymentStatusError,
+  paymentAmountError,
   paymentOrderExpiresAt,
   isPaymentOrderExpired
 });

@@ -9,6 +9,8 @@ const {
   toBytes,
   paymentQuote,
   paymentChannelCode,
+  paymentStatusError,
+  paymentAmountError,
   paymentOrderExpiresAt,
   isPaymentOrderExpired
 } = require("./server");
@@ -67,6 +69,11 @@ assert.throws(() => paymentQuote("basic-30", "invalid", "SAVE10:10"), /优惠码
 assert.strictEqual(paymentChannelCode("100"), "100");
 assert.strictEqual(paymentChannelCode("200"), "200");
 assert.throws(() => paymentChannelCode("300"), /不支持的支付方式/);
+assert.strictEqual(paymentStatusError("failed"), "支付平台返回支付失败。");
+assert.strictEqual(paymentStatusError("paid"), "");
+assert.strictEqual(paymentAmountError(10, "10.00"), "");
+assert.match(paymentAmountError(10, "9.99"), /应付 ¥10.00.*¥9.99/);
+assert.match(paymentAmountError(10, undefined), /无效金额/);
 const expiringOrder = { createdAt: "2026-07-12T00:00:00.000Z" };
 assert.strictEqual(paymentOrderExpiresAt(expiringOrder), "2026-07-12T00:15:00.000Z");
 assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T00:14:59.999Z")), false);

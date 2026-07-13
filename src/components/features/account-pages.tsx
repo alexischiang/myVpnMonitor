@@ -1,9 +1,10 @@
 import * as React from "react"
-import { Link, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { CheckCircle2, Clock3, Copy, ExternalLink, Loader2, RefreshCw, ShieldCheck } from "lucide-react"
+import { Link, Navigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
+import { AlertCircle, CheckCircle2, Clock3, Copy, ExternalLink, Loader2, RefreshCw, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, putJson } from "@/api"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatDate, formatMoney } from "@/utils"
 
-type PaymentOrder = { id: string; merOrderTid: string; planName: string; optionLabel: string; amount: number; status: string; statusText: string; payUrl?: string; createdAt: string; expiresAt: string; paidAt?: string }
+type PaymentOrder = { id: string; merOrderTid: string; planName: string; optionLabel: string; amount: number; status: string; statusText: string; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
 type Subscription = { status: string; activeGroup: string; expiresAt: string; purchasedAt: string; duration: string; traffic: string; devices: number | string; subscriptionUrl: string }
 type Overview = { email: string; createdAt: string; subscription: Subscription | null; orders: PaymentOrder[] }
 
@@ -118,6 +119,7 @@ export function AccountOrderDetailPage() {
           {order.status === "pending" ? <p className="text-sm text-muted-foreground">请在 <span className="font-mono font-medium text-foreground">{countdown}</span> 内完成付款</p> : null}
         </div>
       </div>
+      {order.paymentError || order.fulfillmentError ? <Alert variant="error"><AlertCircle /><AlertTitle>支付处理失败</AlertTitle><AlertDescription>{order.paymentError || order.fulfillmentError}</AlertDescription></Alert> : null}
       <Separator />
       <div className="grid gap-6 sm:grid-cols-2">
         <Metric label="套餐" value={`${order.planName} / ${order.optionLabel}`} />
@@ -172,8 +174,11 @@ export function PaymentResultPage() {
     try { setOrder(await fetchJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(orderId)}`)) } catch (error) { toast.error(error instanceof Error ? error.message : "查询失败") } finally { setLoading(false) }
   }
   React.useEffect(() => { void refresh() }, [orderId])
+  if (!orderId) return <Navigate to="/account/orders" replace />
   const paid = order?.status === "paid"
-  return <div className="px-4 lg:px-6"><Card className="mx-auto max-w-xl"><CardHeader className="text-center">{paid ? <CheckCircle2 className="mx-auto size-10" /> : <Clock3 className="mx-auto size-10" />}<CardTitle>{paid ? "支付成功" : "等待支付"}</CardTitle><CardDescription>{order?.optionLabel || "正在确认订单状态"}</CardDescription></CardHeader><CardContent className="flex justify-center gap-2"><Button onClick={refresh} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : null}刷新状态</Button><Button asChild variant="outline"><Link to={paid ? "/account/subscription" : "/account/orders"}>{paid ? "查看订阅" : "查看订单"}</Link></Button></CardContent></Card></div>
+  const failed = order && !["pending", "paid"].includes(order.status)
+  const error = order?.paymentError || order?.fulfillmentError
+  return <div className="px-4 lg:px-6"><Card className="mx-auto max-w-xl"><CardHeader className="text-center">{paid ? <CheckCircle2 className="mx-auto size-10" /> : failed ? <AlertCircle className="mx-auto size-10" /> : <Clock3 className="mx-auto size-10" />}<CardTitle>{order?.statusText || "正在确认支付"}</CardTitle><CardDescription>{order?.optionLabel || "正在确认订单状态"}</CardDescription></CardHeader><CardContent className="grid gap-4">{error ? <Alert variant="error"><AlertCircle /><AlertTitle>支付处理失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}<div className="flex justify-center gap-2"><Button onClick={refresh} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : null}刷新状态</Button><Button asChild variant="outline"><Link to={paid ? "/account/subscription" : "/account/orders"}>{paid ? "查看订阅" : "查看订单"}</Link></Button></div></CardContent></Card></div>
 }
 
 function Metric({ label, value }: { label: string; value: React.ReactNode }) {
