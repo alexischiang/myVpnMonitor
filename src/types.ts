@@ -33,6 +33,7 @@ export type User = {
   subscriptionId?: string
   subscription?: Subscription
   activeGroup?: string
+  unlimited?: boolean
   vipLevel?: string
   duration?: string
   purchasedAt?: string

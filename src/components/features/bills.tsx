@@ -74,14 +74,12 @@ export function BillsPage() {
         return (
           <div className="flex items-center gap-1">
             <Button asChild variant="ghost" size="sm"><Link to={`/bills/${item.id}`}>查看</Link></Button>
-            {!item.reversedAt && (
+            {item.user?.accountStatus !== "active" && !item.reversedAt && (
               <Button variant="ghost" size="sm" onClick={() => mutate(item, "reverse")}>
                 冲正
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => mutate(item, "delete")}>
-              删除
-            </Button>
+            {item.user?.accountStatus !== "active" ? <Button variant="ghost" size="sm" onClick={() => mutate(item, "delete")}>删除</Button> : null}
           </div>
         )
       },

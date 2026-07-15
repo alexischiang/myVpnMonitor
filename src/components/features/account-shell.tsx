@@ -93,7 +93,7 @@ export function AccountShell() {
       <CloseMobileSidebarOnNavigation />
       <Sidebar variant="inset" collapsible="offcanvas">
         <SidebarHeader>
-          <SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild className="data-[slot=sidebar-menu-button]:p-1.5!"><Link to="/account"><ShieldCheck className="size-5" /><span className="text-lg font-semibold">NEXORA</span><Badge variant="outline" className="h-5 self-baseline border-foreground bg-foreground px-1.5 text-[10px] text-background">beta</Badge></Link></SidebarMenuButton></SidebarMenuItem></SidebarMenu>
+          <SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild className="data-[slot=sidebar-menu-button]:p-1.5!"><Link to="/account"><ShieldCheck className="size-5" /><span className="text-lg font-semibold">NEXORA</span><Badge variant="outline" className="h-4 self-baseline rounded-sm border-foreground bg-foreground px-1.5 py-0 text-[11px] text-background">beta</Badge></Link></SidebarMenuButton></SidebarMenuItem></SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup><SidebarGroupContent><SidebarMenu>{accountNav.map(item => (

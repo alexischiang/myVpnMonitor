@@ -15,7 +15,7 @@ function AuthLayout({ title, description, children }: { title: string; descripti
   return (
     <main className="grid min-h-svh lg:grid-cols-2">
       <section className="flex flex-col gap-4 p-6 md:p-10">
-        <Link to="/pricing" className="flex w-fit items-center gap-2 text-base font-semibold">NEXORA<Badge variant="outline" className="h-5 self-baseline border-foreground bg-foreground px-1.5 text-[10px] text-background">beta</Badge></Link>
+        <Link to="/pricing" className="flex w-fit items-center gap-2 text-base font-semibold">NEXORA<Badge variant="outline" className="h-4 self-baseline rounded-sm border-foreground bg-foreground px-1.5 py-0 text-[11px] text-background">beta</Badge></Link>
         <div className="flex flex-1 items-center justify-center">
           <div className="grid w-full max-w-sm gap-6">
             <header className="grid gap-2 text-center">
