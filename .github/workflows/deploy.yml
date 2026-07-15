@@ -36,7 +36,7 @@ jobs:
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
             git pull --ff-only origin production
-            npm ci --production
+            npm ci --omit=dev
             if [ -f dist/index.html ]; then
               touch dist/index.html
             fi
