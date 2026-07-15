@@ -11,7 +11,8 @@ export const durationLabels: Record<string, string> = {
 
 export const billTypeLabels: Record<string, string> = {
   initial: "新购",
-  renewal: "续费",
+  renewal: "续费延长",
+  replacement: "覆盖",
   adjustment: "调整",
 }
 
@@ -24,6 +25,7 @@ export const statusLabels: Record<string, string> = {
   warning: "即将到期",
   expired: "已到期",
   error: "错误",
+  disabled: "未启用",
   unknown: "未知",
 }
 

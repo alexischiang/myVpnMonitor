@@ -1,6 +1,3 @@
-const fs = require("fs/promises");
-const path = require("path");
-
 let cachedTransporter = null;
 const proxyAgents = new Map();
 
@@ -153,47 +150,6 @@ async function checkTelegram({ signal } = {}) {
   return payload.result;
 }
 
-function createAlertStore(filePath) {
-  let state = null;
-
-  async function load() {
-    if (state) return state;
-    try {
-      const raw = await fs.readFile(filePath, "utf8");
-      state = JSON.parse(raw) || {};
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-      state = {};
-    }
-    return state;
-  }
-
-  async function save() {
-    if (!state) return;
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, JSON.stringify(state, null, 2));
-  }
-
-  return {
-    async get(key) {
-      const data = await load();
-      return data[key] || null;
-    },
-    async set(key, value) {
-      const data = await load();
-      data[key] = value;
-      await save();
-    },
-    async clear(key) {
-      const data = await load();
-      if (data[key]) {
-        delete data[key];
-        await save();
-      }
-    }
-  };
-}
-
 function formatBytes(bytes) {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -298,7 +254,6 @@ module.exports = {
   checkTelegram,
   sendMail,
   sendTelegram,
-  createAlertStore,
   checkAndNotifyLowTraffic,
   isExpiredItem,
   formatBytes

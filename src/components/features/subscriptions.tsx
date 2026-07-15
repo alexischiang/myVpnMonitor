@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { Eye, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Eye, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
@@ -56,6 +56,17 @@ export function SubscriptionsPage() {
       toast.success("刷新完成")
     }, "刷新订阅指标...")
   }
+
+  async function toggleEnabled(item: Subscription) {
+    await runAsync(async () => {
+      const enabled = item.enabled === false
+      await putJson(`/api/subscriptions/${item.id}`, { enabled })
+      await reload(["subscriptions"])
+      toast.success(enabled ? "订阅池已启用" : "订阅池已停用")
+    }, item.enabled === false ? "启用订阅池..." : "停用订阅池...")
+  }
+
+  const sortedSubscriptions = React.useMemo(() => [...subscriptions].sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions])
 
   const columns = React.useMemo<ColumnDef<Subscription>[]>(() => [
     {
@@ -126,6 +137,7 @@ export function SubscriptionsPage() {
             <Button variant="ghost" size="icon" onClick={() => refresh(item)} aria-label="刷新订阅">
               <RefreshCw />
             </Button>
+            <Button variant="ghost" size="sm" onClick={() => toggleEnabled(item)}><Power />{item.enabled === false ? "启用" : "停用"}</Button>
             <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>
               编辑
             </Button>
@@ -161,7 +173,7 @@ export function SubscriptionsPage() {
 
       <DataTable
         columns={columns}
-        data={subscriptions}
+        data={sortedSubscriptions}
         searchKey="subscription"
         searchPlaceholder="搜索订阅..."
         emptyTitle="暂无订阅"

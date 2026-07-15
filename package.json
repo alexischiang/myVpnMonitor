@@ -11,8 +11,9 @@
     "build": "vite build --configLoader runner && node scripts/write-build-meta.js",
     "check": "node --check server.js && vite build --configLoader runner --mode development",
     "migrate:duration-days": "node scripts/migrate-duration-days.js",
-    "migrate:json-to-db": "node scripts/migrate-json-to-db.js",
-    "test": "node test.js"
+    "sync:neon-to-local": "node scripts/sync-neon-to-postgres.js",
+    "test": "node test.js",
+    "test:payment": "node test-payment.js"
   },
   "keywords": [
     "vpn",
@@ -47,6 +48,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "dayjs": "^1.11.21",
+    "embla-carousel-react": "^8.6.0",
     "js-yaml": "^4.2.0",
     "lucide-react": "^1.23.0",
     "next-themes": "^0.4.6",

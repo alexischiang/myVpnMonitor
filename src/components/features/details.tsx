@@ -136,7 +136,7 @@ export function UserDetailPage() {
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteEmail, setInviteEmail] = React.useState("")
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
-  const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed")
+  const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed" || log.reason === "user-created")
 
   const billColumns = React.useMemo<ColumnDef<Bill>[]>(() => [
     {
@@ -177,7 +177,7 @@ export function UserDetailPage() {
       accessorKey: "statusText",
       header: "类型",
       meta: { label: "类型" },
-      cell: ({ row }) => row.original.reason === "manual-pool-changed" ? "手动换池" : "自动换池",
+      cell: ({ row }) => row.original.reason === "user-created" ? "新购绑定" : row.original.reason === "manual-pool-changed" ? "手动换池" : "自动换池",
     },
     {
       accessorKey: "fromSubscriptionLabel",

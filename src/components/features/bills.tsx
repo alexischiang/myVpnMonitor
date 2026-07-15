@@ -1,14 +1,19 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
+import { Link, useParams } from "react-router-dom"
+import { ArrowLeft, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
-import { deleteJson, postJson } from "@/api"
+import { deleteJson, fetchJson, postJson } from "@/api"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
-import { PageHeader } from "@/components/features/shared"
+import { EmptyState, PageHeader } from "@/components/features/shared"
 import type { Bill } from "@/types"
-import { billTypeLabels, formatDate, formatMoney } from "@/utils"
+import { billTypeLabels, durationLabels, formatDate, formatDateTime, formatMoney } from "@/utils"
 
 export function BillsPage() {
   const { bills, reload, runAsync } = useData()
@@ -68,6 +73,7 @@ export function BillsPage() {
         const item = row.original
         return (
           <div className="flex items-center gap-1">
+            <Button asChild variant="ghost" size="sm"><Link to={`/bills/${item.id}`}>查看</Link></Button>
             {!item.reversedAt && (
               <Button variant="ghost" size="sm" onClick={() => mutate(item, "reverse")}>
                 冲正
@@ -96,4 +102,60 @@ export function BillsPage() {
       />
     </div>
   )
+}
+
+const purchaseTypeLabels = { initial: "新购", extend: "续费延长", replace: "覆盖" }
+const paymentChannelLabels: Record<string, string> = { "100": "支付宝", "200": "微信支付", "cash-credit": "现金价值全额抵扣" }
+
+export function BillDetailPage() {
+  const { id } = useParams()
+  const [bill, setBill] = React.useState<Bill | null>(null)
+  const [error, setError] = React.useState("")
+
+  React.useEffect(() => {
+    if (!id) return
+    fetchJson<Bill>(`/api/bills/${encodeURIComponent(id)}`).then(setBill).catch(error => setError(error.message))
+  }, [id])
+
+  if (error) return <div className="px-4 lg:px-6"><EmptyState title="账单加载失败" description={error} /></div>
+  if (!bill) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
+  const payment = bill.payment
+
+  return (
+    <div className="grid gap-4 px-4 lg:px-6">
+      <PageHeader title="账单详情" description={bill.id} actions={<Button asChild variant="outline" size="sm"><Link to="/bills"><ArrowLeft />返回账单</Link></Button>} />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle>账单信息</CardTitle></CardHeader>
+          <CardContent><Table><TableBody>
+            <DetailRow label="用户" value={bill.user?.userId || bill.userId || "-"} />
+            <DetailRow label="账单时间" value={formatDateTime(bill.occurredAt)} />
+            <DetailRow label="购买类型" value={payment ? <Badge variant="outline">{purchaseTypeLabels[payment.purchaseAction]}</Badge> : billTypeLabels[bill.type || ""] || bill.type || "-"} />
+            <DetailRow label="计费周期" value={durationLabels[bill.duration || ""] || bill.duration || "-"} />
+            <DetailRow label="状态" value={<Badge variant={bill.reversedAt ? "destructive" : "secondary"}>{bill.reversedAt ? "已冲正" : "正常"}</Badge>} />
+            <DetailRow label="备注" value={bill.description || "-"} />
+          </TableBody></Table></CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>支付详情</CardTitle></CardHeader>
+          <CardContent>{payment ? <Table><TableBody>
+            <DetailRow label="商品" value={`${payment.planName} · ${payment.optionLabel}`} />
+            <DetailRow label="支付渠道" value={paymentChannelLabels[payment.channelCode] || payment.channelCode || "未知"} />
+            <DetailRow label="支付时间" value={formatDateTime(payment.paidAt)} />
+            <DetailRow label="商品原价" value={formatMoney(payment.originalAmount)} />
+            <DetailRow label={payment.couponCode ? `优惠码 ${payment.couponCode}（${payment.discountPercent}%）` : "优惠码折扣"} value={`-${formatMoney(payment.discountAmount)}`} />
+            <DetailRow label={`${payment.vipLevel.replace(/^vip/i, "VIP ")} 专属折扣（${payment.vipDiscountPercent}%）`} value={`-${formatMoney(payment.vipDiscountAmount)}`} />
+            <DetailRow label="优惠后小计" value={formatMoney(payment.subtotal)} />
+            <DetailRow label={`税费（${payment.taxRate}%）`} value={formatMoney(payment.taxAmount)} />
+            <DetailRow label="剩余现金价值抵扣" value={`-${formatMoney(payment.cashCredit)}`} />
+            <DetailRow label="实际付款" value={<strong>{formatMoney(payment.amount)}</strong>} />
+          </TableBody></Table> : <EmptyState title="无支付订单信息" description="该账单由后台手工创建，未记录支付渠道和折扣。" />}</CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return <TableRow><TableCell className="text-muted-foreground">{label}</TableCell><TableCell className="text-right whitespace-normal">{value}</TableCell></TableRow>
 }

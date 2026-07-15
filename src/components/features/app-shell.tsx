@@ -81,11 +81,11 @@ export function AppShell() {
       }
     >
       <AppSidebar variant="inset" onLogout={logout} />
-      <SidebarInset className="min-w-0 overflow-x-hidden">
+      <SidebarInset className="min-w-0 overflow-x-clip">
         <SiteHeader title={pageTitle} dark={dark} onToggleTheme={toggleTheme} onLogout={logout} />
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="@container/main flex min-w-0 flex-1 flex-col gap-2">
-            <div className="flex min-w-0 flex-col gap-4 py-4 md:gap-6 md:py-6">
+            <div className="flex min-w-0 flex-col gap-4 pt-6 pb-4 md:gap-6 md:pt-8 md:pb-6">
               {(healthError || failedServices.length > 0) && (
                 <div className="grid gap-2 px-4 lg:px-6">
                   {healthError && <Alert variant="error"><AlertCircle /><AlertDescription>服务监控 API 连接异常：{healthError}</AlertDescription></Alert>}

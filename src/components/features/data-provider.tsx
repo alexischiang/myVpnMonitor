@@ -152,9 +152,16 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
 
       commitState(current => ({ ...current, loading: false, error: "" }))
+      void reload(defaultCollections, { silent: true })
       if (missingSupplemental.length) void reload(missingSupplemental, { silent: true })
     }).catch(() => navigate("/login", { replace: true }))
   }, [commitState, navigate, reload])
+
+  React.useEffect(() => {
+    const refresh = () => { void reload(defaultCollections, { silent: true }) }
+    window.addEventListener("focus", refresh)
+    return () => window.removeEventListener("focus", refresh)
+  }, [reload])
 
   const runAsync = React.useCallback(async <T,>(task: () => Promise<T>, label = "处理中...") => {
     setBusy(label)

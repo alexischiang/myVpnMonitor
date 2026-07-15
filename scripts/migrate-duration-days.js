@@ -1,5 +1,4 @@
 const fsSync = require("fs");
-const fs = require("fs/promises");
 const path = require("path");
 const { createDataStore } = require("../database");
 
@@ -104,25 +103,12 @@ function recalculateUser(user, userBills) {
   };
 }
 
-async function backupJsonFile(filePath) {
-  if (!fsSync.existsSync(filePath)) return;
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  await fs.copyFile(filePath, `${filePath}.${stamp}.bak`);
-}
-
 async function main() {
   loadLocalEnv();
-  const root = path.join(__dirname, "..");
-  const dataDir = path.join(root, "data");
-  const files = {
-    subscriptions: process.env.DATA_FILE || path.join(dataDir, "subscriptions.json"),
-    users: process.env.USERS_FILE || path.join(dataDir, "users.json"),
-    bills: process.env.BILLS_FILE || path.join(dataDir, "bills.json")
-  };
+  const localDatabaseUrl = process.env.LOCAL_DATABASE_URL || "";
   const store = createDataStore({
-    dataDir,
-    databaseUrl: process.env.DATABASE_URL || "",
-    files
+    databaseUrl: localDatabaseUrl || process.env.DATABASE_URL || "",
+    ssl: !localDatabaseUrl && process.env.DATABASE_SSL === "true"
   });
   await store.init();
 
@@ -168,10 +154,6 @@ async function main() {
     return;
   }
 
-  if (store.kind === "json") {
-    await backupJsonFile(files.users);
-    await backupJsonFile(files.bills);
-  }
   await store.saveCollection("users", updatedUsers);
   await store.saveCollection("bills", updatedBills);
   console.log("Duration-day migration applied.");

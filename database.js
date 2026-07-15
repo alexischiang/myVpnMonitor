@@ -1,7 +1,4 @@
-const fs = require("fs/promises");
-const path = require("path");
-
-const COLLECTIONS = ["subscriptions", "users", "accounts", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "paymentOrders"];
+const COLLECTIONS = ["subscriptions", "users", "accounts", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "paymentOrders", "salesSettings"];
 const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
 const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
 
@@ -32,49 +29,11 @@ async function withPgRetry(operation, label) {
   throw lastError;
 }
 
-class JsonDataStore {
-  constructor({ dataDir, files }) {
-    this.kind = "json";
-    this.dataDir = dataDir;
-    this.files = files;
-  }
-
-  async init() {
-    await fs.mkdir(this.dataDir, { recursive: true });
-    if (process.env.VERCEL === "1") {
-      throw new Error("Vercel deployment requires DATABASE_URL; local JSON storage is not supported.");
-    }
-  }
-
-  async loadCollection(collection) {
-    try {
-      const raw = await fs.readFile(this.files[collection], "utf8");
-      return { rows: JSON.parse(raw), missing: false };
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-      return { rows: [], missing: true };
-    }
-  }
-
-  async loadAll() {
-    const result = { missing: {} };
-    for (const collection of COLLECTIONS) {
-      const { rows, missing } = await this.loadCollection(collection);
-      result[collection] = rows;
-      result.missing[collection] = missing;
-    }
-    return result;
-  }
-
-  async saveCollection(collection, rows) {
-    await fs.writeFile(this.files[collection], JSON.stringify(rows, null, 2));
-  }
-}
-
 class PostgresDataStore {
-  constructor({ connectionString }) {
+  constructor({ connectionString, ssl }) {
     this.kind = "postgres";
     this.connectionString = normalizePostgresUrl(connectionString);
+    this.ssl = ssl;
     this.pool = null;
   }
 
@@ -91,7 +50,7 @@ class PostgresDataStore {
     const { Pool } = this.loadPg();
     this.pool = new Pool({
       connectionString: this.connectionString,
-      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+      ssl: this.ssl ? { rejectUnauthorized: false } : undefined,
       idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS || 10000),
       connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 10000),
       max: Number(process.env.DATABASE_POOL_MAX || 5)
@@ -108,23 +67,46 @@ class PostgresDataStore {
     `), "postgres init");
   }
 
-  async loadCollection(collection) {
-    const result = await withPgRetry(() => this.pool.query(
-      "SELECT data FROM app_records WHERE collection = $1 ORDER BY position ASC",
-      [collection]
-    ), `load ${collection}`);
-    return { rows: result.rows.map(row => row.data), missing: false };
-  }
-
   async ping() {
     await this.pool.query("SELECT 1");
   }
 
+  async getRecord(collection, id) {
+    const result = await withPgRetry(
+      () => this.pool.query("SELECT data FROM app_records WHERE collection = $1 AND id = $2", [collection, id]),
+      `load ${collection}/${id}`
+    );
+    return result.rows[0]?.data || null;
+  }
+
+  async setRecord(collection, id, data) {
+    await withPgRetry(
+      () => this.pool.query(
+        `INSERT INTO app_records (collection, id, position, data, updated_at)
+         VALUES ($1, $2, 0, $3::jsonb, NOW())
+         ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+        [collection, id, JSON.stringify(data)]
+      ),
+      `save ${collection}/${id}`
+    );
+  }
+
+  async deleteRecord(collection, id) {
+    await withPgRetry(
+      () => this.pool.query("DELETE FROM app_records WHERE collection = $1 AND id = $2", [collection, id]),
+      `delete ${collection}/${id}`
+    );
+  }
+
+  async close() {
+    await this.pool?.end();
+    this.pool = null;
+  }
+
   async loadAll() {
-    const result = { missing: {} };
+    const result = {};
     for (const collection of COLLECTIONS) {
       result[collection] = [];
-      result.missing[collection] = false;
     }
     const query = "SELECT collection, data FROM app_records WHERE collection = ANY($1::text[]) ORDER BY collection ASC, position ASC";
     const rows = await withPgRetry(() => this.pool.query(query, [COLLECTIONS]), "load all collections");
@@ -169,51 +151,10 @@ class PostgresDataStore {
   }
 
 }
-class ResilientDataStore {
-  constructor({ dataDir, files, databaseUrl }) {
-    this.kind = databaseUrl ? "postgres" : "json";
-    this.primary = databaseUrl ? new PostgresDataStore({ connectionString: databaseUrl }) : null;
-    this.fallback = new JsonDataStore({ dataDir, files });
-    this.activeStore = this.primary || this.fallback;
-  }
 
-  async init() {
-    if (!this.primary) {
-      await this.fallback.init();
-      this.activeStore = this.fallback;
-      this.kind = this.activeStore.kind;
-      return;
-    }
-
-    try {
-      await this.primary.init();
-      this.activeStore = this.primary;
-      this.kind = this.activeStore.kind;
-    } catch (error) {
-      if (process.env.VERCEL === "1") throw error;
-      console.warn("[data] Postgres unavailable in local development, falling back to JSON storage.");
-      console.warn(`[data] ${error.message}`);
-      await this.fallback.init();
-      this.activeStore = this.fallback;
-      this.kind = this.activeStore.kind;
-    }
-  }
-
-  async loadAll() {
-    return this.activeStore.loadAll();
-  }
-
-  async saveCollection(collection, rows) {
-    return this.activeStore.saveCollection(collection, rows);
-  }
-
-  async ping() {
-    if (this.activeStore.kind === "postgres") await this.activeStore.ping();
-  }
-}
-
-function createDataStore({ dataDir, files, databaseUrl }) {
-  return new ResilientDataStore({ dataDir, files, databaseUrl });
+function createDataStore({ databaseUrl, ssl = process.env.DATABASE_SSL === "true" }) {
+  if (!databaseUrl) throw new Error("DATABASE_URL is required; PostgreSQL is the only supported data store.");
+  return new PostgresDataStore({ connectionString: databaseUrl, ssl });
 }
 
 function normalizePostgresUrl(value) {

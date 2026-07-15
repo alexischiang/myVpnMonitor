@@ -87,27 +87,14 @@ npm run dev            # 只启动 Vite 前端开发服务
 npm run dev:server     # 只启动后端热重载
 npm run check          # 检查代码语法
 npm test               # 运行解析测试
-npm run migrate:json-to-db # 将 data/*.json 导入 DATABASE_URL 指向的数据库
+npm run sync:neon-to-local # 将 Neon 数据同步到本机 PostgreSQL
 ```
 
 ## 数据存储
 
-项目支持两种数据后端：
+项目只支持 PostgreSQL，业务数据存储在 `app_records` 表中。没有配置数据库或连接失败时，服务会直接启动失败，不会回退到本地文件。
 
-- 本地 JSON：没有配置 `DATABASE_URL` 时，使用 `data/*.json`。
-- PostgreSQL：配置 `DATABASE_URL` 后，使用数据库表 `app_records`。
-
-本地 JSON 文件：
-
-```text
-data/subscriptions.json
-data/users.json
-data/bills.json
-```
-
-这些文件已加入 `.gitignore`，避免误提交真实客户数据。
-
-当前数据库层用 `collection + id + JSONB` 存储三类业务数据，方便从本地 JSON 平滑迁移到云端。后续数据量变大时，可以再拆成更细的关系表。
+当前数据库层使用 `collection + id + JSONB` 存储业务数据。
 
 ## Neon 数据库
 
@@ -116,6 +103,7 @@ data/bills.json
 ```text
 DATABASE_URL=postgres://user:password@host:5432/database
 DATABASE_SSL=true
+LOCAL_DATABASE_URL=postgres://vpn_monitor:password@127.0.0.1:5432/vpn_monitor
 TELEGRAM_BOT_TOKEN=123456:abcdef
 TELEGRAM_CHAT_ID=123456789
 TELEGRAM_API_BASE_URL=https://api.telegram.org
@@ -129,15 +117,13 @@ Telegram bot webhook:
 https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://your-domain.com/api/telegram/webhook/<TELEGRAM_WEBHOOK_SECRET>
 ```
 
-配置后，本地 `npm start` / `npm run dev` 会直接连接 Neon。
+本地 `npm start` / `npm run dev:all` 优先连接 `LOCAL_DATABASE_URL`，Vercel 始终连接 `DATABASE_URL`。
 
-如果要把现有 JSON 数据导入 Neon：
+把 Neon 当前数据覆盖同步到本机 PostgreSQL：
 
 ```bash
-npm run migrate:json-to-db
+npm run sync:neon-to-local
 ```
-
-如果想临时切回本地 JSON，删除或注释 `.env` 里的 `DATABASE_URL`，然后重启服务。
 
 ## Vercel 部署
 
@@ -160,7 +146,7 @@ EXPIRING_SOON_DAYS=3
 REFRESH_INTERVAL_MS=1800000
 ```
 
-Vercel 的函数文件系统不适合保存 `data/*.json`，所以云端必须配置 `DATABASE_URL`。
+云端必须配置 `DATABASE_URL`。
 
 Vercel Hobby 账号的 Cron 限制为每天一次，因此当前配置为每日刷新：
 
@@ -220,14 +206,14 @@ PORT=3000
 REFRESH_INTERVAL_MS=1800000
 LOW_TRAFFIC_BYTES=53687091200
 EXPIRING_SOON_DAYS=3
-DATA_FILE=./data/subscriptions.json
 DATABASE_URL=postgres://user:password@host:5432/database
 DATABASE_SSL=true
+LOCAL_DATABASE_URL=postgres://vpn_monitor:password@127.0.0.1:5432/vpn_monitor
 ```
 
 ## 注意事项
 
 - `.env`、真实客户数据和账单数据不要提交到 GitHub。
 - 已经泄露过的数据库连接串建议在 Neon 后台轮换密码。
-- 本地连接 Neon 时，所有新增、编辑、删除都会直接写入云端数据库。
+- 本地新增、编辑、删除只写入 `LOCAL_DATABASE_URL`；再次同步会以 Neon 数据覆盖本机数据。
 - Vercel 上如果看到 Serverless Function crashed，优先检查 `DATABASE_URL` 是否配置在 Production 环境。

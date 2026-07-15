@@ -264,7 +264,7 @@ function SidebarTrigger({
       data-slot="sidebar-trigger"
       variant="ghost"
       size="icon"
-      className={cn("size-7", className)}
+      className={cn("size-7 motion-safe:transition-transform motion-safe:duration-150 motion-safe:active:scale-90", className)}
       onClick={(event) => {
         onClick?.(event)
         toggleSidebar()

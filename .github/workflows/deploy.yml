@@ -35,17 +35,7 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
-            if [ -f data/alert-state.json ]; then
-              cp data/alert-state.json /tmp/nexora-alert-state.json
-            fi
-            if git ls-files --error-unmatch data/alert-state.json >/dev/null 2>&1; then
-              git checkout -- data/alert-state.json
-            fi
             git pull --ff-only origin production
-            mkdir -p data
-            if [ -f /tmp/nexora-alert-state.json ]; then
-              mv /tmp/nexora-alert-state.json data/alert-state.json
-            fi
             npm ci --production
             if [ -f dist/index.html ]; then
               touch dist/index.html

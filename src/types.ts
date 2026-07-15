@@ -8,6 +8,7 @@ export type Subscription = {
   provider?: string
   serviceProvider?: string
   note?: string
+  enabled?: boolean
   accountStatus?: "unclaimed" | "invited" | "active"
   status?: Status
   httpStatus?: number | string | null
@@ -24,6 +25,7 @@ export type Subscription = {
 
 export type User = {
   id: string
+  accountStatus?: "unclaimed" | "invited" | "active"
   userId?: string
   wechatName?: string
   imessage?: string
@@ -36,6 +38,7 @@ export type User = {
   purchasedAt?: string
   expiresAt?: string
   actualPaid?: number
+  vipSpend?: number
   cost?: number
   deliveryToken?: string
   outputMode?: string
@@ -60,6 +63,7 @@ export type UserLog = {
 
 export type Bill = {
   id: string
+  paymentOrderId?: string
   userId?: string
   user?: User
   type?: string
@@ -68,6 +72,27 @@ export type Bill = {
   occurredAt?: string
   reversedAt?: string | null
   description?: string
+  payment?: {
+    id: string
+    merOrderTid: string
+    planName: string
+    optionLabel: string
+    originalAmount: number
+    discountAmount: number
+    couponCode: string
+    discountPercent: number
+    vipLevel: string
+    vipDiscountPercent: number
+    vipDiscountAmount: number
+    subtotal: number
+    taxRate: number
+    taxAmount: number
+    cashCredit: number
+    purchaseAction: "initial" | "extend" | "replace"
+    channelCode: string
+    amount: number
+    paidAt?: string
+  } | null
 }
 
 export type Vendor = {
@@ -124,14 +149,55 @@ export type PricingRow = {
   recommended?: boolean
   traffic?: string
   features?: string[]
+  unavailableFeatures?: string[]
   monthly?: number
   quarterly?: number
   half_yearly?: number
   yearly?: number
+  unlimitedMonthly?: number
+  unlimitedQuarterly?: number
+  unlimitedHalfYearly?: number
+  unlimitedYearly?: number
   monthlyDevices?: number
   quarterlyDevices?: number
   half_yearlyDevices?: number
   yearlyDevices?: number
+}
+
+export type CouponSetting = {
+  id: string
+  code: string
+  percent: number
+  enabled: boolean
+  validFrom?: string
+  validUntil?: string
+  applicableGroups?: string[]
+  applicableDurations?: string[]
+  totalLimit?: number
+  perAccountLimit?: number
+  usedCount?: number
+}
+
+export type FaqSetting = {
+  id: string
+  question: string
+  answer: string
+  enabled?: boolean
+}
+
+export type AnnouncementSetting = {
+  id: string
+  title: string
+  content: string
+  publishedAt: string
+  enabled: boolean
+}
+
+export type SalesSettings = {
+  id: string
+  coupons: CouponSetting[]
+  faqs: FaqSetting[]
+  announcements: AnnouncementSetting[]
 }
 
 export type AppMeta = {

@@ -14,10 +14,10 @@ import { PageHeader } from "@/components/features/shared"
 import type { PricingRow } from "@/types"
 
 const periods = [
-  { key: "monthly", devicesKey: "monthlyDevices", label: "月付 / 30天" },
-  { key: "quarterly", devicesKey: "quarterlyDevices", label: "季付 / 90天" },
-  { key: "half_yearly", devicesKey: "half_yearlyDevices", label: "半年付 / 180天" },
-  { key: "yearly", devicesKey: "yearlyDevices", label: "年付 / 360天" },
+  { key: "monthly", unlimitedKey: "unlimitedMonthly", devicesKey: "monthlyDevices", label: "月付 / 30天" },
+  { key: "quarterly", unlimitedKey: "unlimitedQuarterly", devicesKey: "quarterlyDevices", label: "季付 / 90天" },
+  { key: "half_yearly", unlimitedKey: "unlimitedHalfYearly", devicesKey: "half_yearlyDevices", label: "半年付 / 180天" },
+  { key: "yearly", unlimitedKey: "unlimitedYearly", devicesKey: "yearlyDevices", label: "年付 / 360天" },
 ] as const
 
 export function PricingSettingsPage() {
@@ -40,7 +40,7 @@ export function PricingSettingsPage() {
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="套餐管理" description="控制价格页显示的套餐信息、周期价格、设备数和功能列表。" actions={<Button size="sm" onClick={save}><Save />保存配置</Button>} />
+      <PageHeader title="套餐管理" description="控制固定流量与无限流量价格、设备数和功能优缺点。" actions={<Button size="sm" onClick={save}><Save />保存配置</Button>} />
       <div className="grid gap-4">
         {rows.map(row => (
           <Card key={row.group}>
@@ -60,12 +60,16 @@ export function PricingSettingsPage() {
                 {periods.map(period => (
                   <FieldGroup key={period.key} className="gap-4">
                     <h3 className="text-sm font-medium">{period.label}</h3>
-                      <Field><FieldLabel htmlFor={`${row.group}-${period.key}`}>价格</FieldLabel><Input id={`${row.group}-${period.key}`} type="number" min="0" step="0.01" value={row[period.key] ?? ""} onChange={event => update(row.group, { [period.key]: Number(event.target.value) })} /></Field>
+                      <Field><FieldLabel htmlFor={`${row.group}-${period.key}`}>固定流量价格</FieldLabel><Input id={`${row.group}-${period.key}`} type="number" min="0" step="0.01" value={row[period.key] ?? ""} onChange={event => update(row.group, { [period.key]: Number(event.target.value) })} /></Field>
+                      <Field><FieldLabel htmlFor={`${row.group}-${period.unlimitedKey}`}>无限流量价格</FieldLabel><Input id={`${row.group}-${period.unlimitedKey}`} type="number" min="0" step="0.01" value={row[period.unlimitedKey] ?? ""} onChange={event => update(row.group, { [period.unlimitedKey]: Number(event.target.value) })} /></Field>
                       <Field><FieldLabel htmlFor={`${row.group}-${period.devicesKey}`}>可绑定设备数</FieldLabel><Input id={`${row.group}-${period.devicesKey}`} type="number" min="0" step="1" value={row[period.devicesKey] ?? ""} onChange={event => update(row.group, { [period.devicesKey]: Number(event.target.value) })} /></Field>
                   </FieldGroup>
                 ))}
               </div>
-              <Field><FieldLabel htmlFor={`${row.group}-features`}>功能列表（每行一项）</FieldLabel><Textarea id={`${row.group}-features`} rows={5} value={(row.features || []).join("\n")} onChange={event => update(row.group, { features: event.target.value.split("\n") })} /></Field>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field><FieldLabel htmlFor={`${row.group}-features`}>支持的优点（✓，每行一项）</FieldLabel><Textarea id={`${row.group}-features`} rows={5} value={(row.features || []).join("\n")} onChange={event => update(row.group, { features: event.target.value.split("\n") })} /></Field>
+                <Field><FieldLabel htmlFor={`${row.group}-unavailable-features`}>不支持的缺点（×，每行一项）</FieldLabel><Textarea id={`${row.group}-unavailable-features`} rows={5} value={(row.unavailableFeatures || []).join("\n")} onChange={event => update(row.group, { unavailableFeatures: event.target.value.split("\n") })} /></Field>
+              </div>
             </CardContent>
           </Card>
         ))}

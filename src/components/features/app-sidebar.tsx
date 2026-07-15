@@ -4,13 +4,11 @@ import {
   IconDotsVertical,
   IconInnerShadowTop,
   IconLogout,
-  IconPlus,
   IconUserCircle,
-  IconUsers,
 } from "@tabler/icons-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,17 +24,16 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useData } from "@/components/features/data-provider"
 import { navItems } from "@/components/features/navigation"
-import { formatDateTime } from "@/utils"
 
 export function AppSidebar({
   onLogout,
@@ -55,39 +52,17 @@ export function AppSidebar({
             <SidebarMenuButton asChild className="data-[slot=sidebar-menu-button]:p-1.5!">
               <Link to="/dashboard">
                 <IconInnerShadowTop className="size-5!" />
-                <span className="text-base font-semibold">NEXORA</span>
+                <span className="text-lg font-semibold">NEXORA</span>
+                <Badge variant="outline" className="h-5 self-baseline border-foreground bg-foreground px-1.5 text-[10px] text-background">beta</Badge>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <SidebarSeparator />
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupContent className="flex flex-col gap-2">
-            <SidebarMenu>
-              <SidebarMenuItem className="flex items-center gap-2">
-                <SidebarMenuButton
-                  asChild
-                  tooltip="添加订阅"
-                  className="min-w-8 bg-primary text-primary-foreground duration-200 ease-linear hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
-                >
-                  <Link to="/urls">
-                    <IconPlus />
-                    <span>添加订阅</span>
-                  </Link>
-                </SidebarMenuButton>
-                <Button
-                  asChild
-                  size="icon"
-                  variant="outline"
-                  className="size-8 group-data-[collapsible=icon]:opacity-0"
-                >
-                  <Link to="/users" aria-label="客户">
-                    <IconUsers />
-                  </Link>
-                </Button>
-              </SidebarMenuItem>
-            </SidebarMenu>
+          <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map(item => (
                 <SidebarMenuItem key={item.url}>
@@ -106,13 +81,6 @@ export function AppSidebar({
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup className="mt-auto group-data-[collapsible=icon]:hidden">
-          <SidebarGroupLabel>Build</SidebarGroupLabel>
-          <SidebarGroupContent className="px-2 text-xs text-sidebar-foreground/70">
-            <div>{data.meta?.version || "--"}</div>
-            <div>{formatDateTime(data.meta?.updatedAt)}</div>
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
@@ -121,7 +89,7 @@ export function AppSidebar({
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton
                   size="lg"
-                  className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                  className="bg-sidebar-accent/70 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 >
                   <Avatar className="h-8 w-8 rounded-lg">
                     <AvatarFallback className="rounded-lg">{account.slice(0, 2).toUpperCase()}</AvatarFallback>

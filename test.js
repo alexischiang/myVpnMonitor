@@ -12,7 +12,8 @@ const {
   paymentStatusError,
   paymentAmountError,
   paymentOrderExpiresAt,
-  isPaymentOrderExpired
+  isPaymentOrderExpired,
+  normalizeSalesSettings
 } = require("./server");
 
 function near(actual, expected, tolerance = 2) {
@@ -78,6 +79,9 @@ const expiringOrder = { createdAt: "2026-07-12T00:00:00.000Z" };
 assert.strictEqual(paymentOrderExpiresAt(expiringOrder), "2026-07-12T00:15:00.000Z");
 assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T00:14:59.999Z")), false);
 assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T00:15:00.000Z")), true);
+const announcementSettings = normalizeSalesSettings({ announcements: [{ title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true }] });
+assert.deepStrictEqual(announcementSettings.announcements[0], { id: announcementSettings.announcements[0].id, title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true });
+assert.throws(() => normalizeSalesSettings({ announcements: [{ title: "", content: "内容" }] }), /不能为空/);
 
 const extracted = extractClashConfigBody("prefix\nmixed-port: 7890\nproxies:\n  - name: node\nrules:\n  - MATCH,PROXY\nextra:\n  value: ignored\n");
 assert.ok(extracted.startsWith("mixed-port: 7890"));

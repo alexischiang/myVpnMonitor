@@ -1,11 +1,15 @@
 import * as React from "react"
 import { Link } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ExternalLink, Plus, Trash2 } from "lucide-react"
+import { ExternalLink, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { CopyButton, PageHeader, StatusBadge } from "@/components/features/shared"
@@ -17,6 +21,30 @@ export function UsersPage() {
   const { users, subscriptions, reload, runAsync } = useData()
   const [editing, setEditing] = React.useState<User | null>(null)
   const [open, setOpen] = React.useState(false)
+  const [poolUser, setPoolUser] = React.useState<User | null>(null)
+  const [poolId, setPoolId] = React.useState("")
+  const [poolSaving, setPoolSaving] = React.useState(false)
+  const [allowDisabledPool, setAllowDisabledPool] = React.useState(false)
+  const currentPool = subscriptions.find(item => item.id === poolUser?.subscriptionId)
+  const selectablePools = React.useMemo(() => subscriptions
+    .filter(item => Date.parse(item.metrics?.expireAt || "") > Date.now() && (allowDisabledPool || item.enabled !== false))
+    .sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions, allowDisabledPool])
+
+  async function changePool(event: React.FormEvent) {
+    event.preventDefault()
+    if (!poolUser || !poolId || poolId === poolUser.subscriptionId) return
+    setPoolSaving(true)
+    try {
+      await postJson(`/api/users/${poolUser.id}/pool`, { subscriptionId: poolId, allowDisabled: allowDisabledPool })
+      await reload(["users"])
+      toast.success("用户订阅池已更新")
+      setPoolUser(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "换池失败")
+    } finally {
+      setPoolSaving(false)
+    }
+  }
 
   async function save(values: UserFormValues) {
     await runAsync(async () => {
@@ -59,11 +87,11 @@ export function UsersPage() {
       cell: ({ row }) => <div className="truncate font-medium">{row.original.userId || "-"}</div>,
     },
     {
-      id: "plan",
-      accessorFn: item => `${item.activeGroup || ""} ${item.vipLevel || ""}`,
-      header: DataTableColumnHeader({ title: "套餐" }),
-      meta: { label: "套餐" },
-      cell: ({ row }) => `${row.original.activeGroup || "-"} / ${row.original.vipLevel || "-"}`,
+      id: "email",
+      accessorFn: item => item.accountStatus === "active" ? item.email || "" : "未认领",
+      header: DataTableColumnHeader({ title: "邮箱" }),
+      meta: { label: "邮箱" },
+      cell: ({ row }) => row.original.accountStatus === "active" ? row.original.email || "-" : "未认领",
     },
     {
       id: "subscription",
@@ -108,6 +136,7 @@ export function UsersPage() {
               </Link>
             </Button>
             {deliveryUrl(item) && <CopyButton value={deliveryUrl(item)} label="" />}
+            <Button variant="ghost" size="sm" onClick={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false) }}><RefreshCw />换池</Button>
             <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>
               编辑
             </Button>
@@ -150,6 +179,16 @@ export function UsersPage() {
         onOpenChange={setOpen}
         onSubmit={save}
       />
+      <Dialog open={Boolean(poolUser)} onOpenChange={open => { if (!open) setPoolUser(null) }}>
+        <DialogContent>
+          <form className="grid gap-4" onSubmit={changePool}>
+            <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription>当前池：{currentPool ? `${currentPool.serviceProvider || currentPool.provider || "Provider"} - ${currentPool.email || currentPool.url} · 到期 ${formatDate(currentPool.metrics?.expireAt)}` : "未绑定"}</DialogDescription></DialogHeader>
+            <div className="grid gap-2"><Label htmlFor="manual-pool">目标订阅池</Label><Select value={poolId} onValueChange={setPoolId}><SelectTrigger id="manual-pool" className="w-full"><SelectValue placeholder="请选择订阅池" /></SelectTrigger><SelectContent>{selectablePools.map(item => <SelectItem key={item.id} value={item.id}>{item.serviceProvider || item.provider || "Provider"} - {item.email || item.url} · 到期 {formatDate(item.metrics?.expireAt)}{item.enabled === false ? " · 未启用" : ""}</SelectItem>)}</SelectContent></Select></div>
+            <div className="flex items-center gap-2"><Checkbox id="allow-disabled-pool" checked={allowDisabledPool} onCheckedChange={checked => { const enabled = checked === true; setAllowDisabledPool(enabled); if (!enabled && subscriptions.find(item => item.id === poolId)?.enabled === false) setPoolId("") }} /><Label htmlFor="allow-disabled-pool">使用未启用池</Label></div>
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose><Button type="submit" disabled={poolSaving || !poolId || poolId === poolUser?.subscriptionId}>{poolSaving ? <RefreshCw className="animate-spin" /> : <RefreshCw />}确认换池</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

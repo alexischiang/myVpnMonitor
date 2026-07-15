@@ -142,10 +142,12 @@ function DatePicker({
   id,
   value,
   onChange,
+  disabled = false,
 }: {
   id: string
   value?: string
   onChange: (value: string) => void
+  disabled?: boolean
 }) {
   const [open, setOpen] = React.useState(false)
   const selected = parseDateValue(value)
@@ -158,6 +160,7 @@ function DatePicker({
           type="button"
           variant="outline"
           className="w-full justify-between font-normal"
+          disabled={disabled}
         >
           {displayDateValue(value)}
           <CalendarIcon />
@@ -195,6 +198,7 @@ export function UserFormDialog({
   const [stepIndex, setStepIndex] = React.useState(0)
   const [errors, setErrors] = React.useState<Partial<Record<keyof UserFormValues, string>>>({})
   const [submitting, setSubmitting] = React.useState(false)
+  const purchaseManaged = user?.accountStatus === "active"
 
   React.useEffect(() => {
     if (open) {
@@ -411,6 +415,7 @@ export function UserFormDialog({
                     <Select
                       value={values.duration || ""}
                       onValueChange={value => update("duration", value)}
+                      disabled={purchaseManaged}
                     >
                       <FieldControl>
                         <SelectTrigger id="duration" className="w-full">
@@ -439,6 +444,7 @@ export function UserFormDialog({
                         id="purchasedAt"
                         value={values.purchasedAt || ""}
                         onChange={value => update("purchasedAt", value)}
+                        disabled={purchaseManaged}
                       />
                     </FieldControl>
                   </Field>
@@ -449,6 +455,7 @@ export function UserFormDialog({
                         id="expiresAt"
                         value={values.expiresAt || ""}
                         onChange={value => update("expiresAt", value)}
+                        disabled={purchaseManaged}
                       />
                     </FieldControl>
                   </Field>
@@ -460,6 +467,7 @@ export function UserFormDialog({
                         type="number"
                         min="0"
                         step="0.01"
+                        disabled={purchaseManaged}
                         value={values.actualPaid ?? ""}
                         onChange={event => update(
                           "actualPaid",

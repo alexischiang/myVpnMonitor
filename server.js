@@ -28,23 +28,8 @@ function loadLocalEnv({ override = false } = {}) {
 loadLocalEnv();
 
 const PORT = Number(process.env.PORT || 3000);
-const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "subscriptions.json");
-const DATA_DIR = path.dirname(DATA_FILE);
-const USERS_FILE = process.env.USERS_FILE || path.join(DATA_DIR, "users.json");
-const BILLS_FILE = process.env.BILLS_FILE || path.join(DATA_DIR, "bills.json");
-const VENDORS_FILE = process.env.VENDORS_FILE || path.join(DATA_DIR, "vendors.json");
-const PLACEHOLDER_NODES_FILE = process.env.PLACEHOLDER_NODES_FILE || path.join(DATA_DIR, "placeholderNodes.json");
-const EMBY_USERS_FILE = process.env.EMBY_USERS_FILE || path.join(DATA_DIR, "embyUsers.json");
-const EMBY_VENDORS_FILE = process.env.EMBY_VENDORS_FILE || path.join(DATA_DIR, "embyVendors.json");
-const PRESETS_FILE = process.env.PRESETS_FILE || path.join(DATA_DIR, "presets.json");
-const PRICING_FILE = process.env.PRICING_FILE || path.join(DATA_DIR, "pricing.json");
-const PAYMENT_ORDERS_FILE = process.env.PAYMENT_ORDERS_FILE || path.join(DATA_DIR, "paymentOrders.json");
-const ACCOUNTS_FILE = process.env.ACCOUNTS_FILE || path.join(DATA_DIR, "accounts.json");
-
-const POOL_CACHE_DIR = process.env.POOL_CACHE_DIR || path.join(DATA_DIR, "pool-cache");
-const ALERT_STATE_FILE = process.env.ALERT_STATE_FILE || path.join(DATA_DIR, "alert-state.json");
-const alertStore = notifier.createAlertStore(ALERT_STATE_FILE);
-const DATABASE_URL = process.env.DATABASE_URL || "";
+const LOCAL_DATABASE_URL = process.env.VERCEL === "1" ? "" : process.env.LOCAL_DATABASE_URL || "";
+const DATABASE_URL = LOCAL_DATABASE_URL || process.env.DATABASE_URL || "";
 const DIST_DIR = path.join(__dirname, "dist");
 const PUBLIC_DIR = fsSync.existsSync(path.join(DIST_DIR, "index.html")) ? DIST_DIR : path.join(__dirname, "public");
 const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "build-meta.json");
@@ -58,35 +43,52 @@ const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, 
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const DEFAULT_SERVICE_PROVIDER = "YKK Cloud";
 const DEFAULT_PRICING = [
-  { id: "basic", group: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", recommended: false, traffic: "每月 100G", features: ["基础线路", "流媒体支持", "在线客服"], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 39, quarterly: 109, half_yearly: 199, yearly: 369 },
-  { id: "pro", group: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], monthlyDevices: 3, quarterlyDevices: 3, half_yearlyDevices: 5, yearlyDevices: 5, monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429 },
-  { id: "ultra", group: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", recommended: false, traffic: "每月 300G", features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859 }
+  { id: "basic", group: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", recommended: false, traffic: "每月 100G", features: ["基础线路", "流媒体支持", "在线客服"], unavailableFeatures: ["稳定 GPT 解锁", "国际内网专线", "独享级带宽体验"], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 39, quarterly: 109, half_yearly: 199, yearly: 369, unlimitedMonthly: 79, unlimitedQuarterly: 219, unlimitedHalfYearly: 399, unlimitedYearly: 599 },
+  { id: "pro", group: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], unavailableFeatures: ["国际内网专线", "独享级带宽体验"], monthlyDevices: 3, quarterlyDevices: 3, half_yearlyDevices: 5, yearlyDevices: 5, monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429, unlimitedMonthly: 95, unlimitedQuarterly: 249, unlimitedHalfYearly: 439, unlimitedYearly: 679 },
+  { id: "ultra", group: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", recommended: false, traffic: "每月 300G", features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], unavailableFeatures: [], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859, unlimitedMonthly: 129, unlimitedQuarterly: 349, unlimitedHalfYearly: 659, unlimitedYearly: 1109 }
 ];
 function publicPricing() {
   return DEFAULT_PRICING.map(defaultRow => {
     const saved = pricing.find(item => item.group === defaultRow.group) || {};
-    return { ...defaultRow, ...saved, features: Array.isArray(saved.features) ? saved.features : defaultRow.features };
+    return { ...defaultRow, ...saved, features: Array.isArray(saved.features) ? saved.features : defaultRow.features, unavailableFeatures: Array.isArray(saved.unavailableFeatures) ? saved.unavailableFeatures : defaultRow.unavailableFeatures };
   });
 }
 const PAYMENT_PLAN_OPTIONS = {
-  "pro-test-001": { planId: "pro", planName: "PRO", optionLabel: "支付测试 1 元", duration: "monthly", group: "pro", fallbackPrice: 1 },
   "basic-30": { planId: "basic", planName: "BASIC", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "basic", fallbackPrice: 39 },
   "basic-90": { planId: "basic", planName: "BASIC", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "basic", fallbackPrice: 109 },
   "basic-180": { planId: "basic", planName: "BASIC", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "basic", fallbackPrice: 199 },
   "basic-360": { planId: "basic", planName: "BASIC", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "basic", fallbackPrice: 369 },
-  "basic-unlimited-180": { planId: "basic", planName: "BASIC", optionLabel: "半年付 180天 无限流量", duration: "half_yearly", group: "basic", fallbackPrice: 399 },
-  "basic-unlimited-360": { planId: "basic", planName: "BASIC", optionLabel: "年付 360天 无限流量", duration: "yearly", group: "basic", fallbackPrice: 599 },
+  "basic-unlimited-30": { planId: "basic", planName: "BASIC", optionLabel: "月付 30天 无限流量", priceKey: "unlimitedMonthly", duration: "monthly", group: "basic", unlimited: true, fallbackPrice: 79 },
+  "basic-unlimited-90": { planId: "basic", planName: "BASIC", optionLabel: "季付 90天 无限流量", priceKey: "unlimitedQuarterly", duration: "quarterly", group: "basic", unlimited: true, fallbackPrice: 219 },
+  "basic-unlimited-180": { planId: "basic", planName: "BASIC", optionLabel: "半年付 180天 无限流量", priceKey: "unlimitedHalfYearly", duration: "half_yearly", group: "basic", unlimited: true, fallbackPrice: 399 },
+  "basic-unlimited-360": { planId: "basic", planName: "BASIC", optionLabel: "年付 360天 无限流量", priceKey: "unlimitedYearly", duration: "yearly", group: "basic", unlimited: true, fallbackPrice: 599 },
   "pro-30": { planId: "pro", planName: "PRO", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "pro", fallbackPrice: 49 },
   "pro-90": { planId: "pro", planName: "PRO", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "pro", fallbackPrice: 129 },
   "pro-180": { planId: "pro", planName: "PRO", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "pro", fallbackPrice: 229 },
   "pro-360": { planId: "pro", planName: "PRO", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "pro", fallbackPrice: 429 },
-  "pro-unlimited-180": { planId: "pro", planName: "PRO", optionLabel: "半年付 180天 无限流量", duration: "half_yearly", group: "pro", fallbackPrice: 439 },
-  "pro-unlimited-360": { planId: "pro", planName: "PRO", optionLabel: "年付 360天 无限流量", duration: "yearly", group: "pro", fallbackPrice: 679 },
+  "pro-unlimited-30": { planId: "pro", planName: "PRO", optionLabel: "月付 30天 无限流量", priceKey: "unlimitedMonthly", duration: "monthly", group: "pro", unlimited: true, fallbackPrice: 95 },
+  "pro-unlimited-90": { planId: "pro", planName: "PRO", optionLabel: "季付 90天 无限流量", priceKey: "unlimitedQuarterly", duration: "quarterly", group: "pro", unlimited: true, fallbackPrice: 249 },
+  "pro-unlimited-180": { planId: "pro", planName: "PRO", optionLabel: "半年付 180天 无限流量", priceKey: "unlimitedHalfYearly", duration: "half_yearly", group: "pro", unlimited: true, fallbackPrice: 439 },
+  "pro-unlimited-360": { planId: "pro", planName: "PRO", optionLabel: "年付 360天 无限流量", priceKey: "unlimitedYearly", duration: "yearly", group: "pro", unlimited: true, fallbackPrice: 679 },
   "ultra-30": { planId: "ultra", planName: "ULTRA", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "ultra", fallbackPrice: 89 },
   "ultra-90": { planId: "ultra", planName: "ULTRA", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "ultra", fallbackPrice: 239 },
   "ultra-180": { planId: "ultra", planName: "ULTRA", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "ultra", fallbackPrice: 449 },
-  "ultra-360": { planId: "ultra", planName: "ULTRA", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "ultra", fallbackPrice: 859 }
+  "ultra-360": { planId: "ultra", planName: "ULTRA", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "ultra", fallbackPrice: 859 },
+  "ultra-unlimited-30": { planId: "ultra", planName: "ULTRA", optionLabel: "月付 30天 无限流量", priceKey: "unlimitedMonthly", duration: "monthly", group: "ultra", unlimited: true, fallbackPrice: 129 },
+  "ultra-unlimited-90": { planId: "ultra", planName: "ULTRA", optionLabel: "季付 90天 无限流量", priceKey: "unlimitedQuarterly", duration: "quarterly", group: "ultra", unlimited: true, fallbackPrice: 349 },
+  "ultra-unlimited-180": { planId: "ultra", planName: "ULTRA", optionLabel: "半年付 180天 无限流量", priceKey: "unlimitedHalfYearly", duration: "half_yearly", group: "ultra", unlimited: true, fallbackPrice: 659 },
+  "ultra-unlimited-360": { planId: "ultra", planName: "ULTRA", optionLabel: "年付 360天 无限流量", priceKey: "unlimitedYearly", duration: "yearly", group: "ultra", unlimited: true, fallbackPrice: 1109 }
 };
+if (process.env.NODE_ENV === "test") {
+  PAYMENT_PLAN_OPTIONS["pro-test-001"] = { planId: "pro", planName: "PRO", optionLabel: "支付测试 1 元", duration: "monthly", group: "pro", fallbackPrice: 1 };
+}
+const DEFAULT_PRICING_FAQS = [
+  { id: "devices", question: "“可绑定设备”是指什么？", answer: "指同一订阅可同时使用的设备数量，手机、电脑和平板等各计为一台；具体数量以所选套餐和计费周期显示为准。", enabled: true },
+  { id: "gpt", question: "哪些套餐支持 GPT 解锁？", answer: "当前 PRO 套餐明确包含稳定 GPT 解锁。其他套餐能力请以套餐卡片的功能列表为准；实际可用性可能受目标平台策略和网络环境影响。", enabled: true },
+  { id: "discount", question: "季度、半年和年度套餐如何计算优惠？", answer: "页面折扣以月付价格乘以对应月数作为基准计算，周期价格旁的百分比就是相比连续月付节省的比例。", enabled: true },
+  { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "同级同流量版本的新购会延长有效期；购买不同级别，或在同一级别切换固定/无限流量版本，会立即覆盖当前套餐。覆盖时按当前套餐剩余有效期折算实付现金价值并自动抵扣，最多抵扣至新订单 0 元，不退现、不结转余额。", enabled: true },
+  { id: "delivery", question: "支付后多久生效？可以退款吗？", answer: "支付成功并完成确认后套餐会自动生效。套餐属于即时交付的数字商品，购买后不支持退款。", enabled: true }
+];
 const DEFAULT_PAYMENT_API_BASE_URL = "http://RfBseViEKZlMAmu7ArWO.itxt002.xyz";
 const USER_GROUPS = ["basic", "pro", "ultra"];
 const AUTH_COOKIE_NAME = "xela_session";
@@ -94,7 +96,7 @@ const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto
   .createHash("sha256")
-  .update(`${ADMIN_USERNAME}:${ADMIN_PASSWORD}:${DATA_FILE}`)
+  .update(`${ADMIN_USERNAME}:${ADMIN_PASSWORD}:${DATABASE_URL}`)
   .digest("hex");
 const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 const REMEMBER_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
@@ -177,23 +179,16 @@ let embyUsers = [];
 let embyVendors = [];
 let pricing = [];
 let paymentOrders = [];
+let salesSettings = [];
 const dataStore = createDataStore({
-  dataDir: DATA_DIR,
   databaseUrl: DATABASE_URL,
-  files: {
-    subscriptions: DATA_FILE,
-    users: USERS_FILE,
-    accounts: ACCOUNTS_FILE,
-    bills: BILLS_FILE,
-    vendors: VENDORS_FILE,
-    presets: PRESETS_FILE,
-    placeholderNodes: PLACEHOLDER_NODES_FILE,
-    embyUsers: EMBY_USERS_FILE,
-    embyVendors: EMBY_VENDORS_FILE,
-    pricing: PRICING_FILE,
-    paymentOrders: PAYMENT_ORDERS_FILE
-  }
+  ssl: !LOCAL_DATABASE_URL && process.env.DATABASE_SSL === "true"
 });
+const alertStore = {
+  get: key => dataStore.getRecord("alertState", key),
+  set: (key, value) => dataStore.setRecord("alertState", key, value),
+  clear: key => dataStore.deleteRecord("alertState", key)
+};
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -216,8 +211,10 @@ async function ensureDataFile() {
   embyVendors = state.embyVendors || [];
   pricing = state.pricing || [];
   paymentOrders = state.paymentOrders || [];
+  salesSettings = state.salesSettings || [];
   lastLoadedAt = Date.now();
   if (!pricing.length) { pricing = DEFAULT_PRICING.map(r => ({ ...r })); await savePricing(); }
+  if (!salesSettings.length) { salesSettings = [initialSalesSettings()]; await saveSalesSettings(); }
   let embyVendorsMigrated = false;
   for (const v of embyVendors) {
     if (v.serverUrl && !v.servers) {
@@ -229,31 +226,6 @@ async function ensureDataFile() {
   }
   if (embyVendorsMigrated) await saveEmbyVendors();
 
-  if (state.missing.subscriptions) await saveData();
-  if (state.missing.users) await saveUsers();
-  if (state.missing.bills) {
-    bills = initialBillsFromUsers();
-    await saveBills();
-  }
-  if (state.missing.vendors) {
-    const names = [...new Set(subscriptions.map(s => s.serviceProvider).filter(Boolean))];
-    vendors = names.map((name, i) => ({ id: `vendor-${i}`, name }));
-    await saveVendors();
-  }
-  if (state.missing.placeholderNodes) await savePlaceholderNodes();
-  if (state.missing.paymentOrders) await savePaymentOrders();
-  if (state.missing.embyVendors) {
-    const urls = [...new Set(embyUsers.map(u => u.serverUrl).filter(Boolean))];
-    embyVendors = urls.map((url, i) => ({ id: `emby-vendor-${Date.now() + i}`, name: url, website: "", servers: [{ url, label: "" }], note: "" }));
-    for (const user of embyUsers) {
-      if (user.serverUrl) {
-        const vendor = embyVendors.find(v => v.servers[0].url === user.serverUrl);
-        if (vendor) user.embyVendorId = vendor.id;
-      }
-    }
-    await saveEmbyVendors();
-    if (embyUsers.length) await saveEmbyUsers();
-  }
   if (ensureSubscriptionServiceProviders()) await saveData();
   if (ensureUserRelayTokens()) await saveUsers();
 
@@ -322,6 +294,7 @@ function _doLoad() {
     embyVendors = state.embyVendors || [];
     pricing = state.pricing || [];
     paymentOrders = state.paymentOrders || [];
+    salesSettings = state.salesSettings || [];
     lastLoadedAt = Date.now();
   }).catch(error => {
     if (lastLoadedAt > 0) {
@@ -391,44 +364,27 @@ async function savePricing() {
   await dataStore.saveCollection("pricing", pricing);
 }
 
+async function saveSalesSettings() {
+  _markWritten();
+  await dataStore.saveCollection("salesSettings", salesSettings);
+}
+
 async function savePaymentOrders() {
   _markWritten();
   await dataStore.saveCollection("paymentOrders", paymentOrders);
 }
 
 
-function poolCacheUsesFiles() {
-  return dataStore.kind === "json";
-}
-
-function poolCacheFileName(item) {
-  const safeId = String(item.id || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, "_");
-  return `${safeId}.yaml`;
-}
-
 async function writePoolCachedBody(item, body) {
   const text = String(body || "");
-  if (!poolCacheUsesFiles()) {
-    return { body: text, bodyFile: null, bodyLength: text.length };
-  }
-
-  await fs.mkdir(POOL_CACHE_DIR, { recursive: true });
-  const bodyFile = poolCacheFileName(item);
-  await fs.writeFile(path.join(POOL_CACHE_DIR, bodyFile), text, "utf8");
-  return { body: null, bodyFile, bodyLength: text.length };
+  return { body: text, bodyFile: null, bodyLength: text.length };
 }
 
 async function readPoolCachedBody(item) {
   const cache = item?.cachedConfig || null;
   if (!cache) return "";
   if (typeof cache.body === "string") return cache.body;
-  if (!cache.bodyFile) return "";
-
-  try {
-    return await fs.readFile(path.join(POOL_CACHE_DIR, cache.bodyFile), "utf8");
-  } catch {
-    return "";
-  }
+  return "";
 }
 
 function relayToken() {
@@ -725,13 +681,14 @@ async function readPaymentCallback(req) {
 
 function paymentConfig() {
   loadLocalEnv({ override: false });
+  const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
   return {
     apiBaseUrl: (process.env.PAYMENT_API_BASE_URL || DEFAULT_PAYMENT_API_BASE_URL).replace(/\/+$/, ""),
     merchantId: process.env.PAYMENT_MERCHANT_ID || "",
     merchantSecret: process.env.PAYMENT_MERCHANT_SECRET || "",
     channelCode: process.env.PAYMENT_CHANNEL_CODE || "",
-    notifyUrl: process.env.PAYMENT_NOTIFY_URL || "",
-    returnUrl: process.env.PAYMENT_RETURN_URL || ""
+    notifyUrl: process.env.PAYMENT_NOTIFY_URL || (publicBaseUrl ? `${publicBaseUrl}/api/payments/callback` : ""),
+    returnUrl: process.env.PAYMENT_RETURN_URL || (publicBaseUrl ? `${publicBaseUrl}/account/payment/result` : "")
   };
 }
 
@@ -773,6 +730,9 @@ function deliveryUrlForUser(user, req) {
 function publicPaymentOrder(order) {
   if (!order) return null;
   const status = order.status === "pending" && isPaymentOrderExpired(order) ? "closed" : order.status;
+  const vipSpendAmount = Number(order.vipSpendAmount) || 0;
+  const currentVipSpend = userVipSpend(userForAccount(accounts.find(item => item.id === order.accountId)));
+  const vipSpendAfter = Number.isFinite(Number(order.vipSpendAfter)) ? Number(order.vipSpendAfter) : currentVipSpend;
   return {
     id: order.id,
     merOrderTid: order.merOrderTid,
@@ -784,8 +744,18 @@ function publicPaymentOrder(order) {
     amount: order.amount,
     originalAmount: order.originalAmount ?? order.amount,
     discountAmount: order.discountAmount || 0,
+    vipLevel: order.vipLevel || "vip1",
+    vipDiscountPercent: order.vipDiscountPercent || 0,
+    vipDiscountAmount: order.vipDiscountAmount || 0,
+    vipSpendAmount,
+    vipSpendBefore: Number.isFinite(Number(order.vipSpendBefore)) ? Number(order.vipSpendBefore) : Math.max(vipSpendAfter - vipSpendAmount, 0),
+    vipSpendAfter,
     subtotal: order.subtotal ?? order.amount,
     taxAmount: order.taxAmount || 0,
+    beforeCreditAmount: order.beforeCreditAmount ?? order.amount,
+    cashCredit: order.cashCredit || 0,
+    purchaseAction: order.purchaseAction || "initial",
+    channelCode: order.channelCode || "",
     couponCode: order.couponCode || "",
     payUrl: order.payUrl || "",
     status,
@@ -895,40 +865,204 @@ function paymentChannelCode(value) {
   return channelCode;
 }
 
-function paymentCoupons(value = process.env.PAYMENT_COUPONS || "") {
-  return new Map(String(value).split(",").map(entry => entry.split(":").map(part => part.trim())).filter(([code, percent]) => code && Number(percent) > 0 && Number(percent) < 100).map(([code, percent]) => [code.toUpperCase(), Number(percent)]));
+function legacyPaymentCoupons(value = process.env.PAYMENT_COUPONS || "") {
+  return String(value).split(",").map(entry => entry.split(":").map(part => part.trim())).filter(([code, percent]) => code && Number(percent) > 0 && Number(percent) < 100).map(([code, percent]) => ({ id: code.toUpperCase(), code: code.toUpperCase(), percent: Number(percent), enabled: true, validFrom: "", validUntil: "", applicableGroups: [], applicableDurations: [], totalLimit: 0, perAccountLimit: 0 }));
 }
 
-function paymentQuote(optionId, couponCode = "", couponConfig) {
+function initialSalesSettings() {
+  return { id: "default", coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [] };
+}
+
+function currentSalesSettings() {
+  const settings = salesSettings[0];
+  return settings ? { ...settings, announcements: settings.announcements || [] } : initialSalesSettings();
+}
+
+function paymentCoupons(value) {
+  const coupons = value === undefined ? currentSalesSettings().coupons : Array.isArray(value) ? value : legacyPaymentCoupons(value);
+  const now = Date.now();
+  return new Map(coupons.filter(item => item.enabled !== false && (!item.validFrom || Date.parse(item.validFrom) <= now) && (!item.validUntil || Date.parse(item.validUntil) > now)).map(item => [String(item.code).toUpperCase(), item]));
+}
+
+function couponUsageOrders(code) {
+  const normalizedCode = String(code || "").toUpperCase();
+  return paymentOrders.filter(order => String(order.couponCode || "").toUpperCase() === normalizedCode && (order.status === "paid" || (order.status === "pending" && !isPaymentOrderExpired(order))));
+}
+
+function validateCouponUsage(coupon, option, accountId = "") {
+  const groups = Array.isArray(coupon.applicableGroups) ? coupon.applicableGroups : [];
+  const durations = Array.isArray(coupon.applicableDurations) ? coupon.applicableDurations : [];
+  if (groups.length && !groups.includes(option.group)) throw new Error("该优惠码不适用于当前套餐。");
+  if (durations.length && !durations.includes(option.duration)) throw new Error("该优惠码不适用于当前计费周期。");
+  const orders = couponUsageOrders(coupon.code);
+  const totalLimit = Number(coupon.totalLimit) || 0;
+  if (totalLimit > 0 && orders.length >= totalLimit) throw new Error("该优惠码已领完。");
+  const perAccountLimit = Number(coupon.perAccountLimit) || 0;
+  if (accountId && perAccountLimit > 0 && orders.filter(order => order.accountId === accountId).length >= perAccountLimit) throw new Error("该账户使用此优惠码的次数已达上限。");
+}
+
+function salesSettingsWithCouponUsage() {
+  const settings = currentSalesSettings();
+  return { ...settings, coupons: settings.coupons.map(coupon => ({ ...coupon, usedCount: couponUsageOrders(coupon.code).length })) };
+}
+
+function normalizeCouponDate(value, label) {
+  if (!value) return "";
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) throw new Error(`${label}无效。`);
+  return new Date(time).toISOString();
+}
+
+function normalizeSalesSettings(payload) {
+  const coupons = Array.isArray(payload?.coupons) ? payload.coupons.slice(0, 50) : [];
+  const seenCodes = new Set();
+  const couponGroups = new Set(["basic", "pro", "ultra"]);
+  const couponDurations = new Set(["monthly", "quarterly", "half_yearly", "yearly"]);
+  const normalizedCoupons = coupons.map(item => {
+    const code = String(item.code || "").trim().toUpperCase();
+    const percent = Number(item.percent);
+    if (!/^[A-Z0-9_-]{2,32}$/.test(code)) throw new Error("优惠码需为 2-32 位字母、数字、下划线或连字符。");
+    if (!Number.isFinite(percent) || percent <= 0 || percent >= 100) throw new Error(`${code} 的折扣比例需在 1-99 之间。`);
+    if (seenCodes.has(code)) throw new Error(`优惠码 ${code} 重复。`);
+    seenCodes.add(code);
+    const validFrom = normalizeCouponDate(item.validFrom, `${code} 的生效时间`);
+    const validUntil = normalizeCouponDate(item.validUntil, `${code} 的失效时间`);
+    if (validFrom && validUntil && Date.parse(validUntil) <= Date.parse(validFrom)) throw new Error(`${code} 的失效时间需晚于生效时间。`);
+    const applicableGroups = [...new Set((Array.isArray(item.applicableGroups) ? item.applicableGroups : []).map(String).filter(value => couponGroups.has(value)))];
+    const applicableDurations = [...new Set((Array.isArray(item.applicableDurations) ? item.applicableDurations : []).map(String).filter(value => couponDurations.has(value)))];
+    const totalLimit = Number(item.totalLimit || 0);
+    const perAccountLimit = Number(item.perAccountLimit || 0);
+    if (!Number.isInteger(totalLimit) || totalLimit < 0) throw new Error(`${code} 的总数量限制需为非负整数。`);
+    if (!Number.isInteger(perAccountLimit) || perAccountLimit < 0) throw new Error(`${code} 的单账户限制需为非负整数。`);
+    return { id: String(item.id || crypto.randomUUID()), code, percent, enabled: item.enabled !== false, validFrom, validUntil, applicableGroups, applicableDurations, totalLimit, perAccountLimit };
+  });
+  const faqs = (Array.isArray(payload?.faqs) ? payload.faqs : []).slice(0, 20).map(item => {
+    const question = String(item.question || "").trim().slice(0, 120);
+    const answer = String(item.answer || "").trim().slice(0, 500);
+    if (!question || !answer) throw new Error("FAQ 的问题和回答不能为空。");
+    return { id: String(item.id || crypto.randomUUID()), question, answer, enabled: item.enabled !== false };
+  });
+  const announcements = (Array.isArray(payload?.announcements) ? payload.announcements : []).slice(0, 50).map(item => {
+    const title = String(item.title || "").trim();
+    const content = String(item.content || "").trim();
+    if (!title || !content) throw new Error("公告标题和正文不能为空。");
+    if (title.length > 80 || content.length > 2000) throw new Error("公告标题最多 80 字，正文最多 2000 字。");
+    return {
+      id: String(item.id || crypto.randomUUID()),
+      title,
+      content,
+      publishedAt: normalizeCouponDate(item.publishedAt, `${title} 的发布时间`) || new Date().toISOString(),
+      enabled: item.enabled !== false
+    };
+  });
+  return { id: "default", coupons: normalizedCoupons, faqs, announcements };
+}
+
+function publicAnnouncements() {
+  return currentSalesSettings().announcements
+    .filter(item => item.enabled !== false)
+    .slice()
+    .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+    .map(({ id, title, content, publishedAt }) => ({ id, title, content, publishedAt }));
+}
+
+const VIP_TIERS = {
+  vip1: { minSpend: 0, discountPercent: 0 },
+  vip2: { minSpend: 360, discountPercent: 5 },
+  vip3: { minSpend: 900, discountPercent: 10 }
+};
+
+function userVipSpend(user = {}) {
+  const record = user || {};
+  const vipSpend = Number(record.vipSpend);
+  return Number.isFinite(vipSpend) && vipSpend >= 0 ? vipSpend : Math.max(Number(record.actualPaid) || 0, 0);
+}
+
+function vipLevelForSpend(value) {
+  const spend = Math.max(Number(value) || 0, 0);
+  return spend >= VIP_TIERS.vip3.minSpend ? "vip3" : spend >= VIP_TIERS.vip2.minSpend ? "vip2" : "vip1";
+}
+
+function vipDiscountPercent(level) {
+  return VIP_TIERS[level]?.discountPercent || 0;
+}
+
+function userVipLevel(user = {}) {
+  return vipLevelForSpend(userVipSpend(user));
+}
+
+function userForAccount(account) {
+  if (!account) return null;
+  if (account.linkedUserId) return users.find(item => item.id === account.linkedUserId) || null;
+  const email = String(account.email || "").toLowerCase();
+  return users.find(item => String(item.email || item.userId || "").toLowerCase() === email) || null;
+}
+
+function remainingPlanCashValue(user, now = new Date()) {
+  if (!user) return 0;
+  const valuedAt = new Date(user.cashValueAt || user.purchasedAt || 0).getTime();
+  const expiresAt = new Date(user.expiresAt || 0).getTime();
+  const currentTime = now.getTime();
+  const cashValue = Math.max(Number(user.cashValue ?? user.actualPaid) || 0, 0);
+  if (!Number.isFinite(valuedAt) || !Number.isFinite(expiresAt) || expiresAt <= currentTime || expiresAt <= valuedAt) return 0;
+  return Math.round(cashValue * Math.min(Math.max((expiresAt - currentTime) / (expiresAt - valuedAt), 0), 1) * 100) / 100;
+}
+
+function paymentPurchaseTerms(user, option, beforeCreditAmount, now = new Date()) {
+  const active = user && new Date(user.expiresAt || 0).getTime() > now.getTime();
+  if (!active) return { purchaseAction: "initial", cashCredit: 0 };
+  const replaces = activeUserGroup(user) !== option.group || Boolean(user.unlimited) !== Boolean(option.unlimited);
+  const cashCredit = replaces ? Math.min(remainingPlanCashValue(user, now), beforeCreditAmount) : 0;
+  return { purchaseAction: replaces ? "replace" : "extend", cashCredit };
+}
+
+function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1", accountId = "") {
   const option = resolvePaymentPlanOption(optionId);
   const code = String(couponCode || "").trim().toUpperCase();
-  const percent = code ? paymentCoupons(couponConfig).get(code) : 0;
-  if (code && !percent) throw new Error("优惠码无效。");
+  const coupon = code ? paymentCoupons(couponConfig).get(code) : null;
+  if (code && !coupon) throw new Error("优惠码无效。");
+  if (coupon) validateCouponUsage(coupon, option, accountId);
+  const percent = Number(coupon?.percent) || 0;
   const originalAmount = Number(option.amount.toFixed(2));
-  const discountAmount = Number((originalAmount * percent / 100).toFixed(2));
-  const subtotal = Number((originalAmount - discountAmount).toFixed(2));
-  const taxAmount = Number((subtotal * 0.03).toFixed(2));
+  const originalCents = Math.round(originalAmount * 100);
+  const discountCents = Math.round(originalCents * percent / 100);
+  const discountAmount = discountCents / 100;
+  const vipPercent = vipDiscountPercent(vipLevel);
+  const afterCouponCents = originalCents - discountCents;
+  const subtotalCents = Math.round(afterCouponCents * (100 - vipPercent) / 100);
+  const vipDiscountAmount = (afterCouponCents - subtotalCents) / 100;
+  const subtotal = subtotalCents / 100;
+  const taxAmount = Math.round(subtotalCents * 0.03) / 100;
+  const beforeCreditAmount = Number((subtotal + taxAmount).toFixed(2));
+  const account = accounts.find(item => item.id === accountId);
+  const terms = paymentPurchaseTerms(userForAccount(account), option, beforeCreditAmount);
   const plan = publicPricing().find(item => item.group === option.planId) || {};
   const cycles = Object.entries(PAYMENT_PLAN_OPTIONS)
-    .filter(([, item]) => item.planId === option.planId && item.priceKey)
-    .map(([id, item]) => ({ optionId: id, label: item.optionLabel, amount: resolvePaymentPlanOption(id).amount, devices: Number(plan[`${item.priceKey}Devices`] || 0) }));
+    .filter(([, item]) => item.planId === option.planId && Boolean(item.unlimited) === Boolean(option.unlimited) && (item.priceKey || item.unlimited))
+    .map(([id, item]) => ({ optionId: id, label: item.optionLabel, amount: resolvePaymentPlanOption(id).amount, devices: Number(plan[`${item.duration}Devices`] || 0) }));
   if (!cycles.some(item => item.optionId === String(optionId))) cycles.unshift({ optionId: String(optionId), label: option.optionLabel, amount: originalAmount, devices: 0 });
   return {
     ...option,
     optionId: String(optionId),
     originalAmount,
     discountAmount,
+    vipLevel,
+    vipDiscountPercent: vipPercent,
+    vipDiscountAmount,
     subtotal,
     taxRate: 3,
     taxAmount,
-    amount: Number((subtotal + taxAmount).toFixed(2)),
+    beforeCreditAmount,
+    cashCredit: terms.cashCredit,
+    purchaseAction: terms.purchaseAction,
+    amount: Number((beforeCreditAmount - terms.cashCredit).toFixed(2)),
     couponCode: code,
     discountPercent: percent || 0,
     title: plan.title || option.planName,
     description: plan.description || "",
-    traffic: plan.traffic || "",
+    traffic: option.unlimited ? "无限流量" : plan.traffic || "",
     features: Array.isArray(plan.features) ? plan.features : [],
-    devices: option.priceKey ? Number(plan[`${option.priceKey}Devices`] || 0) : 0,
+    devices: Number(plan[`${option.duration}Devices`] || 0),
     cycles
   };
 }
@@ -938,42 +1072,54 @@ async function fulfillPaymentOrder(order, req) {
   const email = normalizePaymentEmail(order.email);
   const selectedOption = resolvePaymentPlanOption(order.optionId);
   const purchasedAt = order.paidAt || new Date().toISOString();
-  const expiresAt = calculateExpiry(purchasedAt, selectedOption.duration);
-  const recommendation = recommendSubscriptionForExpiry(expiresAt);
-  if (!recommendation.subscription) throw new Error(recommendation.reason || "No available subscription pool.");
-
   const account = order.accountId ? accounts.find(item => item.id === order.accountId) : null;
   let user = account?.linkedUserId
     ? users.find(item => item.id === account.linkedUserId)
     : users.find(item => String(item.userId || "").toLowerCase() === email);
+  if (user && !user.email) user.email = email;
+  const vipSpendBefore = userVipSpend(user);
+  const expiresAt = nextUserExpiry(user, purchasedAt, selectedOption.duration, order.purchaseAction === "replace");
+  const recommendation = recommendSubscriptionForExpiry(expiresAt);
+  if (!recommendation.subscription) throw new Error(recommendation.reason || "No available subscription pool.");
+
   if (user) {
+    const previousSubscription = subscriptions.find(item => item.id === user.subscriptionId) || null;
+    const poolChanged = previousSubscription?.id !== recommendation.subscription.id;
     const renewal = renewUser(user, {
       purchasedAt,
       actualPaid: order.amount,
+      vipSpendAmount: order.vipSpendAmount ?? order.subtotal ?? order.amount,
       duration: selectedOption.duration,
       group: selectedOption.group,
+      unlimited: Boolean(selectedOption.unlimited),
+      replace: order.purchaseAction === "replace",
       subscriptionId: recommendation.subscription.id
     });
     bills.unshift(makeBill({
       user,
-      type: "renewal",
-      amount: renewal.amount,
+      type: order.purchaseAction === "replace" ? "replacement" : "renewal",
+      paymentOrderId: order.id,
+      amount: order.amount,
+      vipSpendAmount: renewal.vipSpendAmount,
       occurredAt: renewal.renewedAt,
       duration: user.duration,
       beforeExpiresAt: renewal.beforeExpiresAt,
       afterExpiresAt: renewal.afterExpiresAt,
-      description: "Payment order renewal"
+      description: order.purchaseAction === "replace" ? "Payment order replacement" : "Payment order renewal"
     }));
     appendUserLogToUser(user, createUserLog({
       event: "user-action",
-      status: "recorded",
-      reason: "user-renewed",
+      status: poolChanged ? "switched" : "recorded",
+      reason: poolChanged ? "purchase-pool-changed" : "user-renewed",
+      fromSubscription: poolChanged ? previousSubscription : null,
       toSubscription: recommendation.subscription,
       req,
-      message: userActionMessage("user-renewed", {
+      message: userActionMessage(poolChanged ? "purchase-pool-changed" : "user-renewed", {
         amount: renewal.amount,
         duration: user.duration,
-        afterExpiresAt: renewal.afterExpiresAt
+        afterExpiresAt: renewal.afterExpiresAt,
+        fromSubscriptionLabel: subscriptionLogLabel(previousSubscription),
+        toSubscriptionLabel: subscriptionLogLabel(recommendation.subscription)
       }),
       details: {
         paymentOrderId: order.id,
@@ -994,9 +1140,13 @@ async function fulfillPaymentOrder(order, req) {
       wechatName: "",
       purchasedAt,
       actualPaid: order.amount,
+      vipSpend: order.vipSpendAmount ?? order.subtotal ?? order.amount,
       duration: selectedOption.duration,
       group: selectedOption.group,
       activeGroup: selectedOption.group,
+      unlimited: Boolean(selectedOption.unlimited),
+      cashValue: order.beforeCreditAmount ?? order.amount,
+      cashValueAt: purchasedAt,
       subscriptionId: recommendation.subscription.id,
       outputMode: "subconverter",
       blockUserinfo: true
@@ -1007,7 +1157,9 @@ async function fulfillPaymentOrder(order, req) {
     bills.unshift(makeBill({
       user,
       type: "initial",
-      amount: user.actualPaid,
+      paymentOrderId: order.id,
+      amount: order.amount,
+      vipSpendAmount: userVipSpend(user),
       occurredAt: user.purchasedAt,
       duration: user.duration,
       afterExpiresAt: user.expiresAt,
@@ -1032,6 +1184,8 @@ async function fulfillPaymentOrder(order, req) {
   }
 
   order.userId = user.id;
+  order.vipSpendBefore = vipSpendBefore;
+  order.vipSpendAfter = userVipSpend(user);
   if (account && account.linkedUserId !== user.id) {
     account.linkedUserId = user.id;
     account.updatedAt = new Date().toISOString();
@@ -1056,31 +1210,36 @@ function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
 }
 
 async function createPaymentOrder(payload, req, account) {
-  const config = requirePaymentConfig();
-  const selectedOption = paymentQuote(payload.optionId, payload.couponCode);
-  const channelCode = paymentChannelCode(payload.channelCode || config.channelCode);
+  const selectedOption = paymentQuote(payload.optionId, payload.couponCode, undefined, userVipLevel(userForAccount(account)), account.id);
+  if (paymentOrders.some(order => order.accountId === account.id && order.status === "pending" && !isPaymentOrderExpired(order))) {
+    throw new Error("已有待支付订单，请先完成或等待订单关闭。");
+  }
+  const config = selectedOption.amount > 0 ? requirePaymentConfig() : null;
+  const channelCode = config ? paymentChannelCode(payload.channelCode || config.channelCode) : "cash-credit";
   const email = normalizePaymentEmail(account.email);
-  const amount = normalizePaymentAmountForGateway(selectedOption.amount);
+  const amount = selectedOption.amount > 0 ? normalizePaymentAmountForGateway(selectedOption.amount) : "0.00";
   const id = crypto.randomUUID();
   const merOrderTid = makePaymentOrderId();
-  const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
-  if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
-  const returnUrl = paymentReturnUrl(config, req, id, payload.returnUrl);
-
-  const requestParams = {
-    mid: config.merchantId,
-    merOrderTid,
-    money: amount,
-    channelCode,
-    notifyUrl,
-    clientUserPayRemark: selectedOption.optionLabel,
-    clientUserId: String(payload.clientUserId || "").trim(),
-    clientUserName: String(payload.clientUserName || "").trim(),
-    returnUrl
-  };
-  const compactParams = compactPaymentParams(requestParams);
-  compactParams.sign = paymentSign(compactParams, config.merchantSecret);
-  const result = await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", compactParams, config);
+  let compactParams = {};
+  let result = {};
+  if (config) {
+    const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
+    if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
+    const requestParams = {
+      mid: config.merchantId,
+      merOrderTid,
+      money: amount,
+      channelCode,
+      notifyUrl,
+      clientUserPayRemark: selectedOption.optionLabel,
+      clientUserId: String(payload.clientUserId || "").trim(),
+      clientUserName: String(payload.clientUserName || "").trim(),
+      returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl)
+    };
+    compactParams = compactPaymentParams(requestParams);
+    compactParams.sign = paymentSign(compactParams, config.merchantSecret);
+    result = await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", compactParams, config);
+  }
 
   const now = new Date().toISOString();
   const order = {
@@ -1093,25 +1252,35 @@ async function createPaymentOrder(payload, req, account) {
     optionLabel: selectedOption.optionLabel,
     duration: selectedOption.duration,
     group: selectedOption.group,
+    unlimited: Boolean(selectedOption.unlimited),
     originalAmount: selectedOption.originalAmount,
     discountAmount: selectedOption.discountAmount,
+    vipLevel: selectedOption.vipLevel,
+    vipDiscountPercent: selectedOption.vipDiscountPercent,
+    vipDiscountAmount: selectedOption.vipDiscountAmount,
     subtotal: selectedOption.subtotal,
     taxAmount: selectedOption.taxAmount,
+    beforeCreditAmount: selectedOption.beforeCreditAmount,
+    cashCredit: selectedOption.cashCredit,
+    purchaseAction: selectedOption.purchaseAction,
+    vipSpendAmount: Math.round((Number(amount) / 1.03) * 100) / 100,
     couponCode: selectedOption.couponCode,
     channelCode,
     amount: Number(amount),
     email,
     accountId: account.id,
     payUrl: result.payUrl || "",
-    status: platformStatusToOrderStatus(result.payOrderStatus),
+    status: config ? platformStatusToOrderStatus(result.payOrderStatus) : "paid",
     platformStatus: result.payOrderStatus ?? null,
     requestParams: compactParams,
+    paidAt: config ? "" : now,
     createdAt: now,
     expiresAt: new Date(Date.now() + PAYMENT_ORDER_TTL_MS).toISOString(),
     updatedAt: now
   };
   paymentOrders.unshift(order);
   await savePaymentOrders();
+  if (!config) await fulfillPaymentOrder(order, req);
   return order;
 }
 
@@ -1189,6 +1358,7 @@ function normalizeSubscription(input, existing = {}) {
   const serviceProviderWebsite = normalizeServiceProviderWebsite(input, existing, serviceProvider);
   const customer = String(input.customer || existing.customer || "").trim();
   const note = String(input.note || existing.note || "").trim();
+  const enabled = input.enabled !== undefined ? Boolean(input.enabled) : existing.enabled !== false;
 
   if (!url || !/^https?:\/\//i.test(url)) throw new Error("请填写 http 或 https 开头的订阅 URL。");
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("请填写该 URL 绑定的有效邮箱。");
@@ -1202,6 +1372,7 @@ function normalizeSubscription(input, existing = {}) {
     serviceProviderWebsite,
     customer,
     note,
+    enabled,
     updatedAt: new Date().toISOString()
   };
 }
@@ -1261,6 +1432,13 @@ function calculateExpiry(purchasedAt, duration) {
   return expiresAt.toISOString();
 }
 
+function nextUserExpiry(user, purchasedAt, duration, replace = false) {
+  const purchased = new Date(purchasedAt);
+  const currentExpiry = user?.expiresAt ? new Date(user.expiresAt) : null;
+  const base = !replace && currentExpiry && currentExpiry.getTime() > purchased.getTime() ? currentExpiry : purchased;
+  return calculateExpiry(base.toISOString(), duration);
+}
+
 function startOfUtcDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
@@ -1284,7 +1462,8 @@ function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "" } = {}) 
   const dayMs = 86400000;
   let noExpiry = 0;
   let outOfWindow = 0;
-  const candidates = subscriptions
+  const eligibleSubscriptions = subscriptions.filter(item => item.enabled !== false && Date.parse(item.metrics?.expireAt || "") > Date.now());
+  const candidates = eligibleSubscriptions
     .map(item => {
       const expireTime = item.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
       if (!Number.isFinite(expireTime) || !Number.isFinite(userExpiryTime)) {
@@ -1313,11 +1492,11 @@ function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "" } = {}) 
   }
 
   if (outOfWindow > 0) {
-    const latest = subscriptionsByLatestExpiry()[0];
+    const latest = subscriptionsByLatestExpiry().find(item => eligibleSubscriptions.includes(item));
     if (latest) return { subscription: latest, reason: "用户到期日远超所有池，已推荐最晚到期的池。" };
   }
 
-  const reason = subscriptions.length === 0
+  const reason = eligibleSubscriptions.length === 0
     ? "没有可用的池 URL。"
     : noExpiry > 0
     ? "池 URL 缺少到期时间，请手动选择。"
@@ -1336,6 +1515,7 @@ function normalizeUser(input, existing = {}) {
   const duration = String(input.duration || existing.duration || "monthly").trim();
   const requestedSubscriptionId = String(input.subscriptionId || existing.subscriptionId || "").trim();
   const actualPaid = normalizePaymentAmount(input.actualPaid ?? existing.actualPaid ?? "");
+  const vipSpend = normalizePaymentAmount(input.vipSpend !== undefined ? input.vipSpend : input.actualPaid !== undefined ? input.actualPaid : existing.vipSpend ?? actualPaid ?? "");
   const calculatedExpiresAt = calculateExpiry(purchasedAt, duration);
   const requestedExpiresAt = String(input.expiresAt || "").trim();
   const requestedExpiresDate = requestedExpiresAt ? new Date(requestedExpiresAt) : null;
@@ -1352,6 +1532,11 @@ function normalizeUser(input, existing = {}) {
   if (!expiresAt) throw new Error(duration === "custom" ? "请选择到期日期。" : "购买时间格式不正确。");
   if (requestedExpiresAt && (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime()))) throw new Error("到期时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
+  if (vipSpend === null) throw new Error("请填写正确的累计消费金额。");
+
+  const cashValue = normalizePaymentAmount(input.cashValue ?? existing.cashValue ?? actualPaid);
+  const cashValueAt = String(input.cashValueAt || existing.cashValueAt || purchasedAt);
+  if (cashValue === null || Number.isNaN(new Date(cashValueAt).getTime())) throw new Error("Invalid cash value.");
 
   const group = normalizeUserGroup(input.group, existing.activeGroup || existing.group || "pro");
   const activeGroup = normalizeUserGroup(
@@ -1360,7 +1545,8 @@ function normalizeUser(input, existing = {}) {
   );
   const isBusiness = input.isBusiness !== undefined ? Boolean(input.isBusiness) : Boolean(existing.isBusiness);
   const isFamilyFriend = input.isFamilyFriend !== undefined ? Boolean(input.isFamilyFriend) : Boolean(existing.isFamilyFriend);
-  const level = actualPaid <= 300 ? "vip1" : (actualPaid <= 1000 ? "vip2" : "vip3");
+  const unlimited = input.unlimited !== undefined ? Boolean(input.unlimited) : Boolean(existing.unlimited);
+  const level = vipLevelForSpend(vipSpend);
 
   return {
     ...existing,
@@ -1373,8 +1559,12 @@ function normalizeUser(input, existing = {}) {
     purchasedAt: new Date(purchasedAt).toISOString(),
     duration,
     actualPaid,
+    vipSpend,
     group,
     activeGroup,
+    unlimited,
+    cashValue,
+    cashValueAt: new Date(cashValueAt).toISOString(),
     level,
     isBusiness,
     isFamilyFriend,
@@ -1405,10 +1595,11 @@ function billUserLabel(user) {
   return user.userId || user.wechatName || userImessageIds(user)[0] || "未知用户";
 }
 
-function makeBill({ user, type, amount, occurredAt, duration, beforeExpiresAt = null, afterExpiresAt = null, description = "" }) {
+function makeBill({ user, type, paymentOrderId = "", amount, vipSpendAmount = amount, occurredAt, duration, beforeExpiresAt = null, afterExpiresAt = null, description = "" }) {
   return {
     id: crypto.randomUUID(),
     type,
+    paymentOrderId,
     userId: user.id,
     userLabel: billUserLabel(user),
     userSnapshot: {
@@ -1419,6 +1610,7 @@ function makeBill({ user, type, amount, occurredAt, duration, beforeExpiresAt = 
       imessageIds: userImessageIds(user)
     },
     amount: Math.round(Number(amount || 0) * 100) / 100,
+    vipSpendAmount: Math.round(Number(vipSpendAmount || 0) * 100) / 100,
     occurredAt,
     duration: duration || user.duration || "",
     beforeExpiresAt,
@@ -1438,6 +1630,7 @@ function initialBillsFromUsers() {
         user,
         type: "initial",
         amount,
+        vipSpendAmount: userVipSpend(user),
         occurredAt: user.purchasedAt || user.createdAt || new Date().toISOString(),
         duration: user.duration,
         afterExpiresAt: user.expiresAt || null,
@@ -1454,7 +1647,10 @@ function reverseBill(bill) {
   const user = users.find(entry => entry.id === bill.userId);
   if (user) {
     const currentPaid = Number(user.actualPaid) || 0;
+    const currentVipSpend = userVipSpend(user);
     user.actualPaid = Math.max(Math.round((currentPaid - (Number(bill.amount) || 0)) * 100) / 100, 0);
+    user.vipSpend = Math.max(Math.round((currentVipSpend - (Number(bill.vipSpendAmount ?? bill.amount) || 0)) * 100) / 100, 0);
+    user.level = vipLevelForSpend(user.vipSpend);
     if (bill.type === "renewal" && bill.beforeExpiresAt && user.expiresAt === bill.afterExpiresAt) {
       user.expiresAt = bill.beforeExpiresAt;
     }
@@ -1477,10 +1673,17 @@ function renewUser(user, input) {
   const group = normalizeUserGroup(input.group, activeUserGroup(user));
   const currentExpiry = user.expiresAt ? new Date(user.expiresAt) : null;
   const previousPaid = Number(user.actualPaid) || 0;
+  const previousVipSpend = userVipSpend(user);
+  const vipSpendAmount = normalizePaymentAmount(input.vipSpendAmount ?? actualPaid);
+  const replace = input.replace === true;
+  const currentCashValue = remainingPlanCashValue(user, renewedAt);
+  const addedCashValue = normalizePaymentAmount(input.cashValueAmount ?? actualPaid);
 
   if (!isValidDuration(duration)) throw new Error("请选择续费时长。");
   if (Number.isNaN(renewedAt.getTime())) throw new Error("续费时间格式不正确。");
   if (actualPaid === null) throw new Error("请填写正确的实付款金额。");
+  if (vipSpendAmount === null) throw new Error("请填写正确的累计消费金额。");
+  if (addedCashValue === null) throw new Error("现金价值金额不正确。");
 
   let expiresAt;
   if (duration === "lifetime") {
@@ -1490,26 +1693,31 @@ function renewUser(user, input) {
     if (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime())) throw new Error("请选择到期日期。");
     expiresAt = requestedExpiresDate.toISOString();
   } else {
-    const baseTime = currentExpiry && currentExpiry.getTime() > renewedAt.getTime() ? currentExpiry : renewedAt;
-    expiresAt = calculateExpiry(baseTime.toISOString(), duration);
+    expiresAt = nextUserExpiry(user, renewedAt.toISOString(), duration, replace);
   }
   const subscription = subscriptions.find(item => item.id === requestedSubscriptionId);
   if (!expiresAt) throw new Error("续费时间格式不正确。");
   if (!subscription) throw new Error("请选择已添加的 URL。");
 
+  const vipSpend = Math.round((previousVipSpend + vipSpendAmount) * 100) / 100;
   Object.assign(user, {
     purchasedAt: renewedAt.toISOString(),
     duration,
     actualPaid: Math.round((previousPaid + actualPaid) * 100) / 100,
+    vipSpend,
+    level: vipLevelForSpend(vipSpend),
     group,
     activeGroup: group,
+    unlimited: input.unlimited !== undefined ? Boolean(input.unlimited) : Boolean(user.unlimited),
+    cashValue: Math.round((replace ? addedCashValue : currentCashValue + addedCashValue) * 100) / 100,
+    cashValueAt: renewedAt.toISOString(),
     subscriptionId: subscription.id,
     subscriptionToken: user.subscriptionToken || relayToken(),
     expiresAt,
     updatedAt: new Date().toISOString()
   });
 
-  return { user, amount: actualPaid, renewedAt: renewedAt.toISOString(), beforeExpiresAt: currentExpiry?.toISOString() || null, afterExpiresAt: expiresAt };
+  return { user, amount: actualPaid, vipSpendAmount, renewedAt: renewedAt.toISOString(), beforeExpiresAt: currentExpiry?.toISOString() || null, afterExpiresAt: expiresAt };
 }
 
 function parseSubscriptionUserInfo(value) {
@@ -1697,20 +1905,46 @@ function publicItem(item, customerCount = null) {
     ...item,
     serviceProvider: normalizeServiceProvider({}, item),
     customerCount: resolvedCustomerCount,
-    status: statusFor(item, resolvedCustomerCount)
+    status: item.enabled === false ? "disabled" : statusFor(item, resolvedCustomerCount)
   };
+}
+
+function publicUserLogs(user) {
+  const logs = Array.isArray(user.userLogs) ? user.userLogs : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []);
+  let currentSubscription = null;
+  return logs.slice().reverse().map(log => {
+    const target = log.toSubscriptionId || log.toSubscriptionLabel
+      ? { id: log.toSubscriptionId || "", label: log.toSubscriptionLabel || "" }
+      : null;
+    let output = log;
+    if (log.reason === "user-renewed" && !log.fromSubscriptionId && currentSubscription && target
+      && (currentSubscription.id || currentSubscription.label) !== (target.id || target.label)) {
+      output = {
+        ...log,
+        status: "switched",
+        statusText: userLogStatusText.switched,
+        reason: "purchase-pool-changed",
+        reasonText: userLogReasonText["purchase-pool-changed"],
+        fromSubscriptionId: currentSubscription.id,
+        fromSubscriptionLabel: currentSubscription.label,
+        message: `\u7eed\u8d39\u89e6\u53d1\u81ea\u52a8\u6362\u6c60\uff1a${currentSubscription.label || "-"} -> ${target.label || "-"}`
+      };
+    }
+    if (target) currentSubscription = target;
+    return output;
+  }).reverse();
 }
 
 function publicUser(user, subscriptionMap = null) {
   const subscription = subscriptionMap
     ? subscriptionMap.get(user.subscriptionId)
     : subscriptions.find(item => item.id === user.subscriptionId);
+  const linkedAccount = accounts.find(item => item.linkedUserId === user.id);
   return {
     ...user,
-    accountStatus: accounts.find(item => item.linkedUserId === user.id)?.status || "unclaimed",
-    userLogs: Array.isArray(user.userLogs)
-      ? user.userLogs
-      : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []),
+    email: user.email || linkedAccount?.email || "",
+    accountStatus: linkedAccount?.status || "unclaimed",
+    userLogs: publicUserLogs(user),
     relayPath: user.subscriptionToken ? `/sub/${user.subscriptionToken}` : "",
     subscription: subscription ? {
       id: subscription.id,
@@ -1742,6 +1976,18 @@ function publicBill(bill, userMap = null) {
     } : null,
     isReversed: Boolean(bill.reversedAt)
   };
+}
+
+function paymentOrderForBill(bill) {
+  if (bill.paymentOrderId) return paymentOrders.find(order => order.id === bill.paymentOrderId) || null;
+  return paymentOrders.find(order => order.userId === bill.userId
+    && order.status === "paid"
+    && Number(order.amount) === Number(bill.amount)
+    && order.paidAt === bill.occurredAt) || null;
+}
+
+function publicBillDetail(bill) {
+  return { ...publicBill(bill), payment: publicPaymentOrder(paymentOrderForBill(bill)) };
 }
 
 async function refreshSubscription(item) {
@@ -2187,6 +2433,7 @@ const userLogReasonText = {
   "subconverter-request-failed": "\u8ba2\u9605\u8f6c\u6362\u8bf7\u6c42\u5931\u8d25",
   "user-created": "\u7528\u6237\u521b\u5efa",
   "user-renewed": "\u7528\u6237\u7eed\u8d39",
+  "purchase-pool-changed": "\u8d2d\u4e70\u540e\u81ea\u52a8\u6362\u6c60",
   "user-updated": "\u7528\u6237\u8d44\u6599\u66f4\u65b0",
   "manual-pool-changed": "\u624b\u52a8\u6362\u6c60",
   "bill-reversed": "\u8d26\u5355\u51b2\u9500",
@@ -2436,6 +2683,7 @@ function userActionMessage(reason, details = {}) {
   if (reason === "user-renewed") {
     return `\u7eed\u8d39 ${details.duration || "-"}\uff0c\u91d1\u989d ${Number(details.amount || 0).toFixed(2)}\uff0c\u5230\u671f ${details.beforeExpiresAt || "-"} -> ${details.afterExpiresAt || "-"}`;
   }
+  if (reason === "purchase-pool-changed") return `\u7eed\u8d39\u89e6\u53d1\u81ea\u52a8\u6362\u6c60\uff1a${details.fromSubscriptionLabel || "-"} -> ${details.toSubscriptionLabel || "-"}`;
   if (reason === "manual-pool-changed") {
     const changeText = (details.changes || [])
       .map(item => `${item.label}: ${item.before || "-"} -> ${item.after || "-"}`)
@@ -2717,7 +2965,7 @@ function buildUserInfoNodes(user) {
     const remaining = Math.max(0, Math.ceil((expires.getTime() - Date.now()) / 86400000));
     nodes.push(`到期: ${expires.toISOString().slice(0, 10)} | 剩余 ${remaining} 天`);
   }
-  const level = user.level || (Number(user.actualPaid) <= 300 ? "VIP 1" : Number(user.actualPaid) <= 1000 ? "VIP 2" : "VIP 3");
+  const level = userVipLevel(user);
   const group = activeUserGroup(user).toUpperCase();
   nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group}`);
   return nodes;
@@ -3565,10 +3813,6 @@ function userTelegramStatus(user) {
   return "ok";
 }
 
-function userVipLevel(user = {}) {
-  return user.level || (Number(user.actualPaid) <= 300 ? "vip1" : Number(user.actualPaid) <= 1000 ? "vip2" : "vip3");
-}
-
 function deliveryTutorials() {
   return [
     { platform: "iOS（美区账号密码联系客服）", client: "Shadowrocket", url: "https://pan.baidu.com/s/1EfxrUShiOj5Zmx9TEMIdlw?pwd=nT76" },
@@ -3715,7 +3959,7 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 200, { ok: true, role: "admin", account: ADMIN_USERNAME }, { "set-cookie": authCookie(req, token, cookieMaxAge) });
         return;
       }
-      await loadLatestData();
+      void loadLatestData();
       const email = normalizeAccountEmail(account);
       const userAccount = accounts.find(item => item.email === email && item.status === "active");
       if (!userAccount || !verifyAccountPassword(password, userAccount.passwordHash)) {
@@ -3888,7 +4132,7 @@ async function handleApi(req, res, pathname) {
       account.passwordHash = hashAccountPassword(validateAccountPassword(payload.password));
       account.updatedAt = new Date().toISOString();
       await saveAccounts();
-      sendJson(res, 200, { ok: true });
+      sendJson(res, 200, { ok: true }, { "set-cookie": clearAuthCookie(req) });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -3905,16 +4149,21 @@ async function handleApi(req, res, pathname) {
     sendJson(res, 200, {
       email: account.email,
       createdAt: account.createdAt,
+      vipLevel: user ? userVipLevel(user) : "vip1",
+      vipSpend: user ? userVipSpend(user) : 0,
+      vipDiscountPercent: vipDiscountPercent(user ? userVipLevel(user) : "vip1"),
       subscription: user ? {
         ...publicDeliveryPayload(user, req),
         id: user.id,
         status: isUserExpired(user) ? "expired" : "active",
         purchasedAt: user.purchasedAt || "",
         duration: user.duration || "",
+        cashValue: remainingPlanCashValue(user),
         traffic: plan?.traffic || "-",
         devices: plan?.[`${user.duration}Devices`] || "-"
       } : null,
-      orders: paymentOrders.filter(item => item.accountId === account.id).slice(0, 5).map(publicPaymentOrder)
+      orders: paymentOrders.filter(item => item.accountId === account.id).slice(0, 5).map(publicPaymentOrder),
+      announcements: publicAnnouncements()
     });
     return;
   }
@@ -4058,6 +4307,12 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/public/sales-settings" && req.method === "GET") {
+    await loadLatestData();
+    sendJson(res, 200, { faqs: currentSalesSettings().faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })) });
+    return;
+  }
+
   const telegramWebhookMatch = pathname.match(/^\/api\/telegram\/webhook\/([^/]+)$/);
   if (telegramWebhookMatch && req.method === "POST") {
     const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET || INTERNAL_TOKEN;
@@ -4109,7 +4364,8 @@ async function handleApi(req, res, pathname) {
     if (!session) return;
     try {
       const payload = await readJson(req);
-      sendJson(res, 200, paymentQuote(payload.optionId, payload.couponCode));
+      const account = accountBySession(session);
+      sendJson(res, 200, paymentQuote(payload.optionId, payload.couponCode, undefined, userVipLevel(userForAccount(account)), account.id));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -4154,6 +4410,22 @@ async function handleApi(req, res, pathname) {
 
   if (!requireAdmin(req, res)) return;
   await loadLatestData();
+
+  if (pathname === "/api/sales-settings" && req.method === "GET") {
+    sendJson(res, 200, salesSettingsWithCouponUsage());
+    return;
+  }
+
+  if (pathname === "/api/sales-settings" && req.method === "PUT") {
+    try {
+      salesSettings = [normalizeSalesSettings(await readJson(req))];
+      await saveSalesSettings();
+      sendJson(res, 200, salesSettingsWithCouponUsage());
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
 
   const accountInviteMatch = pathname.match(/^\/api\/users\/([^/]+)\/account-invite$/);
   if (accountInviteMatch && req.method === "POST") {
@@ -4297,12 +4569,14 @@ async function handleApi(req, res, pathname) {
 
 
   if (pathname === "/api/users" && req.method === "GET") {
+    await loadLatestData();
     const subscriptionsById = subscriptionById();
     sendJson(res, 200, users.map(user => publicUser(user, subscriptionsById)));
     return;
   }
 
   if (pathname === "/api/bills" && req.method === "GET") {
+    await loadLatestData();
     const usersById = userById();
     sendJson(res, 200, bills.map(bill => publicBill(bill, usersById)).sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)));
     return;
@@ -4421,6 +4695,11 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
+    if (req.method === "GET") {
+      sendJson(res, 200, publicBillDetail(bill));
+      return;
+    }
+
     if (req.method === "DELETE") {
       appendBillActionLog(bill, "bill-deleted", req);
       deleteBillRecord(bill);
@@ -4524,16 +4803,18 @@ async function handleApi(req, res, pathname) {
       if (!Array.isArray(payload)) { sendJson(res, 400, { error: "payload must be an array." }); return; }
       const GROUPS = ["basic", "pro", "ultra"];
       const DURATIONS = ["monthly", "quarterly", "half_yearly", "yearly"];
+      const UNLIMITED_PRICE_KEYS = { monthly: "unlimitedMonthly", quarterly: "unlimitedQuarterly", half_yearly: "unlimitedHalfYearly", yearly: "unlimitedYearly" };
       const TEXT_FIELDS = ["name", "title", "description", "traffic"];
       for (const item of payload) {
         if (!GROUPS.includes(item.group)) continue;
         let row = pricing.find(r => r.group === item.group);
         if (!row) { row = { id: item.group, group: item.group }; pricing.push(row); }
         for (const dur of DURATIONS) {
-          if (item[dur] !== undefined) {
-            const val = Number(item[dur]);
-            if (Number.isNaN(val) || val < 0) { sendJson(res, 400, { error: `${item.group}.${dur} 价格无效。` }); return; }
-            row[dur] = val;
+          for (const priceKey of [dur, UNLIMITED_PRICE_KEYS[dur]]) {
+            if (item[priceKey] === undefined) continue;
+            const val = Number(item[priceKey]);
+            if (Number.isNaN(val) || val < 0) { sendJson(res, 400, { error: `${item.group}.${priceKey} 价格无效。` }); return; }
+            row[priceKey] = val;
           }
           const devicesKey = `${dur}Devices`;
           if (item[devicesKey] !== undefined) {
@@ -4545,6 +4826,7 @@ async function handleApi(req, res, pathname) {
         for (const field of TEXT_FIELDS) row[field] = String(item[field] ?? "").trim().slice(0, field === "description" ? 120 : 60);
         row.recommended = Boolean(item.recommended);
         row.features = Array.isArray(item.features) ? item.features.map(value => String(value).trim()).filter(Boolean).slice(0, 10) : [];
+        row.unavailableFeatures = Array.isArray(item.unavailableFeatures) ? item.unavailableFeatures.map(value => String(value).trim()).filter(Boolean).slice(0, 10) : [];
       }
       await savePricing();
       sendJson(res, 200, publicPricing());
@@ -4742,7 +5024,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -4754,6 +5036,7 @@ async function handleApi(req, res, pathname) {
 
     if (action === "renew" && req.method === "POST") {
       try {
+        if (accounts.some(account => account.linkedUserId === item.id)) throw new Error("客户中心用户只能通过自主购买变更金额和套餐时长。");
         const payload = await readJson(req);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
@@ -4803,6 +5086,39 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
+    if (action === "pool" && req.method === "POST") {
+      try {
+        const payload = await readJson(req);
+        const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || ""));
+        if (!toSubscription) throw new Error("请选择有效的订阅池。");
+        const poolExpiresAt = Date.parse(toSubscription.metrics?.expireAt || "");
+        if (!Number.isFinite(poolExpiresAt) || poolExpiresAt <= Date.now()) throw new Error("无有效到期日或已过期的订阅池不能绑定用户。");
+        if (toSubscription.enabled === false && payload.allowDisabled !== true) throw new Error("该订阅池尚未启用。");
+        const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
+        if (fromSubscription?.id !== toSubscription.id) {
+          item.subscriptionId = toSubscription.id;
+          item.updatedAt = new Date().toISOString();
+          appendUserLogToUser(item, createUserLog({
+            event: "user-action",
+            status: "recorded",
+            reason: "manual-pool-changed",
+            fromSubscription,
+            toSubscription,
+            req,
+            message: userActionMessage("manual-pool-changed", {
+              fromSubscriptionLabel: subscriptionLogLabel(fromSubscription),
+              toSubscriptionLabel: subscriptionLogLabel(toSubscription)
+            })
+          }));
+          await saveUsers();
+        }
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
     if (action) {
       sendJson(res, 405, { error: "Method not allowed." });
       return;
@@ -4814,7 +5130,15 @@ async function handleApi(req, res, pathname) {
         const linkedAccount = accounts.find(account => account.linkedUserId === item.id);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
-        Object.assign(item, normalizeUser(payload, item));
+        const normalizedPayload = linkedAccount ? {
+          ...payload,
+          duration: item.duration,
+          purchasedAt: item.purchasedAt,
+          expiresAt: item.expiresAt,
+          actualPaid: item.actualPaid,
+          vipSpend: item.vipSpend
+        } : payload;
+        Object.assign(item, normalizeUser(normalizedPayload, item));
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const after = userSnapshotForLog(item);
@@ -5119,6 +5443,7 @@ if (require.main === module) {
 }
 
 module.exports = Object.assign(requestHandler, {
+  closeDataStore: () => dataStore.close(),
   ensureDataFile,
   handleApi,
   sendJson,
@@ -5137,9 +5462,12 @@ module.exports = Object.assign(requestHandler, {
   fallbackCandidateRank,
   startOfUtcDate,
   paymentQuote,
+  vipLevelForSpend,
+  vipDiscountPercent,
   paymentChannelCode,
   paymentStatusError,
   paymentAmountError,
   paymentOrderExpiresAt,
-  isPaymentOrderExpired
+  isPaymentOrderExpired,
+  normalizeSalesSettings
 });
