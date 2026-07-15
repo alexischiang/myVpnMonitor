@@ -53,7 +53,7 @@ export function AppSidebar({
               <Link to="/dashboard">
                 <IconInnerShadowTop className="size-5!" />
                 <span className="text-lg font-semibold">NEXORA</span>
-                <Badge variant="outline" className="h-5 self-baseline border-foreground bg-foreground px-1.5 text-[10px] text-background">beta</Badge>
+                <Badge variant="outline" className="h-4 self-baseline rounded-sm border-foreground bg-foreground px-1.5 py-0 text-[11px] text-background">beta</Badge>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

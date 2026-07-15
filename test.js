@@ -4,6 +4,7 @@ const {
   parseBodyHints,
   parseAccountUnavailable,
   calculateExpiry,
+  calculateGiftExpiry,
   extractClashConfigBody,
   statusFor,
   toBytes,
@@ -58,6 +59,9 @@ assert.strictEqual(calculateExpiry("2026-06-02T00:00:00.000Z", "monthly").slice(
 assert.strictEqual(calculateExpiry("2026-07-02T00:00:00.000Z", "monthly").slice(0, 10), "2026-08-01");
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "quarterly").slice(0, 10), "2026-08-26");
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "half_yearly").slice(0, 10), "2026-11-24");
+assert.strictEqual(calculateGiftExpiry({ expiresAt: "2026-07-20T00:00:00.000Z" }, 10, new Date("2026-07-15T00:00:00.000Z")).slice(0, 10), "2026-07-30");
+assert.strictEqual(calculateGiftExpiry({ expiresAt: "2026-07-10T00:00:00.000Z" }, 10, new Date("2026-07-15T00:00:00.000Z")).slice(0, 10), "2026-07-25");
+assert.strictEqual(calculateGiftExpiry({}, 0, new Date("2026-07-15T00:00:00.000Z")), null);
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "yearly").slice(0, 10), "2027-05-23");
 const discountedQuote = paymentQuote("basic-30", "save10", "SAVE10:10");
 assert.strictEqual(discountedQuote.originalAmount, 39);

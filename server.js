@@ -1439,6 +1439,20 @@ function nextUserExpiry(user, purchasedAt, duration, replace = false) {
   return calculateExpiry(base.toISOString(), duration);
 }
 
+function calculateGiftExpiry(user, days, now = new Date()) {
+  const giftDays = Number(days);
+  if (!Number.isSafeInteger(giftDays) || giftDays <= 0) return null;
+  if (user?.duration === "lifetime") return LIFETIME_EXPIRES_AT;
+  const currentExpiry = user?.expiresAt ? new Date(user.expiresAt) : null;
+  const base = currentExpiry && !Number.isNaN(currentExpiry.getTime()) && currentExpiry > now ? currentExpiry : new Date(now);
+  base.setUTCDate(base.getUTCDate() + giftDays);
+  return base.toISOString();
+}
+
+function userHasClaimedAccount(userId) {
+  return accounts.some(account => account.linkedUserId === userId && account.status === "active");
+}
+
 function startOfUtcDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
@@ -1968,6 +1982,7 @@ function publicBill(bill, userMap = null) {
     user: user ? {
       id: user.id,
       userId: user.userId,
+      accountStatus: userHasClaimedAccount(user.id) ? "active" : "unclaimed",
       wechatName: user.wechatName || "",
       imessageId: user.imessageId || "",
       imessageIds: userImessageIds(user),
@@ -2433,6 +2448,7 @@ const userLogReasonText = {
   "subconverter-request-failed": "\u8ba2\u9605\u8f6c\u6362\u8bf7\u6c42\u5931\u8d25",
   "user-created": "\u7528\u6237\u521b\u5efa",
   "user-renewed": "\u7528\u6237\u7eed\u8d39",
+  "user-gifted": "\u8d60\u9001\u65f6\u957f",
   "purchase-pool-changed": "\u8d2d\u4e70\u540e\u81ea\u52a8\u6362\u6c60",
   "user-updated": "\u7528\u6237\u8d44\u6599\u66f4\u65b0",
   "manual-pool-changed": "\u624b\u52a8\u6362\u6c60",
@@ -2683,6 +2699,7 @@ function userActionMessage(reason, details = {}) {
   if (reason === "user-renewed") {
     return `\u7eed\u8d39 ${details.duration || "-"}\uff0c\u91d1\u989d ${Number(details.amount || 0).toFixed(2)}\uff0c\u5230\u671f ${details.beforeExpiresAt || "-"} -> ${details.afterExpiresAt || "-"}`;
   }
+  if (reason === "user-gifted") return `\u8d60\u9001 ${details.days || 0} \u5929\uff0c\u5230\u671f ${details.beforeExpiresAt || "-"} -> ${details.afterExpiresAt || "-"}`;
   if (reason === "purchase-pool-changed") return `\u7eed\u8d39\u89e6\u53d1\u81ea\u52a8\u6362\u6c60\uff1a${details.fromSubscriptionLabel || "-"} -> ${details.toSubscriptionLabel || "-"}`;
   if (reason === "manual-pool-changed") {
     const changeText = (details.changes || [])
@@ -4562,7 +4579,8 @@ async function handleApi(req, res, pathname) {
     });
     sendJson(res, 200, {
       subscription: recommendation.subscription ? publicItem(recommendation.subscription) : null,
-      reason: recommendation.reason
+      reason: recommendation.reason,
+      expiresAt
     });
     return;
   }
@@ -4638,6 +4656,10 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 400, { error: "不支持的批量操作。" });
         return;
       }
+      if (ids.some(id => {
+        const bill = bills.find(entry => entry.id === id);
+        return bill && userHasClaimedAccount(bill.userId);
+      })) throw new Error("已认领账户的账单不能冲正或删除。");
 
       let changed = 0;
       for (const id of ids) {
@@ -4674,6 +4696,10 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === "POST") {
+      if (userHasClaimedAccount(bill.userId)) {
+        sendJson(res, 400, { error: "已认领账户的账单不能冲正。" });
+        return;
+      }
       const wasReversed = Boolean(bill.reversedAt);
       reverseBill(bill);
       if (!wasReversed) appendBillActionLog(bill, "bill-reversed", req);
@@ -4701,6 +4727,10 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === "DELETE") {
+      if (userHasClaimedAccount(bill.userId)) {
+        sendJson(res, 400, { error: "已认领账户的账单不能删除。" });
+        return;
+      }
       appendBillActionLog(bill, "bill-deleted", req);
       deleteBillRecord(bill);
       await saveBills();
@@ -5024,7 +5054,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -5036,7 +5066,7 @@ async function handleApi(req, res, pathname) {
 
     if (action === "renew" && req.method === "POST") {
       try {
-        if (accounts.some(account => account.linkedUserId === item.id)) throw new Error("客户中心用户只能通过自主购买变更金额和套餐时长。");
+        if (userHasClaimedAccount(item.id)) throw new Error("已认领用户只能通过自主购买变更付款信息。");
         const payload = await readJson(req);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
@@ -5086,6 +5116,47 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
+    if (action === "gift" && req.method === "POST") {
+      try {
+        const payload = await readJson(req);
+        const expiresAt = calculateGiftExpiry(item, payload.days);
+        if (!expiresAt) throw new Error("请输入正确的赠送天数。");
+        const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id });
+        if (payload.preview === true) {
+          sendJson(res, 200, {
+            expiresAt,
+            subscription: recommendation.subscription ? publicItem(recommendation.subscription) : null,
+            reason: recommendation.reason
+          });
+          return;
+        }
+        const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || recommendation.subscription?.id || ""));
+        if (!toSubscription) throw new Error("请选择有效的订阅池。");
+        const poolExpiresAt = Date.parse(toSubscription.metrics?.expireAt || "");
+        if (toSubscription.enabled === false || !Number.isFinite(poolExpiresAt) || poolExpiresAt <= Date.now()) throw new Error("请选择已启用且未过期的订阅池。");
+        const beforeExpiresAt = item.expiresAt || null;
+        const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
+        item.expiresAt = expiresAt;
+        item.subscriptionId = toSubscription.id;
+        item.updatedAt = new Date().toISOString();
+        appendUserLogToUser(item, createUserLog({
+          event: "user-action",
+          status: "recorded",
+          reason: "user-gifted",
+          fromSubscription,
+          toSubscription,
+          req,
+          message: userActionMessage("user-gifted", { days: Number(payload.days), beforeExpiresAt, afterExpiresAt: expiresAt }),
+          details: { days: Number(payload.days), beforeExpiresAt, afterExpiresAt: expiresAt }
+        }));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
     if (action === "pool" && req.method === "POST") {
       try {
         const payload = await readJson(req);
@@ -5127,18 +5198,11 @@ async function handleApi(req, res, pathname) {
     if (req.method === "PUT") {
       try {
         const payload = await readJson(req);
+        if (userHasClaimedAccount(item.id)) throw new Error("已认领账户仅允许换池或赠送时长。");
         const linkedAccount = accounts.find(account => account.linkedUserId === item.id);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
-        const normalizedPayload = linkedAccount ? {
-          ...payload,
-          duration: item.duration,
-          purchasedAt: item.purchasedAt,
-          expiresAt: item.expiresAt,
-          actualPaid: item.actualPaid,
-          vipSpend: item.vipSpend
-        } : payload;
-        Object.assign(item, normalizeUser(normalizedPayload, item));
+        Object.assign(item, normalizeUser(payload, item));
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const after = userSnapshotForLog(item);
@@ -5177,6 +5241,10 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === "DELETE") {
+      if (userHasClaimedAccount(item.id)) {
+        sendJson(res, 400, { error: "已认领账户不能删除。" });
+        return;
+      }
       users = users.filter(entry => entry.id !== id);
       await saveUsers();
       sendJson(res, 200, { ok: true });
@@ -5451,6 +5519,7 @@ module.exports = Object.assign(requestHandler, {
   parseBodyHints,
   parseAccountUnavailable,
   calculateExpiry,
+  calculateGiftExpiry,
   extractClashConfigBody,
   statusFor,
   toBytes,

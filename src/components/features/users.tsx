@@ -1,13 +1,15 @@
 import * as React from "react"
 import { Link } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ExternalLink, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { ExternalLink, Gift, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
@@ -17,18 +19,35 @@ import { UserFormDialog, type UserFormValues } from "@/components/features/user-
 import type { User } from "@/types"
 import { absoluteUrl, formatDate, formatMoney, userStatus } from "@/utils"
 
+type GiftPreview = {
+  expiresAt: string
+  subscription: User["subscription"] | null
+  reason?: string
+}
+
 export function UsersPage() {
-  const { users, subscriptions, reload, runAsync } = useData()
+  const { users, subscriptions, pricing, reload, runAsync } = useData()
   const [editing, setEditing] = React.useState<User | null>(null)
   const [open, setOpen] = React.useState(false)
   const [poolUser, setPoolUser] = React.useState<User | null>(null)
   const [poolId, setPoolId] = React.useState("")
   const [poolSaving, setPoolSaving] = React.useState(false)
   const [allowDisabledPool, setAllowDisabledPool] = React.useState(false)
+  const [giftUser, setGiftUser] = React.useState<User | null>(null)
+  const [giftDays, setGiftDays] = React.useState("")
+  const [giftExpiresAt, setGiftExpiresAt] = React.useState("")
+  const [giftPoolId, setGiftPoolId] = React.useState("")
+  const [giftMessage, setGiftMessage] = React.useState("")
+  const [giftError, setGiftError] = React.useState("")
+  const [giftPreviewing, setGiftPreviewing] = React.useState(false)
+  const [giftSaving, setGiftSaving] = React.useState(false)
   const currentPool = subscriptions.find(item => item.id === poolUser?.subscriptionId)
   const selectablePools = React.useMemo(() => subscriptions
     .filter(item => Date.parse(item.metrics?.expireAt || "") > Date.now() && (allowDisabledPool || item.enabled !== false))
     .sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions, allowDisabledPool])
+  const giftPools = React.useMemo(() => subscriptions
+    .filter(item => item.enabled !== false && Date.parse(item.metrics?.expireAt || "") > Date.now())
+    .sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions])
 
   async function changePool(event: React.FormEvent) {
     event.preventDefault()
@@ -43,6 +62,52 @@ export function UsersPage() {
       toast.error(error instanceof Error ? error.message : "换池失败")
     } finally {
       setPoolSaving(false)
+    }
+  }
+
+  function openGift(item: User) {
+    setGiftUser(item)
+    setGiftDays("")
+    setGiftExpiresAt("")
+    setGiftPoolId("")
+    setGiftMessage("")
+    setGiftError("")
+  }
+
+  async function previewGift() {
+    if (!giftUser) return
+    const days = Number(giftDays)
+    if (!Number.isSafeInteger(days) || days <= 0) {
+      setGiftError("请输入正确的赠送天数")
+      return
+    }
+    setGiftPreviewing(true)
+    setGiftError("")
+    try {
+      const preview = await postJson<GiftPreview>(`/api/users/${giftUser.id}/gift`, { days, preview: true })
+      setGiftExpiresAt(preview.expiresAt)
+      setGiftPoolId(preview.subscription?.id || "")
+      setGiftMessage(preview.subscription ? "已根据赠送后的到期日推荐订阅池，可手动更换。" : preview.reason || "暂无推荐订阅池，请手动选择。")
+    } catch (error) {
+      setGiftError(error instanceof Error ? error.message : "计算赠送时长失败")
+    } finally {
+      setGiftPreviewing(false)
+    }
+  }
+
+  async function submitGift(event: React.FormEvent) {
+    event.preventDefault()
+    if (!giftUser || !giftExpiresAt || !giftPoolId) return
+    setGiftSaving(true)
+    try {
+      await postJson(`/api/users/${giftUser.id}/gift`, { days: Number(giftDays), subscriptionId: giftPoolId })
+      await reload(["users"])
+      toast.success("赠送时长已生效")
+      setGiftUser(null)
+    } catch (error) {
+      setGiftError(error instanceof Error ? error.message : "赠送时长失败")
+    } finally {
+      setGiftSaving(false)
     }
   }
 
@@ -129,20 +194,18 @@ export function UsersPage() {
       cell: ({ row }) => {
         const item = row.original
         return (
-          <div className="flex items-center gap-1">
-            <Button asChild variant="ghost" size="icon">
+          <div className="flex w-max items-center gap-2">
+            <Button asChild variant="outline" size="sm">
               <Link to={`/users/detail/${item.id}`} aria-label="查看用户">
                 <ExternalLink />
+                详情
               </Link>
             </Button>
             {deliveryUrl(item) && <CopyButton value={deliveryUrl(item)} label="" />}
-            <Button variant="ghost" size="sm" onClick={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false) }}><RefreshCw />换池</Button>
-            <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>
-              编辑
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => remove(item)} aria-label="删除用户">
-              <Trash2 />
-            </Button>
+            <Button variant="outline" size="sm" onClick={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false) }}><RefreshCw />换池</Button>
+            <Button variant="outline" size="sm" onClick={() => openGift(item)}><Gift />赠送</Button>
+            {item.accountStatus !== "active" ? <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>编辑</Button> : null}
+            {item.accountStatus !== "active" ? <Button variant="ghost" size="icon" onClick={() => remove(item)} aria-label="删除用户"><Trash2 /></Button> : null}
           </div>
         )
       },
@@ -176,6 +239,7 @@ export function UsersPage() {
         open={open}
         user={editing}
         subscriptions={subscriptions}
+        pricing={pricing}
         onOpenChange={setOpen}
         onSubmit={save}
       />
@@ -186,6 +250,29 @@ export function UsersPage() {
             <div className="grid gap-2"><Label htmlFor="manual-pool">目标订阅池</Label><Select value={poolId} onValueChange={setPoolId}><SelectTrigger id="manual-pool" className="w-full"><SelectValue placeholder="请选择订阅池" /></SelectTrigger><SelectContent>{selectablePools.map(item => <SelectItem key={item.id} value={item.id}>{item.serviceProvider || item.provider || "Provider"} - {item.email || item.url} · 到期 {formatDate(item.metrics?.expireAt)}{item.enabled === false ? " · 未启用" : ""}</SelectItem>)}</SelectContent></Select></div>
             <div className="flex items-center gap-2"><Checkbox id="allow-disabled-pool" checked={allowDisabledPool} onCheckedChange={checked => { const enabled = checked === true; setAllowDisabledPool(enabled); if (!enabled && subscriptions.find(item => item.id === poolId)?.enabled === false) setPoolId("") }} /><Label htmlFor="allow-disabled-pool">使用未启用池</Label></div>
             <DialogFooter><DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose><Button type="submit" disabled={poolSaving || !poolId || poolId === poolUser?.subscriptionId}>{poolSaving ? <RefreshCw className="animate-spin" /> : <RefreshCw />}确认换池</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(giftUser)} onOpenChange={open => { if (!open) setGiftUser(null) }}>
+        <DialogContent>
+          <form className="grid gap-4" onSubmit={submitGift}>
+            <DialogHeader><DialogTitle>赠送时长</DialogTitle><DialogDescription>{giftUser?.userId || giftUser?.email || "用户"} · 当前到期 {formatDate(giftUser?.expiresAt)}</DialogDescription></DialogHeader>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="gift-days">赠送天数</FieldLabel>
+                <Input id="gift-days" type="number" min="1" step="1" value={giftDays} onChange={event => { setGiftDays(event.target.value); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }} />
+                <FieldError>{giftError}</FieldError>
+              </Field>
+              <Field>
+                <FieldLabel>快捷选择</FieldLabel>
+                <div className="flex flex-wrap gap-2">
+                  {[7, 15, 30].map(days => <Button key={days} type="button" variant={giftDays === String(days) ? "default" : "outline"} size="sm" onClick={() => { setGiftDays(String(days)); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }}>{days} 天</Button>)}
+                </div>
+              </Field>
+              {giftExpiresAt ? <Field><FieldLabel htmlFor="gift-expires-at">赠送后到期日</FieldLabel><Input id="gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /></Field> : null}
+              {giftExpiresAt ? <Field><FieldLabel htmlFor="gift-pool">订阅池 URL</FieldLabel><Select value={giftPoolId} onValueChange={setGiftPoolId}><SelectTrigger id="gift-pool" className="w-full"><SelectValue placeholder="请选择订阅池" /></SelectTrigger><SelectContent>{giftPools.map(item => <SelectItem key={item.id} value={item.id}>{item.serviceProvider || item.provider || "Provider"} - {item.email || item.url} · 到期 {formatDate(item.metrics?.expireAt)}</SelectItem>)}</SelectContent></Select><FieldDescription>{giftMessage}</FieldDescription></Field> : null}
+            </FieldGroup>
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose>{giftExpiresAt ? <Button type="submit" disabled={giftSaving || !giftPoolId}>{giftSaving ? <Loader2 className="animate-spin" /> : <Gift />}{giftSaving ? "赠送中..." : "确认赠送"}</Button> : <Button type="button" onClick={previewGift} disabled={giftPreviewing}>{giftPreviewing ? <Loader2 className="animate-spin" /> : <Gift />}{giftPreviewing ? "计算中..." : "推荐订阅池"}</Button>}</DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

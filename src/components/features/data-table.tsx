@@ -139,7 +139,7 @@ export function DataTable<TData, TValue>({
         </div>
       </div>
       <div className="w-full overflow-x-auto rounded-lg border">
-        <Table className="min-w-full table-fixed">
+        <Table className="min-w-full table-auto">
           <colgroup>
             {table.getVisibleLeafColumns().map((column, index) => (
               <col
