@@ -5,6 +5,7 @@ import { ArrowLeft, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, fetchJson, postJson } from "@/api"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -17,6 +18,7 @@ import { billTypeLabels, durationLabels, formatDate, formatDateTime, formatMoney
 
 export function BillsPage() {
   const { bills, reload, runAsync } = useData()
+  const [pendingAction, setPendingAction] = React.useState<{ item: Bill; action: "reverse" | "delete" } | null>(null)
 
   async function mutate(item: Bill, action: "reverse" | "delete") {
     await runAsync(async () => {
@@ -25,6 +27,12 @@ export function BillsPage() {
       await reload(["bills", "users"])
       toast.success(action === "delete" ? "账单已删除" : "账单已冲正")
     }, "处理账单...")
+  }
+
+  async function confirmAction() {
+    if (!pendingAction) return
+    await mutate(pendingAction.item, pendingAction.action)
+    setPendingAction(null)
   }
 
   const columns = React.useMemo<ColumnDef<Bill>[]>(() => [
@@ -73,13 +81,13 @@ export function BillsPage() {
         const item = row.original
         return (
           <div className="flex items-center gap-1">
-            <Button asChild variant="ghost" size="sm"><Link to={`/bills/${item.id}`}>查看</Link></Button>
+            <Button asChild variant="outline" size="sm"><Link to={`/bills/${item.id}`}>查看</Link></Button>
             {item.user?.accountStatus !== "active" && !item.reversedAt && (
-              <Button variant="ghost" size="sm" onClick={() => mutate(item, "reverse")}>
-                冲正
+              <Button variant="outline" size="sm" className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setPendingAction({ item, action: "reverse" })}>
+                撤销
               </Button>
             )}
-            {item.user?.accountStatus !== "active" ? <Button variant="ghost" size="sm" onClick={() => mutate(item, "delete")}>删除</Button> : null}
+            {item.user?.accountStatus !== "active" ? <Button variant="destructive" size="sm" onClick={() => setPendingAction({ item, action: "delete" })}>删除</Button> : null}
           </div>
         )
       },
@@ -98,6 +106,15 @@ export function BillsPage() {
         searchPlaceholder="搜索账单..."
         emptyTitle="暂无账单"
       />
+      <AlertDialog open={Boolean(pendingAction)} onOpenChange={open => { if (!open) setPendingAction(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认{pendingAction?.action === "delete" ? "删除" : "撤销"}账单？</AlertDialogTitle>
+            <AlertDialogDescription>{pendingAction?.action === "delete" ? "删除后无法恢复。" : "撤销后将冲正该账单，并同步扣减用户消费金额。"}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction className="bg-destructive/10 text-destructive hover:bg-destructive/20" onClick={() => void confirmAction()}>确认{pendingAction?.action === "delete" ? "删除" : "撤销"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -146,7 +163,10 @@ export function BillDetailPage() {
             <DetailRow label="优惠后小计" value={formatMoney(payment.subtotal)} />
             <DetailRow label={`税费（${payment.taxRate}%）`} value={formatMoney(payment.taxAmount)} />
             <DetailRow label="剩余现金价值抵扣" value={`-${formatMoney(payment.cashCredit)}`} />
-            <DetailRow label="实际付款" value={<strong>{formatMoney(payment.amount)}</strong>} />
+            {payment.walletGiftAmount ? <DetailRow label="赠送余额支付" value={formatMoney(payment.walletGiftAmount)} /> : null}
+            {payment.walletCashAmount ? <DetailRow label="充值余额支付" value={formatMoney(payment.walletCashAmount)} /> : null}
+            <DetailRow label="第三方实付" value={formatMoney(payment.amount)} />
+            <DetailRow label="订单支付合计" value={<strong>{formatMoney(payment.totalAmount ?? payment.amount)}</strong>} />
           </TableBody></Table> : <EmptyState title="无支付订单信息" description="该账单由后台手工创建，未记录支付渠道和折扣。" />}</CardContent>
         </Card>
       </div>

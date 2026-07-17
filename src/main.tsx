@@ -16,11 +16,12 @@ import { SubscriptionDetailPage, UserDetailPage } from "@/components/features/de
 import { EmbyPage } from "@/components/features/emby"
 import { PricingSettingsPage } from "@/components/features/pricing-settings"
 import { SalesSettingsPage } from "@/components/features/sales-settings"
+import { StatusPage } from "@/components/features/status-page"
 import { SubconverterPage } from "@/components/features/subconverter"
 import { CheckoutPage, DeliveryPage, PricingPage } from "@/components/features/public-pages"
 import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from "@/components/features/auth-pages"
 import { AccountShell } from "@/components/features/account-shell"
-import { AccountDocsPage, AccountOrderDetailPage, AccountOrdersPage, AccountOverviewPage, AccountSettingsPage, PaymentResultPage } from "@/components/features/account-pages"
+import { AccountDocsPage, AccountOrderDetailPage, AccountOrdersPage, AccountOverviewPage, AccountReferralPage, AccountSettingsPage, AccountWalletPage, PaymentResultPage } from "@/components/features/account-pages"
 
 function ProtectedApp() {
   return (
@@ -32,7 +33,10 @@ function ProtectedApp() {
 
 function ScrollToTop() {
   const { pathname, search } = useLocation()
-  useEffect(() => { window.scrollTo(0, 0) }, [pathname, search])
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => document.scrollingElement?.scrollTo({ top: 0, left: 0 }))
+    return () => window.cancelAnimationFrame(frame)
+  }, [pathname, search])
   return null
 }
 
@@ -57,6 +61,8 @@ function App() {
               <Route path="plans" element={<PricingPage />} />
               <Route path="plans/checkout" element={<CheckoutPage />} />
               <Route path="orders" element={<AccountOrdersPage />} />
+              <Route path="wallet" element={<AccountWalletPage />} />
+              <Route path="referrals" element={<AccountReferralPage />} />
               <Route path="orders/:id" element={<AccountOrderDetailPage />} />
               <Route path="settings" element={<AccountSettingsPage />} />
               <Route path="profile" element={<Navigate to="/account/settings" replace />} />
@@ -76,11 +82,11 @@ function App() {
               <Route path="sales-settings" element={<SalesSettingsPage />} />
               <Route path="emby" element={<EmbyPage />} />
               <Route path="subconverter" element={<SubconverterPage />} />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
+            <Route path="*" element={<StatusPage code="404" title="页面不存在" description="没有找到你访问的页面，它可能已被移动或删除。" />} />
           </Routes>
         </BrowserRouter>
-        <Toaster position="bottom-right" />
+        <Toaster position="bottom-right" richColors />
       </TooltipProvider>
     </ThemeProvider>
   )

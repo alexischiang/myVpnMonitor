@@ -19,9 +19,9 @@ export function PageHeader({ title, description, actions }: { title: string; des
   )
 }
 
-export function StatusBadge({ status }: { status?: string }) {
+export function StatusBadge({ status, children, className = "", style }: { status?: string; children?: React.ReactNode; className?: string; style?: React.CSSProperties }) {
   const variant = status === "ok" ? "default" : status === "expired" || status === "invalid" || status === "error" || status === "depleted" ? "destructive" : "secondary"
-  return <Badge variant={variant} className={status === "ok" ? "bg-emerald-600 text-[10px] text-white" : "text-[10px]"}>{statusLabels[status || "unknown"] || status || "未知"}</Badge>
+  return <Badge variant={variant} className={`${status === "ok" ? "rounded-sm bg-emerald-600 text-[10px] font-semibold text-white" : "rounded-sm text-[10px] font-semibold"} ${className}`} style={style}>{children ?? (statusLabels[status || "unknown"] || status || "未知")}</Badge>
 }
 
 export function EmptyState({ title = "暂无数据", description }: { title?: string; description?: string }) {

@@ -1,21 +1,25 @@
 import * as React from "react"
 import { Link } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ExternalLink, Gift, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, Gift, Loader2, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { CopyButton, PageHeader, StatusBadge } from "@/components/features/shared"
 import { UserFormDialog, type UserFormValues } from "@/components/features/user-form-dialog"
+import { VipBadge } from "@/components/features/vip-badge"
 import type { User } from "@/types"
 import { absoluteUrl, formatDate, formatMoney, userStatus } from "@/utils"
 
@@ -29,6 +33,7 @@ export function UsersPage() {
   const { users, subscriptions, pricing, reload, runAsync } = useData()
   const [editing, setEditing] = React.useState<User | null>(null)
   const [open, setOpen] = React.useState(false)
+  const [deleteUser, setDeleteUser] = React.useState<User | null>(null)
   const [poolUser, setPoolUser] = React.useState<User | null>(null)
   const [poolId, setPoolId] = React.useState("")
   const [poolSaving, setPoolSaving] = React.useState(false)
@@ -130,17 +135,28 @@ export function UsersPage() {
     }, "保存用户...")
   }
 
-  async function remove(item: User) {
-    if (!confirm("确认删除该用户？")) return
+  function remove(item: User) {
+    setDeleteUser(item)
+  }
+
+  async function confirmRemove() {
+    if (!deleteUser) return
+    const item = deleteUser
     await runAsync(async () => {
       await deleteJson(`/api/users/${item.id}`)
       await reload(["users", "bills"])
       toast.success("用户已删除")
     }, "删除用户...")
+    setDeleteUser(null)
   }
 
   function deliveryUrl(user: User) {
     return user.deliveryToken ? absoluteUrl(`/delivery/${user.deliveryToken}`) : ""
+  }
+
+  function renderMobileUser(item: User) {
+    const claimed = item.accountStatus === "active"
+    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="truncate">{claimed ? item.email || item.userId || "-" : item.userId || "-"}</span><StatusBadge status={userStatus(item)} /><VipBadge level={item.vipLevel} /></ItemTitle><ItemDescription>到期 {formatDate(item.expiresAt)} · 总消费 {formatMoney(item.actualPaid)}</ItemDescription></ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}<DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem><DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
   }
 
   const columns = React.useMemo<ColumnDef<User>[]>(() => [
@@ -231,6 +247,7 @@ export function UsersPage() {
         columns={columns}
         data={users}
         searchKey="user"
+        renderMobileItem={renderMobileUser}
         searchPlaceholder="搜索用户..."
         emptyTitle="暂无用户"
       />
@@ -243,6 +260,12 @@ export function UsersPage() {
         onOpenChange={setOpen}
         onSubmit={save}
       />
+      <AlertDialog open={Boolean(deleteUser)} onOpenChange={open => { if (!open) setDeleteUser(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>确认删除用户？</AlertDialogTitle><AlertDialogDescription>删除后无法恢复，相关用户记录也将不再显示。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction className="bg-destructive/10 text-destructive hover:bg-destructive/20" onClick={() => void confirmRemove()}>确认删除</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <Dialog open={Boolean(poolUser)} onOpenChange={open => { if (!open) setPoolUser(null) }}>
         <DialogContent>
           <form className="grid gap-4" onSubmit={changePool}>

@@ -1,9 +1,9 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, Clock3, Copy, ExternalLink, Eye, Loader2, RefreshCw } from "lucide-react"
+import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Loader2, Percent, RefreshCw, Users, WalletCards, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
-import { clearJsonCache, fetchCachedJson, fetchJson, getCachedJson, putJson } from "@/api"
+import { clearJsonCache, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -24,10 +24,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { VipBadge } from "@/components/features/vip-badge"
 import { formatDate, formatDateTime, formatMoney } from "@/utils"
 
-type PaymentOrder = { id: string; merOrderTid: string; planName: string; optionLabel: string; amount: number; status: string; statusText: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
+type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge"; planName: string; optionLabel: string; amount: number; totalAmount?: number; walletAmount?: number; status: string; statusText: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
 type Subscription = { status: string; activeGroup: string; expiresAt: string; purchasedAt: string; duration: string; cashValue: number; traffic: string; devices: number | string; subscriptionUrl: string; vipLevel?: string }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
-type Overview = { email: string; createdAt: string; vipLevel: string; vipSpend: number; vipDiscountPercent: number; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
+type Overview = { email: string; createdAt: string; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
+type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; vipDelta: number; balance: number; description: string; createdAt: string }
+type WalletData = { balance: number; cashBalance: number; giftBalance: number; availableBalance: number; heldBalance: number; vipSpend: number; entries: WalletEntry[] }
 
 const clientGuides = [
   { client: "Shadowrocket", platform: "iPhone / iPad", resources: [{ label: "点击查看教程👉https://pan.baidu.com/s/1EfxrUShiOj5Zmx9TEMIdlw?pwd=nT76", href: "https://pan.baidu.com/s/1EfxrUShiOj5Zmx9TEMIdlw?pwd=nT76", suffix: " [美区账号请联系右下角客服获取]" }] },
@@ -213,6 +215,102 @@ export function AccountDocsPage() {
   )
 }
 
+export function AccountWalletPage() {
+  const navigate = useNavigate()
+  const { data, error } = useCachedAccountData<WalletData>("/api/account/wallet")
+  const [amount, setAmount] = React.useState("")
+  const [paying, setPaying] = React.useState("")
+
+  async function recharge(channelCode: "100" | "200") {
+    const value = Number(amount)
+    if (!/^\d+(\.\d{1,2})?$/.test(amount.trim()) || value <= 0 || value > 10000) {
+      toast.error("请输入 0.01 至 10,000.00 元，最多两位小数")
+      return
+    }
+    const paymentWindow = window.open("about:blank", "_blank")
+    if (paymentWindow) paymentWindow.opener = null
+    setPaying(channelCode)
+    try {
+      const order = await postJson<PaymentOrder>("/api/wallet/recharge", {
+        amount: value,
+        channelCode,
+        returnUrl: `${window.location.origin}/account/payment/result`,
+      })
+      clearJsonCache()
+      if (order.status === "pending") window.dispatchEvent(new CustomEvent("payment-order-updated", { detail: { id: order.id, status: order.status } }))
+      if (order.payUrl && paymentWindow) paymentWindow.location.href = order.payUrl
+      navigate(`/account/orders/${encodeURIComponent(order.id)}`)
+    } catch (error) {
+      paymentWindow?.close()
+      toast.error(error instanceof Error ? error.message : "创建充值订单失败")
+      setPaying("")
+    }
+  }
+
+  if (!data) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
+  return (
+    <div className="grid gap-4 px-4 lg:px-6">
+      <section className="grid gap-4 md:grid-cols-3" aria-label="余额概览">
+        <Card><CardHeader><CardDescription>可用余额</CardDescription><CardTitle className="text-3xl">{formatMoney(data.availableBalance)}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">冻结中 {formatMoney(data.heldBalance)}</CardContent></Card>
+        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Coins className="size-4" />充值余额</CardDescription><CardTitle>{formatMoney(data.cashBalance)}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">充值成功时计入 VIP</CardContent></Card>
+        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Gift className="size-4" />赠送余额</CardDescription><CardTitle>{formatMoney(data.giftBalance)}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">永久有效，消费时优先使用</CardContent></Card>
+      </section>
+      <Card>
+        <CardHeader><CardTitle className="flex items-center gap-2"><WalletCards />充值余额</CardTitle><CardDescription>支持任意金额充值，充值成功后立即累计 VIP 成长值。</CardDescription></CardHeader>
+        <CardContent><Field><FieldLabel htmlFor="recharge-amount">充值金额</FieldLabel><Input id="recharge-amount" inputMode="decimal" placeholder="0.00" value={amount} onChange={event => setAmount(event.target.value)} disabled={Boolean(paying)} /><FieldDescription>单次充值范围 ¥0.01–¥10,000.00</FieldDescription><div className="flex flex-col gap-2 sm:flex-row"><Button type="button" onClick={() => recharge("100")} disabled={Boolean(paying)}>{paying === "100" ? <Loader2 className="animate-spin" /> : null}支付宝充值</Button><Button type="button" variant="outline" onClick={() => recharge("200")} disabled={Boolean(paying)}>{paying === "200" ? <Loader2 className="animate-spin" /> : null}微信充值</Button></div></Field></CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle>余额流水</CardTitle><CardDescription>充值、消费和返利都会保留不可删除的记录。</CardDescription></CardHeader>
+        <CardContent>{data.entries.length ? <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>类型</TableHead><TableHead>说明</TableHead><TableHead>余额变动</TableHead><TableHead className="text-right">余额</TableHead></TableRow></TableHeader><TableBody>{data.entries.map(entry => { const delta = entry.cashDelta + entry.giftDelta; return <TableRow key={entry.id}><TableCell>{formatDateTime(entry.createdAt)}</TableCell><TableCell><Badge variant="outline">{entry.type === "recharge" ? "充值" : entry.type === "purchase" ? "消费" : "返利"}</Badge></TableCell><TableCell>{entry.description || "-"}</TableCell><TableCell className={delta >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-foreground"}>{delta >= 0 ? "+" : ""}{formatMoney(delta)}</TableCell><TableCell className="text-right">{formatMoney(entry.balance)}</TableCell></TableRow> })}</TableBody></Table> : <p className="text-sm text-muted-foreground">暂无余额流水</p>}</CardContent>
+      </Card>
+    </div>
+  )
+}
+
+type ReferralReward = { id: string; sourceOrderId: string; rewardAmount: number; baseAmount: number; status: string; availableAt: string; createdAt: string }
+
+function ReferralMetric({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: React.ReactNode }) {
+  return <Card><CardContent className="flex items-stretch gap-3"><span className="flex self-stretch min-w-12 items-center justify-center rounded-md bg-muted"><Icon className="size-6" /></span><span className="grid min-w-0 content-center gap-1"><span className="text-xs text-muted-foreground">{label}</span><strong className="text-base font-semibold">{value}</strong></span></CardContent></Card>
+}
+
+function CopyValue({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = React.useState(false)
+  async function copy() {
+    await navigator.clipboard.writeText(value)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+    toast.success(`${label}已复制`)
+  }
+  return <div className="grid gap-2"><Label>{label}</Label><div className="flex gap-2"><Input value={value} readOnly /><Button type="button" variant="outline" onClick={() => void copy()}>{copied ? "已复制" : "复制"}</Button></div></div>
+}
+
+export function AccountReferralPage() {
+  const [data, setData] = React.useState<{ code: string; invitedCount: number; referralBalance: number; pendingAmount: number; earnedAmount: number; referralRate: number; recurringReferral: boolean; rewards: ReferralReward[] } | null>(null)
+  const [amount, setAmount] = React.useState("")
+  const [loading, setLoading] = React.useState(false)
+  const load = React.useCallback(() => fetchJson<typeof data>("/api/account/referrals").then(setData), [])
+  React.useEffect(() => { void load() }, [load])
+  if (!data) return <PageLoading />
+  const inviteUrl = `${window.location.origin}/register?ref=${data.code}`
+  async function transfer() {
+    setLoading(true)
+    try { await postJson("/api/account/referrals/transfer", { amount }); setAmount(""); await load(); toast.success("返利已转入余额钱包") }
+    catch (error) { toast.error(error instanceof Error ? error.message : "转入失败") }
+    finally { setLoading(false) }
+  }
+  return <div className="grid gap-4 px-4 lg:px-6">
+    <section className="grid gap-4 sm:grid-cols-2" aria-label="邀请返利统计">
+      <ReferralMetric icon={Users} label="已注册用户数" value={`${data.invitedCount} 人`} />
+      <ReferralMetric icon={Percent} label="佣金比例" value={`${data.referralRate}%`} />
+      <ReferralMetric icon={Clock3} label="确认中的佣金" value={formatMoney(data.pendingAmount)} />
+      <ReferralMetric icon={Coins} label="累计获得佣金" value={formatMoney(data.earnedAmount)} />
+    </section>
+    <Card><CardContent className="grid gap-4 pt-6 sm:grid-cols-2"><CopyValue label="邀请码" value={data.code} /><CopyValue label="邀请链接" value={inviteUrl} /></CardContent></Card>
+    <Card><CardHeader><CardTitle>邀请返利</CardTitle><CardDescription>分享邀请码，邀请好友购买套餐后获得返利。</CardDescription></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2"><Metric label="我的邀请码" value={data.code} /><Metric label="返利比例" value={`${data.referralRate}%${data.recurringReferral ? "（循环返利）" : "（首次购买）"}`} /><Metric label="返利钱包" value={formatMoney(data.referralBalance)} /><div className="grid gap-2"><Label htmlFor="referral-transfer">转入余额钱包</Label><div className="flex gap-2"><Input id="referral-transfer" inputMode="decimal" placeholder="金额" value={amount} onChange={event => setAmount(event.target.value)} /><Button onClick={() => void transfer()} disabled={loading || !amount}>转入</Button></div></div><p className="text-sm text-muted-foreground sm:col-span-2">邀请链接：{`${window.location.origin}/register?ref=${data.code}`}</p></CardContent></Card>
+    <Card><CardHeader><CardTitle>返利明细</CardTitle></CardHeader><CardContent>{data.rewards.length ? <Table><TableHeader><TableRow><TableHead>来源订单</TableHead><TableHead>实际投入</TableHead><TableHead>返利金额</TableHead><TableHead>状态</TableHead><TableHead>到账时间</TableHead></TableRow></TableHeader><TableBody>{data.rewards.map(item => <TableRow key={item.id}><TableCell className="font-mono text-xs">{item.sourceOrderId}</TableCell><TableCell>{formatMoney(item.baseAmount)}</TableCell><TableCell>{formatMoney(item.rewardAmount)}</TableCell><TableCell><Badge variant={item.status === "available" ? "success" : "secondary"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "审核中" : item.status}</Badge></TableCell><TableCell>{formatDateTime(item.availableAt)}</TableCell></TableRow>)}</TableBody></Table> : <p className="text-sm text-muted-foreground">暂无返利记录</p>}</CardContent></Card>
+  </div>
+}
+
 export function AccountOrdersPage() {
   const { data: orders, error } = useCachedAccountData<PaymentOrder[]>("/api/account/orders")
   if (!orders) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
@@ -262,7 +360,9 @@ export function AccountOrderDetailPage() {
           <Separator />
           <div className="grid gap-3 sm:grid-cols-2">
             <OrderInfo label="套餐" value={`${order.planName} / ${order.optionLabel}`} />
-            <OrderInfo label="订单金额" value={formatMoney(order.amount)} emphasis />
+            <OrderInfo label="订单金额" value={formatMoney(order.totalAmount ?? order.amount)} emphasis />
+            {order.walletAmount ? <OrderInfo label="余额支付" value={formatMoney(order.walletAmount)} /> : null}
+            {order.walletAmount ? <OrderInfo label="第三方支付" value={formatMoney(order.amount)} /> : null}
             <OrderInfo label="创建时间" value={formatDateTime(order.createdAt)} />
             <OrderInfo label="支付时间" value={order.paidAt ? formatDateTime(order.paidAt) : "尚未支付"} />
           </div>
@@ -332,10 +432,10 @@ export function PaymentResultPage() {
             <span className="absolute inset-2 rounded-full border-2 border-primary/30 motion-safe:animate-ping" />
             <CheckCircle2 className="relative size-10 text-emerald-600 dark:text-emerald-500" />
           </span>
-          <header className="grid gap-2"><h1 className="text-2xl font-semibold tracking-tight">支付成功 🎉</h1><p className="text-sm text-muted-foreground">您的套餐已成功开通</p></header>
-          <section className="grid gap-1" aria-label="支付信息"><strong className="text-4xl font-semibold tracking-tight">{formatMoney(order.amount)}</strong><p className="text-xs text-muted-foreground">已支付 · {order.planName} / {order.optionLabel}</p></section>
+          <header className="grid gap-2"><h1 className="text-2xl font-semibold tracking-tight">支付成功 🎉</h1><p className="text-sm text-muted-foreground">{order.purpose === "recharge" ? "充值金额已存入账户余额" : "您的套餐已成功开通"}</p></header>
+          <section className="grid gap-1" aria-label="支付信息"><strong className="text-4xl font-semibold tracking-tight">{formatMoney(order.totalAmount ?? order.amount)}</strong><p className="text-xs text-muted-foreground">已支付 · {order.planName} / {order.optionLabel}</p></section>
           <PaymentVipProgress order={order} />
-          <Button asChild size="lg" className="w-full"><Link to="/account">开始畅游网络 →</Link></Button>
+          <Button asChild size="lg" className="w-full"><Link to={order.purpose === "recharge" ? "/account/wallet" : "/account"}>{order.purpose === "recharge" ? "查看账户余额 →" : "开始畅游网络 →"}</Link></Button>
         </CardContent>
       </Card>
     </div>
@@ -376,5 +476,5 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function OrdersTable({ orders }: { orders: PaymentOrder[] }) {
-  return <Table><TableHeader><TableRow><TableHead>订单</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{orders.map(order => <TableRow key={order.id}><TableCell className="font-mono text-xs">{order.merOrderTid}</TableCell><TableCell>{order.planName} / {order.optionLabel}</TableCell><TableCell>{formatMoney(order.amount)}</TableCell><TableCell><Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge></TableCell><TableCell>{formatDate(order.createdAt)}</TableCell><TableCell className="text-right"><Button asChild size="sm" variant="outline"><Link to={`/account/orders/${encodeURIComponent(order.id)}`}>查看详情</Link></Button></TableCell></TableRow>)}</TableBody></Table>
+  return <Table><TableHeader><TableRow><TableHead>订单</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{orders.map(order => <TableRow key={order.id}><TableCell className="font-mono text-xs">{order.merOrderTid}</TableCell><TableCell>{order.planName} / {order.optionLabel}</TableCell><TableCell>{formatMoney(order.totalAmount ?? order.amount)}</TableCell><TableCell><Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge></TableCell><TableCell>{formatDate(order.createdAt)}</TableCell><TableCell className="text-right"><Button asChild size="sm" variant="outline"><Link to={`/account/orders/${encodeURIComponent(order.id)}`}>查看详情</Link></Button></TableCell></TableRow>)}</TableBody></Table>
 }

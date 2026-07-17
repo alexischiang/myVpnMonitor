@@ -4,10 +4,11 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { ArrowLeft, MailCheck, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
-import { fetchJson, postJson } from "@/api"
+import { fetchJson, postJson, putJson } from "@/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -135,8 +136,15 @@ export function UserDetailPage() {
   const user = users.find(entry => entry.id === id)
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteEmail, setInviteEmail] = React.useState("")
+  const [referralRate, setReferralRate] = React.useState(10)
+  const [recurringReferral, setRecurringReferral] = React.useState(false)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed" || log.reason === "user-created")
+
+  React.useEffect(() => {
+    setReferralRate(user?.referralRate ?? 10)
+    setRecurringReferral(user?.recurringReferral === true)
+  }, [user?.referralRate, user?.recurringReferral])
 
   const billColumns = React.useMemo<ColumnDef<Bill>[]>(() => [
     {
@@ -216,6 +224,19 @@ export function UserDetailPage() {
     }
   }
 
+  async function saveReferralSettings() {
+    if (!user.accountId) return
+    try {
+      await runAsync(async () => {
+        await putJson(`/api/referrals/accounts/${user.accountId}`, { referralRate, recurringReferral })
+        await reload(["users"], { silent: true })
+        toast.success("返利设置已保存")
+      }, "保存返利设置...")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存失败")
+    }
+  }
+
   return (
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex gap-2">{user.accountStatus !== "active" ? <Button size="sm" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button> : null}<Button asChild variant="outline" size="sm"><Link to="/users"><ArrowLeft />返回</Link></Button></div>} />
@@ -253,6 +274,10 @@ export function UserDetailPage() {
               emptyTitle="暂无账单"
             />
           </CardContent>
+        </Card>
+        <Card className="lg:col-span-2">
+          <CardHeader><CardTitle>邀请返利设置</CardTitle></CardHeader>
+          <CardContent>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="referral-rate">收到返利比例（%）</Label><Input id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /></div><div className="flex items-center gap-2 self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} /><Label htmlFor="recurring-referral">享受循环返利</Label></div><Button className="sm:w-fit" onClick={() => void saveReferralSettings()}>保存返利设置</Button></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</CardContent>
         </Card>
         <Card className="lg:col-span-2">
           <CardHeader><CardTitle>换池日志</CardTitle></CardHeader>

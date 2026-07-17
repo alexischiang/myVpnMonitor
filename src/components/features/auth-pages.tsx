@@ -3,11 +3,11 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Loader2 } from "lucide-react"
 
 import { apiFetch, postJson } from "@/api"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { StatusPage } from "@/components/features/status-page"
 
 type AuthResponse = { role?: "admin" | "user" }
 
@@ -15,7 +15,7 @@ function AuthLayout({ title, description, children }: { title: string; descripti
   return (
     <main className="grid min-h-svh lg:grid-cols-2">
       <section className="flex flex-col gap-4 p-6 md:p-10">
-        <Link to="/pricing" className="flex w-fit items-center gap-2 text-base font-semibold">NEXORA<Badge variant="outline" className="h-4 self-baseline rounded-sm border-foreground bg-foreground px-1.5 py-0 text-[11px] text-background">beta</Badge></Link>
+        <Link to="/pricing" className="inline-flex w-fit items-end text-base font-semibold">NEXORA<span className="text-[10px] font-bold leading-none text-muted-foreground">.beta</span></Link>
         <div className="flex flex-1 items-center justify-center">
           <div className="grid w-full max-w-sm gap-6">
             <header className="grid gap-2 text-center">
@@ -88,11 +88,13 @@ export function LoginPage() {
 
 export function RegisterPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [email, setEmail] = React.useState("")
   const [password, setPassword] = React.useState("")
   const [confirmPassword, setConfirmPassword] = React.useState("")
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState("")
+  const [referralCode, setReferralCode] = React.useState(() => searchParams.get("ref") || "")
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -100,7 +102,7 @@ export function RegisterPage() {
     setLoading(true)
     setError("")
     try {
-      await postJson("/api/auth/register", { email, password })
+      await postJson("/api/auth/register", { email, password, referralCode })
       navigate("/account", { replace: true })
     } catch (error) {
       setError(error instanceof Error ? error.message : "注册失败")
@@ -110,11 +112,12 @@ export function RegisterPage() {
   }
 
   return (
-    <AuthLayout title="创建账户" description="使用邮箱注册，无需邮箱验证码">
+    <AuthLayout title="创建账户" description="请输入有效的邮箱">
       <form className="grid gap-4" onSubmit={submit}>
         <div className="grid gap-2"><Label htmlFor="email">邮箱</Label><Input id="email" type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} required /></div>
         <div className="grid gap-2"><Label htmlFor="new-password">密码</Label><Input id="new-password" type="password" minLength={8} autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} required /></div>
         <div className="grid gap-2"><Label htmlFor="confirm-password">确认密码</Label><Input id="confirm-password" type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required /></div>
+        <div className="grid gap-2"><Label htmlFor="referral-code">邀请码（可选）</Label><Input id="referral-code" inputMode="numeric" maxLength={6} value={referralCode} onChange={event => setReferralCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /></div>
         <ErrorText value={error} />
         <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />注册中</> : "注册"}</Button>
         <p className="text-center text-sm">已有账户？ <Link to="/login" className="underline underline-offset-4">返回登录</Link></p>
@@ -160,10 +163,16 @@ export function ForgotPasswordPage() {
 export function ResetPasswordPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const token = searchParams.get("token") || ""
   const [password, setPassword] = React.useState("")
   const [confirmPassword, setConfirmPassword] = React.useState("")
   const [error, setError] = React.useState("")
   const [loading, setLoading] = React.useState(false)
+  const [tokenStatus, setTokenStatus] = React.useState<"checking" | "valid" | "invalid">("checking")
+
+  React.useEffect(() => {
+    postJson("/api/auth/token-status", { token }).then(() => setTokenStatus("valid")).catch(() => setTokenStatus("invalid"))
+  }, [token])
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -171,7 +180,7 @@ export function ResetPasswordPage() {
     setLoading(true)
     setError("")
     try {
-      await postJson("/api/auth/reset-password", { token: searchParams.get("token"), password })
+      await postJson("/api/auth/reset-password", { token, password })
       navigate("/login", { replace: true })
     } catch (error) {
       setError(error instanceof Error ? error.message : "重置失败")
@@ -180,6 +189,8 @@ export function ResetPasswordPage() {
     }
   }
 
+  if (tokenStatus === "invalid") return <StatusPage code="410" title="链接已过期" description="该认领链接已失效或已被使用，请联系管理员重新发送。" />
+  if (tokenStatus === "checking") return <main className="grid min-h-svh place-items-center"><Loader2 className="animate-spin" aria-label="正在验证链接" /></main>
   return (
     <AuthLayout title="设置新密码" description="链接有效期为 30 分钟，使用后立即失效">
       <form className="grid gap-4" onSubmit={submit}>

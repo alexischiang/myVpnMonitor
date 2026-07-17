@@ -2,6 +2,7 @@ import * as React from "react"
 import {
   type ColumnDef,
   type ColumnFiltersState,
+  type FilterFn,
   type PaginationState,
   type SortingState,
   type VisibilityState,
@@ -12,6 +13,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
+import { pinyin } from "pinyin-pro"
 import {
   ChevronDown,
   ChevronLeft,
@@ -30,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
@@ -43,6 +46,16 @@ import {
 import { EmptyState } from "@/components/features/shared"
 import { cn } from "@/lib/utils"
 
+const normalizeSearchText = (value: unknown) => String(value ?? "").toLocaleLowerCase().replace(/\s+/g, "")
+
+const fuzzyTextFilter: FilterFn<unknown> = (row, columnId, filterValue) => {
+  const text = String(row.getValue(columnId) ?? "")
+  const query = normalizeSearchText(filterValue)
+  if (!query) return true
+  return [text, pinyin(text, { toneType: "none", separator: "" }), pinyin(text, { toneType: "none", pattern: "first", separator: "" })]
+    .some(value => normalizeSearchText(value).includes(query))
+}
+
 type DataTableProps<TData, TValue> = {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
@@ -53,6 +66,7 @@ type DataTableProps<TData, TValue> = {
   pageSize?: number
   toolbar?: React.ReactNode
   className?: string
+  renderMobileItem?: (item: TData) => React.ReactNode
 }
 
 export function DataTable<TData, TValue>({
@@ -62,9 +76,10 @@ export function DataTable<TData, TValue>({
   searchPlaceholder = "搜索...",
   emptyTitle = "暂无数据",
   emptyDescription,
-  pageSize = 10,
+  pageSize = 30,
   toolbar,
   className,
+  renderMobileItem,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -73,10 +88,19 @@ export function DataTable<TData, TValue>({
     pageIndex: 0,
     pageSize,
   })
+  const tableTopRef = React.useRef<HTMLDivElement>(null)
+  const previousPageIndex = React.useRef(0)
+
+  React.useEffect(() => {
+    if (pagination.pageIndex === previousPageIndex.current) return
+    previousPageIndex.current = pagination.pageIndex
+    tableTopRef.current?.scrollIntoView({ block: "start" })
+  }, [pagination.pageIndex])
 
   const table = useReactTable({
     data,
     columns,
+    defaultColumn: { filterFn: fuzzyTextFilter },
     state: {
       sorting,
       columnFilters,
@@ -99,7 +123,7 @@ export function DataTable<TData, TValue>({
   const pageCount = Math.max(table.getPageCount(), 1)
 
   return (
-    <div className={cn("flex min-w-0 w-full flex-col justify-start gap-6", className)}>
+    <div ref={tableTopRef} className={cn("flex min-w-0 w-full scroll-mt-16 flex-col justify-start gap-6", className)}>
       <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         {searchableColumn && (
           <Input
@@ -138,7 +162,21 @@ export function DataTable<TData, TValue>({
           </DropdownMenu>
         </div>
       </div>
-      <div className="w-full overflow-x-auto rounded-lg border">
+      <ItemGroup className="md:hidden">
+        {table.getRowModel().rows.length ? table.getRowModel().rows.map(row => renderMobileItem ? <React.Fragment key={row.id}>{renderMobileItem(row.original)}</React.Fragment> : (
+          <Item key={row.id} variant="outline" className="items-start">
+            <ItemContent className="gap-3">
+              {row.getVisibleCells().map(cell => (
+                <section key={cell.id} className="grid gap-1">
+                  <ItemDescription className="text-xs">{cell.column.columnDef.meta?.label ?? (typeof cell.column.columnDef.header === "string" ? cell.column.columnDef.header : cell.column.id === "actions" ? "操作" : cell.column.id)}</ItemDescription>
+                  <ItemTitle className="w-full whitespace-normal">{flexRender(cell.column.columnDef.cell, cell.getContext())}</ItemTitle>
+                </section>
+              ))}
+            </ItemContent>
+          </Item>
+        )) : <Item variant="outline"><ItemContent><EmptyState title={emptyTitle} description={emptyDescription} /></ItemContent></Item>}
+      </ItemGroup>
+      <div className="hidden w-full overflow-x-auto rounded-lg border md:block">
         <Table className="min-w-full table-auto">
           <colgroup>
             {table.getVisibleLeafColumns().map((column, index) => (
