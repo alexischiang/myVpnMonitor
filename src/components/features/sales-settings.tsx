@@ -72,6 +72,7 @@ export function SalesSettingsPage() {
   const [settings, setSettings] = React.useState<SalesSettings | null>(null)
   const [editor, setEditor] = React.useState<Editor | null>(null)
   const [saving, setSaving] = React.useState(false)
+  const [savingAction, setSavingAction] = React.useState<"save" | "delete" | "">("")
   const date = editor?.type === "coupon" ? couponDateRange(editor.value) : undefined
 
   function toggleCouponScope(key: "applicableGroups" | "applicableDurations", value: string, checked: boolean, options: readonly { value: string }[]) {
@@ -116,7 +117,12 @@ export function SalesSettingsPage() {
       : editor.type === "faq"
         ? { ...settings, faqs: editor.isNew ? [...settings.faqs, editor.value] : settings.faqs.map(item => item.id === editor.value.id ? editor.value : item) }
         : { ...settings, announcements: editor.isNew ? [...settings.announcements, editor.value] : settings.announcements.map(item => item.id === editor.value.id ? editor.value : item) }
-    if (await persist(next, editor.isNew ? "已添加" : "修改已保存")) setEditor(null)
+    setSavingAction("save")
+    try {
+      if (await persist(next, editor.isNew ? "已添加" : "修改已保存")) setEditor(null)
+    } finally {
+      setSavingAction("")
+    }
   }
 
   async function removeEditor() {
@@ -126,7 +132,12 @@ export function SalesSettingsPage() {
       : editor.type === "faq"
         ? { ...settings, faqs: settings.faqs.filter(item => item.id !== editor.value.id) }
         : { ...settings, announcements: settings.announcements.filter(item => item.id !== editor.value.id) }
-    if (await persist(next, "已删除")) setEditor(null)
+    setSavingAction("delete")
+    try {
+      if (await persist(next, "已删除")) setEditor(null)
+    } finally {
+      setSavingAction("")
+    }
   }
 
   if (!settings) return <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-52" /><Skeleton className="h-72" /></div>
@@ -231,9 +242,9 @@ export function SalesSettingsPage() {
               </FieldGroup>}
             </div>
             <SheetFooter>
-              {!editor.isNew ? <Button variant="destructive" onClick={removeEditor} disabled={saving}><Trash2 />删除</Button> : null}
+              {!editor.isNew ? <Button variant="destructive" onClick={removeEditor} disabled={saving}>{savingAction === "delete" ? <Loader2 className="animate-spin" /> : <Trash2 />}删除</Button> : null}
               <SheetClose asChild><Button variant="outline" disabled={saving}>取消</Button></SheetClose>
-              <Button onClick={saveEditor} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : null}{saving ? "保存中..." : "保存修改"}</Button>
+              <Button onClick={saveEditor} disabled={saving}>{savingAction === "save" ? <Loader2 className="animate-spin" /> : null}{savingAction === "save" ? "保存中..." : "保存修改"}</Button>
             </SheetFooter>
           </> : null}
         </SheetContent>

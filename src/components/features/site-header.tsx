@@ -1,3 +1,5 @@
+import * as React from "react"
+import { Loader2 } from "lucide-react"
 import { IconLogout, IconMoon, IconSun } from "@tabler/icons-react"
 
 import { Button } from "@/components/ui/button"
@@ -14,8 +16,19 @@ export function SiteHeader({
   title: string
   dark: boolean
   onToggleTheme: () => void
-  onLogout: () => void
+  onLogout: () => void | Promise<void>
 }) {
+  const [loggingOut, setLoggingOut] = React.useState(false)
+
+  async function logout() {
+    setLoggingOut(true)
+    try {
+      await onLogout()
+    } finally {
+      setLoggingOut(false)
+    }
+  }
+
   return (
     <header className="sticky top-0 z-40 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height) md:static">
       <div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
@@ -33,8 +46,8 @@ export function SiteHeader({
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={onLogout} aria-label="退出登录">
-                <IconLogout className="size-4" />
+              <Button variant="ghost" size="icon" onClick={() => void logout()} disabled={loggingOut} aria-label="退出登录">
+                {loggingOut ? <Loader2 className="animate-spin" /> : <IconLogout className="size-4" />}
               </Button>
             </TooltipTrigger>
             <TooltipContent>退出登录</TooltipContent>

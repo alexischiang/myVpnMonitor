@@ -68,14 +68,43 @@ function getTransporter() {
   return cachedTransporter;
 }
 
+function renderEmailHtml({ subject, text, html }) {
+  const title = escapeHtml(subject || "NEXORA 通知");
+  const content = html || escapeHtml(text || "").replace(/\n/g, "<br>");
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>${title}</title>
+</head>
+<body style="margin:0;background:#f5f5f5;color:#171717;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f5f5;">
+    <tr><td align="center" style="padding:40px 16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#ffffff;border:1px solid #e5e5e5;border-radius:10px;">
+        <tr><td style="padding:22px 28px;border-bottom:1px solid #e5e5e5;font-size:18px;font-weight:700;">NEXORA <span style="color:#737373;font-size:11px;">beta</span></td></tr>
+        <tr><td style="padding:32px 28px;">
+          <h1 style="margin:0 0 20px;font-size:22px;line-height:1.35;font-weight:600;letter-spacing:0;">${title}</h1>
+          <div style="font-size:15px;line-height:1.7;color:#404040;overflow-wrap:anywhere;">${content}</div>
+        </td></tr>
+        <tr><td style="padding:20px 28px;border-top:1px solid #e5e5e5;color:#737373;font-size:12px;line-height:1.6;">此邮件由 NEXORA 自动发送，请勿直接回复。</td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
 async function sendMail({ to, subject, text, html }) {
   const cfg = getMailerConfig();
+  const renderedHtml = renderEmailHtml({ subject, text, html });
   if (cfg.resendApiKey && cfg.resendFrom) {
     try {
       const response = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { authorization: `Bearer ${cfg.resendApiKey}`, "content-type": "application/json" },
-        body: JSON.stringify({ from: cfg.resendFrom, to: [to || cfg.to], subject, text, html }),
+        body: JSON.stringify({ from: cfg.resendFrom, to: [to || cfg.to], subject, text, html: renderedHtml }),
         signal: AbortSignal.timeout(10000)
       });
       const result = await response.json().catch(() => ({}));
@@ -92,7 +121,7 @@ async function sendMail({ to, subject, text, html }) {
     to: to || cfg.to,
     subject,
     text,
-    html
+    html: renderedHtml
   });
 }
 
@@ -186,6 +215,20 @@ function buildLowTrafficAlert(item, remaining, threshold) {
   return { subject, text, html };
 }
 
+function buildPaymentAlert(order) {
+  const recharge = order.purpose === "recharge";
+  const total = Number(order.totalAmount ?? order.amount ?? 0).toFixed(2);
+  return [
+    "🔔 用户消费提醒",
+    `📧 用户邮箱：${order.email || "-"}`,
+    `🛒 消费类型：${recharge ? "余额充值" : "套餐购买"}`,
+    `📦 消费详情：${recharge ? `充值 ¥${total}` : `${order.planName || "-"} / ${order.optionLabel || "-"}`}`,
+    `💰 消费金额：¥${total}`,
+    `🧾 订单编号：${order.merOrderTid || order.id || "-"}`,
+    `🕒 消费时间：${order.paidAt || new Date().toISOString()}`
+  ].join("\n");
+}
+
 function isExpiredItem(item, now = Date.now()) {
   const expireAt = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
   return Number.isFinite(expireAt) && expireAt <= now;
@@ -254,6 +297,8 @@ module.exports = {
   checkTelegram,
   sendMail,
   sendTelegram,
+  renderEmailHtml,
+  buildPaymentAlert,
   checkAndNotifyLowTraffic,
   isExpiredItem,
   formatBytes

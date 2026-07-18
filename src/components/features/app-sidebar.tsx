@@ -41,8 +41,12 @@ export function AppSidebar({
 }: React.ComponentProps<typeof Sidebar> & { onLogout: () => void }) {
   const data = useData()
   const location = useLocation()
-  const { isMobile } = useSidebar()
+  const { isMobile, setOpenMobile } = useSidebar()
   const account = data.account || "admin"
+
+  React.useEffect(() => {
+    setOpenMobile(false)
+  }, [location.pathname, setOpenMobile])
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>

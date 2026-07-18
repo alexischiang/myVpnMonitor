@@ -234,7 +234,7 @@ export function UserFormDialog({
       })
       setValues(current => ({
         ...current,
-        actualPaid: price ?? current.actualPaid,
+        actualPaid: current.actualPaid ?? price,
         expiresAt: toInputDate(recommendation.expiresAt),
         subscriptionId: recommendation.subscription?.id || current.subscriptionId,
       }))
@@ -253,7 +253,7 @@ export function UserFormDialog({
     if (!validateStep(2)) return
     setSubmitting(true)
     try {
-      await onSubmit({ ...values, actualPaid: price ?? values.actualPaid })
+      await onSubmit({ ...values, actualPaid: values.actualPaid ?? price })
       onOpenChange(false)
     } finally {
       setSubmitting(false)
@@ -262,18 +262,18 @@ export function UserFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[calc(100vh-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
-        <DialogHeader className="shrink-0 px-6 pt-6">
+      <DialogContent className="flex min-w-0 max-h-[calc(100vh-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
+        <DialogHeader className="shrink-0 bg-[#f9f9f9] px-6 pt-6 text-left">
           <DialogTitle>{user ? "编辑用户" : "新增用户"}</DialogTitle>
-          <DialogDescription>填写购买信息后，系统会按到期日推荐订阅池。</DialogDescription>
+          <DialogDescription className="sr-only">填写用户购买信息</DialogDescription>
           <FieldGroup className="gap-2 pt-2">
             <FieldDescription>步骤 {stepIndex + 1} / {steps.length} · {steps[stepIndex]}</FieldDescription>
             <Progress value={((stepIndex + 1) / steps.length) * 100} />
           </FieldGroup>
         </DialogHeader>
 
-        <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
-          <FieldGroup className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+        <form className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden" onSubmit={submit} noValidate>
+          <FieldGroup className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pb-6">
             {stepIndex === 0 ? (
               <>
                 <FieldGroup className="grid-cols-1 sm:grid-cols-2">
@@ -324,14 +324,14 @@ export function UserFormDialog({
                     ))}
                   </RadioGroup>
                 </Field>
-                <Field><FieldLabel htmlFor="actualPaid">本次消费金额</FieldLabel><Input id="actualPaid" type="number" min="0" step="0.01" value={price ?? values.actualPaid ?? ""} readOnly={price !== undefined} aria-invalid={Boolean(errors.actualPaid)} onChange={event => update("actualPaid", event.target.value === "" ? undefined : Number(event.target.value))} /><FieldDescription>{price !== undefined ? "根据套餐配置自动填写。" : "自定义和永久周期请手动填写金额。"}</FieldDescription><FieldError>{errors.actualPaid}</FieldError></Field>
+                <Field><FieldLabel htmlFor="actualPaid">本次消费金额</FieldLabel><Input id="actualPaid" type="number" min="0" step="0.01" value={values.actualPaid ?? price ?? ""} aria-invalid={Boolean(errors.actualPaid)} onChange={event => update("actualPaid", event.target.value === "" ? undefined : Number(event.target.value))} />{price === undefined ? <FieldDescription>自定义和永久周期请手动填写金额。</FieldDescription> : null}<FieldError>{errors.actualPaid}</FieldError></Field>
               </>
             ) : (
               <>
-                <Field>
+                <Field className="min-w-0">
                   <FieldLabel htmlFor="subscriptionId">订阅池 URL</FieldLabel>
                   <Select required value={values.subscriptionId || ""} onValueChange={value => update("subscriptionId", value)}>
-                    <SelectTrigger id="subscriptionId" className="w-full" aria-invalid={Boolean(errors.subscriptionId)}><SelectValue placeholder="请选择订阅池" /></SelectTrigger>
+                    <SelectTrigger id="subscriptionId" className="min-w-0 w-full [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:truncate" aria-invalid={Boolean(errors.subscriptionId)}><SelectValue placeholder="请选择订阅池" /></SelectTrigger>
                     <SelectContent>{subscriptions.map(item => <SelectItem key={item.id} value={item.id}>{subscriptionLabel(item)}</SelectItem>)}</SelectContent>
                   </Select>
                   <FieldDescription>{recommendationMessage}</FieldDescription>
@@ -341,12 +341,12 @@ export function UserFormDialog({
             )}
           </FieldGroup>
 
-          <DialogFooter className="shrink-0 border-t bg-muted/40 px-6 py-4 sm:justify-between">
+          <DialogFooter className="shrink-0 flex-row items-center justify-between border-t bg-[#f9f9f9] px-6 py-4 sm:justify-between">
+            <DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose>
             <div className="flex gap-2">
-              <DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose>
               {stepIndex > 0 ? <Button type="button" variant="outline" onClick={() => setStepIndex(current => current - 1)}>上一步</Button> : null}
+              {stepIndex < 2 ? <Button type="button" onClick={nextStep} disabled={recommending}>{recommending ? <Loader2 className="animate-spin" /> : null}{recommending ? "推荐中..." : "下一步"}</Button> : <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="animate-spin" /> : null}{submitting ? "保存中..." : user ? "保存修改" : "完成添加"}</Button>}
             </div>
-            {stepIndex < 2 ? <Button type="button" onClick={nextStep} disabled={recommending}>{recommending ? <Loader2 className="animate-spin" /> : null}{recommending ? "推荐中..." : "下一步"}</Button> : <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="animate-spin" /> : null}{submitting ? "保存中..." : user ? "保存修改" : "完成添加"}</Button>}
           </DialogFooter>
         </form>
       </DialogContent>

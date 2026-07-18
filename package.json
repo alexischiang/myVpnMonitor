@@ -13,7 +13,8 @@
     "migrate:duration-days": "node scripts/migrate-duration-days.js",
     "sync:neon-to-local": "node scripts/sync-neon-to-postgres.js",
     "test": "node test.js",
-    "test:payment": "node test-payment.js"
+    "test:payment": "node test-payment.js",
+    "test:wallet": "node test-wallet.js"
   },
   "keywords": [
     "vpn",

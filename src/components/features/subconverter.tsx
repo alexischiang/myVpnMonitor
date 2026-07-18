@@ -1,6 +1,6 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
-import { Plus, Trash2 } from "lucide-react"
+import { Loader2, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
@@ -36,6 +36,7 @@ export function SubconverterPage() {
 function PresetCard() {
   const { presets, reload, runAsync } = useData()
   const preset = presets[0] || {}
+  const [saving, setSaving] = React.useState(false)
   const [values, setValues] = React.useState({
     target: preset.target || "clash",
     config: preset.config || "",
@@ -48,11 +49,16 @@ function PresetCard() {
     setValues({ target: preset.target || "clash", config: preset.config || "", emoji: preset.emoji !== false, udp: preset.udp !== false, scv: Boolean(preset.scv), sort: Boolean(preset.sort) })
   }, [preset.config, preset.emoji, preset.scv, preset.sort, preset.target, preset.udp])
   async function save() {
-    await runAsync(async () => {
-      await putJson("/api/presets", values)
-      await reload(["presets"])
-      toast.success("转换预设已保存")
-    }, "保存转换预设...")
+    setSaving(true)
+    try {
+      await runAsync(async () => {
+        await putJson("/api/presets", values)
+        await reload(["presets"])
+        toast.success("转换预设已保存")
+      }, "保存转换预设...")
+    } finally {
+      setSaving(false)
+    }
   }
   return (
     <Card>
@@ -77,7 +83,7 @@ function PresetCard() {
             </label>
           ))}
         </div>
-        <Button onClick={save}>保存预设</Button>
+        <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : null}{saving ? "保存中..." : "保存预设"}</Button>
       </CardContent>
     </Card>
   )
@@ -87,6 +93,7 @@ function VendorOverrides() {
   const { vendors, reload, runAsync } = useData()
   const [editing, setEditing] = React.useState<Vendor | null>(null)
   const [open, setOpen] = React.useState(false)
+  const [deletingId, setDeletingId] = React.useState("")
   const fields: Field[] = [
     { name: "name", label: "供应商名称", required: true },
     { name: "overrideExclude", label: "排除规则", type: "textarea" },
@@ -103,7 +110,12 @@ function VendorOverrides() {
   }
   async function remove(item: Vendor) {
     if (!confirm("确认删除？")) return
-    await runAsync(async () => { await deleteJson(`/api/vendors/${item.id}`); await reload(["vendors"]) }, "删除供应商...")
+    setDeletingId(item.id)
+    try {
+      await runAsync(async () => { await deleteJson(`/api/vendors/${item.id}`); await reload(["vendors"]) }, "删除供应商...")
+    } finally {
+      setDeletingId("")
+    }
   }
 
   const columns = React.useMemo<ColumnDef<Vendor>[]>(() => [
@@ -132,15 +144,15 @@ function VendorOverrides() {
           <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>
             编辑
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} aria-label="删除供应商覆写">
-            <Trash2 />
+          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} disabled={Boolean(deletingId)} aria-label="删除供应商覆写">
+            {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
           </Button>
         </div>
       ),
       enableHiding: false,
       enableSorting: false,
     },
-  ], [])
+  ], [deletingId])
 
   return (
     <Card>
@@ -164,6 +176,7 @@ function PlaceholderNodes() {
   const { placeholderNodes, reload, runAsync } = useData()
   const [editing, setEditing] = React.useState<PlaceholderNode | null>(null)
   const [open, setOpen] = React.useState(false)
+  const [deletingId, setDeletingId] = React.useState("")
   const fields: Field[] = [
     { name: "tag", label: "标签", required: true },
     { name: "nodesText", label: "节点（每行一个）", type: "textarea", required: true },
@@ -179,7 +192,12 @@ function PlaceholderNodes() {
   }
   async function remove(item: PlaceholderNode) {
     if (!confirm("确认删除？")) return
-    await runAsync(async () => { await deleteJson(`/api/placeholder-nodes/${item.id}`); await reload(["placeholderNodes"]) }, "删除占位节点...")
+    setDeletingId(item.id)
+    try {
+      await runAsync(async () => { await deleteJson(`/api/placeholder-nodes/${item.id}`); await reload(["placeholderNodes"]) }, "删除占位节点...")
+    } finally {
+      setDeletingId("")
+    }
   }
 
   const columns = React.useMemo<ColumnDef<PlaceholderNode>[]>(() => [
@@ -203,15 +221,15 @@ function PlaceholderNodes() {
           <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>
             编辑
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} aria-label="删除占位节点">
-            <Trash2 />
+          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} disabled={Boolean(deletingId)} aria-label="删除占位节点">
+            {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
           </Button>
         </div>
       ),
       enableHiding: false,
       enableSorting: false,
     },
-  ], [])
+  ], [deletingId])
 
   return (
     <Card>
@@ -234,20 +252,26 @@ function PlaceholderNodes() {
 function PricingCard() {
   const { pricing, reload, runAsync } = useData()
   const [text, setText] = React.useState("")
+  const [saving, setSaving] = React.useState(false)
   React.useEffect(() => setText(JSON.stringify(pricing, null, 2)), [pricing])
   async function save() {
-    await runAsync(async () => {
-      await putJson("/api/pricing", JSON.parse(text || "[]"))
-      await reload(["pricing"])
-      toast.success("价格已保存")
-    }, "保存价格...")
+    setSaving(true)
+    try {
+      await runAsync(async () => {
+        await putJson("/api/pricing", JSON.parse(text || "[]"))
+        await reload(["pricing"])
+        toast.success("价格已保存")
+      }, "保存价格...")
+    } finally {
+      setSaving(false)
+    }
   }
   return (
     <Card>
       <CardHeader><CardTitle>价格表 JSON</CardTitle></CardHeader>
       <CardContent className="grid gap-4">
         <Textarea value={text} onChange={event => setText(event.target.value)} rows={12} />
-        <Button onClick={save}>保存价格</Button>
+        <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : null}{saving ? "保存中..." : "保存价格"}</Button>
       </CardContent>
     </Card>
   )

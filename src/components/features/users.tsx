@@ -1,21 +1,27 @@
 import * as React from "react"
 import { Link } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ExternalLink, Gift, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, Gift, Loader2, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
-import { CopyButton, PageHeader, StatusBadge } from "@/components/features/shared"
+import { CopyButton, UserStatusBadge } from "@/components/features/shared"
+import { SummaryCard } from "@/components/features/summary-card"
 import { UserFormDialog, type UserFormValues } from "@/components/features/user-form-dialog"
+import { VipBadge } from "@/components/features/vip-badge"
 import type { User } from "@/types"
 import { absoluteUrl, formatDate, formatMoney, userStatus } from "@/utils"
 
@@ -29,11 +35,16 @@ export function UsersPage() {
   const { users, subscriptions, pricing, reload, runAsync } = useData()
   const [editing, setEditing] = React.useState<User | null>(null)
   const [open, setOpen] = React.useState(false)
+  const [deleteUser, setDeleteUser] = React.useState<User | null>(null)
+  const [deleting, setDeleting] = React.useState(false)
   const [poolUser, setPoolUser] = React.useState<User | null>(null)
   const [poolId, setPoolId] = React.useState("")
   const [poolSaving, setPoolSaving] = React.useState(false)
   const [allowDisabledPool, setAllowDisabledPool] = React.useState(false)
   const [giftUser, setGiftUser] = React.useState<User | null>(null)
+  const [accountFilter, setAccountFilter] = React.useState("all")
+  const [planFilter, setPlanFilter] = React.useState("all")
+  const [statusFilter, setStatusFilter] = React.useState("all")
   const [giftDays, setGiftDays] = React.useState("")
   const [giftExpiresAt, setGiftExpiresAt] = React.useState("")
   const [giftPoolId, setGiftPoolId] = React.useState("")
@@ -48,6 +59,17 @@ export function UsersPage() {
   const giftPools = React.useMemo(() => subscriptions
     .filter(item => item.enabled !== false && Date.parse(item.metrics?.expireAt || "") > Date.now())
     .sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions])
+  const planOptions = React.useMemo(() => [...new Set(users.map(item => item.activeGroup).filter((value): value is string => Boolean(value)))].sort(), [users])
+  const filteredUsers = React.useMemo(() => users.filter(item =>
+    (accountFilter === "all" || (item.accountStatus || "unclaimed") === accountFilter) &&
+    (planFilter === "all" || item.activeGroup === planFilter) &&
+    (statusFilter === "all" || userStatus(item) === statusFilter)
+  ), [users, accountFilter, planFilter, statusFilter])
+  const totalUsers = users.length
+  const unclaimedUsers = users.filter(item => item.accountStatus !== "active").length
+  const activeUsers = users.filter(item => userStatus(item) !== "expired").length
+  const addedToday = users.filter(item => item.createdAt && new Date(item.createdAt).toDateString() === new Date().toDateString()).length
+  const expiringUsers = users.filter(item => userStatus(item) === "warning").length
 
   async function changePool(event: React.FormEvent) {
     event.preventDefault()
@@ -130,17 +152,33 @@ export function UsersPage() {
     }, "保存用户...")
   }
 
-  async function remove(item: User) {
-    if (!confirm("确认删除该用户？")) return
-    await runAsync(async () => {
-      await deleteJson(`/api/users/${item.id}`)
-      await reload(["users", "bills"])
-      toast.success("用户已删除")
-    }, "删除用户...")
+  function remove(item: User) {
+    setDeleteUser(item)
+  }
+
+  async function confirmRemove() {
+    if (!deleteUser) return
+    const item = deleteUser
+    setDeleting(true)
+    try {
+      await runAsync(async () => {
+        await deleteJson(`/api/users/${item.id}`)
+        await reload(["users", "bills"])
+        toast.success("用户已删除")
+      }, "删除用户...")
+      setDeleteUser(null)
+    } finally {
+      setDeleting(false)
+    }
   }
 
   function deliveryUrl(user: User) {
     return user.deliveryToken ? absoluteUrl(`/delivery/${user.deliveryToken}`) : ""
+  }
+
+  function renderMobileUser(item: User) {
+    const claimed = item.accountStatus === "active"
+    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="truncate">{claimed ? item.email || item.userId || "-" : item.userId || "-"}</span><UserStatusBadge user={item} /><VipBadge level={item.vipLevel} /></ItemTitle><ItemDescription>到期 {formatDate(item.expiresAt)} · 总消费 {formatMoney(item.actualPaid)}</ItemDescription></ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}<DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem><DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
   }
 
   const columns = React.useMemo<ColumnDef<User>[]>(() => [
@@ -186,7 +224,7 @@ export function UsersPage() {
       accessorFn: item => userStatus(item),
       header: DataTableColumnHeader({ title: "状态" }),
       meta: { label: "状态" },
-      cell: ({ row }) => <StatusBadge status={userStatus(row.original)} />,
+      cell: ({ row }) => <UserStatusBadge user={row.original} />,
     },
     {
       id: "actions",
@@ -216,24 +254,29 @@ export function UsersPage() {
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader
-        title="用户"
-        description="客户订阅、到期日、交付链接和账单入口。"
-        actions={
-          <Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}>
-            <Plus />
-            新增用户
-          </Button>
-        }
-      />
-
-      <DataTable
-        columns={columns}
-        data={users}
-        searchKey="user"
-        searchPlaceholder="搜索用户..."
-        emptyTitle="暂无用户"
-      />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard label="总用户数" value={totalUsers} detail={`未认领用户 ${unclaimedUsers} 位`} />
+        <SummaryCard label="活跃用户" value={activeUsers} detail={`占总用户 ${totalUsers ? Math.round(activeUsers / totalUsers * 100) : 0}%`} />
+        <SummaryCard label="本日新增用户" value={addedToday} />
+        <SummaryCard label="即将过期用户" value={expiringUsers} />
+      </div>
+      <DataTableCard filters={<>
+        <Field><FieldLabel htmlFor="account-filter">账户状态</FieldLabel><Select value={accountFilter} onValueChange={setAccountFilter}><SelectTrigger id="account-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="active">已认领</SelectItem><SelectItem value="invited">等待认领</SelectItem><SelectItem value="unclaimed">未认领</SelectItem></SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="plan-filter">套餐</FieldLabel><Select value={planFilter} onValueChange={setPlanFilter}><SelectTrigger id="plan-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{planOptions.map(plan => <SelectItem key={plan} value={plan}>{plan}</SelectItem>)}</SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="status-filter">用户状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="ok">Active</SelectItem><SelectItem value="warning">Expiring</SelectItem><SelectItem value="expired">Expired</SelectItem></SelectContent></Select></Field>
+      </>}>
+        <DataTable
+          columns={columns}
+          data={filteredUsers}
+          searchKey="user"
+          renderMobileItem={renderMobileUser}
+          searchPlaceholder="搜索用户..."
+          emptyTitle="暂无用户"
+          pageSize={10}
+          frame="card"
+          toolbar={<Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增用户</Button>}
+        />
+      </DataTableCard>
 
       <UserFormDialog
         open={open}
@@ -243,9 +286,15 @@ export function UsersPage() {
         onOpenChange={setOpen}
         onSubmit={save}
       />
+      <AlertDialog open={Boolean(deleteUser)} onOpenChange={open => { if (!open) setDeleteUser(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>确认删除用户？</AlertDialogTitle><AlertDialogDescription>删除后无法恢复，相关用户记录也将不再显示。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel><AlertDialogAction className="bg-destructive/10 text-destructive hover:bg-destructive/20" onClick={() => void confirmRemove()} disabled={deleting}>{deleting ? <Loader2 className="animate-spin" /> : null}确认删除</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <Dialog open={Boolean(poolUser)} onOpenChange={open => { if (!open) setPoolUser(null) }}>
         <DialogContent>
-          <form className="grid gap-4" onSubmit={changePool}>
+          <form className="grid gap-4" onSubmit={changePool} noValidate>
             <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription>当前池：{currentPool ? `${currentPool.serviceProvider || currentPool.provider || "Provider"} - ${currentPool.email || currentPool.url} · 到期 ${formatDate(currentPool.metrics?.expireAt)}` : "未绑定"}</DialogDescription></DialogHeader>
             <div className="grid gap-2"><Label htmlFor="manual-pool">目标订阅池</Label><Select value={poolId} onValueChange={setPoolId}><SelectTrigger id="manual-pool" className="w-full"><SelectValue placeholder="请选择订阅池" /></SelectTrigger><SelectContent>{selectablePools.map(item => <SelectItem key={item.id} value={item.id}>{item.serviceProvider || item.provider || "Provider"} - {item.email || item.url} · 到期 {formatDate(item.metrics?.expireAt)}{item.enabled === false ? " · 未启用" : ""}</SelectItem>)}</SelectContent></Select></div>
             <div className="flex items-center gap-2"><Checkbox id="allow-disabled-pool" checked={allowDisabledPool} onCheckedChange={checked => { const enabled = checked === true; setAllowDisabledPool(enabled); if (!enabled && subscriptions.find(item => item.id === poolId)?.enabled === false) setPoolId("") }} /><Label htmlFor="allow-disabled-pool">使用未启用池</Label></div>
@@ -255,7 +304,7 @@ export function UsersPage() {
       </Dialog>
       <Dialog open={Boolean(giftUser)} onOpenChange={open => { if (!open) setGiftUser(null) }}>
         <DialogContent>
-          <form className="grid gap-4" onSubmit={submitGift}>
+          <form className="grid gap-4" onSubmit={submitGift} noValidate>
             <DialogHeader><DialogTitle>赠送时长</DialogTitle><DialogDescription>{giftUser?.userId || giftUser?.email || "用户"} · 当前到期 {formatDate(giftUser?.expiresAt)}</DialogDescription></DialogHeader>
             <FieldGroup>
               <Field>

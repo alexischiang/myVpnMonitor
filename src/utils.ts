@@ -87,7 +87,7 @@ export function absoluteUrl(path?: string) {
 export function userStatus(user?: User | null) {
   const expiresAt = user?.expiresAt ? new Date(user.expiresAt).getTime() : null
   if (expiresAt && expiresAt < Date.now()) return "expired"
-  if (expiresAt && expiresAt - Date.now() < 3 * 86400000) return "warning"
+  if (expiresAt && expiresAt - Date.now() <= 3 * 86400000) return "warning"
   return "ok"
 }
 

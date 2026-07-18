@@ -10,6 +10,10 @@ export type Subscription = {
   note?: string
   enabled?: boolean
   accountStatus?: "unclaimed" | "invited" | "active"
+  accountId?: string
+  referralCode?: string
+  referralRate?: number
+  recurringReferral?: boolean
   status?: Status
   httpStatus?: number | string | null
   lastCheckedAt?: string | null
@@ -25,6 +29,7 @@ export type Subscription = {
 
 export type User = {
   id: string
+  createdAt?: string
   accountStatus?: "unclaimed" | "invited" | "active"
   userId?: string
   wechatName?: string
@@ -92,6 +97,10 @@ export type Bill = {
     purchaseAction: "initial" | "extend" | "replace"
     channelCode: string
     amount: number
+    totalAmount?: number
+    walletAmount?: number
+    walletCashAmount?: number
+    walletGiftAmount?: number
     paidAt?: string
   } | null
 }

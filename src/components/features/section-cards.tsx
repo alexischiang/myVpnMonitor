@@ -1,14 +1,7 @@
 import { IconTrendingDown, IconTrendingUp } from "@tabler/icons-react"
 
 import { Badge } from "@/components/ui/badge"
-import {
-  Card,
-  CardAction,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { SummaryCard } from "@/components/features/summary-card"
 import { formatMoney } from "@/utils"
 
 type SectionCardsProps = {
@@ -59,56 +52,10 @@ export function SectionCards({
 }: SectionCardsProps) {
   return (
     <div className="grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:shadow-xs md:grid-cols-2 lg:px-6 xl:grid-cols-4">
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>累计收入</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {formatMoney(income)}
-          </CardTitle>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 font-medium">有效账单 {bills} 笔</div>
-        </CardFooter>
-      </Card>
-
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>本月收入</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {formatMoney(monthlyIncome)}
-          </CardTitle>
-          <CardAction>
-            <GrowthBadge value={monthlyIncomeGrowth} />
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 font-medium">本日收入 {formatMoney(dailyIncome)}</div>
-        </CardFooter>
-      </Card>
-
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>总客户数</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {users}
-          </CardTitle>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 font-medium">累计客户 {users} 位</div>
-        </CardFooter>
-      </Card>
-
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>活跃客户</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {activeUsers}
-          </CardTitle>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 font-medium">占总用户 {formatPercent(activeUserRate)}</div>
-        </CardFooter>
-      </Card>
+      <SummaryCard label="累计收入" value={formatMoney(income)} detail={`有效账单 ${bills} 笔`} />
+      <SummaryCard label="本月收入" value={formatMoney(monthlyIncome)} detail={`本日收入 ${formatMoney(dailyIncome)}`} action={<GrowthBadge value={monthlyIncomeGrowth} />} />
+      <SummaryCard label="总客户数" value={users} detail={`累计客户 ${users} 位`} />
+      <SummaryCard label="活跃客户" value={activeUsers} detail={`占总用户 ${formatPercent(activeUserRate)}`} />
     </div>
   )
 }

@@ -180,6 +180,7 @@ let embyVendors = [];
 let pricing = [];
 let paymentOrders = [];
 let salesSettings = [];
+let referralRewards = [];
 const dataStore = createDataStore({
   databaseUrl: DATABASE_URL,
   ssl: !LOCAL_DATABASE_URL && process.env.DATABASE_SSL === "true"
@@ -212,6 +213,8 @@ async function ensureDataFile() {
   pricing = state.pricing || [];
   paymentOrders = state.paymentOrders || [];
   salesSettings = state.salesSettings || [];
+  referralRewards = state.referralRewards || [];
+  if (ensureReferralAccountFields()) await saveAccounts();
   lastLoadedAt = Date.now();
   if (!pricing.length) { pricing = DEFAULT_PRICING.map(r => ({ ...r })); await savePricing(); }
   if (!salesSettings.length) { salesSettings = [initialSalesSettings()]; await saveSalesSettings(); }
@@ -295,6 +298,7 @@ function _doLoad() {
     pricing = state.pricing || [];
     paymentOrders = state.paymentOrders || [];
     salesSettings = state.salesSettings || [];
+    referralRewards = state.referralRewards || [];
     lastLoadedAt = Date.now();
   }).catch(error => {
     if (lastLoadedAt > 0) {
@@ -621,6 +625,13 @@ function tokenHash(token) {
   return crypto.createHash("sha256").update(String(token || "")).digest("hex");
 }
 
+function validAccountActionToken(token) {
+  const hash = tokenHash(token);
+  const account = accounts.find(item => item.resetTokenHash === hash || item.claimTokenHash === hash);
+  const expiresAt = account?.resetTokenHash === hash ? account.resetTokenExpiresAt : account?.claimTokenExpiresAt;
+  return account && expiresAt && new Date(expiresAt).getTime() > Date.now() ? { account, hash } : null;
+}
+
 function accountActionUrl(req, pathName, token) {
   const base = String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "");
   return `${base}${pathName}?token=${encodeURIComponent(token)}`;
@@ -741,7 +752,12 @@ function publicPaymentOrder(order) {
     planName: order.planName,
     optionId: order.optionId,
     optionLabel: order.optionLabel,
+    purpose: order.purpose || "plan",
     amount: order.amount,
+    totalAmount: order.totalAmount ?? order.amount,
+    walletAmount: order.walletAmount || 0,
+    walletCashAmount: order.walletCashAmount || 0,
+    walletGiftAmount: order.walletGiftAmount || 0,
     originalAmount: order.originalAmount ?? order.amount,
     discountAmount: order.discountAmount || 0,
     vipLevel: order.vipLevel || "vip1",
@@ -998,6 +1014,135 @@ function userForAccount(account) {
   return users.find(item => String(item.email || item.userId || "").toLowerCase() === email) || null;
 }
 
+async function saveReferralRewards() {
+  _markWritten();
+  await dataStore.saveCollection("referralRewards", referralRewards);
+}
+
+function moneyCents(value, label = "金额") {
+  const raw = String(value ?? "").trim();
+  const amount = Number(value);
+  const cents = Math.round(amount * 100);
+  if (!/^\d+(\.\d{1,2})?$/.test(raw) || !Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - cents) > 0.000001) throw new Error(`${label}必须是最多两位小数的正数。`);
+  return cents;
+}
+
+function initialWalletVipCents(account) {
+  return Math.round(userVipSpend(userForAccount(account)) * 100);
+}
+
+async function walletForAccount(account) {
+  return dataStore.getWallet(account.id, initialWalletVipCents(account));
+}
+
+function publicWallet(wallet) {
+  return {
+    cashBalance: wallet.cashCents / 100,
+    giftBalance: wallet.giftCents / 100,
+    balance: (wallet.cashCents + wallet.giftCents) / 100,
+    availableCashBalance: wallet.availableCashCents / 100,
+    availableGiftBalance: wallet.availableGiftCents / 100,
+    availableBalance: (wallet.availableCashCents + wallet.availableGiftCents) / 100,
+    heldBalance: (wallet.cashHeldCents + wallet.giftHeldCents) / 100,
+    referralBalance: wallet.referralCents / 100,
+    vipSpend: wallet.vipSpendCents / 100
+  };
+}
+
+function normalizeReferralCode(value) {
+  const code = String(value || "").trim();
+  return /^\d{6}$/.test(code) ? code : "";
+}
+
+function randomReferralCode() {
+  let code = "";
+  do code = String(Math.floor(100000 + Math.random() * 900000));
+  while (accounts.some(account => account.referralCode === code));
+  return code;
+}
+
+function ensureReferralAccountFields() {
+  let changed = false;
+  for (const account of accounts) {
+    if (!normalizeReferralCode(account.referralCode)) { account.referralCode = randomReferralCode(); changed = true; }
+    if (!account.referralRate && account.referralRate !== 0) { account.referralRate = 10; changed = true; }
+    if (account.recurringReferral === undefined) { account.recurringReferral = false; changed = true; }
+  }
+  return changed;
+}
+
+function referralRewardBaseCents(order) {
+  return Math.max(0, Math.round((Number(order.amount || 0) + Number(order.walletCashAmount || 0)) * 100));
+}
+
+async function settleReferralRewards() {
+  const now = Date.now();
+  let changed = false;
+  for (const reward of referralRewards) {
+    if (reward.status !== "pending" || new Date(reward.availableAt).getTime() > now) continue;
+    const account = accounts.find(item => item.id === reward.inviterAccountId);
+    if (!account) { reward.status = "rejected"; reward.reason = "inviter-missing"; changed = true; continue; }
+    await dataStore.creditReferralReward({
+      id: crypto.randomUUID(), accountId: account.id, sourceId: reward.id,
+      amountCents: reward.rewardCents, idempotencyKey: `referral:${reward.id}`,
+      description: `邀请返利：${reward.sourceOrderId}`, initialVipCents: initialWalletVipCents(account)
+    });
+    reward.status = "available";
+    reward.settledAt = new Date().toISOString();
+    changed = true;
+  }
+  if (changed) await saveReferralRewards();
+}
+
+async function createReferralReward(order, account) {
+  const inviterId = account?.referredByAccountId;
+  if (!inviterId) return;
+  const inviter = accounts.find(item => item.id === inviterId);
+  const baseCents = referralRewardBaseCents(order);
+  if (!inviter || !baseCents) return;
+  const priorPaid = paymentOrders.some(item => item.accountId === account.id && item.id !== order.id && item.purpose !== "recharge" && item.status === "paid");
+  if (priorPaid && inviter.recurringReferral !== true) return;
+  if (referralRewards.some(item => item.sourceOrderId === order.id)) return;
+  const rate = Math.max(0, Math.min(100, Number(inviter.referralRate ?? 10)));
+  const rewardCents = Math.floor(baseCents * rate / 100);
+  if (!rewardCents) return;
+  const now = new Date();
+  referralRewards.unshift({
+    id: crypto.randomUUID(), sourceOrderId: order.id, inviterAccountId: inviter.id,
+    inviteeAccountId: account.id, baseCents, rate, rewardCents,
+    status: "pending", availableAt: new Date(now.getTime() + 48 * 60 * 60 * 1000).toISOString(), createdAt: now.toISOString()
+  });
+  await saveReferralRewards();
+}
+
+function syncWalletVip(account, wallet) {
+  const vipSpend = wallet.vipSpendCents / 100;
+  account.vipSpend = vipSpend;
+  const user = userForAccount(account);
+  if (user) {
+    user.vipSpend = vipSpend;
+    user.level = vipLevelForSpend(vipSpend);
+  }
+}
+
+async function paymentQuoteForAccount(payload, account) {
+  const wallet = await walletForAccount(account);
+  const quote = paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id);
+  const payableCents = Math.round(quote.amount * 100);
+  const useBalance = payload.useBalance !== false;
+  const walletGiftCents = useBalance ? Math.min(payableCents, wallet.availableGiftCents) : 0;
+  const walletCashCents = useBalance ? Math.min(payableCents - walletGiftCents, wallet.availableCashCents) : 0;
+  return {
+    ...quote,
+    payableAmount: payableCents / 100,
+    walletGiftAmount: walletGiftCents / 100,
+    walletCashAmount: walletCashCents / 100,
+    walletAmount: (walletGiftCents + walletCashCents) / 100,
+    amount: (payableCents - walletGiftCents - walletCashCents) / 100,
+    wallet: publicWallet(wallet)
+  };
+}
+
 function remainingPlanCashValue(user, now = new Date()) {
   if (!user) return 0;
   const valuedAt = new Date(user.cashValueAt || user.purchasedAt || 0).getTime();
@@ -1069,6 +1214,30 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
 
 async function fulfillPaymentOrder(order, req) {
   if (!order || order.status !== "paid" || order.fulfilledAt) return order;
+  if (order.purpose === "recharge") {
+    const account = accounts.find(item => item.id === order.accountId);
+    if (!account) throw new Error("充值账户不存在。");
+    const wallet = await dataStore.creditWalletRecharge({
+      id: crypto.randomUUID(),
+      accountId: account.id,
+      orderId: order.id,
+      amountCents: Math.round(order.amount * 100),
+      description: "余额充值",
+      initialVipCents: initialWalletVipCents(account)
+    });
+    syncWalletVip(account, wallet);
+    order.vipSpendAmount = order.amount;
+    order.vipSpendBefore = (wallet.vipSpendCents - Math.round(order.amount * 100)) / 100;
+    order.vipSpendAfter = wallet.vipSpendCents / 100;
+    order.fulfilledAt = new Date().toISOString();
+    order.fulfillmentStatus = "fulfilled";
+    order.fulfillmentError = "";
+    await saveAccounts();
+    if (userForAccount(account)) await saveUsers();
+    await savePaymentOrders();
+    await notifyPaymentOrder(order);
+    return order;
+  }
   const email = normalizePaymentEmail(order.email);
   const selectedOption = resolvePaymentPlanOption(order.optionId);
   const purchasedAt = order.paidAt || new Date().toISOString();
@@ -1077,7 +1246,16 @@ async function fulfillPaymentOrder(order, req) {
     ? users.find(item => item.id === account.linkedUserId)
     : users.find(item => String(item.userId || "").toLowerCase() === email);
   if (user && !user.email) user.email = email;
-  const vipSpendBefore = userVipSpend(user);
+  const wallet = await dataStore.settleWalletPurchase({
+    id: crypto.randomUUID(),
+    accountId: account.id,
+    orderId: order.id,
+    vipDeltaCents: Math.round(order.amount * 100),
+    description: `${order.planName} ${order.optionLabel}`,
+    initialVipCents: initialWalletVipCents(account)
+  });
+  const vipSpendBefore = (wallet.vipSpendCents - Math.round(order.amount * 100)) / 100;
+  syncWalletVip(account, wallet);
   const expiresAt = nextUserExpiry(user, purchasedAt, selectedOption.duration, order.purchaseAction === "replace");
   const recommendation = recommendSubscriptionForExpiry(expiresAt);
   if (!recommendation.subscription) throw new Error(recommendation.reason || "No available subscription pool.");
@@ -1087,8 +1265,9 @@ async function fulfillPaymentOrder(order, req) {
     const poolChanged = previousSubscription?.id !== recommendation.subscription.id;
     const renewal = renewUser(user, {
       purchasedAt,
-      actualPaid: order.amount,
-      vipSpendAmount: order.vipSpendAmount ?? order.subtotal ?? order.amount,
+      actualPaid: order.totalAmount ?? order.amount,
+      vipSpendAmount: order.amount,
+      cashValueAmount: order.totalAmount ?? order.amount,
       duration: selectedOption.duration,
       group: selectedOption.group,
       unlimited: Boolean(selectedOption.unlimited),
@@ -1099,7 +1278,7 @@ async function fulfillPaymentOrder(order, req) {
       user,
       type: order.purchaseAction === "replace" ? "replacement" : "renewal",
       paymentOrderId: order.id,
-      amount: order.amount,
+      amount: order.totalAmount ?? order.amount,
       vipSpendAmount: renewal.vipSpendAmount,
       occurredAt: renewal.renewedAt,
       duration: user.duration,
@@ -1139,13 +1318,13 @@ async function fulfillPaymentOrder(order, req) {
       email,
       wechatName: "",
       purchasedAt,
-      actualPaid: order.amount,
-      vipSpend: order.vipSpendAmount ?? order.subtotal ?? order.amount,
+      actualPaid: order.totalAmount ?? order.amount,
+      vipSpend: wallet.vipSpendCents / 100,
       duration: selectedOption.duration,
       group: selectedOption.group,
       activeGroup: selectedOption.group,
       unlimited: Boolean(selectedOption.unlimited),
-      cashValue: order.beforeCreditAmount ?? order.amount,
+      cashValue: order.totalAmount ?? order.amount,
       cashValueAt: purchasedAt,
       subscriptionId: recommendation.subscription.id,
       outputMode: "subconverter",
@@ -1158,7 +1337,7 @@ async function fulfillPaymentOrder(order, req) {
       user,
       type: "initial",
       paymentOrderId: order.id,
-      amount: order.amount,
+      amount: order.totalAmount ?? order.amount,
       vipSpendAmount: userVipSpend(user),
       occurredAt: user.purchasedAt,
       duration: user.duration,
@@ -1185,7 +1364,9 @@ async function fulfillPaymentOrder(order, req) {
 
   order.userId = user.id;
   order.vipSpendBefore = vipSpendBefore;
-  order.vipSpendAfter = userVipSpend(user);
+  user.vipSpend = wallet.vipSpendCents / 100;
+  user.level = vipLevelForSpend(user.vipSpend);
+  order.vipSpendAfter = wallet.vipSpendCents / 100;
   if (account && account.linkedUserId !== user.id) {
     account.linkedUserId = user.id;
     account.updatedAt = new Date().toISOString();
@@ -1196,9 +1377,21 @@ async function fulfillPaymentOrder(order, req) {
   order.fulfillmentStatus = "fulfilled";
   order.fulfillmentError = "";
   await saveUsers();
+  await saveAccounts();
   await saveBills();
+  await createReferralReward(order, account);
   await savePaymentOrders();
+  await notifyPaymentOrder(order);
   return order;
+}
+
+async function notifyPaymentOrder(order) {
+  if (!notifier.isTelegramConfigured()) return;
+  try {
+    await notifier.sendTelegram({ text: notifier.buildPaymentAlert(order) });
+  } catch (error) {
+    console.error(`Payment notification failed for ${order.merOrderTid}:`, error.message);
+  }
 }
 
 function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
@@ -1210,41 +1403,56 @@ function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
 }
 
 async function createPaymentOrder(payload, req, account) {
-  const selectedOption = paymentQuote(payload.optionId, payload.couponCode, undefined, userVipLevel(userForAccount(account)), account.id);
+  const wallet = await walletForAccount(account);
+  const selectedOption = paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id);
   if (paymentOrders.some(order => order.accountId === account.id && order.status === "pending" && !isPaymentOrderExpired(order))) {
     throw new Error("已有待支付订单，请先完成或等待订单关闭。");
   }
-  const config = selectedOption.amount > 0 ? requirePaymentConfig() : null;
-  const channelCode = config ? paymentChannelCode(payload.channelCode || config.channelCode) : "cash-credit";
   const email = normalizePaymentEmail(account.email);
-  const amount = selectedOption.amount > 0 ? normalizePaymentAmountForGateway(selectedOption.amount) : "0.00";
   const id = crypto.randomUUID();
   const merOrderTid = makePaymentOrderId();
+  const payableCents = Math.round(selectedOption.amount * 100);
+  const expiresAt = new Date(Date.now() + PAYMENT_ORDER_TTL_MS).toISOString();
+  const hold = payload.useBalance === false || payableCents === 0
+    ? { cashCents: 0, giftCents: 0 }
+    : await dataStore.reserveWallet({ accountId: account.id, orderId: id, amountCents: payableCents, expiresAt, initialVipCents: initialWalletVipCents(account) });
+  const gatewayCents = payableCents - hold.cashCents - hold.giftCents;
+  const amount = (gatewayCents / 100).toFixed(2);
+  let config;
+  let channelCode;
   let compactParams = {};
   let result = {};
-  if (config) {
-    const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
-    if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
-    const requestParams = {
-      mid: config.merchantId,
-      merOrderTid,
-      money: amount,
-      channelCode,
-      notifyUrl,
-      clientUserPayRemark: selectedOption.optionLabel,
-      clientUserId: String(payload.clientUserId || "").trim(),
-      clientUserName: String(payload.clientUserName || "").trim(),
-      returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl)
-    };
-    compactParams = compactPaymentParams(requestParams);
-    compactParams.sign = paymentSign(compactParams, config.merchantSecret);
-    result = await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", compactParams, config);
+  try {
+    config = gatewayCents > 0 ? requirePaymentConfig() : null;
+    channelCode = config ? paymentChannelCode(payload.channelCode || config.channelCode) : hold.cashCents + hold.giftCents > 0 ? "wallet" : "cash-credit";
+    if (config) {
+      const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
+      if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
+      const requestParams = {
+        mid: config.merchantId,
+        merOrderTid,
+        money: amount,
+        channelCode,
+        notifyUrl,
+        clientUserPayRemark: selectedOption.optionLabel,
+        clientUserId: String(payload.clientUserId || "").trim(),
+        clientUserName: String(payload.clientUserName || "").trim(),
+        returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl)
+      };
+      compactParams = compactPaymentParams(requestParams);
+      compactParams.sign = paymentSign(compactParams, config.merchantSecret);
+      result = await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", compactParams, config);
+    }
+  } catch (error) {
+    await dataStore.releaseWalletHold(id);
+    throw error;
   }
 
   const now = new Date().toISOString();
   const order = {
     id,
     merOrderTid,
+    purpose: "plan",
     tid: result.tid || "",
     planId: selectedOption.planId,
     planName: selectedOption.planName,
@@ -1263,9 +1471,13 @@ async function createPaymentOrder(payload, req, account) {
     beforeCreditAmount: selectedOption.beforeCreditAmount,
     cashCredit: selectedOption.cashCredit,
     purchaseAction: selectedOption.purchaseAction,
-    vipSpendAmount: Math.round((Number(amount) / 1.03) * 100) / 100,
+    vipSpendAmount: Number(amount),
     couponCode: selectedOption.couponCode,
     channelCode,
+    totalAmount: payableCents / 100,
+    walletAmount: (hold.cashCents + hold.giftCents) / 100,
+    walletCashAmount: hold.cashCents / 100,
+    walletGiftAmount: hold.giftCents / 100,
     amount: Number(amount),
     email,
     accountId: account.id,
@@ -1275,12 +1487,85 @@ async function createPaymentOrder(payload, req, account) {
     requestParams: compactParams,
     paidAt: config ? "" : now,
     createdAt: now,
+    expiresAt,
+    updatedAt: now
+  };
+  paymentOrders.unshift(order);
+  try {
+    await savePaymentOrders();
+  } catch (error) {
+    paymentOrders = paymentOrders.filter(item => item.id !== order.id);
+    await dataStore.releaseWalletHold(order.id);
+    throw error;
+  }
+  if (order.status === "paid") {
+    order.paidAt ||= now;
+    await fulfillPaymentOrder(order, req);
+  } else if (["failed", "abnormal", "closed"].includes(order.status)) await dataStore.releaseWalletHold(order.id);
+  return order;
+}
+
+async function createRechargeOrder(payload, req, account) {
+  if (paymentOrders.some(order => order.accountId === account.id && order.status === "pending" && !isPaymentOrderExpired(order))) {
+    throw new Error("已有待支付订单，请先完成或等待订单关闭。");
+  }
+  const amountCents = moneyCents(payload.amount, "充值金额");
+  if (amountCents > 1000000) throw new Error("单次充值不能超过 ¥10,000.00。");
+  const config = requirePaymentConfig();
+  const channelCode = paymentChannelCode(payload.channelCode || config.channelCode);
+  const id = crypto.randomUUID();
+  const merOrderTid = makePaymentOrderId();
+  const amount = (amountCents / 100).toFixed(2);
+  const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
+  if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
+  const requestParams = {
+    mid: config.merchantId,
+    merOrderTid,
+    money: amount,
+    channelCode,
+    notifyUrl,
+    clientUserPayRemark: "余额充值",
+    returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl)
+  };
+  const compactParams = compactPaymentParams(requestParams);
+  compactParams.sign = paymentSign(compactParams, config.merchantSecret);
+  const result = await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", compactParams, config);
+  const now = new Date().toISOString();
+  const order = {
+    id,
+    merOrderTid,
+    tid: result.tid || "",
+    purpose: "recharge",
+    planId: "wallet",
+    planName: "账户余额",
+    optionId: "wallet-recharge",
+    optionLabel: `充值 ¥${amount}`,
+    amount: Number(amount),
+    totalAmount: Number(amount),
+    vipSpendAmount: Number(amount),
+    channelCode,
+    email: normalizePaymentEmail(account.email),
+    accountId: account.id,
+    payUrl: result.payUrl || "",
+    status: platformStatusToOrderStatus(result.payOrderStatus),
+    platformStatus: result.payOrderStatus ?? null,
+    requestParams: compactParams,
+    paidAt: "",
+    createdAt: now,
     expiresAt: new Date(Date.now() + PAYMENT_ORDER_TTL_MS).toISOString(),
     updatedAt: now
   };
   paymentOrders.unshift(order);
-  await savePaymentOrders();
-  if (!config) await fulfillPaymentOrder(order, req);
+  try {
+    await savePaymentOrders();
+  } catch (error) {
+    paymentOrders = paymentOrders.filter(item => item.id !== order.id);
+    throw error;
+  }
+  if (order.status === "paid") {
+    order.paidAt = now;
+    await fulfillPaymentOrder(order, req);
+  }
   return order;
 }
 
@@ -1302,6 +1587,7 @@ async function refreshPaymentOrder(order) {
   order.paymentError = amountError || paymentStatusError(order.status);
   order.updatedAt = new Date().toISOString();
   if (order.status === "paid" && !order.paidAt) order.paidAt = order.updatedAt;
+  if (["failed", "abnormal", "closed"].includes(order.status)) await dataStore.releaseWalletHold(order.id);
   await savePaymentOrders();
   return order;
 }
@@ -1332,6 +1618,7 @@ async function handlePaymentCallback(req) {
     order.callbackPayload = payload;
     order.updatedAt = now;
     if (order.status === "paid" && !order.paidAt) order.paidAt = now;
+    if (["failed", "abnormal", "closed"].includes(order.status)) await dataStore.releaseWalletHold(order.id);
     await savePaymentOrders();
     if (order.status === "paid") {
       try {
@@ -1957,7 +2244,12 @@ function publicUser(user, subscriptionMap = null) {
   return {
     ...user,
     email: user.email || linkedAccount?.email || "",
+    vipLevel: userVipLevel(user),
     accountStatus: linkedAccount?.status || "unclaimed",
+    accountId: linkedAccount?.id || "",
+    referralCode: linkedAccount?.referralCode || "",
+    referralRate: Number(linkedAccount?.referralRate ?? 10),
+    recurringReferral: linkedAccount?.recurringReferral === true,
     userLogs: publicUserLogs(user),
     relayPath: user.subscriptionToken ? `/sub/${user.subscriptionToken}` : "",
     subscription: subscription ? {
@@ -3943,6 +4235,8 @@ async function handleApi(req, res, pathname) {
       const payload = await readJson(req);
       const email = normalizeAccountEmail(payload.email);
       const password = validateAccountPassword(payload.password);
+      const referralCode = normalizeReferralCode(payload.referralCode);
+      if (payload.referralCode && !referralCode) throw new Error("邀请码必须是 6 位数字");
       if (accounts.some(item => item.email === email)) {
         sendJson(res, 409, { error: "该邮箱已有账户，请直接登录或重置密码。" });
         return;
@@ -3952,7 +4246,12 @@ async function handleApi(req, res, pathname) {
         return;
       }
       const now = new Date().toISOString();
-      const account = { id: crypto.randomUUID(), email, passwordHash: hashAccountPassword(password), status: "active", linkedUserId: "", createdAt: now, updatedAt: now };
+      const inviter = referralCode ? accounts.find(item => item.referralCode === referralCode) : null;
+      if (referralCode && (!inviter || inviter.email === email)) {
+        sendJson(res, 400, { error: "邀请码无效" });
+        return;
+      }
+      const account = { id: crypto.randomUUID(), email, passwordHash: hashAccountPassword(password), status: "active", linkedUserId: "", referralCode: randomReferralCode(), referredByAccountId: inviter?.id || "", referralRate: 10, recurringReferral: false, referralBoundAt: inviter ? now : "", createdAt: now, updatedAt: now };
       accounts.unshift(account);
       await saveAccounts();
       const token = makeSessionToken({ role: "user", accountId: account.id, email }, REMEMBER_MAX_AGE_SECONDS);
@@ -4030,13 +4329,12 @@ async function handleApi(req, res, pathname) {
       await loadLatestData();
       const payload = await readJson(req);
       const password = validateAccountPassword(payload.password);
-      const hash = tokenHash(payload.token);
-      const account = accounts.find(item => (item.resetTokenHash === hash || item.claimTokenHash === hash));
-      const expiresAt = account?.resetTokenHash === hash ? account.resetTokenExpiresAt : account?.claimTokenExpiresAt;
-      if (!account || !expiresAt || new Date(expiresAt).getTime() <= Date.now()) {
+      const match = validAccountActionToken(payload.token);
+      if (!match) {
         sendJson(res, 400, { error: "链接无效或已过期。" });
         return;
       }
+      const { account } = match;
       account.passwordHash = hashAccountPassword(password);
       account.status = "active";
       delete account.resetTokenHash;
@@ -4161,14 +4459,24 @@ async function handleApi(req, res, pathname) {
     if (!session) return;
     await loadLatestData();
     const account = accountBySession(session);
+    await settleReferralRewards();
     const user = account?.linkedUserId ? users.find(item => item.id === account.linkedUserId) : null;
+    const wallet = await walletForAccount(account);
+    const walletVipLevel = vipLevelForSpend(wallet.vipSpendCents / 100);
     const plan = user ? publicPricing().find(item => item.group === activeUserGroup(user)) : null;
     sendJson(res, 200, {
       email: account.email,
       createdAt: account.createdAt,
-      vipLevel: user ? userVipLevel(user) : "vip1",
-      vipSpend: user ? userVipSpend(user) : 0,
-      vipDiscountPercent: vipDiscountPercent(user ? userVipLevel(user) : "vip1"),
+      vipLevel: walletVipLevel,
+      vipSpend: wallet.vipSpendCents / 100,
+      vipDiscountPercent: vipDiscountPercent(walletVipLevel),
+      wallet: publicWallet(wallet),
+      referral: {
+        code: account.referralCode,
+        balance: wallet.referralCents / 100,
+        rate: Number(account.referralRate ?? 10),
+        recurring: account.recurringReferral === true
+      },
       subscription: user ? {
         ...publicDeliveryPayload(user, req),
         id: user.id,
@@ -4190,6 +4498,82 @@ async function handleApi(req, res, pathname) {
     if (!session) return;
     await loadLatestData();
     sendJson(res, 200, paymentOrders.filter(item => item.accountId === session.accountId).map(publicPaymentOrder));
+    return;
+  }
+
+  if (pathname === "/api/auth/token-status" && req.method === "POST") {
+    await loadLatestData();
+    const payload = await readJson(req);
+    if (!validAccountActionToken(payload.token)) {
+      sendJson(res, 400, { error: "链接无效或已过期。" });
+      return;
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname === "/api/account/wallet" && req.method === "GET") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    await loadLatestData();
+    const account = accountBySession(session);
+    const [wallet, entries] = await Promise.all([
+      walletForAccount(account),
+      dataStore.listWalletEntries(account.id)
+    ]);
+    sendJson(res, 200, {
+      ...publicWallet(wallet),
+      entries: entries.map(entry => ({
+        id: entry.id,
+        type: entry.type,
+        cashDelta: entry.cashDeltaCents / 100,
+        giftDelta: entry.giftDeltaCents / 100,
+        vipDelta: entry.vipDeltaCents / 100,
+        referralDelta: entry.referralDeltaCents / 100,
+        balance: (entry.cashBalanceCents + entry.giftBalanceCents) / 100,
+        sourceId: entry.sourceId,
+        description: entry.description,
+        createdAt: entry.createdAt
+      }))
+    });
+    return;
+  }
+
+  if (pathname === "/api/account/referrals" && req.method === "GET") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    await loadLatestData();
+    await settleReferralRewards();
+    const account = accountBySession(session);
+    const wallet = await walletForAccount(account);
+    const accountRewards = referralRewards.filter(item => item.inviterAccountId === account.id);
+    const pendingCents = accountRewards.filter(item => item.status === "pending").reduce((sum, item) => sum + Number(item.rewardCents || 0), 0);
+    const earnedCents = accountRewards.filter(item => item.status === "available").reduce((sum, item) => sum + Number(item.rewardCents || 0), 0);
+    sendJson(res, 200, {
+      code: account.referralCode,
+      invitedCount: accounts.filter(item => item.referredByAccountId === account.id).length,
+      referralBalance: wallet.referralCents / 100,
+      pendingAmount: pendingCents / 100,
+      earnedAmount: earnedCents / 100,
+      referralRate: Number(account.referralRate ?? 10),
+      recurringReferral: account.recurringReferral === true,
+      rewards: accountRewards.map(item => ({ ...item, baseAmount: item.baseCents / 100, rewardAmount: item.rewardCents / 100 }))
+    });
+    return;
+  }
+
+  if (pathname === "/api/account/referrals/transfer" && req.method === "POST") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      const account = accountBySession(session);
+      const payload = await readJson(req);
+      const amountCents = moneyCents(payload.amount, "转入金额");
+      const wallet = await walletForAccount(account);
+      if (amountCents > wallet.referralCents) throw new Error("返利钱包余额不足");
+      const nextWallet = await dataStore.transferReferralToCash({ id: crypto.randomUUID(), accountId: account.id, amountCents, description: "返利转入余额钱包", initialVipCents: initialWalletVipCents(account) });
+      sendJson(res, 200, publicWallet(nextWallet));
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
     return;
   }
 
@@ -4376,13 +4760,27 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/wallet/recharge" && req.method === "POST") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      const payload = await readJson(req);
+      const account = accountBySession(session);
+      const order = await createRechargeOrder(payload, req, account);
+      sendJson(res, 201, publicPaymentOrder(order));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/payments/quote" && req.method === "POST") {
     const session = requireUser(req, res);
     if (!session) return;
     try {
       const payload = await readJson(req);
       const account = accountBySession(session);
-      sendJson(res, 200, paymentQuote(payload.optionId, payload.couponCode, undefined, userVipLevel(userForAccount(account)), account.id));
+      sendJson(res, 200, await paymentQuoteForAccount(payload, account));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -4597,6 +4995,24 @@ async function handleApi(req, res, pathname) {
     await loadLatestData();
     const usersById = userById();
     sendJson(res, 200, bills.map(bill => publicBill(bill, usersById)).sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)));
+    return;
+  }
+
+  const referralAccountMatch = pathname.match(/^\/api\/referrals\/accounts\/([^/]+)$/);
+  if (referralAccountMatch && req.method === "PUT") {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const account = accounts.find(item => item.id === referralAccountMatch[1]);
+      if (!account) throw new Error("账户不存在");
+      const payload = await readJson(req);
+      const rate = Number(payload.referralRate);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 100) throw new Error("返利比例必须在 0 到 100 之间");
+      account.referralRate = rate;
+      account.recurringReferral = payload.recurringReferral === true;
+      account.updatedAt = new Date().toISOString();
+      await saveAccounts();
+      sendJson(res, 200, { ok: true, referralRate: rate, recurringReferral: account.recurringReferral });
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
     return;
   }
 
@@ -5054,7 +5470,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -5151,6 +5567,31 @@ async function handleApi(req, res, pathname) {
         }));
         await saveUsers();
         sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "wallet-gift" && req.method === "POST") {
+      try {
+        const account = accounts.find(entry => entry.linkedUserId === item.id && entry.status === "active");
+        if (!account) throw new Error("用户需要先认领账户才能赠送余额。");
+        const payload = await readJson(req);
+        const amountCents = moneyCents(payload.amount, "赠送金额");
+        if (amountCents > 1000000) throw new Error("单次赠送不能超过 ¥10,000.00。");
+        const note = String(payload.note || "").trim().slice(0, 100);
+        const sourceId = crypto.randomUUID();
+        const wallet = await dataStore.creditWalletGift({
+          id: crypto.randomUUID(),
+          accountId: account.id,
+          sourceId,
+          amountCents,
+          description: note ? `后台赠送：${note}` : "后台赠送余额",
+          idempotencyKey: `admin-gift:${sourceId}`,
+          initialVipCents: initialWalletVipCents(account)
+        });
+        sendJson(res, 200, publicWallet(wallet));
       } catch (error) {
         sendJson(res, 400, { error: error.message });
       }
@@ -5501,6 +5942,9 @@ async function main() {
   setInterval(() => {
     refreshAll().catch(error => console.error("Refresh failed:", error));
   }, REFRESH_INTERVAL_MS);
+  setInterval(() => {
+    settleReferralRewards().catch(error => console.error("Referral settlement failed:", error));
+  }, 60 * 1000);
 }
 
 if (require.main === module) {

@@ -1,6 +1,6 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
-import { Plus, Trash2 } from "lucide-react"
+import { Loader2, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
@@ -33,6 +33,7 @@ function EmbyUsers() {
   const { embyUsers, embyVendors, reload, runAsync } = useData()
   const [editing, setEditing] = React.useState<EmbyUser | null>(null)
   const [open, setOpen] = React.useState(false)
+  const [deletingId, setDeletingId] = React.useState("")
   const fields: Field[] = [
     { name: "customerName", label: "客户名称", required: true },
     { name: "embyVendorId", label: "供应商", type: "select", required: true, options: embyVendors.map(v => ({ value: v.id, label: v.name })) },
@@ -56,10 +57,15 @@ function EmbyUsers() {
 
   async function remove(item: EmbyUser) {
     if (!confirm("确认删除？")) return
-    await runAsync(async () => {
-      await deleteJson(`/api/emby-users/${item.id}`)
-      await reload(["embyUsers"])
-    }, "删除 Emby 用户...")
+    setDeletingId(item.id)
+    try {
+      await runAsync(async () => {
+        await deleteJson(`/api/emby-users/${item.id}`)
+        await reload(["embyUsers"])
+      }, "删除 Emby 用户...")
+    } finally {
+      setDeletingId("")
+    }
   }
 
   const columns = React.useMemo<ColumnDef<EmbyUser>[]>(() => [
@@ -101,15 +107,15 @@ function EmbyUsers() {
           <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>
             编辑
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} aria-label="删除 Emby 用户">
-            <Trash2 />
+          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} disabled={Boolean(deletingId)} aria-label="删除 Emby 用户">
+            {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
           </Button>
         </div>
       ),
       enableHiding: false,
       enableSorting: false,
     },
-  ], [embyVendors])
+  ], [deletingId, embyVendors])
 
   return (
     <>
@@ -130,6 +136,7 @@ function EmbyVendors() {
   const { embyVendors, reload, runAsync } = useData()
   const [editing, setEditing] = React.useState<EmbyVendor | null>(null)
   const [open, setOpen] = React.useState(false)
+  const [deletingId, setDeletingId] = React.useState("")
   const fields: Field[] = [
     { name: "name", label: "供应商名称", required: true },
     { name: "website", label: "官网", type: "url" },
@@ -150,10 +157,15 @@ function EmbyVendors() {
 
   async function remove(item: EmbyVendor) {
     if (!confirm("确认删除？")) return
-    await runAsync(async () => {
-      await deleteJson(`/api/emby-vendors/${item.id}`)
-      await reload(["embyVendors"])
-    }, "删除供应商...")
+    setDeletingId(item.id)
+    try {
+      await runAsync(async () => {
+        await deleteJson(`/api/emby-vendors/${item.id}`)
+        await reload(["embyVendors"])
+      }, "删除供应商...")
+    } finally {
+      setDeletingId("")
+    }
   }
 
   const columns = React.useMemo<ColumnDef<EmbyVendor>[]>(() => [
@@ -183,15 +195,15 @@ function EmbyVendors() {
           <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>
             编辑
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} aria-label="删除供应商">
-            <Trash2 />
+          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} disabled={Boolean(deletingId)} aria-label="删除供应商">
+            {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
           </Button>
         </div>
       ),
       enableHiding: false,
       enableSorting: false,
     },
-  ], [])
+  ], [deletingId])
 
   return (
     <>

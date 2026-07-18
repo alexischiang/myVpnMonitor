@@ -1,6 +1,11 @@
 const assert = require("assert");
 const notifier = require("./notifier");
 
+const emailHtml = notifier.renderEmailHtml({ subject: "账户 <通知>", text: "第一行\n第二行" });
+assert.match(emailHtml, /<title>账户 &lt;通知&gt;<\/title>/);
+assert.match(emailHtml, /第一行<br>第二行/);
+assert.match(emailHtml, /NEXORA/);
+
 assert.strictEqual(
   notifier.isExpiredItem({ metrics: { expireAt: "2026-06-30T00:00:00.000Z" } }, new Date("2026-07-03T00:00:00.000Z").getTime()),
   true
@@ -9,6 +14,16 @@ assert.strictEqual(
 assert.strictEqual(
   notifier.isExpiredItem({ metrics: { expireAt: "2026-07-04T00:00:00.000Z" } }, new Date("2026-07-03T00:00:00.000Z").getTime()),
   false
+);
+
+assert.strictEqual(
+  notifier.buildPaymentAlert({ purpose: "plan", email: "user@example.com", planName: "Pro", optionLabel: "一年", totalAmount: 99, merOrderTid: "ORDER-1", paidAt: "2026-07-17T10:00:00.000Z" }),
+  "🔔 用户消费提醒\n📧 用户邮箱：user@example.com\n🛒 消费类型：套餐购买\n📦 消费详情：Pro / 一年\n💰 消费金额：¥99.00\n🧾 订单编号：ORDER-1\n🕒 消费时间：2026-07-17T10:00:00.000Z"
+);
+
+assert.match(
+  notifier.buildPaymentAlert({ purpose: "recharge", email: "user@example.com", amount: 50, merOrderTid: "ORDER-2", paidAt: "2026-07-17T10:00:00.000Z" }),
+  /🛒 消费类型：余额充值\n📦 消费详情：充值 ¥50\.00/
 );
 
 async function run() {

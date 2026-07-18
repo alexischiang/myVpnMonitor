@@ -2,6 +2,7 @@ import * as React from "react"
 import {
   type ColumnDef,
   type ColumnFiltersState,
+  type FilterFn,
   type PaginationState,
   type SortingState,
   type VisibilityState,
@@ -12,6 +13,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
+import { pinyin } from "pinyin-pro"
 import {
   ChevronDown,
   ChevronLeft,
@@ -20,6 +22,7 @@ import {
   ChevronsRight,
   ChevronsUpDown,
   Columns3,
+  Search,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -30,8 +33,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
 import {
   Table,
   TableBody,
@@ -43,6 +48,16 @@ import {
 import { EmptyState } from "@/components/features/shared"
 import { cn } from "@/lib/utils"
 
+const normalizeSearchText = (value: unknown) => String(value ?? "").toLocaleLowerCase().replace(/\s+/g, "")
+
+const fuzzyTextFilter: FilterFn<unknown> = (row, columnId, filterValue) => {
+  const text = String(row.getValue(columnId) ?? "")
+  const query = normalizeSearchText(filterValue)
+  if (!query) return true
+  return [text, pinyin(text, { toneType: "none", separator: "" }), pinyin(text, { toneType: "none", pattern: "first", separator: "" })]
+    .some(value => normalizeSearchText(value).includes(query))
+}
+
 type DataTableProps<TData, TValue> = {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
@@ -53,6 +68,8 @@ type DataTableProps<TData, TValue> = {
   pageSize?: number
   toolbar?: React.ReactNode
   className?: string
+  renderMobileItem?: (item: TData) => React.ReactNode
+  frame?: "default" | "card"
 }
 
 export function DataTable<TData, TValue>({
@@ -62,9 +79,11 @@ export function DataTable<TData, TValue>({
   searchPlaceholder = "搜索...",
   emptyTitle = "暂无数据",
   emptyDescription,
-  pageSize = 10,
+  pageSize = 30,
   toolbar,
   className,
+  renderMobileItem,
+  frame = "default",
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -73,10 +92,19 @@ export function DataTable<TData, TValue>({
     pageIndex: 0,
     pageSize,
   })
+  const tableTopRef = React.useRef<HTMLDivElement>(null)
+  const previousPageIndex = React.useRef(0)
+
+  React.useEffect(() => {
+    if (pagination.pageIndex === previousPageIndex.current) return
+    previousPageIndex.current = pagination.pageIndex
+    tableTopRef.current?.scrollIntoView({ block: "start" })
+  }, [pagination.pageIndex])
 
   const table = useReactTable({
     data,
     columns,
+    defaultColumn: { filterFn: fuzzyTextFilter },
     state: {
       sorting,
       columnFilters,
@@ -99,18 +127,27 @@ export function DataTable<TData, TValue>({
   const pageCount = Math.max(table.getPageCount(), 1)
 
   return (
-    <div className={cn("flex min-w-0 w-full flex-col justify-start gap-6", className)}>
-      <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+    <div ref={tableTopRef} className={cn("flex min-w-0 w-full scroll-mt-16 flex-col justify-start", frame === "default" ? "gap-6" : "gap-0", className)}>
+      <div className={cn("flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", frame === "card" && "p-4 lg:p-6")}>
         {searchableColumn && (
-          <Input
-            placeholder={searchPlaceholder}
-            value={(searchableColumn.getFilterValue() as string) ?? ""}
-            onChange={event => searchableColumn.setFilterValue(event.target.value)}
-            className="h-8 w-full lg:max-w-sm"
-          />
+          <div className="relative w-full lg:max-w-sm">
+            {frame === "card" ? <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" /> : null}
+            <Input
+              placeholder={searchPlaceholder}
+              value={(searchableColumn.getFilterValue() as string) ?? ""}
+              onChange={event => searchableColumn.setFilterValue(event.target.value)}
+              className={cn("w-full", frame === "card" ? "pl-9" : "h-8")}
+            />
+          </div>
         )}
-        <div className="flex min-w-0 items-center gap-2 lg:ml-auto">
-          {toolbar}
+        <div className="flex min-w-0 flex-wrap items-center gap-2 lg:ml-auto lg:justify-end">
+          {frame === "default" ? toolbar : null}
+          {frame === "card" ? (
+            <Select value={`${table.getState().pagination.pageSize}`} onValueChange={value => table.setPageSize(Number(value))}>
+              <SelectTrigger size="sm" aria-label="每页行数"><SelectValue /></SelectTrigger>
+              <SelectContent align="end">{[10, 20, 30, 40, 50].map(size => <SelectItem key={size} value={`${size}`}>{size}</SelectItem>)}</SelectContent>
+            </Select>
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">
@@ -136,9 +173,25 @@ export function DataTable<TData, TValue>({
                 ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          {frame === "card" ? toolbar : null}
         </div>
       </div>
-      <div className="w-full overflow-x-auto rounded-lg border">
+      {frame === "card" ? <Separator /> : null}
+      <ItemGroup className={cn("md:hidden", frame === "card" && "gap-0 divide-y [&>[data-slot=item]]:rounded-none [&>[data-slot=item]]:border-0")}>
+        {table.getRowModel().rows.length ? table.getRowModel().rows.map(row => renderMobileItem ? <React.Fragment key={row.id}>{renderMobileItem(row.original)}</React.Fragment> : (
+          <Item key={row.id} variant="outline" className="items-start">
+            <ItemContent className="gap-3">
+              {row.getVisibleCells().map(cell => (
+                <section key={cell.id} className="grid gap-1">
+                  <ItemDescription className="text-xs">{cell.column.columnDef.meta?.label ?? (typeof cell.column.columnDef.header === "string" ? cell.column.columnDef.header : cell.column.id === "actions" ? "操作" : cell.column.id)}</ItemDescription>
+                  <ItemTitle className="w-full whitespace-normal">{flexRender(cell.column.columnDef.cell, cell.getContext())}</ItemTitle>
+                </section>
+              ))}
+            </ItemContent>
+          </Item>
+        )) : <Item variant="outline"><ItemContent><EmptyState title={emptyTitle} description={emptyDescription} /></ItemContent></Item>}
+      </ItemGroup>
+      <div className={cn("hidden w-full overflow-x-auto md:block", frame === "default" && "rounded-lg border")}>
         <Table className="min-w-full table-auto">
           <colgroup>
             {table.getVisibleLeafColumns().map((column, index) => (
@@ -151,7 +204,7 @@ export function DataTable<TData, TValue>({
               />
             ))}
           </colgroup>
-          <TableHeader className="sticky top-0 z-10 bg-muted">
+          <TableHeader className={cn("sticky top-0 z-10", frame === "default" ? "bg-muted" : "bg-card")}>
             {table.getHeaderGroups().map(headerGroup => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map(header => (
@@ -187,12 +240,13 @@ export function DataTable<TData, TValue>({
           </TableBody>
         </Table>
       </div>
-      <div className="flex items-center justify-between px-4">
+      {frame === "card" ? <Separator /> : null}
+      <div className={cn("flex items-center justify-between px-4", frame === "card" && "py-4 lg:px-6")}>
         <div className="hidden flex-1 text-sm text-muted-foreground lg:flex">
-          {selectedRows} / {filteredRows} 行已选择
+          {frame === "card" ? `共 ${filteredRows} 条` : `${selectedRows} / ${filteredRows} 行已选择`}
         </div>
         <div className="flex w-full items-center gap-8 lg:w-fit">
-          <div className="hidden items-center gap-2 lg:flex">
+          {frame === "default" ? <div className="hidden items-center gap-2 lg:flex">
             <Label htmlFor="rows-per-page" className="text-sm font-medium">
               每页行数
             </Label>
@@ -211,7 +265,7 @@ export function DataTable<TData, TValue>({
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </div> : null}
           <div className="flex w-fit items-center justify-center text-sm font-medium">
             第 {table.getState().pagination.pageIndex + 1} / {pageCount} 页
           </div>

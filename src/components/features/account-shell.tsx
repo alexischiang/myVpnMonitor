@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
-import { AlertCircle, ArrowRight, BookOpen, CreditCard, Gauge, LogOut, ReceiptText, ShieldCheck, UserRound } from "lucide-react"
+import { AlertCircle, ArrowRight, BookOpen, CreditCard, Gauge, Gift, LogOut, ReceiptText, ShieldCheck, UserRound, WalletCards } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { apiFetch, clearJsonCache, fetchJson, setCachedJson } from "@/api"
@@ -15,8 +15,10 @@ import { SiteHeader } from "@/components/features/site-header"
 
 const accountNav = [
   { title: "总览", url: "/account", icon: Gauge, exact: true },
-  { title: "使用文档", url: "/account/docs", icon: BookOpen },
   { title: "购买套餐", url: "/account/plans", icon: CreditCard },
+  { title: "使用文档", url: "/account/docs", icon: BookOpen },
+  { title: "账户余额", url: "/account/wallet", icon: WalletCards },
+  { title: "邀请返利", url: "/account/referrals", icon: Gift },
   { title: "订单记录", url: "/account/orders", icon: ReceiptText },
   { title: "账户设置", url: "/account/settings", icon: UserRound },
 ]
