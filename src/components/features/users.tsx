@@ -19,6 +19,7 @@ import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { CopyButton, UserStatusBadge } from "@/components/features/shared"
+import { SummaryCard } from "@/components/features/summary-card"
 import { UserFormDialog, type UserFormValues } from "@/components/features/user-form-dialog"
 import { VipBadge } from "@/components/features/vip-badge"
 import type { User } from "@/types"
@@ -64,6 +65,11 @@ export function UsersPage() {
     (planFilter === "all" || item.activeGroup === planFilter) &&
     (statusFilter === "all" || userStatus(item) === statusFilter)
   ), [users, accountFilter, planFilter, statusFilter])
+  const totalUsers = users.length
+  const unclaimedUsers = users.filter(item => item.accountStatus !== "active").length
+  const activeUsers = users.filter(item => userStatus(item) !== "expired").length
+  const addedToday = users.filter(item => item.createdAt && new Date(item.createdAt).toDateString() === new Date().toDateString()).length
+  const expiringUsers = users.filter(item => userStatus(item) === "warning").length
 
   async function changePool(event: React.FormEvent) {
     event.preventDefault()
@@ -248,6 +254,12 @@ export function UsersPage() {
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard label="总用户数" value={totalUsers} detail={`未认领用户 ${unclaimedUsers} 位`} />
+        <SummaryCard label="活跃用户" value={activeUsers} detail={`占总用户 ${totalUsers ? Math.round(activeUsers / totalUsers * 100) : 0}%`} />
+        <SummaryCard label="本日新增用户" value={addedToday} />
+        <SummaryCard label="即将过期用户" value={expiringUsers} />
+      </div>
       <DataTableCard filters={<>
         <Field><FieldLabel htmlFor="account-filter">账户状态</FieldLabel><Select value={accountFilter} onValueChange={setAccountFilter}><SelectTrigger id="account-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="active">已认领</SelectItem><SelectItem value="invited">等待认领</SelectItem><SelectItem value="unclaimed">未认领</SelectItem></SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="plan-filter">套餐</FieldLabel><Select value={planFilter} onValueChange={setPlanFilter}><SelectTrigger id="plan-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{planOptions.map(plan => <SelectItem key={plan} value={plan}>{plan}</SelectItem>)}</SelectContent></Select></Field>

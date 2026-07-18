@@ -1,6 +1,11 @@
 const assert = require("assert");
 const notifier = require("./notifier");
 
+const emailHtml = notifier.renderEmailHtml({ subject: "账户 <通知>", text: "第一行\n第二行" });
+assert.match(emailHtml, /<title>账户 &lt;通知&gt;<\/title>/);
+assert.match(emailHtml, /第一行<br>第二行/);
+assert.match(emailHtml, /NEXORA/);
+
 assert.strictEqual(
   notifier.isExpiredItem({ metrics: { expireAt: "2026-06-30T00:00:00.000Z" } }, new Date("2026-07-03T00:00:00.000Z").getTime()),
   true

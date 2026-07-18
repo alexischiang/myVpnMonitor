@@ -29,6 +29,7 @@ export type Subscription = {
 
 export type User = {
   id: string
+  createdAt?: string
   accountStatus?: "unclaimed" | "invited" | "active"
   userId?: string
   wechatName?: string
