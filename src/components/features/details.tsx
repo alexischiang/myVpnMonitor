@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ArrowLeft, MailCheck, RefreshCw } from "lucide-react"
+import { ArrowLeft, Gift, Loader2, MailCheck, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -10,11 +10,14 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
-import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell } from "@/components/features/shared"
+import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
 import type { Bill, User, UserLog } from "@/types"
 import { formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, userStatus } from "@/utils"
 
@@ -22,6 +25,8 @@ export function SubscriptionDetailPage() {
   const { id } = useParams()
   const { subscriptions, users, reload, runAsync } = useData()
   const [cache, setCache] = React.useState<{ body?: string; error?: string; fetchedAt?: string; bodyLength?: number; storage?: string } | null>(null)
+  const [refreshing, setRefreshing] = React.useState(false)
+  const [refreshingCache, setRefreshingCache] = React.useState(false)
   const item = subscriptions.find(entry => entry.id === id)
   const boundUsers = users.filter(user => user.subscriptionId === id)
 
@@ -49,22 +54,32 @@ export function SubscriptionDetailPage() {
       accessorFn: user => userStatus(user),
       header: DataTableColumnHeader({ title: "状态" }),
       meta: { label: "状态" },
-      cell: ({ row }) => <StatusBadge status={userStatus(row.original)} />,
+      cell: ({ row }) => <UserStatusBadge user={row.original} />,
     },
   ], [])
 
   if (!item) return <EmptyState title="未找到订阅" />
 
   async function refresh() {
-    await runAsync(async () => {
-      await postJson(`/api/subscriptions/${item.id}/refresh`, {})
-      await reload(["subscriptions"])
-    }, "刷新订阅...")
+    setRefreshing(true)
+    try {
+      await runAsync(async () => {
+        await postJson(`/api/subscriptions/${item.id}/refresh`, {})
+        await reload(["subscriptions"])
+      }, "刷新订阅...")
+    } finally {
+      setRefreshing(false)
+    }
   }
 
   async function refreshCache() {
-    const payload = await fetchJson<typeof cache>(`/api/subscriptions/${item.id}/cache?force=true`).catch(error => ({ error: error.message }))
-    setCache(payload)
+    setRefreshingCache(true)
+    try {
+      const payload = await fetchJson<typeof cache>(`/api/subscriptions/${item.id}/cache?force=true`).catch(error => ({ error: error.message }))
+      setCache(payload)
+    } finally {
+      setRefreshingCache(false)
+    }
   }
 
   return (
@@ -75,7 +90,7 @@ export function SubscriptionDetailPage() {
         actions={
           <>
             <Button asChild variant="outline" size="sm"><Link to="/urls"><ArrowLeft />返回</Link></Button>
-            <Button size="sm" onClick={refresh}><RefreshCw />刷新</Button>
+            <Button size="sm" onClick={refresh} disabled={refreshing}>{refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新</Button>
           </>
         }
       />
@@ -103,7 +118,7 @@ export function SubscriptionDetailPage() {
         <Card>
           <CardHeader>
             <CardTitle>实时配置</CardTitle>
-            <Button variant="outline" size="sm" onClick={refreshCache}>刷新缓存</Button>
+            <Button variant="outline" size="sm" onClick={refreshCache} disabled={refreshingCache}>{refreshingCache ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新缓存</Button>
           </CardHeader>
           <CardContent className="grid gap-3">
             <p className="text-sm text-muted-foreground">
@@ -136,8 +151,16 @@ export function UserDetailPage() {
   const user = users.find(entry => entry.id === id)
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteEmail, setInviteEmail] = React.useState("")
+  const [inviteEmailError, setInviteEmailError] = React.useState("")
+  const [inviteSending, setInviteSending] = React.useState(false)
   const [referralRate, setReferralRate] = React.useState(10)
   const [recurringReferral, setRecurringReferral] = React.useState(false)
+  const [referralSaving, setReferralSaving] = React.useState(false)
+  const [giftBalanceOpen, setGiftBalanceOpen] = React.useState(false)
+  const [giftBalanceAmount, setGiftBalanceAmount] = React.useState("")
+  const [giftBalanceNote, setGiftBalanceNote] = React.useState("")
+  const [giftBalanceError, setGiftBalanceError] = React.useState("")
+  const [giftBalanceSaving, setGiftBalanceSaving] = React.useState(false)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed" || log.reason === "user-created")
 
@@ -210,8 +233,15 @@ export function UserDetailPage() {
 
   if (!user) return <EmptyState title="未找到用户" />
 
-  async function sendAccountInvite(event: React.FormEvent) {
+  async function sendAccountInvite(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const input = event.currentTarget.elements.namedItem("inviteEmail") as HTMLInputElement
+    if (!inviteEmail.trim() || !input.validity.valid) {
+      setInviteEmailError(inviteEmail.trim() ? "请输入有效的邮箱地址。" : "请输入收件邮箱。")
+      return
+    }
+    setInviteEmailError("")
+    setInviteSending(true)
     try {
       await runAsync(async () => {
         await postJson(`/api/users/${user.id}/account-invite`, { email: inviteEmail })
@@ -221,11 +251,14 @@ export function UserDetailPage() {
       }, "发送认领邮件...")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "账户认领邮件发送失败")
+    } finally {
+      setInviteSending(false)
     }
   }
 
   async function saveReferralSettings() {
     if (!user.accountId) return
+    setReferralSaving(true)
     try {
       await runAsync(async () => {
         await putJson(`/api/referrals/accounts/${user.accountId}`, { referralRate, recurringReferral })
@@ -234,24 +267,64 @@ export function UserDetailPage() {
       }, "保存返利设置...")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败")
+    } finally {
+      setReferralSaving(false)
+    }
+  }
+
+  async function giftBalance(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const amount = Number(giftBalanceAmount)
+    if (!/^\d+(\.\d{1,2})?$/.test(giftBalanceAmount.trim()) || amount <= 0 || amount > 10000) {
+      setGiftBalanceError("请输入 0.01 至 10,000.00 元，最多两位小数。")
+      return
+    }
+    setGiftBalanceSaving(true)
+    try {
+      const wallet = await postJson<{ availableBalance: number }>(`/api/users/${user.id}/wallet-gift`, { amount, note: giftBalanceNote })
+      setGiftBalanceOpen(false)
+      setGiftBalanceAmount("")
+      setGiftBalanceNote("")
+      toast.success(`已赠送 ${formatMoney(amount)}，用户可用余额 ${formatMoney(wallet.availableBalance)}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "赠送余额失败")
+    } finally {
+      setGiftBalanceSaving(false)
     }
   }
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex gap-2">{user.accountStatus !== "active" ? <Button size="sm" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button> : null}<Button asChild variant="outline" size="sm"><Link to="/users"><ArrowLeft />返回</Link></Button></div>} />
-      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex gap-2">{user.accountStatus === "active" ? <Button size="sm" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button> : <Button size="sm" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button>}<Button asChild variant="outline" size="sm"><Link to="/users"><ArrowLeft />返回</Link></Button></div>} />
+      <Dialog open={giftBalanceOpen} onOpenChange={setGiftBalanceOpen}>
         <DialogContent>
-          <form className="grid gap-4" onSubmit={sendAccountInvite}>
-            <DialogHeader><DialogTitle>发送账户认领邮件</DialogTitle><DialogDescription>用户将通过该邮箱设置密码并认领订阅账户。</DialogDescription></DialogHeader>
-            <div className="grid gap-2"><Label htmlFor="invite-email">收件邮箱</Label><Input id="invite-email" type="email" value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} autoFocus required /></div>
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose><Button type="submit"><MailCheck />发送邮件</Button></DialogFooter>
+          <form className="grid gap-4" onSubmit={giftBalance}>
+            <DialogHeader><DialogTitle>赠送余额</DialogTitle><DialogDescription>赠送金额永久有效，消费时优先于充值余额使用，不计入 VIP。</DialogDescription></DialogHeader>
+            <Field><FieldLabel htmlFor="gift-balance-amount">赠送金额</FieldLabel><Input id="gift-balance-amount" inputMode="decimal" placeholder="0.00" value={giftBalanceAmount} onChange={event => { setGiftBalanceAmount(event.target.value); setGiftBalanceError("") }} aria-invalid={Boolean(giftBalanceError)} autoFocus required /><FieldError>{giftBalanceError}</FieldError></Field>
+            <Field><FieldLabel htmlFor="gift-balance-note">备注</FieldLabel><Input id="gift-balance-note" maxLength={100} placeholder="可选" value={giftBalanceNote} onChange={event => setGiftBalanceNote(event.target.value)} /></Field>
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={giftBalanceSaving}>取消</Button></DialogClose><Button type="submit" disabled={giftBalanceSaving}>{giftBalanceSaving ? <Loader2 className="animate-spin" /> : <Gift />}{giftBalanceSaving ? "赠送中..." : "确认赠送"}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle>订阅信息</CardTitle></CardHeader>
+      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+        <DialogContent>
+          <form className="grid gap-4" onSubmit={sendAccountInvite} noValidate>
+            <DialogHeader><DialogTitle>发送账户认领邮件</DialogTitle><DialogDescription>用户将通过该邮箱设置密码并认领订阅账户。</DialogDescription></DialogHeader>
+            <Field><FieldLabel htmlFor="invite-email">收件邮箱</FieldLabel><Input id="invite-email" name="inviteEmail" type="email" value={inviteEmail} onChange={event => { setInviteEmail(event.target.value); setInviteEmailError("") }} aria-invalid={Boolean(inviteEmailError)} autoFocus required /><FieldError>{inviteEmailError}</FieldError></Field>
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={inviteSending}>取消</Button></DialogClose><Button type="submit" disabled={inviteSending}>{inviteSending ? <Loader2 className="animate-spin" /> : <MailCheck />}{inviteSending ? "发送中..." : "发送邮件"}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Tabs defaultValue="overview" className="gap-4">
+        <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+          <TabsTrigger value="overview" className="flex-none">基本信息</TabsTrigger>
+          <TabsTrigger value="bills" className="flex-none">账单记录</TabsTrigger>
+          <TabsTrigger value="referral" className="flex-none">邀请返利</TabsTrigger>
+          <TabsTrigger value="logs" className="flex-none">换池日志</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview">
+          <Card>
+          <CardHeader className="gap-6"><CardTitle>订阅信息</CardTitle><Separator /></CardHeader>
           <CardContent className="grid gap-3">
             <Info label="用户 ID" value={user.userId || "-"} />
             <Info label="邮箱" value={user.email || "-"} />
@@ -259,12 +332,14 @@ export function UserDetailPage() {
             <Info label="套餐" value={`${user.activeGroup || "-"} / ${user.vipLevel || "-"}`} />
             <Info label="到期" value={formatUserExpiry(user)} />
             <Info label="订阅池" value={user.subscription?.email || user.subscription?.serviceProvider || "-"} />
-            <Info label="状态" value={<StatusBadge status={userStatus(user)} />} />
+            <Info label="状态" value={<UserStatusBadge user={user} />} />
             <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
           </CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle>账单记录</CardTitle></CardHeader>
+          </Card>
+        </TabsContent>
+        <TabsContent value="bills">
+          <Card>
+          <CardHeader className="gap-6"><CardTitle>账单记录</CardTitle><Separator /></CardHeader>
           <CardContent>
             <DataTable
               columns={billColumns}
@@ -274,13 +349,17 @@ export function UserDetailPage() {
               emptyTitle="暂无账单"
             />
           </CardContent>
-        </Card>
-        <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>邀请返利设置</CardTitle></CardHeader>
-          <CardContent>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="referral-rate">收到返利比例（%）</Label><Input id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /></div><div className="flex items-center gap-2 self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} /><Label htmlFor="recurring-referral">享受循环返利</Label></div><Button className="sm:w-fit" onClick={() => void saveReferralSettings()}>保存返利设置</Button></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</CardContent>
-        </Card>
-        <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>换池日志</CardTitle></CardHeader>
+          </Card>
+        </TabsContent>
+        <TabsContent value="referral">
+          <Card>
+          <CardHeader className="gap-6"><CardTitle>邀请返利设置</CardTitle><Separator /></CardHeader>
+          <CardContent>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="referral-rate">收到返利比例（%）</Label><Input id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /></div><div className="flex items-center gap-2 self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} /><Label htmlFor="recurring-referral">享受循环返利</Label></div><Button className="sm:w-fit" onClick={() => void saveReferralSettings()} disabled={referralSaving}>{referralSaving ? <Loader2 className="animate-spin" /> : null}{referralSaving ? "保存中..." : "保存返利设置"}</Button></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="logs">
+          <Card>
+          <CardHeader className="gap-6"><CardTitle>换池日志</CardTitle><Separator /></CardHeader>
           <CardContent>
             <DataTable
               columns={poolLogColumns}
@@ -290,8 +369,9 @@ export function UserDetailPage() {
               emptyTitle="暂无换池日志"
             />
           </CardContent>
-        </Card>
-      </div>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

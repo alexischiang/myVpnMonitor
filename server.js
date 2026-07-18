@@ -1235,6 +1235,7 @@ async function fulfillPaymentOrder(order, req) {
     await saveAccounts();
     if (userForAccount(account)) await saveUsers();
     await savePaymentOrders();
+    await notifyPaymentOrder(order);
     return order;
   }
   const email = normalizePaymentEmail(order.email);
@@ -1380,7 +1381,17 @@ async function fulfillPaymentOrder(order, req) {
   await saveBills();
   await createReferralReward(order, account);
   await savePaymentOrders();
+  await notifyPaymentOrder(order);
   return order;
+}
+
+async function notifyPaymentOrder(order) {
+  if (!notifier.isTelegramConfigured()) return;
+  try {
+    await notifier.sendTelegram({ text: notifier.buildPaymentAlert(order) });
+  } catch (error) {
+    console.error(`Payment notification failed for ${order.merOrderTid}:`, error.message);
+  }
 }
 
 function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
@@ -5459,7 +5470,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -5556,6 +5567,31 @@ async function handleApi(req, res, pathname) {
         }));
         await saveUsers();
         sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "wallet-gift" && req.method === "POST") {
+      try {
+        const account = accounts.find(entry => entry.linkedUserId === item.id && entry.status === "active");
+        if (!account) throw new Error("用户需要先认领账户才能赠送余额。");
+        const payload = await readJson(req);
+        const amountCents = moneyCents(payload.amount, "赠送金额");
+        if (amountCents > 1000000) throw new Error("单次赠送不能超过 ¥10,000.00。");
+        const note = String(payload.note || "").trim().slice(0, 100);
+        const sourceId = crypto.randomUUID();
+        const wallet = await dataStore.creditWalletGift({
+          id: crypto.randomUUID(),
+          accountId: account.id,
+          sourceId,
+          amountCents,
+          description: note ? `后台赠送：${note}` : "后台赠送余额",
+          idempotencyKey: `admin-gift:${sourceId}`,
+          initialVipCents: initialWalletVipCents(account)
+        });
+        sendJson(res, 200, publicWallet(wallet));
       } catch (error) {
         sendJson(res, 400, { error: error.message });
       }

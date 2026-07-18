@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react"
 import { apiFetch, postJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { FieldError } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { StatusPage } from "@/components/features/status-page"
@@ -37,10 +38,6 @@ function AuthLayout({ title, description, children }: { title: string; descripti
   )
 }
 
-function ErrorText({ value }: { value: string }) {
-  return value ? <p className="text-sm text-destructive">{value}</p> : null
-}
-
 export function LoginPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -71,14 +68,14 @@ export function LoginPage() {
 
   return (
     <AuthLayout title="登录账户" description="使用邮箱和密码进入账户中心">
-      <form className="grid gap-4" onSubmit={submit}>
+      <form className="grid gap-4" onSubmit={submit} noValidate>
         <div className="grid gap-2"><Label htmlFor="account">邮箱</Label><Input id="account" autoFocus autoComplete="username" value={account} onChange={event => setAccount(event.target.value)} required /></div>
         <div className="grid gap-2">
           <div className="flex items-center"><Label htmlFor="password">密码</Label><Link to="/forgot-password" className="ml-auto text-sm underline-offset-4 hover:underline">忘记密码？</Link></div>
           <Input id="password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required />
         </div>
         <div className="flex items-center gap-2"><Checkbox id="remember" checked={remember} onCheckedChange={checked => setRemember(checked === true)} /><Label htmlFor="remember">记住我，30 天内免登录</Label></div>
-        <ErrorText value={error} />
+        <FieldError>{error}</FieldError>
         <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />登录中</> : "登录"}</Button>
         <p className="text-center text-sm">还没有账户？ <Link to="/register" className="underline underline-offset-4">立即注册</Link></p>
       </form>
@@ -113,12 +110,12 @@ export function RegisterPage() {
 
   return (
     <AuthLayout title="创建账户" description="请输入有效的邮箱">
-      <form className="grid gap-4" onSubmit={submit}>
+      <form className="grid gap-4" onSubmit={submit} noValidate>
         <div className="grid gap-2"><Label htmlFor="email">邮箱</Label><Input id="email" type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} required /></div>
         <div className="grid gap-2"><Label htmlFor="new-password">密码</Label><Input id="new-password" type="password" minLength={8} autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} required /></div>
         <div className="grid gap-2"><Label htmlFor="confirm-password">确认密码</Label><Input id="confirm-password" type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required /></div>
         <div className="grid gap-2"><Label htmlFor="referral-code">邀请码（可选）</Label><Input id="referral-code" inputMode="numeric" maxLength={6} value={referralCode} onChange={event => setReferralCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /></div>
-        <ErrorText value={error} />
+        <FieldError>{error}</FieldError>
         <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />注册中</> : "注册"}</Button>
         <p className="text-center text-sm">已有账户？ <Link to="/login" className="underline underline-offset-4">返回登录</Link></p>
       </form>
@@ -149,9 +146,9 @@ export function ForgotPasswordPage() {
   return (
     <AuthLayout title="忘记密码" description="我们会向账户邮箱发送重置链接">
       {message ? <div className="grid gap-4 text-center"><p className="text-sm text-muted-foreground">{message}</p><Button asChild><Link to="/login">返回登录</Link></Button></div> : (
-        <form className="grid gap-4" onSubmit={submit}>
+        <form className="grid gap-4" onSubmit={submit} noValidate>
           <div className="grid gap-2"><Label htmlFor="email">邮箱</Label><Input id="email" type="email" autoFocus value={email} onChange={event => setEmail(event.target.value)} required /></div>
-          <ErrorText value={error} />
+          <FieldError>{error}</FieldError>
           <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />发送中</> : "发送重置链接"}</Button>
           <Button asChild variant="ghost"><Link to="/login">返回登录</Link></Button>
         </form>
@@ -193,10 +190,10 @@ export function ResetPasswordPage() {
   if (tokenStatus === "checking") return <main className="grid min-h-svh place-items-center"><Loader2 className="animate-spin" aria-label="正在验证链接" /></main>
   return (
     <AuthLayout title="设置新密码" description="链接有效期为 30 分钟，使用后立即失效">
-      <form className="grid gap-4" onSubmit={submit}>
+      <form className="grid gap-4" onSubmit={submit} noValidate>
         <div className="grid gap-2"><Label htmlFor="password">新密码</Label><Input id="password" type="password" minLength={8} value={password} onChange={event => setPassword(event.target.value)} required /></div>
         <div className="grid gap-2"><Label htmlFor="confirm-password">确认密码</Label><Input id="confirm-password" type="password" minLength={8} value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required /></div>
-        <ErrorText value={error} />
+        <FieldError>{error}</FieldError>
         <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />提交中</> : "保存新密码"}</Button>
       </form>
     </AuthLayout>

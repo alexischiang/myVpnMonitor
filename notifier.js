@@ -186,6 +186,20 @@ function buildLowTrafficAlert(item, remaining, threshold) {
   return { subject, text, html };
 }
 
+function buildPaymentAlert(order) {
+  const recharge = order.purpose === "recharge";
+  const total = Number(order.totalAmount ?? order.amount ?? 0).toFixed(2);
+  return [
+    "🔔 用户消费提醒",
+    `📧 用户邮箱：${order.email || "-"}`,
+    `🛒 消费类型：${recharge ? "余额充值" : "套餐购买"}`,
+    `📦 消费详情：${recharge ? `充值 ¥${total}` : `${order.planName || "-"} / ${order.optionLabel || "-"}`}`,
+    `💰 消费金额：¥${total}`,
+    `🧾 订单编号：${order.merOrderTid || order.id || "-"}`,
+    `🕒 消费时间：${order.paidAt || new Date().toISOString()}`
+  ].join("\n");
+}
+
 function isExpiredItem(item, now = Date.now()) {
   const expireAt = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
   return Number.isFinite(expireAt) && expireAt <= now;
@@ -254,6 +268,7 @@ module.exports = {
   checkTelegram,
   sendMail,
   sendTelegram,
+  buildPaymentAlert,
   checkAndNotifyLowTraffic,
   isExpiredItem,
   formatBytes

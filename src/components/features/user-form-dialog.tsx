@@ -272,7 +272,7 @@ export function UserFormDialog({
           </FieldGroup>
         </DialogHeader>
 
-        <form className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden" onSubmit={submit}>
+        <form className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden" onSubmit={submit} noValidate>
           <FieldGroup className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pb-6">
             {stepIndex === 0 ? (
               <>

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Save } from "lucide-react"
+import { Loader2, Save } from "lucide-react"
 import { toast } from "sonner"
 
 import { putJson } from "@/api"
@@ -23,6 +23,7 @@ const periods = [
 export function PricingSettingsPage() {
   const { pricing, reload, runAsync } = useData()
   const [rows, setRows] = React.useState<PricingRow[]>(pricing)
+  const [saving, setSaving] = React.useState(false)
 
   React.useEffect(() => setRows(pricing), [pricing])
 
@@ -31,16 +32,21 @@ export function PricingSettingsPage() {
   }
 
   async function save() {
-    await runAsync(async () => {
-      await putJson("/api/pricing", rows)
-      await reload(["pricing"], { silent: true })
-      toast.success("套餐配置已保存")
-    }, "保存套餐配置...")
+    setSaving(true)
+    try {
+      await runAsync(async () => {
+        await putJson("/api/pricing", rows)
+        await reload(["pricing"], { silent: true })
+        toast.success("套餐配置已保存")
+      }, "保存套餐配置...")
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="套餐管理" description="控制固定流量与无限流量价格、设备数和功能优缺点。" actions={<Button size="sm" onClick={save}><Save />保存配置</Button>} />
+      <PageHeader title="套餐管理" description="控制固定流量与无限流量价格、设备数和功能优缺点。" actions={<Button size="sm" onClick={save} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存配置</Button>} />
       <div className="grid gap-4">
         {rows.map(row => (
           <Card key={row.group}>

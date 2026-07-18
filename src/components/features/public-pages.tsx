@@ -170,6 +170,7 @@ export function CheckoutPage() {
   const [couponCode, setCouponCode] = React.useState("")
   const [couponError, setCouponError] = React.useState("")
   const [loading, setLoading] = React.useState(true)
+  const [validatingCoupon, setValidatingCoupon] = React.useState(false)
   const [paying, setPaying] = React.useState("")
   const [useBalance, setUseBalance] = React.useState(true)
   const [pendingPaymentChannel, setPendingPaymentChannel] = React.useState<"100" | "200" | null>(null)
@@ -197,6 +198,15 @@ export function CheckoutPage() {
     setOptionId(nextOptionId)
     if (quote?.couponCode) setCouponCode("")
     void loadQuote("", nextOptionId)
+  }
+
+  async function validateCoupon() {
+    setValidatingCoupon(true)
+    try {
+      await loadQuote(couponCode)
+    } finally {
+      setValidatingCoupon(false)
+    }
   }
 
   async function createPayment(channelCode: "100" | "200") {
@@ -228,11 +238,11 @@ export function CheckoutPage() {
     else void createPayment(channelCode)
   }
 
-  function confirmReplacement() {
+  async function confirmReplacement() {
     if (!pendingPaymentChannel) return
     const channelCode = pendingPaymentChannel
+    await createPayment(channelCode)
     setPendingPaymentChannel(null)
-    void createPayment(channelCode)
   }
 
   if (loading && !quote) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
@@ -263,7 +273,7 @@ export function CheckoutPage() {
         <aside className="grid content-start gap-4 lg:col-span-2">
           <Card>
             <CardHeader><CardTitle>优惠码</CardTitle></CardHeader>
-            <CardContent><Field><div className="flex gap-2"><Input aria-label="优惠码" aria-invalid={Boolean(couponError)} aria-describedby={couponError ? "coupon-error" : couponApplied ? "coupon-success" : undefined} placeholder="输入优惠码（如有）" value={couponCode} onChange={event => { setCouponCode(event.target.value); setCouponError("") }} /><Button variant="outline" size="default" onClick={() => loadQuote(couponCode)} disabled={loading}><Tag />验证</Button></div><FieldError id="coupon-error">{couponError}</FieldError>{couponApplied ? <FieldDescription id="coupon-success" className="text-emerald-600 dark:text-emerald-500">优惠码验证成功</FieldDescription> : null}</Field></CardContent>
+            <CardContent><Field><div className="flex gap-2"><Input aria-label="优惠码" aria-invalid={Boolean(couponError)} aria-describedby={couponError ? "coupon-error" : couponApplied ? "coupon-success" : undefined} placeholder="输入优惠码（如有）" value={couponCode} onChange={event => { setCouponCode(event.target.value); setCouponError("") }} /><Button variant="outline" size="default" onClick={validateCoupon} disabled={loading}>{validatingCoupon ? <Loader2 className="animate-spin" /> : <Tag />}验证</Button></div><FieldError id="coupon-error">{couponError}</FieldError>{couponApplied ? <FieldDescription id="coupon-success" className="text-emerald-600 dark:text-emerald-500">优惠码验证成功</FieldDescription> : null}</Field></CardContent>
           </Card>
           <Card>
             <CardHeader><CardTitle>订单摘要</CardTitle><CardDescription>{quote.optionLabel}</CardDescription></CardHeader>
@@ -282,7 +292,7 @@ export function CheckoutPage() {
       <AlertDialog open={pendingPaymentChannel !== null} onOpenChange={open => { if (!open) setPendingPaymentChannel(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>确认覆盖当前套餐？</AlertDialogTitle><AlertDialogDescription>支付成功后，{quote.planName} 将立即覆盖当前套餐，原套餐剩余有效期不再保留；剩余现金价值 {formatMoney(quote.cashCredit)} 已用于抵扣。</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel>返回检查</AlertDialogCancel><AlertDialogAction onClick={confirmReplacement}>{quote.amount === 0 ? "确认覆盖" : "确认并继续支付"}</AlertDialogAction></AlertDialogFooter>
+          <AlertDialogFooter><AlertDialogCancel disabled={Boolean(paying)}>返回检查</AlertDialogCancel><AlertDialogAction onClick={() => void confirmReplacement()} disabled={Boolean(paying)}>{paying ? <Loader2 className="animate-spin" /> : null}{quote.amount === 0 ? "确认覆盖" : "确认并继续支付"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </main>

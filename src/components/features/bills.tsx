@@ -9,7 +9,10 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
+import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader } from "@/components/features/shared"
@@ -19,6 +22,17 @@ import { billTypeLabels, durationLabels, formatDate, formatDateTime, formatMoney
 export function BillsPage() {
   const { bills, reload, runAsync } = useData()
   const [pendingAction, setPendingAction] = React.useState<{ item: Bill; action: "reverse" | "delete" } | null>(null)
+  const [confirming, setConfirming] = React.useState(false)
+  const [typeFilter, setTypeFilter] = React.useState("all")
+  const [statusFilter, setStatusFilter] = React.useState("all")
+  const [durationFilter, setDurationFilter] = React.useState("all")
+  const typeOptions = React.useMemo(() => [...new Set(bills.map(item => item.type).filter((value): value is string => Boolean(value)))].sort(), [bills])
+  const durationOptions = React.useMemo(() => [...new Set(bills.map(item => item.duration).filter((value): value is string => Boolean(value)))].sort(), [bills])
+  const filteredBills = React.useMemo(() => bills.filter(item =>
+    (typeFilter === "all" || item.type === typeFilter) &&
+    (statusFilter === "all" || (item.reversedAt ? "reversed" : "normal") === statusFilter) &&
+    (durationFilter === "all" || item.duration === durationFilter)
+  ), [bills, typeFilter, statusFilter, durationFilter])
 
   async function mutate(item: Bill, action: "reverse" | "delete") {
     await runAsync(async () => {
@@ -31,8 +45,13 @@ export function BillsPage() {
 
   async function confirmAction() {
     if (!pendingAction) return
-    await mutate(pendingAction.item, pendingAction.action)
-    setPendingAction(null)
+    setConfirming(true)
+    try {
+      await mutate(pendingAction.item, pendingAction.action)
+      setPendingAction(null)
+    } finally {
+      setConfirming(false)
+    }
   }
 
   const columns = React.useMemo<ColumnDef<Bill>[]>(() => [
@@ -98,21 +117,28 @@ export function BillsPage() {
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="账单" description="收入记录、续费记录与冲正状态。" />
-      <DataTable
-        columns={columns}
-        data={bills}
-        searchKey="user"
-        searchPlaceholder="搜索账单..."
-        emptyTitle="暂无账单"
-      />
+      <DataTableCard filters={<>
+        <Field><FieldLabel htmlFor="bill-type-filter">账单类型</FieldLabel><Select value={typeFilter} onValueChange={setTypeFilter}><SelectTrigger id="bill-type-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{typeOptions.map(type => <SelectItem key={type} value={type}>{billTypeLabels[type] || type}</SelectItem>)}</SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="bill-status-filter">账单状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="bill-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="normal">正常</SelectItem><SelectItem value="reversed">已冲正</SelectItem></SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="bill-duration-filter">计费周期</FieldLabel><Select value={durationFilter} onValueChange={setDurationFilter}><SelectTrigger id="bill-duration-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{durationOptions.map(duration => <SelectItem key={duration} value={duration}>{durationLabels[duration] || duration}</SelectItem>)}</SelectContent></Select></Field>
+      </>}>
+        <DataTable
+          columns={columns}
+          data={filteredBills}
+          searchKey="user"
+          searchPlaceholder="搜索账单..."
+          emptyTitle="暂无账单"
+          pageSize={10}
+          frame="card"
+        />
+      </DataTableCard>
       <AlertDialog open={Boolean(pendingAction)} onOpenChange={open => { if (!open) setPendingAction(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认{pendingAction?.action === "delete" ? "删除" : "撤销"}账单？</AlertDialogTitle>
             <AlertDialogDescription>{pendingAction?.action === "delete" ? "删除后无法恢复。" : "撤销后将冲正该账单，并同步扣减用户消费金额。"}</AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction className="bg-destructive/10 text-destructive hover:bg-destructive/20" onClick={() => void confirmAction()}>确认{pendingAction?.action === "delete" ? "删除" : "撤销"}</AlertDialogAction></AlertDialogFooter>
+        <AlertDialogFooter><AlertDialogCancel disabled={confirming}>取消</AlertDialogCancel><AlertDialogAction className="bg-destructive/10 text-destructive hover:bg-destructive/20" onClick={() => void confirmAction()} disabled={confirming}>{confirming ? <Loader2 className="animate-spin" /> : null}确认{pendingAction?.action === "delete" ? "删除" : "撤销"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>

@@ -5,23 +5,21 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import { copyText, formatBytes, statusLabels } from "@/utils"
+import type { User } from "@/types"
+import { copyText, formatBytes, statusLabels, userStatus } from "@/utils"
 
-export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <div className="grid gap-1">
-        <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
-        {description && <p className="text-sm text-muted-foreground">{description}</p>}
-      </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
-    </div>
-  )
+export function PageHeader({ actions }: { title: string; description?: string; actions?: React.ReactNode }) {
+  return actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null
 }
 
 export function StatusBadge({ status, children, className = "", style }: { status?: string; children?: React.ReactNode; className?: string; style?: React.CSSProperties }) {
-  const variant = status === "ok" ? "default" : status === "expired" || status === "invalid" || status === "error" || status === "depleted" ? "destructive" : "secondary"
-  return <Badge variant={variant} className={`${status === "ok" ? "rounded-sm bg-emerald-600 text-[10px] font-semibold text-white" : "rounded-sm text-[10px] font-semibold"} ${className}`} style={style}>{children ?? (statusLabels[status || "unknown"] || status || "未知")}</Badge>
+  const variant = status === "ok" ? "success" : status === "expired" || status === "invalid" || status === "error" || status === "depleted" ? "destructive" : status === "warning" || status === "expiring" ? "warning" : "secondary"
+  return <Badge variant={variant} className={`rounded-sm text-[10px] font-semibold ${className}`} style={style}>{children ?? (statusLabels[status || "unknown"] || status || "未知")}</Badge>
+}
+
+export function UserStatusBadge({ user }: { user?: User | null }) {
+  const status = userStatus(user)
+  return <StatusBadge status={status}>{status === "ok" ? "Active" : status === "warning" ? "Expiring" : "Expired"}</StatusBadge>
 }
 
 export function EmptyState({ title = "暂无数据", description }: { title?: string; description?: string }) {

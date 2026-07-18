@@ -1,19 +1,22 @@
 import * as React from "react"
 import { Link } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { Eye, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
+import { Eye, Loader2, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
-import { SimpleFormDialog, type Field, type FormValues } from "@/components/features/simple-form"
-import { PageHeader, StatusBadge, TrafficProgress, UrlCell } from "@/components/features/shared"
+import { SimpleFormDialog, type Field as SimpleField, type FormValues } from "@/components/features/simple-form"
+import { StatusBadge, TrafficProgress, UrlCell } from "@/components/features/shared"
 import type { Subscription } from "@/types"
-import { formatDate } from "@/utils"
+import { formatDate, statusLabels } from "@/utils"
 
-const fields: Field[] = [
+const fields: SimpleField[] = [
   { name: "url", label: "订阅 URL", type: "url", required: true, placeholder: "https://...", className: "sm:col-span-2" },
   { name: "email", label: "邮箱", type: "email", placeholder: "customer@example.com" },
   { name: "serviceProvider", label: "供应商", type: "text", placeholder: "YKK Cloud" },
@@ -24,6 +27,10 @@ export function SubscriptionsPage() {
   const { subscriptions, reload, runAsync, busy } = useData()
   const [editing, setEditing] = React.useState<Subscription | null>(null)
   const [open, setOpen] = React.useState(false)
+  const [pendingAction, setPendingAction] = React.useState("")
+  const [enabledFilter, setEnabledFilter] = React.useState("all")
+  const [statusFilter, setStatusFilter] = React.useState("all")
+  const [providerFilter, setProviderFilter] = React.useState("all")
 
   async function save(values: FormValues) {
     await runAsync(async () => {
@@ -41,32 +48,54 @@ export function SubscriptionsPage() {
 
   async function remove(item: Subscription) {
     if (!confirm("确认删除该订阅？")) return
-    await runAsync(async () => {
-      await deleteJson(`/api/subscriptions/${item.id}`)
-      await reload(["subscriptions"])
-      toast.success("订阅已删除")
-    }, "删除订阅...")
+    setPendingAction(`delete:${item.id}`)
+    try {
+      await runAsync(async () => {
+        await deleteJson(`/api/subscriptions/${item.id}`)
+        await reload(["subscriptions"])
+        toast.success("订阅已删除")
+      }, "删除订阅...")
+    } finally {
+      setPendingAction("")
+    }
   }
 
   async function refresh(item?: Subscription) {
-    await runAsync(async () => {
-      if (item) await postJson(`/api/subscriptions/${item.id}/refresh`, {})
-      else await postJson("/api/subscriptions/cache-refresh", {})
-      await reload(["subscriptions"])
-      toast.success("刷新完成")
-    }, "刷新订阅指标...")
+    setPendingAction(item ? `refresh:${item.id}` : "refresh:all")
+    try {
+      await runAsync(async () => {
+        if (item) await postJson(`/api/subscriptions/${item.id}/refresh`, {})
+        else await postJson("/api/subscriptions/cache-refresh", {})
+        await reload(["subscriptions"])
+        toast.success("刷新完成")
+      }, "刷新订阅指标...")
+    } finally {
+      setPendingAction("")
+    }
   }
 
   async function toggleEnabled(item: Subscription) {
-    await runAsync(async () => {
-      const enabled = item.enabled === false
-      await putJson(`/api/subscriptions/${item.id}`, { enabled })
-      await reload(["subscriptions"])
-      toast.success(enabled ? "订阅池已启用" : "订阅池已停用")
-    }, item.enabled === false ? "启用订阅池..." : "停用订阅池...")
+    setPendingAction(`toggle:${item.id}`)
+    try {
+      await runAsync(async () => {
+        const enabled = item.enabled === false
+        await putJson(`/api/subscriptions/${item.id}`, { enabled })
+        await reload(["subscriptions"])
+        toast.success(enabled ? "订阅池已启用" : "订阅池已停用")
+      }, item.enabled === false ? "启用订阅池..." : "停用订阅池...")
+    } finally {
+      setPendingAction("")
+    }
   }
 
   const sortedSubscriptions = React.useMemo(() => [...subscriptions].sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions])
+  const statusOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.status).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
+  const providerOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.serviceProvider || item.provider).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
+  const filteredSubscriptions = React.useMemo(() => sortedSubscriptions.filter(item =>
+    (enabledFilter === "all" || (item.enabled === false ? "disabled" : "enabled") === enabledFilter) &&
+    (statusFilter === "all" || item.status === statusFilter) &&
+    (providerFilter === "all" || (item.serviceProvider || item.provider) === providerFilter)
+  ), [sortedSubscriptions, enabledFilter, statusFilter, providerFilter])
 
   const columns = React.useMemo<ColumnDef<Subscription>[]>(() => [
     {
@@ -134,15 +163,15 @@ export function SubscriptionsPage() {
                 <Eye />
               </Link>
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => refresh(item)} aria-label="刷新订阅">
-              <RefreshCw />
+            <Button variant="ghost" size="icon" onClick={() => refresh(item)} disabled={Boolean(pendingAction)} aria-label="刷新订阅">
+              {pendingAction === `refresh:${item.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => toggleEnabled(item)}><Power />{item.enabled === false ? "启用" : "停用"}</Button>
+            <Button variant="ghost" size="sm" onClick={() => toggleEnabled(item)} disabled={Boolean(pendingAction)}>{pendingAction === `toggle:${item.id}` ? <Loader2 className="animate-spin" /> : <Power />}{item.enabled === false ? "启用" : "停用"}</Button>
             <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>
               编辑
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => remove(item)} aria-label="删除订阅">
-              <Trash2 />
+            <Button variant="ghost" size="icon" onClick={() => remove(item)} disabled={Boolean(pendingAction)} aria-label="删除订阅">
+              {pendingAction === `delete:${item.id}` ? <Loader2 className="animate-spin" /> : <Trash2 />}
             </Button>
           </div>
         )
@@ -150,34 +179,26 @@ export function SubscriptionsPage() {
       enableHiding: false,
       enableSorting: false,
     },
-  ], [])
+  ], [pendingAction])
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader
-        title="订阅池"
-        description="管理上游订阅 URL、缓存状态、客户绑定与流量到期指标。"
-        actions={
-          <>
-            <Button variant="outline" size="sm" onClick={() => refresh()} disabled={!!busy}>
-              <RefreshCw />
-              全部刷新
-            </Button>
-            <Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}>
-              <Plus />
-              新增订阅
-            </Button>
-          </>
-        }
-      />
-
-      <DataTable
-        columns={columns}
-        data={sortedSubscriptions}
-        searchKey="subscription"
-        searchPlaceholder="搜索订阅..."
-        emptyTitle="暂无订阅"
-      />
+      <DataTableCard filters={<>
+        <Field><FieldLabel htmlFor="pool-enabled-filter">启用状态</FieldLabel><Select value={enabledFilter} onValueChange={setEnabledFilter}><SelectTrigger id="pool-enabled-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="enabled">已启用</SelectItem><SelectItem value="disabled">已停用</SelectItem></SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="pool-status-filter">运行状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="pool-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{statusOptions.map(status => <SelectItem key={status} value={status}>{statusLabels[status] || status}</SelectItem>)}</SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="pool-provider-filter">供应商</FieldLabel><Select value={providerFilter} onValueChange={setProviderFilter}><SelectTrigger id="pool-provider-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{providerOptions.map(provider => <SelectItem key={provider} value={provider}>{provider}</SelectItem>)}</SelectContent></Select></Field>
+      </>}>
+        <DataTable
+          columns={columns}
+          data={filteredSubscriptions}
+          searchKey="subscription"
+          searchPlaceholder="搜索订阅..."
+          emptyTitle="暂无订阅"
+          pageSize={10}
+          frame="card"
+          toolbar={<><Button variant="outline" size="sm" onClick={() => refresh()} disabled={!!busy || Boolean(pendingAction)}>{pendingAction === "refresh:all" ? <Loader2 className="animate-spin" /> : <RefreshCw />}全部刷新</Button><Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增订阅</Button></>}
+        />
+      </DataTableCard>
 
       <SimpleFormDialog
         open={open}
