@@ -87,6 +87,7 @@ function CopySubscription({ value }: { value: string }) {
 
 export function AccountOverviewPage() {
   const { data, error } = useOverview()
+  const [importClient, setImportClient] = React.useState<"shadowrocket" | "sparkle" | null>(null)
   const [announcementOpen, setAnnouncementOpen] = React.useState(false)
   const [selectedAnnouncement, setSelectedAnnouncement] = React.useState<Announcement | null>(null)
   const [reminderDialog, setReminderDialog] = React.useState(false)
@@ -128,6 +129,12 @@ export function AccountOverviewPage() {
 
   if (!data) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
   const subscription = data.subscription
+  const importName = importClient === "shadowrocket" ? "Shadowrocket" : "Sparkle"
+  const importUrl = subscription && importClient
+    ? importClient === "shadowrocket"
+      ? `shadowrocket://add/${encodeURIComponent(subscription.subscriptionUrl)}`
+      : `mihomo://install-config?url=${encodeURIComponent(subscription.subscriptionUrl)}`
+    : ""
   const vipSpend = data.vipSpend
   const vipTarget = vipSpend < 360 ? { level: "VIP 2", start: 0, amount: 360 } : vipSpend < 900 ? { level: "VIP 3", start: 360, amount: 900 } : null
   const vipProgress = vipTarget ? Math.min(100, Math.max(0, (vipSpend - vipTarget.start) / (vipTarget.amount - vipTarget.start) * 100)) : 100
@@ -171,7 +178,7 @@ export function AccountOverviewPage() {
             <Metric label="可绑定设备" value={subscription ? `${subscription.devices} 台` : "-"} />
             <Metric label="剩余现金价值" value={subscription ? formatMoney(subscription.cashValue) : "-"} />
             <div className="col-span-2 flex flex-wrap gap-2 xl:col-span-4"><Button asChild><Link to="/account/plans">{subscription ? "续费或更换套餐" : "购买套餐"}</Link></Button></div>
-            {subscription ? <><Separator className="col-span-2 xl:col-span-4" /><Field className="col-span-2 xl:col-span-4"><FieldLabel htmlFor="subscription-url">订阅链接</FieldLabel><FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription><Input id="subscription-url" readOnly value={subscription.subscriptionUrl} /><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button asChild variant="outline"><a href={`shadowrocket://add/${encodeURIComponent(subscription.subscriptionUrl)}`}><ExternalLink />导入 Shadowrocket</a></Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></> : null}
+            {subscription ? <><Separator className="col-span-2 xl:col-span-4" /><Field className="col-span-2 xl:col-span-4"><FieldLabel htmlFor="subscription-url">订阅链接</FieldLabel><FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription><Input id="subscription-url" readOnly value={subscription.subscriptionUrl} /><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></> : null}
           </CardContent>
         </Card>
       </div>
@@ -185,6 +192,18 @@ export function AccountOverviewPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={importClient !== null} onOpenChange={open => { if (!open) setImportClient(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>导入 {importName}</AlertDialogTitle>
+            <AlertDialogDescription>{`⚠️请先关闭${importClient === "shadowrocket" ? "小火箭" : "Sparkle"}的连接开关。`}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { window.location.href = importUrl }}>导入 {importName}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }
