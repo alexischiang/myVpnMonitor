@@ -3157,12 +3157,11 @@ function fallbackCandidateRank(item, user) {
   const poolTime = item?.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
   const dayMs = 86400000;
   if (!Number.isFinite(userTime) || !Number.isFinite(poolTime)) {
-    return { group: 2, distance: Number.POSITIVE_INFINITY };
+    return { group: 4, distance: Number.POSITIVE_INFINITY };
   }
   const diffDays = (poolTime - userTime) / dayMs;
-  if (Math.abs(diffDays) > 10) return null;
   return {
-    group: diffDays >= 0 ? 0 : 1,
+    group: Math.abs(diffDays) <= 10 ? (diffDays >= 0 ? 0 : 1) : (diffDays >= 0 ? 2 : 3),
     distance: Math.abs(diffDays)
   };
 }
@@ -3548,14 +3547,10 @@ function forwardedSubscriptionHeaders(req) {
 }
 
 function isBrowserNavigationRequest(req) {
-  const accept = String(req?.headers?.accept || "");
   const userAgent = String(req?.headers?.["user-agent"] || "");
-  const secFetchDest = String(req?.headers?.["sec-fetch-dest"] || "");
   const looksLikeBrowser = /(Mozilla|Chrome|Safari|Firefox|Edg|OPR)\//i.test(userAgent);
   const looksLikeSubscriptionClient = /(Clash|Stash|Shadowrocket|Quantumult|Surge|sing-box|SFA|VPNSubscriptionMonitor)/i.test(userAgent);
-  return !looksLikeSubscriptionClient && looksLikeBrowser && (
-    /\btext\/html\b/i.test(accept) || secFetchDest === "document"
-  );
+  return !looksLikeSubscriptionClient && looksLikeBrowser;
 }
 
 function normalizeSubconverterConfigParam(value) {
@@ -3576,24 +3571,38 @@ function defaultSubconverterPreset() {
   };
 }
 
+function relaySubconverterConfig(subscription, vendorList = vendors) {
+  const config = { ...defaultSubconverterPreset(), target: DEFAULT_SUBCONVERTER_TARGET, include: "", exclude: "", rename: "" };
+  const vendor = vendorList.find(item => item.name === subscription?.serviceProvider);
+  if (vendor?.overrideExclude) config.exclude = vendor.overrideExclude;
+  if (vendor?.overrideInclude) config.include = vendor.overrideInclude;
+  if (vendor?.overrideRename) config.rename = vendor.overrideRename;
+  return config;
+}
+
 function userOutputMode(user = {}) {
   return String(user.outputMode || "subconverter").trim().toLowerCase() === "direct"
     ? "direct"
     : "subconverter";
 }
 
-function copyUpstreamHeaders(response) {
+function copyUpstreamHeaders(response, req) {
+  const browserInline = isBrowserNavigationRequest(req);
   const headers = {
     "cache-control": "no-store, max-age=0",
     "pragma": "no-cache",
     "expires": "0",
-    "content-disposition": "attachment; filename*=UTF-8''NEXORA"
+    "content-disposition": browserInline ? "inline; filename*=UTF-8''NEXORA.yaml" : "attachment; filename*=UTF-8''NEXORA"
   };
   for (const name of ["content-type", "subscription-userinfo", "profile-update-interval"]) {
     const value = response.headers.get(name);
     if (value) headers[name] = value;
   }
   if (!headers["content-type"]) headers["content-type"] = "text/plain; charset=utf-8";
+  if (browserInline) {
+    headers["content-type"] = "text/plain; charset=utf-8";
+    headers["x-content-type-options"] = "nosniff";
+  }
   return headers;
 }
 
@@ -3643,7 +3652,7 @@ async function findDirectFallbackSubscription(user, currentSubscription, req) {
       return {
         subscription: candidate,
         body,
-        headers: copyUpstreamHeaders(response),
+        headers: copyUpstreamHeaders(response, req),
         errors
       };
     } catch (error) {
@@ -3725,18 +3734,9 @@ async function handleRelaySubscription(req, res, token) {
 
   let subscription = subscriptions.find(item => item.id === user.subscriptionId);
   const outputMode = userOutputMode(user);
-  const sc = (() => {
+  let sc = (() => {
     // 用户可显式选择直链模式，绕过订阅转换
-    if (outputMode === "direct") return null;
-    const base = { ...defaultSubconverterPreset(), target: DEFAULT_SUBCONVERTER_TARGET, include: "", exclude: "", rename: "" };
-    const sub = subscriptions.find(s => s.id === user.subscriptionId);
-    const v = vendors.find(v => v.name === sub?.serviceProvider);
-    if (v) {
-      if (v.overrideExclude) base.exclude = v.overrideExclude;
-      if (v.overrideInclude) base.include = v.overrideInclude;
-      if (v.overrideRename) base.rename = v.overrideRename;
-    }
-    return base;
+    return outputMode === "direct" ? null : relaySubconverterConfig(subscription);
   })();
   let precheckedLiveConfig = null;
   const initialFallbackReason = initialPoolFallbackReason(subscription, Boolean(sc?.target));
@@ -3749,23 +3749,6 @@ async function handleRelaySubscription(req, res, token) {
     currentPool: poolLogInfo(subscription),
     initialFallbackReason
   });
-  if (!sc?.target && initialFallbackReason === "pool-missing") {
-    relayLog("response-placeholder-pool-missing-before-converter", {
-      relayRequestId,
-      userId: user.id,
-      currentPool: poolLogInfo(subscription)
-    });
-    await recordUserLog(user, {
-      status: "no_usable_pool",
-      reason: "pool-missing",
-      fromSubscription: subscription,
-      req,
-      stage: "pool-url-check",
-      message: "\u7528\u6237\u5f53\u524d\u7ed1\u5b9a\u7684\u6c60 URL \u4e0d\u5b58\u5728\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
-    });
-    sendUnavailablePoolPlaceholderSubscription(res, user);
-    return;
-  }
   if (outputMode !== "direct" && !sc?.target) {
     relayLog("response-placeholder-custom-url-disabled", {
       relayRequestId,
@@ -3845,6 +3828,7 @@ async function handleRelaySubscription(req, res, token) {
         return;
       }
       subscription = fallback.subscription;
+      if (sc) sc = relaySubconverterConfig(subscription);
       precheckedLiveConfig = fallback.liveConfig;
       relayLog("current-pool-replaced-by-fallback", {
         relayRequestId,
@@ -3958,6 +3942,7 @@ async function handleRelaySubscription(req, res, token) {
         return;
       }
       subscription = fallback.subscription;
+      sc = relaySubconverterConfig(subscription);
       liveConfig = fallback.liveConfig;
       relayLog("subconverter-using-fallback-pool", {
         relayRequestId,
@@ -4117,7 +4102,7 @@ async function handleRelaySubscription(req, res, token) {
       bodyLength: body.length,
       bodyPreview: bodyPreview(body.toString("utf8"))
     });
-    res.writeHead(response.status, copyUpstreamHeaders(response));
+    res.writeHead(response.status, copyUpstreamHeaders(response, req));
     res.end(body);
   } catch (error) {
     relayLog("direct-current-response-failed", {
@@ -6191,8 +6176,10 @@ module.exports = Object.assign(requestHandler, {
   statusFor,
   toBytes,
   isBrowserNavigationRequest,
+  copyUpstreamHeaders,
   normalizeSubconverterConfigParam,
   defaultSubconverterPreset,
+  relaySubconverterConfig,
   userOutputMode,
   poolMetricUnavailableReason,
   initialPoolFallbackReason,

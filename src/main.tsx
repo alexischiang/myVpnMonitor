@@ -23,6 +23,8 @@ import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from "
 import { AccountShell } from "@/components/features/account-shell"
 import { AccountDocsPage, AccountOrderDetailPage, AccountOrdersPage, AccountOverviewPage, AccountReferralPage, AccountSettingsPage, AccountWalletPage, PaymentResultPage } from "@/components/features/account-pages"
 
+if (import.meta.env.DEV) document.title = `[LOCAL] ${document.title}`
+
 function ProtectedApp() {
   return (
     <DataProvider>
