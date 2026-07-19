@@ -33,7 +33,7 @@ const DATABASE_URL = LOCAL_DATABASE_URL || process.env.DATABASE_URL || "";
 const DIST_DIR = path.join(__dirname, "dist");
 const PUBLIC_DIR = fsSync.existsSync(path.join(DIST_DIR, "index.html")) ? DIST_DIR : path.join(__dirname, "public");
 const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "build-meta.json");
-const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 2 * 60 * 60 * 1000);
+const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 24 * 60 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 10 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
 const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 10);
@@ -657,8 +657,8 @@ async function sendAccountActionMail({ to, subject, title, url }) {
   await notifier.sendMail({
     to,
     subject,
-    text: `${title}\n\n${url}\n\n链接 30 分钟内有效，且只能使用一次。`,
-    html: `<p>${title}</p><p><a href="${url}">${url}</a></p><p>链接 30 分钟内有效，且只能使用一次。</p>`
+    text: `${title}\n\n${url}\n\n⚠️请勿直接在邮箱APP点击链接，需要复制到手机浏览器中打开。\n\n链接 30 分钟内有效，且只能使用一次。`,
+    html: `<p>${title}</p><p><a href="${url}">${url}</a></p><p style="color:#dc2626;font-weight:700;">⚠️请勿直接在邮箱APP点击链接，需要复制到手机浏览器中打开。</p><p>链接 30 分钟内有效，且只能使用一次。</p>`
   });
 }
 
@@ -2594,13 +2594,15 @@ async function fetchSubscriptionMetrics(url, profile) {
 }
 
 function cacheIsFresh(cache, now = Date.now()) {
-  const fetchedAt = cache?.fetchedAt ? new Date(cache.fetchedAt).getTime() : 0;
-  return Boolean(cache?.body || cache?.bodyFile) && Number.isFinite(fetchedAt) && now - fetchedAt < POOL_CONFIG_CACHE_TTL_MS;
+  const fetchedAt = cache?.bodyFetchedAt || cache?.fetchedAt;
+  const fetchedTime = fetchedAt ? new Date(fetchedAt).getTime() : 0;
+  const body = typeof cache?.body === "string" ? extractClashConfigBody(cache.body) : cache?.bodyFile;
+  return Boolean(body) && Number.isFinite(fetchedTime) && now - fetchedTime < POOL_CONFIG_CACHE_TTL_MS;
 }
 
 async function liveConfigFromCachedPoolConfig(item, { allowStale = false } = {}) {
   if (!allowStale && !cacheIsFresh(item?.cachedConfig)) return null;
-  const body = await readPoolCachedBody(item);
+  const body = extractClashConfigBody(await readPoolCachedBody(item));
   if (!body) return null;
   return {
     body,
@@ -2631,6 +2633,7 @@ function clashConfigScore(body) {
 function extractClashConfigBody(body) {
   const text = String(body || "").replace(/\r\n/g, "\n");
   if (!text.trim()) return "";
+  if (/^\s*<(?:!doctype\s+html|html)\b/i.test(text)) return "";
 
   const lines = text.split("\n");
   const startIndex = lines.findIndex(line => /^(mixed-port|port|socks-port|redir-port|tproxy-port|allow-lan|mode|log-level|external-controller|proxies):\s*/.test(line));
@@ -2818,6 +2821,7 @@ async function fetchLivePoolConfig(item) {
 }
 
 function poolMetricUnavailableReason(item, now = Date.now()) {
+  if (item?.enabled === false) return "pool-disabled";
   const expireTime = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
   if (Number.isFinite(expireTime) && expireTime <= now) return "pool-expired";
   const remaining = item?.metrics?.remainingBytes;
@@ -2826,6 +2830,7 @@ function poolMetricUnavailableReason(item, now = Date.now()) {
 }
 
 const fallbackReasonText = {
+  "pool-disabled": "\u539f\u6c60 URL \u5df2\u505c\u7528",
   "pool-expired": "\u539f\u6c60 URL \u5df2\u5230\u671f",
   "pool-depleted": "\u539f\u6c60 URL \u6d41\u91cf\u5df2\u7528\u5c3d",
   "pool-fetch-failed": "\u539f\u6c60 URL \u5b9e\u65f6\u83b7\u53d6\u5931\u8d25",
@@ -3284,7 +3289,7 @@ async function refreshPoolConfigCache(item, { force = false } = {}) {
         }
       });
       const rawBody = await response.text();
-      const body = extractClashConfigBody(rawBody);
+      const body = response.ok ? extractClashConfigBody(rawBody) : "";
       results.push({
         body,
         client: profile.name,
@@ -3293,7 +3298,9 @@ async function refreshPoolConfigCache(item, { force = false } = {}) {
         rawBodyLength: rawBody.length,
         contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
         subscriptionUserinfo: response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo") || "",
-        error: null
+        error: response.ok
+          ? (body ? null : "\u54cd\u5e94\u4e0d\u662f\u6709\u6548\u7684\u8ba2\u9605\u914d\u7f6e\u3002")
+          : `\u8ba2\u9605\u914d\u7f6e\u83b7\u53d6\u5931\u8d25\uff08HTTP ${response.status}\uff09\u3002`
       });
     } catch (error) {
       results.push({
@@ -3352,6 +3359,20 @@ async function refreshPoolConfigCache(item, { force = false } = {}) {
   return item.cachedConfig;
 }
 
+async function cachedPoolConfig(item) {
+  const cached = await liveConfigFromCachedPoolConfig(item);
+  if (cached) return cached;
+
+  const cache = await refreshPoolConfigCache(item);
+  await saveData();
+  const refreshed = await liveConfigFromCachedPoolConfig(item);
+  if (refreshed) return refreshed;
+
+  const error = new Error(cache?.error || "\u6ca1\u6709\u83b7\u53d6\u5230\u53ef\u7528\u7684\u8ba2\u9605\u914d\u7f6e\u3002");
+  error.attempts = cache?.attempts || [];
+  throw error;
+}
+
 async function refreshAllPoolConfigCaches({ force = false } = {}) {
   await Promise.all(subscriptions.map(item => Promise.all([
     refreshSubscription(item),
@@ -3387,12 +3408,12 @@ function buildUserInfoNodes(user) {
   return nodes;
 }
 
-function injectPlaceholderNodes(bodyBuffer, user) {
+function injectPlaceholderNodes(bodyBuffer, user, groups = placeholderNodes) {
   const useDefault = user.useDefaultPlaceholder !== false;
   const showUserInfo = user.showUserInfo !== false;
-  const defaultGroup = useDefault ? placeholderNodes.find(p => p.tag === "default") : null;
+  const defaultGroup = useDefault ? groups.find(p => p.tag === "default") : null;
   const customGroup = user.placeholderTag && user.placeholderTag !== "default"
-    ? placeholderNodes.find(p => p.tag === user.placeholderTag) : null;
+    ? groups.find(p => p.tag === user.placeholderTag) : null;
   const defaultNodes = defaultGroup?.nodes?.length ? defaultGroup.nodes : [];
   const customNodes = customGroup?.nodes?.length ? customGroup.nodes : [];
   const userInfoNodes = showUserInfo ? buildUserInfoNodes(user) : [];
@@ -3401,16 +3422,21 @@ function injectPlaceholderNodes(bodyBuffer, user) {
     const text = bodyBuffer.toString("utf8");
     const doc = yaml.load(text);
     if (!doc || typeof doc !== "object") return bodyBuffer;
-    if (!Array.isArray(doc.proxies)) doc.proxies = [];
+    const proxies = Array.isArray(doc.proxies)
+      ? doc.proxies
+      : (Array.isArray(doc.Proxy) ? doc.Proxy : (doc.proxies = []));
     const allNames = [...userInfoNodes, ...defaultNodes, ...customNodes];
-    const firstProxy = doc.proxies[0];
+    const firstProxy = proxies[0];
     const allProxies = allNames.map(nodeName => {
       if (firstProxy) return { ...firstProxy, name: nodeName };
       return { name: nodeName, type: "ss", server: "127.0.0.1", port: 1, cipher: "aes-128-gcm", password: "placeholder" };
     });
-    doc.proxies.unshift(...allProxies);
-    if (Array.isArray(doc["proxy-groups"])) {
-      for (const pg of doc["proxy-groups"]) {
+    proxies.unshift(...allProxies);
+    const proxyGroups = Array.isArray(doc["proxy-groups"])
+      ? doc["proxy-groups"]
+      : doc["Proxy Group"];
+    if (Array.isArray(proxyGroups)) {
+      for (const pg of proxyGroups) {
         if (Array.isArray(pg.proxies)) {
           pg.proxies.unshift(...allNames);
         }
@@ -3702,7 +3728,9 @@ async function handleRelaySubscription(req, res, token) {
     return base;
   })();
   let precheckedLiveConfig = null;
-  const initialFallbackReason = !subscription?.url ? "pool-missing" : (sc?.target ? poolMetricUnavailableReason(subscription) : "");
+  const initialFallbackReason = !subscription?.url
+    ? "pool-missing"
+    : ((subscription.enabled === false || sc?.target) ? poolMetricUnavailableReason(subscription) : "");
   relayLog("current-pool-selected", {
     relayRequestId,
     userId: user.id,
@@ -3748,9 +3776,9 @@ async function handleRelaySubscription(req, res, token) {
     return;
   }
   if (initialFallbackReason) {
-    if (subscription?.url) {
+    if (subscription?.url && subscription.enabled !== false) {
       try {
-        precheckedLiveConfig = await fetchLivePoolConfig(subscription);
+        precheckedLiveConfig = await cachedPoolConfig(subscription);
         relayLog("current-pool-live-precheck-ok", {
           relayRequestId,
           userId: user.id,
@@ -3864,7 +3892,7 @@ async function handleRelaySubscription(req, res, token) {
     });
     let liveConfig = precheckedLiveConfig;
     try {
-      if (!liveConfig) liveConfig = await fetchLivePoolConfig(subscription);
+      if (!liveConfig) liveConfig = await cachedPoolConfig(subscription);
     } catch (error) {
       relayLog("subconverter-current-live-fetch-failed", {
         relayRequestId,
@@ -5911,7 +5939,7 @@ async function handleApi(req, res, pathname) {
       const wasFresh = !force && cacheIsFresh(item.cachedConfig);
       const cache = await refreshPoolConfigCache(item, { force });
       if (!wasFresh) await saveData();
-      const body = await readPoolCachedBody(item);
+      const body = extractClashConfigBody(await readPoolCachedBody(item));
       sendJson(res, 200, {
         status: cache.status || null,
         client: cache.client || "",
@@ -5924,9 +5952,9 @@ async function handleApi(req, res, pathname) {
         contentType: cache.contentType || "",
         subscriptionUserinfo: cache.subscriptionUserinfo || "",
         error: cache.error || null,
-        body: body.slice(0, 20000),
+        body,
         bodyLength: cache.bodyLength || body.length,
-        truncated: body.length > 20000
+        truncated: false
       });
     } catch (error) {
       sendJson(res, 502, {
@@ -6158,6 +6186,7 @@ module.exports = Object.assign(requestHandler, {
   userOutputMode,
   poolMetricUnavailableReason,
   fallbackCandidateRank,
+  injectPlaceholderNodes,
   liveConfigFromCachedPoolConfig,
   startOfUtcDate,
   paymentQuote,

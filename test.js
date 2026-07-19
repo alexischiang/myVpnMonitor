@@ -92,5 +92,6 @@ assert.ok(extracted.startsWith("mixed-port: 7890"));
 assert.ok(extracted.includes("proxies:\n  - name: node"));
 assert.ok(extracted.includes("rules:\n  - MATCH,PROXY"));
 assert.ok(!extracted.includes("extra:"));
+assert.strictEqual(extractClashConfigBody("<!doctype html><html><title>403</title></html>"), "");
 
 console.log("All checks passed.");

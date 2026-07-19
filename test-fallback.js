@@ -6,10 +6,16 @@ const {
   normalizeSubconverterConfigParam,
   defaultSubconverterPreset,
   userOutputMode,
+  injectPlaceholderNodes,
   liveConfigFromCachedPoolConfig,
   publicRegisteredAccount,
   startOfUtcDate
 } = require("./server");
+
+assert.strictEqual(
+  poolMetricUnavailableReason({ enabled: false, metrics: { expireAt: "2030-01-01T00:00:00.000Z", remainingBytes: 1000000 } }),
+  "pool-disabled"
+);
 
 // ─── poolMetricUnavailableReason ────────────────────────────────────────
 
@@ -179,11 +185,29 @@ assert.strictEqual(startOfUtcDate("invalid"), null);
 // null 被 Date 解析为 epoch (1970-01-01)，startOfUtcDate 返回 0 而非 null
 assert.strictEqual(startOfUtcDate(null), 0);
 
+const injectedLegacyConfig = require("js-yaml").load(injectPlaceholderNodes(Buffer.from([
+  "Proxy:",
+  "  - name: upstream",
+  "    type: ss",
+  "    server: example.com",
+  "    port: 443",
+  "    cipher: aes-128-gcm",
+  "    password: secret",
+  "Proxy Group:",
+  "  - name: Auto",
+  "    type: select",
+  "    proxies: [upstream]"
+].join("\n")), { showUserInfo: false }, [{ tag: "default", nodes: ["notice"] }]).toString("utf8"));
+assert.strictEqual(injectedLegacyConfig.Proxy[0].name, "notice");
+assert.strictEqual(injectedLegacyConfig["Proxy Group"][0].proxies[0], "notice");
+
 Promise.all([
   liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: "2020-01-01T00:00:00.000Z" } }),
-  liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: "2020-01-01T00:00:00.000Z" } }, { allowStale: true })
-]).then(([stale, allowed]) => {
+  liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: "2020-01-01T00:00:00.000Z" } }, { allowStale: true }),
+  liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: new Date().toISOString(), bodyFetchedAt: "2020-01-01T00:00:00.000Z" } })
+]).then(([stale, allowed, failedRefresh]) => {
   assert.strictEqual(stale, null);
+  assert.strictEqual(failedRefresh, null);
   assert.strictEqual(allowed.cached, true);
   assert.match(allowed.body, /name: cached/);
   console.log("All fallback logic tests passed.");
