@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useLocation, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
 import { ArrowLeft, Gift, Loader2, MailCheck, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
@@ -19,12 +19,12 @@ import { DataTable, DataTableColumnHeader } from "@/components/features/data-tab
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
 import type { Bill, User, UserLog } from "@/types"
-import { formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, userStatus } from "@/utils"
+import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, userStatus } from "@/utils"
 
 export function SubscriptionDetailPage() {
   const { id } = useParams()
   const { subscriptions, users, reload, runAsync } = useData()
-  const [cache, setCache] = React.useState<{ body?: string; error?: string; fetchedAt?: string; bodyLength?: number; storage?: string } | null>(null)
+  const [cache, setCache] = React.useState<{ body?: string; error?: string; fetchedAt?: string; bodyFetchedAt?: string; bodyLength?: number; storage?: string } | null>(null)
   const [refreshing, setRefreshing] = React.useState(false)
   const [refreshingCache, setRefreshingCache] = React.useState(false)
   const item = subscriptions.find(entry => entry.id === id)
@@ -122,9 +122,10 @@ export function SubscriptionDetailPage() {
           </CardHeader>
           <CardContent className="grid gap-3">
             <p className="text-sm text-muted-foreground">
-              {cache?.fetchedAt ? `${cache.storage || "cache"} - ${formatDateTime(cache.fetchedAt)} - ${formatBytes(cache.bodyLength)}` : "未加载"}
+              {cache?.body ? `缓存时间：${formatDateTime(cache.bodyFetchedAt || cache.fetchedAt)} - ${formatBytes(cache.bodyLength)}` : cache?.fetchedAt ? `最近尝试：${formatDateTime(cache.fetchedAt)}` : "未加载"}
             </p>
-            <pre className="max-h-96 overflow-auto rounded-lg border bg-muted p-3 text-xs">{cache?.error ? `Error: ${cache.error}` : cache?.body || "(empty)"}</pre>
+            {cache?.error ? <Alert variant="destructive"><AlertDescription>最新配置拉取失败：{cache.error}{cache.body ? ` 当前显示的是 ${formatDateTime(cache.bodyFetchedAt || cache.fetchedAt)} 的缓存配置。` : " 当前没有可显示的缓存配置。"}</AlertDescription></Alert> : null}
+            <pre className="max-h-96 overflow-auto rounded-lg border bg-muted p-3 text-xs">{cache?.body || "(empty)"}</pre>
           </CardContent>
         </Card>
 
@@ -147,6 +148,7 @@ export function SubscriptionDetailPage() {
 
 export function UserDetailPage() {
   const { id } = useParams()
+  const location = useLocation()
   const { users, bills, reload, runAsync } = useData()
   const user = users.find(entry => entry.id === id)
   const [inviteOpen, setInviteOpen] = React.useState(false)
@@ -295,7 +297,7 @@ export function UserDetailPage() {
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex gap-2">{user.accountStatus === "active" ? <Button size="sm" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button> : <Button size="sm" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button>}<Button asChild variant="outline" size="sm"><Link to="/users"><ArrowLeft />返回</Link></Button></div>} />
+      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex gap-2">{user.registeredOnly ? null : user.accountStatus === "active" ? <Button size="sm" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button> : <Button size="sm" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button>}<Button asChild variant="outline" size="sm"><Link to={`/users${location.search}`}><ArrowLeft />返回</Link></Button></div>} />
       <Dialog open={giftBalanceOpen} onOpenChange={setGiftBalanceOpen}>
         <DialogContent>
           <form className="grid gap-4" onSubmit={giftBalance}>
@@ -330,8 +332,11 @@ export function UserDetailPage() {
             <Info label="邮箱" value={user.email || "-"} />
             <Info label="iMessage" value={user.imessage || "-"} />
             <Info label="套餐" value={`${user.activeGroup || "-"} / ${user.vipLevel || "-"}`} />
-            <Info label="到期" value={formatUserExpiry(user)} />
+            <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
+            <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
+            <Info label="当前到期" value={formatUserExpiry(user)} />
             <Info label="订阅池" value={user.subscription?.email || user.subscription?.serviceProvider || "-"} />
+            <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
             <Info label="状态" value={<UserStatusBadge user={user} />} />
             <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
           </CardContent>

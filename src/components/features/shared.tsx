@@ -19,7 +19,7 @@ export function StatusBadge({ status, children, className = "", style }: { statu
 
 export function UserStatusBadge({ user }: { user?: User | null }) {
   const status = userStatus(user)
-  return <StatusBadge status={status}>{status === "ok" ? "Active" : status === "warning" ? "Expiring" : "Expired"}</StatusBadge>
+  return <StatusBadge status={status}>{status === "registered" ? "未购买" : status === "ok" ? "Active" : status === "warning" ? "Expiring" : "Expired"}</StatusBadge>
 }
 
 export function EmptyState({ title = "暂无数据", description }: { title?: string; description?: string }) {

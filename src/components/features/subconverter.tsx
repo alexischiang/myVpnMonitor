@@ -10,22 +10,45 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { SimpleFormDialog, type Field, type FormValues } from "@/components/features/simple-form"
 import { PageHeader } from "@/components/features/shared"
-import type { PlaceholderNode, Vendor } from "@/types"
+import type { PlaceholderNode, Preset, Vendor } from "@/types"
 
 const targets = ["clash", "clashr", "quan", "quanx", "loon", "surge&ver=4", "surge&ver=3", "shadowrocket", "v2ray", "mixed"]
+const booleanOptions = [
+  { key: "emoji", label: "节点 Emoji", defaultValue: true },
+  { key: "udp", label: "UDP", defaultValue: true },
+  { key: "tfo", label: "TCP Fast Open", defaultValue: false },
+  { key: "scv", label: "跳过证书验证", defaultValue: false },
+  { key: "sort", label: "节点排序", defaultValue: false },
+  { key: "list", label: "仅输出节点列表", defaultValue: false },
+  { key: "fdn", label: "过滤不支持节点", defaultValue: true },
+  { key: "insert", label: "插入预设订阅", defaultValue: true },
+  { key: "expand", label: "展开规则", defaultValue: true },
+  { key: "classic", label: "Clash 经典规则", defaultValue: false },
+  { key: "new_name", label: "Clash 新字段名", defaultValue: false },
+  { key: "append_type", label: "附加节点类型", defaultValue: false },
+  { key: "append_info", label: "附加流量信息", defaultValue: true },
+  { key: "strict", label: "Surge 强制更新", defaultValue: false },
+] as const
+type BooleanOptionKey = typeof booleanOptions[number]["key"]
+type PresetValues = { target: string; config: string } & Record<BooleanOptionKey, boolean>
 
+function presetValues(preset: Preset): PresetValues {
+  return {
+    target: preset.target || "clash",
+    config: preset.config || "",
+    ...Object.fromEntries(booleanOptions.map(option => [option.key, preset[option.key] ?? option.defaultValue])) as Record<BooleanOptionKey, boolean>,
+  }
+}
 export function SubconverterPage() {
   return (
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="Subconverter" description="订阅转换预设、供应商覆写与占位节点配置。" />
       <div className="grid gap-4">
         <PresetCard />
-        <PricingCard />
         <VendorOverrides />
         <PlaceholderNodes />
       </div>
@@ -37,17 +60,10 @@ function PresetCard() {
   const { presets, reload, runAsync } = useData()
   const preset = presets[0] || {}
   const [saving, setSaving] = React.useState(false)
-  const [values, setValues] = React.useState({
-    target: preset.target || "clash",
-    config: preset.config || "",
-    emoji: preset.emoji !== false,
-    udp: preset.udp !== false,
-    scv: Boolean(preset.scv),
-    sort: Boolean(preset.sort),
-  })
+  const [values, setValues] = React.useState(() => presetValues(preset))
   React.useEffect(() => {
-    setValues({ target: preset.target || "clash", config: preset.config || "", emoji: preset.emoji !== false, udp: preset.udp !== false, scv: Boolean(preset.scv), sort: Boolean(preset.sort) })
-  }, [preset.config, preset.emoji, preset.scv, preset.sort, preset.target, preset.udp])
+    setValues(presetValues(preset))
+  }, [preset])
   async function save() {
     setSaving(true)
     try {
@@ -75,12 +91,12 @@ function PresetCard() {
           <Label>远程配置</Label>
           <Input value={values.config} onChange={event => setValues(current => ({ ...current, config: event.target.value }))} placeholder="https://..." />
         </div>
-        <div className="flex flex-wrap items-center gap-4">
-          {(["emoji", "udp", "scv", "sort"] as const).map(key => (
-            <label key={key} className="flex items-center gap-2 text-sm">
-              <Checkbox checked={Boolean(values[key])} onCheckedChange={checked => setValues(current => ({ ...current, [key]: Boolean(checked) }))} />
-              {key}
-            </label>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {booleanOptions.map(option => (
+            <Label key={option.key} htmlFor={`preset-${option.key}`} className="flex items-center gap-2">
+              <Checkbox id={`preset-${option.key}`} checked={values[option.key]} onCheckedChange={checked => setValues(current => ({ ...current, [option.key]: checked === true }))} />
+              {option.label} ({option.key})
+            </Label>
           ))}
         </div>
         <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : null}{saving ? "保存中..." : "保存预设"}</Button>
@@ -90,32 +106,25 @@ function PresetCard() {
 }
 
 function VendorOverrides() {
-  const { vendors, reload, runAsync } = useData()
+  const { subscriptions, vendors, reload, runAsync } = useData()
   const [editing, setEditing] = React.useState<Vendor | null>(null)
   const [open, setOpen] = React.useState(false)
-  const [deletingId, setDeletingId] = React.useState("")
-  const fields: Field[] = [
-    { name: "name", label: "供应商名称", required: true },
-    { name: "overrideExclude", label: "排除规则", type: "textarea" },
-    { name: "overrideInclude", label: "包含规则", type: "textarea" },
-    { name: "overrideRename", label: "重命名规则", type: "textarea" },
-  ]
+  const providerNames = React.useMemo(() => [...new Set(subscriptions.map(item => item.serviceProvider || item.provider).filter((name): name is string => Boolean(name)))].sort(), [subscriptions])
+  const vendorRows = React.useMemo(() => providerNames.map(name => vendors.find(vendor => vendor.name === name) || { id: `provider:${name}`, name }), [providerNames, vendors])
+  const fields = React.useMemo<Field[]>(() => [
+    { name: "overrideExclude", label: "排除规则", type: "textarea", rows: 5, className: "sm:col-span-1" },
+    { name: "overrideInclude", label: "包含规则", type: "textarea", rows: 5, className: "sm:col-span-1" },
+    { name: "overrideRename", label: "重命名规则", type: "textarea", rows: 4 },
+  ], [])
   async function save(values: FormValues) {
+    if (!editing) return
+    const vendor = vendors.find(item => item.name === editing.name)
     await runAsync(async () => {
-      if (editing?.id) await putJson(`/api/vendors/${editing.id}`, values)
-      else await postJson("/api/vendors", values)
+      if (vendor) await putJson(`/api/vendors/${vendor.id}`, values)
+      else await postJson("/api/vendors", { ...values, name: editing.name })
       await reload(["vendors"])
       toast.success("供应商配置已保存")
     }, "保存供应商配置...")
-  }
-  async function remove(item: Vendor) {
-    if (!confirm("确认删除？")) return
-    setDeletingId(item.id)
-    try {
-      await runAsync(async () => { await deleteJson(`/api/vendors/${item.id}`); await reload(["vendors"]) }, "删除供应商...")
-    } finally {
-      setDeletingId("")
-    }
   }
 
   const columns = React.useMemo<ColumnDef<Vendor>[]>(() => [
@@ -139,20 +148,11 @@ function VendorOverrides() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => (
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>
-            编辑
-          </Button>
-          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} disabled={Boolean(deletingId)} aria-label="删除供应商覆写">
-            {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
-          </Button>
-        </div>
-      ),
+      cell: ({ row }) => <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>编辑</Button>,
       enableHiding: false,
       enableSorting: false,
     },
-  ], [deletingId])
+  ], [])
 
   return (
     <Card>
@@ -160,14 +160,13 @@ function VendorOverrides() {
       <CardContent>
         <DataTable
           columns={columns}
-          data={vendors}
+          data={vendorRows}
           searchKey="name"
-          searchPlaceholder="搜索供应商覆写..."
-          emptyTitle="暂无供应商覆写"
-          toolbar={<Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增</Button>}
+          searchPlaceholder="搜索供应商..."
+          emptyTitle="暂无订阅池供应商"
         />
       </CardContent>
-      <SimpleFormDialog open={open} title={editing ? "编辑供应商" : "新增供应商"} fields={fields} initialValues={editing || {}} onOpenChange={setOpen} onSubmit={save} />
+      <SimpleFormDialog open={open} title={`编辑 ${editing?.name || ""} 覆写`} description="规则留空时使用默认转换配置。" fields={fields} initialValues={editing || {}} contentClassName="sm:max-w-2xl" onOpenChange={setOpen} onSubmit={save} />
     </Card>
   )
 }
@@ -245,34 +244,6 @@ function PlaceholderNodes() {
         />
       </CardContent>
       <SimpleFormDialog open={open} title={editing ? "编辑占位节点" : "新增占位节点"} fields={fields} initialValues={editing ? { tag: editing.tag, nodesText: editing.nodes.join("\n") } : {}} onOpenChange={setOpen} onSubmit={save} />
-    </Card>
-  )
-}
-
-function PricingCard() {
-  const { pricing, reload, runAsync } = useData()
-  const [text, setText] = React.useState("")
-  const [saving, setSaving] = React.useState(false)
-  React.useEffect(() => setText(JSON.stringify(pricing, null, 2)), [pricing])
-  async function save() {
-    setSaving(true)
-    try {
-      await runAsync(async () => {
-        await putJson("/api/pricing", JSON.parse(text || "[]"))
-        await reload(["pricing"])
-        toast.success("价格已保存")
-      }, "保存价格...")
-    } finally {
-      setSaving(false)
-    }
-  }
-  return (
-    <Card>
-      <CardHeader><CardTitle>价格表 JSON</CardTitle></CardHeader>
-      <CardContent className="grid gap-4">
-        <Textarea value={text} onChange={event => setText(event.target.value)} rows={12} />
-        <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : null}{saving ? "保存中..." : "保存价格"}</Button>
-      </CardContent>
     </Card>
   )
 }

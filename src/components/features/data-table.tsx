@@ -62,6 +62,8 @@ type DataTableProps<TData, TValue> = {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
   searchKey?: string
+  initialSearchValue?: string
+  onSearchChange?: (value: string) => void
   searchPlaceholder?: string
   emptyTitle?: string
   emptyDescription?: string
@@ -76,6 +78,8 @@ export function DataTable<TData, TValue>({
   columns,
   data,
   searchKey,
+  initialSearchValue,
+  onSearchChange,
   searchPlaceholder = "搜索...",
   emptyTitle = "暂无数据",
   emptyDescription,
@@ -86,7 +90,9 @@ export function DataTable<TData, TValue>({
   frame = "default",
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
+  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
+    searchKey && initialSearchValue ? [{ id: searchKey, value: initialSearchValue }] : []
+  )
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -135,7 +141,10 @@ export function DataTable<TData, TValue>({
             <Input
               placeholder={searchPlaceholder}
               value={(searchableColumn.getFilterValue() as string) ?? ""}
-              onChange={event => searchableColumn.setFilterValue(event.target.value)}
+              onChange={event => {
+                searchableColumn.setFilterValue(event.target.value)
+                onSearchChange?.(event.target.value)
+              }}
               className={cn("w-full", frame === "card" ? "pl-9" : "h-8")}
             />
           </div>

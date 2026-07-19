@@ -16,29 +16,26 @@ import { StatusBadge, TrafficProgress, UrlCell } from "@/components/features/sha
 import type { Subscription } from "@/types"
 import { formatDate, statusLabels } from "@/utils"
 
-const fields: SimpleField[] = [
-  { name: "url", label: "订阅 URL", type: "url", required: true, placeholder: "https://...", className: "sm:col-span-2" },
-  { name: "email", label: "邮箱", type: "email", placeholder: "customer@example.com" },
-  { name: "serviceProvider", label: "供应商", type: "text", placeholder: "YKK Cloud" },
-  { name: "note", label: "备注", type: "textarea", rows: 3, placeholder: "套餐、来源或其他备注", className: "sm:col-span-2" },
-]
-
 export function SubscriptionsPage() {
   const { subscriptions, reload, runAsync, busy } = useData()
   const [editing, setEditing] = React.useState<Subscription | null>(null)
   const [open, setOpen] = React.useState(false)
   const [pendingAction, setPendingAction] = React.useState("")
   const [enabledFilter, setEnabledFilter] = React.useState("all")
-  const [statusFilter, setStatusFilter] = React.useState("all")
+  const [statusFilter, setStatusFilter] = React.useState("ok")
   const [providerFilter, setProviderFilter] = React.useState("all")
 
   async function save(values: FormValues) {
+    const payload = {
+      ...values,
+      allowedGroups: ["basic", "pro", "ultra"].filter(group => values[`allow_${group}`] === true),
+    }
     await runAsync(async () => {
       if (editing?.id) {
-        await putJson(`/api/subscriptions/${editing.id}`, values)
+        await putJson(`/api/subscriptions/${editing.id}`, payload)
         toast.success("订阅已更新")
       } else {
-        const created = await postJson<Subscription>("/api/subscriptions", values)
+        const created = await postJson<Subscription>("/api/subscriptions", payload)
         await postJson(`/api/subscriptions/${created.id}/refresh`, {})
         toast.success("订阅已创建")
       }
@@ -91,6 +88,31 @@ export function SubscriptionsPage() {
   const sortedSubscriptions = React.useMemo(() => [...subscriptions].sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions])
   const statusOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.status).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
   const providerOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.serviceProvider || item.provider).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
+  const fields = React.useMemo<SimpleField[]>(() => [
+    { name: "url", label: "订阅 URL", type: "url", required: true, placeholder: "https://...", className: "sm:col-span-2" },
+    { name: "email", label: "邮箱", type: "email", placeholder: "customer@example.com" },
+    {
+      name: "serviceProvider",
+      label: "供应商",
+      type: "select",
+      placeholder: "选择供应商",
+      options: providerOptions.map(provider => ({ value: provider, label: provider })),
+      allowCustom: true,
+      customLabel: "新增供应商",
+      customPlaceholder: "输入供应商名称",
+    },
+    { name: "maxUsers", label: "人数上限", type: "number", required: true, placeholder: "15", className: "sm:col-span-2" },
+    { name: "allow_basic", label: "BASIC", type: "checkbox", className: "items-center rounded-md border p-3 sm:col-span-1" },
+    { name: "allow_pro", label: "PRO", type: "checkbox", className: "items-center rounded-md border p-3 sm:col-span-1" },
+    { name: "allow_ultra", label: "ULTRA", type: "checkbox", className: "items-center rounded-md border p-3 sm:col-span-1" },
+    {
+      name: "useCachedConfigForFallback",
+      label: "不依赖实时拉取",
+      type: "checkbox",
+      description: "已有 YAML 缓存时，无需验证远端即可换入。",
+      className: "items-start rounded-md border p-3 sm:col-span-2",
+    },
+  ], [providerOptions])
   const filteredSubscriptions = React.useMemo(() => sortedSubscriptions.filter(item =>
     (enabledFilter === "all" || (item.enabled === false ? "disabled" : "enabled") === enabledFilter) &&
     (statusFilter === "all" || item.status === statusFilter) &&
@@ -125,6 +147,13 @@ export function SubscriptionsPage() {
       header: DataTableColumnHeader({ title: "客户" }),
       meta: { label: "客户" },
       cell: ({ row }) => row.original.customerCount || 0,
+    },
+    {
+      id: "allowedGroups",
+      accessorFn: item => (item.allowedGroups || ["basic", "pro", "ultra"]).join(" "),
+      header: DataTableColumnHeader({ title: "适用范围" }),
+      meta: { label: "适用范围" },
+      cell: ({ row }) => (row.original.allowedGroups || ["basic", "pro", "ultra"]).map(group => group.toUpperCase()).join(" / "),
     },
     {
       id: "traffic",
@@ -205,7 +234,13 @@ export function SubscriptionsPage() {
         title={editing ? "编辑订阅" : "新增订阅"}
         description="粘贴上游订阅地址，保存后会自动刷新一次指标。"
         fields={fields}
-        initialValues={editing || {}}
+        initialValues={editing ? {
+          ...editing,
+          maxUsers: editing.maxUsers ?? 15,
+          allow_basic: !editing.allowedGroups || editing.allowedGroups.includes("basic"),
+          allow_pro: !editing.allowedGroups || editing.allowedGroups.includes("pro"),
+          allow_ultra: !editing.allowedGroups || editing.allowedGroups.includes("ultra"),
+        } : { maxUsers: 15, allow_basic: true, allow_pro: true, allow_ultra: true }}
         submitLabel={editing ? "保存修改" : "保存并刷新"}
         contentClassName="sm:max-w-2xl"
         onOpenChange={setOpen}

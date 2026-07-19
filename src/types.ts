@@ -9,6 +9,7 @@ export type Subscription = {
   serviceProvider?: string
   note?: string
   enabled?: boolean
+  useCachedConfigForFallback?: boolean
   accountStatus?: "unclaimed" | "invited" | "active"
   accountId?: string
   referralCode?: string
@@ -19,6 +20,8 @@ export type Subscription = {
   lastCheckedAt?: string | null
   lastError?: string | null
   customerCount?: number
+  maxUsers?: number
+  allowedGroups?: string[]
   metrics?: {
     totalBytes?: number
     usedBytes?: number
@@ -29,6 +32,8 @@ export type Subscription = {
 
 export type User = {
   id: string
+  registeredOnly?: boolean
+  accountId?: string
   createdAt?: string
   accountStatus?: "unclaimed" | "invited" | "active"
   userId?: string
@@ -42,7 +47,9 @@ export type User = {
   vipLevel?: string
   duration?: string
   purchasedAt?: string
+  planExpiresAt?: string
   expiresAt?: string
+  giftedDays?: number
   actualPaid?: number
   vipSpend?: number
   cost?: number
@@ -119,8 +126,18 @@ export type Preset = {
   config?: string
   emoji?: boolean
   udp?: boolean
+  tfo?: boolean
   scv?: boolean
   sort?: boolean
+  list?: boolean
+  fdn?: boolean
+  insert?: boolean
+  expand?: boolean
+  classic?: boolean
+  new_name?: boolean
+  append_type?: boolean
+  append_info?: boolean
+  strict?: boolean
 }
 
 export type PlaceholderNode = {
@@ -205,6 +222,7 @@ export type AnnouncementSetting = {
 
 export type SalesSettings = {
   id: string
+  registrationMode: "open" | "invite_only" | "disabled"
   coupons: CouponSetting[]
   faqs: FaqSetting[]
   announcements: AnnouncementSetting[]

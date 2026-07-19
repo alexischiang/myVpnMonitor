@@ -2,7 +2,7 @@ import * as React from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Loader2 } from "lucide-react"
 
-import { apiFetch, postJson } from "@/api"
+import { apiFetch, fetchJson, postJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { FieldError } from "@/components/ui/field"
@@ -91,7 +91,14 @@ export function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = React.useState("")
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState("")
+  const [registrationMode, setRegistrationMode] = React.useState<"open" | "invite_only" | "disabled">("open")
   const [referralCode, setReferralCode] = React.useState(() => searchParams.get("ref") || "")
+
+  React.useEffect(() => {
+    void fetchJson<{ registrationMode: "open" | "invite_only" | "disabled" }>("/api/public/sales-settings")
+      .then(result => setRegistrationMode(result.registrationMode))
+      .catch(() => undefined)
+  }, [])
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -109,12 +116,13 @@ export function RegisterPage() {
   }
 
   return (
-    <AuthLayout title="创建账户" description="请输入有效的邮箱">
+    <AuthLayout title="创建账户" description={registrationMode === "invite_only" ? "请输入有效的推荐码" : registrationMode === "disabled" ? "当前暂时不开放注册" : "请输入有效的邮箱"}>
+      {registrationMode === "disabled" ? <FieldError>当前暂时不开放注册</FieldError> : null}
       <form className="grid gap-4" onSubmit={submit} noValidate>
         <div className="grid gap-2"><Label htmlFor="email">邮箱</Label><Input id="email" type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} required /></div>
         <div className="grid gap-2"><Label htmlFor="new-password">密码</Label><Input id="new-password" type="password" minLength={8} autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} required /></div>
         <div className="grid gap-2"><Label htmlFor="confirm-password">确认密码</Label><Input id="confirm-password" type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required /></div>
-        <div className="grid gap-2"><Label htmlFor="referral-code">邀请码（可选）</Label><Input id="referral-code" inputMode="numeric" maxLength={6} value={referralCode} onChange={event => setReferralCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /></div>
+        <div className="grid gap-2"><Label htmlFor="referral-code">推荐码{registrationMode === "invite_only" ? "" : "（可选）"}</Label><Input id="referral-code" inputMode="numeric" required={registrationMode === "invite_only"} maxLength={6} value={referralCode} onChange={event => setReferralCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /></div>
         <FieldError>{error}</FieldError>
         <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />注册中</> : "注册"}</Button>
         <p className="text-center text-sm">已有账户？ <Link to="/login" className="underline underline-offset-4">返回登录</Link></p>

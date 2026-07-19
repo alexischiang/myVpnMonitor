@@ -8,6 +8,8 @@ import { fetchJson, putJson } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -17,6 +19,7 @@ import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHe
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PageHeader } from "@/components/features/shared"
 import { useData } from "@/components/features/data-provider"
 import type { AnnouncementSetting, CouponSetting, FaqSetting, SalesSettings } from "@/types"
@@ -73,6 +76,8 @@ export function SalesSettingsPage() {
   const [editor, setEditor] = React.useState<Editor | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [savingAction, setSavingAction] = React.useState<"save" | "delete" | "">("")
+  const [registrationDraft, setRegistrationDraft] = React.useState<SalesSettings["registrationMode"]>("open")
+  const [registrationConfirmOpen, setRegistrationConfirmOpen] = React.useState(false)
   const date = editor?.type === "coupon" ? couponDateRange(editor.value) : undefined
 
   function toggleCouponScope(key: "applicableGroups" | "applicableDurations", value: string, checked: boolean, options: readonly { value: string }[]) {
@@ -84,7 +89,11 @@ export function SalesSettingsPage() {
   }
 
   React.useEffect(() => {
-    fetchJson<SalesSettings>("/api/sales-settings").then(setSettings).catch(error => toast.error(error.message))
+    fetchJson<SalesSettings>("/api/sales-settings").then(result => {
+      const registrationMode = ["open", "invite_only", "disabled"].includes(result.registrationMode) ? result.registrationMode : "open"
+      setSettings({ ...result, registrationMode })
+      setRegistrationDraft(registrationMode)
+    }).catch(error => toast.error(error.message))
   }, [])
 
   async function persist(next: SalesSettings, message: string) {
@@ -140,11 +149,55 @@ export function SalesSettingsPage() {
     }
   }
 
+  async function applyRegistrationMode() {
+    if (!settings || registrationDraft === settings.registrationMode) {
+      setRegistrationConfirmOpen(false)
+      return
+    }
+    if (await persist({ ...settings, registrationMode: registrationDraft }, "注册模式已更新")) setRegistrationConfirmOpen(false)
+  }
+
   if (!settings) return <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-52" /><Skeleton className="h-72" /></div>
+
+  const registrationModeLabel = settings.registrationMode === "invite_only" ? "必须填写推荐码" : settings.registrationMode === "disabled" ? "暂停注册" : "允许公开注册"
 
   return (
     <div className="grid gap-8 px-4 lg:px-6">
       <PageHeader title="销售设置" description="管理结算优惠码、套餐价格页常见问题和用户中心公告。" />
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle>注册模式</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-5 pt-6">
+          <CardDescription>当前启用模式：{registrationModeLabel}</CardDescription>
+          <Field>
+            <FieldLabel htmlFor="registration-mode">选择注册模式</FieldLabel>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <Select value={registrationDraft} onValueChange={value => setRegistrationDraft(value as SalesSettings["registrationMode"])}>
+              <SelectTrigger id="registration-mode" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="open">允许公开注册</SelectItem>
+                <SelectItem value="invite_only">必须填写推荐码</SelectItem>
+                <SelectItem value="disabled">暂停注册</SelectItem>
+              </SelectContent>
+              </Select>
+              <Button className="sm:shrink-0" disabled={registrationDraft === settings.registrationMode || saving} onClick={() => setRegistrationConfirmOpen(true)}>应用</Button>
+            </div>
+          </Field>
+        </CardContent>
+      </Card>
+      <AlertDialog open={registrationConfirmOpen} onOpenChange={setRegistrationConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认应用注册模式？</AlertDialogTitle>
+            <AlertDialogDescription>应用后会立即影响新用户注册，当前模式将切换为“{registrationDraft === "invite_only" ? "必须填写推荐码" : registrationDraft === "disabled" ? "暂停注册" : "允许公开注册"}”。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>取消</AlertDialogCancel>
+            <AlertDialogAction disabled={saving} onClick={event => { event.preventDefault(); void applyRegistrationMode() }}>确认应用</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <Tabs defaultValue="coupons" className="gap-6">
         <TabsList>
           <TabsTrigger value="coupons">优惠码</TabsTrigger>
