@@ -1,6 +1,7 @@
 const assert = require("assert");
 const {
   poolMetricUnavailableReason,
+  initialPoolFallbackReason,
   fallbackCandidateRank,
   isBrowserNavigationRequest,
   normalizeSubconverterConfigParam,
@@ -16,6 +17,9 @@ assert.strictEqual(
   poolMetricUnavailableReason({ enabled: false, metrics: { expireAt: "2030-01-01T00:00:00.000Z", remainingBytes: 1000000 } }),
   "pool-disabled"
 );
+assert.strictEqual(initialPoolFallbackReason({ enabled: false }, false), "pool-disabled");
+assert.strictEqual(initialPoolFallbackReason({ enabled: false, url: "" }, true), "pool-disabled");
+assert.strictEqual(initialPoolFallbackReason({ url: "" }, false), "pool-missing");
 
 // ─── poolMetricUnavailableReason ────────────────────────────────────────
 
@@ -196,10 +200,16 @@ const injectedLegacyConfig = require("js-yaml").load(injectPlaceholderNodes(Buff
   "Proxy Group:",
   "  - name: Auto",
   "    type: select",
-  "    proxies: [upstream]"
+  "    proxies: [upstream]",
+  "Rule:",
+  "  - MATCH,Auto"
 ].join("\n")), { showUserInfo: false }, [{ tag: "default", nodes: ["notice"] }]).toString("utf8"));
-assert.strictEqual(injectedLegacyConfig.Proxy[0].name, "notice");
-assert.strictEqual(injectedLegacyConfig["Proxy Group"][0].proxies[0], "notice");
+assert.strictEqual(injectedLegacyConfig.proxies[0].name, "notice");
+assert.strictEqual(injectedLegacyConfig["proxy-groups"][0].proxies[0], "notice");
+assert.deepStrictEqual(injectedLegacyConfig.rules, ["MATCH,Auto"]);
+assert.strictEqual(injectedLegacyConfig.Proxy, undefined);
+assert.strictEqual(injectedLegacyConfig["Proxy Group"], undefined);
+assert.strictEqual(injectedLegacyConfig.Rule, undefined);
 
 Promise.all([
   liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: "2020-01-01T00:00:00.000Z" } }),
