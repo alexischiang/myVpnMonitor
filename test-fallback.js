@@ -4,8 +4,10 @@ const {
   initialPoolFallbackReason,
   fallbackCandidateRank,
   isBrowserNavigationRequest,
+  copyUpstreamHeaders,
   normalizeSubconverterConfigParam,
   defaultSubconverterPreset,
+  relaySubconverterConfig,
   userOutputMode,
   injectPlaceholderNodes,
   liveConfigFromCachedPoolConfig,
@@ -103,28 +105,28 @@ const rank4 = fallbackCandidateRank(
   { metrics: { expireAt: "2026-07-20T00:00:00.000Z" } },
   { expiresAt: "2026-07-05T00:00:00.000Z" }
 );
-assert.strictEqual(rank4, null);
+assert.deepStrictEqual(rank4, { group: 2, distance: 15 });
 
 const rank5 = fallbackCandidateRank(
   { metrics: { expireAt: "2026-06-20T00:00:00.000Z" } },
   { expiresAt: "2026-07-05T00:00:00.000Z" }
 );
-assert.strictEqual(rank5, null);
+assert.deepStrictEqual(rank5, { group: 3, distance: 15 });
 
-// 池没有到期时间 → group 2, distance Infinity
+// Missing pool expiry is the lowest-priority fallback.
 const rank6 = fallbackCandidateRank(
   { metrics: {} },
   { expiresAt: "2026-07-05T00:00:00.000Z" }
 );
-assert.strictEqual(rank6.group, 2);
+assert.strictEqual(rank6.group, 4);
 assert.strictEqual(rank6.distance, Number.POSITIVE_INFINITY);
 
-// 用户没有到期时间 → group 2, distance Infinity
+// Missing user expiry is the lowest-priority fallback.
 const rank7 = fallbackCandidateRank(
   { metrics: { expireAt: "2026-07-10T00:00:00.000Z" } },
   {}
 );
-assert.strictEqual(rank7.group, 2);
+assert.strictEqual(rank7.group, 4);
 assert.strictEqual(rank7.distance, Number.POSITIVE_INFINITY);
 
 assert.strictEqual(
@@ -145,16 +147,36 @@ assert.strictEqual(isBrowserNavigationRequest({
 
 assert.strictEqual(isBrowserNavigationRequest({
   headers: {
+    accept: "*/*",
+    "user-agent": "Mozilla/5.0 Chrome/126.0 Safari/537.36"
+  }
+}), true);
+
+assert.strictEqual(isBrowserNavigationRequest({
+  headers: {
     accept: "text/plain, application/yaml, */*",
     "user-agent": "ClashforWindows/0.20.39"
   }
 }), false);
+
+const browserHeaders = copyUpstreamHeaders(new Response("proxies: []", {
+  headers: { "content-type": "application/octet-stream" }
+}), { headers: { "user-agent": "Mozilla/5.0 Chrome/126.0 Safari/537.36" } });
+assert.strictEqual(browserHeaders["content-type"], "text/plain; charset=utf-8");
+assert.match(browserHeaders["content-disposition"], /^inline;/);
 
 assert.strictEqual(normalizeSubconverterConfigParam("/config/ACL4SSR_Mini_AI_Local.ini"), "config/ACL4SSR_Mini_AI_Local.ini");
 assert.strictEqual(normalizeSubconverterConfigParam("https://example.com/config.ini"), "https://example.com/config.ini");
 assert.deepStrictEqual(
   Object.fromEntries(["tfo", "list", "classic", "new_name", "append_type", "strict", "fdn", "insert", "expand", "append_info"].map(key => [key, defaultSubconverterPreset()[key]])),
   { tfo: false, list: false, classic: false, new_name: false, append_type: false, strict: false, fdn: true, insert: true, expand: true, append_info: true }
+);
+assert.deepStrictEqual(
+  Object.fromEntries(Object.entries(relaySubconverterConfig(
+    { serviceProvider: "new-vendor" },
+    [{ name: "new-vendor", overrideInclude: "new-only", overrideExclude: "old", overrideRename: "rename" }]
+  )).filter(([key]) => ["target", "include", "exclude", "rename"].includes(key))),
+  { target: "clash", include: "new-only", exclude: "old", rename: "rename" }
 );
 assert.strictEqual(userOutputMode({ outputMode: "direct" }), "direct");
 assert.strictEqual(userOutputMode({ outputMode: " direct " }), "direct");
