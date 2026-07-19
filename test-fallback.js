@@ -4,7 +4,10 @@ const {
   fallbackCandidateRank,
   isBrowserNavigationRequest,
   normalizeSubconverterConfigParam,
+  defaultSubconverterPreset,
   userOutputMode,
+  liveConfigFromCachedPoolConfig,
+  publicRegisteredAccount,
   startOfUtcDate
 } = require("./server");
 
@@ -114,6 +117,14 @@ const rank7 = fallbackCandidateRank(
 assert.strictEqual(rank7.group, 2);
 assert.strictEqual(rank7.distance, Number.POSITIVE_INFINITY);
 
+assert.strictEqual(
+  fallbackCandidateRank(
+    { enabled: false, metrics: { expireAt: "2026-07-05T00:00:00.000Z" } },
+    { expiresAt: "2026-07-05T00:00:00.000Z" }
+  ),
+  null
+);
+
 assert.strictEqual(isBrowserNavigationRequest({
   headers: {
     accept: "text/html,application/xhtml+xml",
@@ -131,11 +142,25 @@ assert.strictEqual(isBrowserNavigationRequest({
 
 assert.strictEqual(normalizeSubconverterConfigParam("/config/ACL4SSR_Mini_AI_Local.ini"), "config/ACL4SSR_Mini_AI_Local.ini");
 assert.strictEqual(normalizeSubconverterConfigParam("https://example.com/config.ini"), "https://example.com/config.ini");
+assert.deepStrictEqual(
+  Object.fromEntries(["tfo", "list", "classic", "new_name", "append_type", "strict", "fdn", "insert", "expand", "append_info"].map(key => [key, defaultSubconverterPreset()[key]])),
+  { tfo: false, list: false, classic: false, new_name: false, append_type: false, strict: false, fdn: true, insert: true, expand: true, append_info: true }
+);
 assert.strictEqual(userOutputMode({ outputMode: "direct" }), "direct");
 assert.strictEqual(userOutputMode({ outputMode: " direct " }), "direct");
 assert.strictEqual(userOutputMode({ outputMode: "DIRECT" }), "direct");
 assert.strictEqual(userOutputMode({ outputMode: "" }), "subconverter");
 assert.strictEqual(userOutputMode({}), "subconverter");
+
+assert.deepStrictEqual(
+  publicRegisteredAccount({ id: "account-1", email: "new@example.com", status: "active", createdAt: "2026-07-19T00:00:00.000Z" }),
+  {
+    id: "account:account-1", accountId: "account-1", registeredOnly: true, accountStatus: "active",
+    email: "new@example.com", userId: "new@example.com", createdAt: "2026-07-19T00:00:00.000Z",
+    actualPaid: 0, vipSpend: 0, vipLevel: "vip1", subscriptionId: "", subscription: null,
+    activeGroup: "", expiresAt: null, userLogs: []
+  }
+);
 
 // ─── startOfUtcDate ─────────────────────────────────────────────────────
 
@@ -154,4 +179,15 @@ assert.strictEqual(startOfUtcDate("invalid"), null);
 // null 被 Date 解析为 epoch (1970-01-01)，startOfUtcDate 返回 0 而非 null
 assert.strictEqual(startOfUtcDate(null), 0);
 
-console.log("All fallback logic tests passed.");
+Promise.all([
+  liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: "2020-01-01T00:00:00.000Z" } }),
+  liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: "2020-01-01T00:00:00.000Z" } }, { allowStale: true })
+]).then(([stale, allowed]) => {
+  assert.strictEqual(stale, null);
+  assert.strictEqual(allowed.cached, true);
+  assert.match(allowed.body, /name: cached/);
+  console.log("All fallback logic tests passed.");
+}).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

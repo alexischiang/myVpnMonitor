@@ -1,14 +1,15 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Loader2, Percent, RefreshCw, Users, WalletCards, type LucideIcon } from "lucide-react"
+import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Loader2, Percent, RefreshCw, Users, WalletCards, XCircle, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
-import { clearJsonCache, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
+import { clearJsonCache, deleteJson, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { type CarouselApi, Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -25,7 +26,7 @@ import { VipBadge } from "@/components/features/vip-badge"
 import { formatDate, formatDateTime, formatMoney } from "@/utils"
 
 type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge"; planName: string; optionLabel: string; amount: number; totalAmount?: number; walletAmount?: number; status: string; statusText: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
-type Subscription = { status: string; activeGroup: string; expiresAt: string; purchasedAt: string; duration: string; cashValue: number; traffic: string; devices: number | string; subscriptionUrl: string; vipLevel?: string }
+type Subscription = { status: string; activeGroup: string; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; cashValue: number; traffic: string; devices: number | string; subscriptionUrl: string; vipLevel?: string }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type Overview = { email: string; createdAt: string; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; vipDelta: number; balance: number; description: string; createdAt: string }
@@ -163,7 +164,9 @@ export function AccountOverviewPage() {
         <Card>
           <CardHeader className="flex-row items-start justify-between gap-4"><div><CardDescription>当前订阅</CardDescription><CardTitle className="mt-1 text-2xl">{subscription ? subscription.activeGroup.toUpperCase() : "暂无订阅"}</CardTitle></div><Badge variant={subscription?.status === "active" ? "success" : subscription?.status === "expired" ? "destructive" : "warning"}>{subscription?.status === "active" ? <><BadgeCheck />生效中</> : subscription?.status === "expired" ? "已过期" : "未开通"}</Badge></CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-            <Metric label="到期时间" value={subscription ? formatDate(subscription.expiresAt) : "-"} />
+          <Metric label="原套餐到期" value={subscription ? formatDate(subscription.planExpiresAt) : "-"} />
+          <Metric label="赠送时长" value={subscription ? `${subscription.giftedDays || 0} 天` : "-"} />
+          <Metric label="当前到期" value={subscription ? formatDate(subscription.expiresAt) : "-"} />
             <Metric label="流量" value={subscription?.traffic || "-"} />
             <Metric label="可绑定设备" value={subscription ? `${subscription.devices} 台` : "-"} />
             <Metric label="剩余现金价值" value={subscription ? formatMoney(subscription.cashValue) : "-"} />
@@ -227,8 +230,6 @@ export function AccountWalletPage() {
       toast.error("请输入 0.01 至 10,000.00 元，最多两位小数")
       return
     }
-    const paymentWindow = window.open("about:blank", "_blank")
-    if (paymentWindow) paymentWindow.opener = null
     setPaying(channelCode)
     try {
       const order = await postJson<PaymentOrder>("/api/wallet/recharge", {
@@ -238,10 +239,8 @@ export function AccountWalletPage() {
       })
       clearJsonCache()
       if (order.status === "pending") window.dispatchEvent(new CustomEvent("payment-order-updated", { detail: { id: order.id, status: order.status } }))
-      if (order.payUrl && paymentWindow) paymentWindow.location.href = order.payUrl
       navigate(`/account/orders/${encodeURIComponent(order.id)}`)
     } catch (error) {
-      paymentWindow?.close()
       toast.error(error instanceof Error ? error.message : "创建充值订单失败")
       setPaying("")
     }
@@ -321,6 +320,8 @@ export function AccountOrderDetailPage() {
   const { id = "" } = useParams()
   const [order, setOrder] = React.useState<PaymentOrder | null>(null)
   const [loading, setLoading] = React.useState(false)
+  const [cancelling, setCancelling] = React.useState(false)
+  const [cancelOpen, setCancelOpen] = React.useState(false)
   const [now, setNow] = React.useState(Date.now())
   async function refresh(showToast = false) {
     setLoading(true)
@@ -345,6 +346,22 @@ export function AccountOrderDetailPage() {
   React.useEffect(() => {
     if (order?.status === "pending" && remainingSeconds === 0) void refresh()
   }, [order?.status, remainingSeconds])
+  async function cancelOrder() {
+    setCancelling(true)
+    try {
+      const nextOrder = await deleteJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(id)}`)
+      setOrder(nextOrder)
+      clearJsonCache()
+      window.dispatchEvent(new Event("payment-order-updated"))
+      toast.success("订单已关闭")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "取消订单失败")
+      await refresh()
+    } finally {
+      setCancelling(false)
+      setCancelOpen(false)
+    }
+  }
   if (!order) return <PageLoading />
   const countdown = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`
   return (
@@ -370,9 +387,16 @@ export function AccountOrderDetailPage() {
         <CardFooter className="grid gap-2 sm:flex sm:flex-wrap">
           {order.status === "pending" && order.payUrl ? <Button asChild className="w-full sm:w-auto"><a href={order.payUrl} target="_blank" rel="noreferrer"><ExternalLink />打开支付页面</a></Button> : null}
           <Button className="w-full sm:w-auto" variant="outline" onClick={() => refresh(true)} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}检测支付状态</Button>
+          {order.status === "pending" ? <Button className="w-full sm:w-auto" variant="destructive" onClick={() => setCancelOpen(true)} disabled={cancelling}><XCircle />取消订单</Button> : null}
           <Button asChild className="w-full sm:ml-auto sm:w-auto" variant="ghost"><Link to="/account/orders"><ArrowLeft />返回订单列表</Link></Button>
         </CardFooter>
       </Card>
+      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>取消这个订单？</AlertDialogTitle><AlertDialogDescription>订单将立即关闭，已冻结的账户余额会被释放。支付平台无法关闭旧支付链接，请勿再通过该链接付款。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={cancelling}>保留订单</AlertDialogCancel><AlertDialogAction className={buttonVariants({ variant: "destructive" })} onClick={() => void cancelOrder()} disabled={cancelling}>{cancelling ? <Loader2 className="animate-spin" /> : <XCircle />}确认取消</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

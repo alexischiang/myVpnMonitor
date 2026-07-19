@@ -181,7 +181,7 @@ async function main() {
       cookie: adminCookie,
       body: {
         coupons: [
-          { id: "save20", code: "save20", percent: 20, enabled: true },
+          { id: "save20", code: "save20", percent: 20, totalLimit: 1, enabled: true },
           { id: "expired", code: "expired", percent: 50, enabled: true, validUntil: "2020-01-01T00:00:00.000Z" }
         ],
         faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答", enabled: true }]
@@ -190,7 +190,7 @@ async function main() {
     assert.strictEqual(savedSettings.response.status, 200);
     assert.strictEqual(savedSettings.data.coupons[0].code, "SAVE20");
     const publicSettings = await request("/api/public/sales-settings");
-    assert.deepStrictEqual(publicSettings.data, { faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }] });
+    assert.deepStrictEqual(publicSettings.data, { registrationMode: "open", faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }] });
 
     const quote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001" } });
     assert.strictEqual(quote.response.status, 200);
@@ -221,6 +221,13 @@ async function main() {
         }
       });
     }
+
+    const pendingCouponOrder = await createOrder({ couponCode: "SAVE20" });
+    assert.strictEqual(pendingCouponOrder.response.status, 201);
+    const settingsWithPendingCoupon = await request("/api/sales-settings", { cookie: adminCookie });
+    assert.strictEqual(settingsWithPendingCoupon.data.coupons.find(item => item.code === "SAVE20").usedCount, 0);
+    const cancelledCouponOrder = await request(`/api/payments/orders/${pendingCouponOrder.data.id}`, { method: "DELETE", cookie });
+    assert.strictEqual(cancelledCouponOrder.data.status, "closed");
 
     for (const clientUserName of ["non-json", "http-error", "reject"]) {
       const rejected = await createOrder({ clientUserName });
@@ -266,6 +273,23 @@ async function main() {
     assert.strictEqual(failedCallback.response.status, 200);
     status = await request(`/api/payments/orders/${failedOrder.data.id}`, { cookie });
     assert.strictEqual(status.data.status, "failed");
+
+    const pendingOrder = await createOrder();
+    assert.strictEqual(pendingOrder.response.status, 201);
+    const overLimitOrder = await createOrder();
+    assert.strictEqual(overLimitOrder.response.status, 400);
+    assert.match(overLimitOrder.data.error, /已有待支付订单/);
+    const cancelledOrder = await request(`/api/payments/orders/${pendingOrder.data.id}`, { method: "DELETE", cookie });
+    assert.strictEqual(cancelledOrder.data.status, "closed");
+    const replacementPendingOrder = await createOrder();
+    assert.strictEqual(replacementPendingOrder.response.status, 201);
+    const cancelledReplacement = await request(`/api/payments/orders/${replacementPendingOrder.data.id}`, { method: "DELETE", cookie });
+    assert.strictEqual(cancelledReplacement.data.status, "closed");
+    await callback(cancelledOrder.data, 1, "1.03", true);
+    status = await request(`/api/payments/orders/${cancelledOrder.data.id}`, { cookie });
+    assert.strictEqual(status.data.status, "abnormal");
+    assert.strictEqual(status.data.fulfillmentStatus, "failed");
+    assert.match(status.data.paymentError, /联系客服退款/);
 
     const mismatchedOrder = await createOrder();
     await callback(mismatchedOrder.data, 1, "0.01", true);
@@ -314,9 +338,7 @@ async function main() {
     assert.ok(switchedLog?.fromSubscriptionLabel && switchedLog?.toSubscriptionLabel, "purchase-triggered pool changes must log both pools");
     const managedUser = adminUsers.data[0];
     const protectedUpdate = await request(`/api/users/${managedUser.id}`, { method: "PUT", cookie: adminCookie, body: { actualPaid: 999, duration: "yearly", expiresAt: "2030-01-01" } });
-    assert.strictEqual(protectedUpdate.data.actualPaid, managedUser.actualPaid);
-    assert.strictEqual(protectedUpdate.data.duration, managedUser.duration);
-    assert.strictEqual(protectedUpdate.data.expiresAt, managedUser.expiresAt);
+    assert.strictEqual(protectedUpdate.response.status, 400);
     const blockedRenewal = await request(`/api/users/${managedUser.id}/renew`, { method: "POST", cookie: adminCookie, body: { actualPaid: 1, duration: "monthly" } });
     assert.strictEqual(blockedRenewal.response.status, 400);
     const manualPoolChange = await request(`/api/users/${managedUser.id}/pool`, { method: "POST", cookie: adminCookie, body: { subscriptionId: subscription.id } });
@@ -341,6 +363,11 @@ async function main() {
     const otherCookie = crossAccount.response.headers.get("set-cookie").split(";", 1)[0];
     const hiddenOrder = await request(`/api/payments/orders/${paidOrder.data.id}`, { cookie: otherCookie });
     assert.strictEqual(hiddenOrder.response.status, 404);
+    const protectedPendingOrder = await createOrder();
+    const hiddenCancellation = await request(`/api/payments/orders/${protectedPendingOrder.data.id}`, { method: "DELETE", cookie: otherCookie });
+    assert.strictEqual(hiddenCancellation.response.status, 404);
+    const ownerCancellation = await request(`/api/payments/orders/${protectedPendingOrder.data.id}`, { method: "DELETE", cookie });
+    assert.strictEqual(ownerCancellation.data.status, "closed");
 
     const resultPage = await request(`/account/payment/result?paymentOrder=${paidOrder.data.id}`, { cookie, redirect: "manual" });
     assert.strictEqual(resultPage.response.status, 200);
@@ -384,6 +411,13 @@ async function main() {
     assert.strictEqual(zeroOrder.data.status, "paid");
     assert.strictEqual(zeroOrder.data.fulfillmentStatus, "fulfilled");
     assert.strictEqual(zeroOrder.data.payUrl, "");
+
+    const couponOrder = await createOrder({ couponCode: "SAVE20" });
+    if (couponOrder.data.status === "pending") await callback(couponOrder.data, 1, String(couponOrder.data.amount), true);
+    const couponSettings = await request("/api/sales-settings", { cookie: adminCookie });
+    assert.strictEqual(couponSettings.data.coupons.find(item => item.code === "SAVE20").usedCount, 1);
+    const exhaustedCoupon = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001", couponCode: "SAVE20" } });
+    assert.strictEqual(exhaustedCoupon.response.status, 400);
 
     const passwordChange = await request("/api/auth/password", {
       method: "PUT",

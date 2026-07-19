@@ -234,6 +234,12 @@ function isExpiredItem(item, now = Date.now()) {
   return Number.isFinite(expireAt) && expireAt <= now;
 }
 
+function isInvalidItem(item) {
+  if (item?.status === "invalid" || item?.lastError || item?.metrics?.unavailable) return true;
+  const expireAt = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
+  return !Number.isFinite(expireAt) || !Number.isFinite(Number(item?.metrics?.remainingBytes));
+}
+
 async function checkAndNotifyLowTraffic(items, store, { logger = console } = {}) {
   const cfg = getAlertConfig();
   const mailConfigured = isMailConfigured();
@@ -249,6 +255,10 @@ async function checkAndNotifyLowTraffic(items, store, { logger = console } = {})
   for (const item of items) {
     const remaining = item.metrics?.remainingBytes;
     const key = `low:${item.id}`;
+    if (isInvalidItem(item)) {
+      await store.clear(key);
+      continue;
+    }
     if (remaining === null || remaining === undefined) continue;
 
     if (isExpiredItem(item, now)) {

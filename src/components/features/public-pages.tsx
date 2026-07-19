@@ -211,8 +211,6 @@ export function CheckoutPage() {
 
   async function createPayment(channelCode: "100" | "200") {
     if (!quote) return
-    const paymentWindow = quote.amount > 0 ? window.open("about:blank", "_blank") : null
-    if (paymentWindow) paymentWindow.opener = null
     setPaying(channelCode)
     try {
       const order = await postJson<{ id: string; payUrl?: string; status?: string }>("/api/payments/orders", {
@@ -224,10 +222,8 @@ export function CheckoutPage() {
       })
       clearJsonCache()
       if (order.status === "pending") window.dispatchEvent(new CustomEvent("payment-order-updated", { detail: { id: order.id, status: order.status } }))
-      if (order.payUrl && paymentWindow) paymentWindow.location.href = order.payUrl
       navigate(order.payUrl ? `/account/orders/${encodeURIComponent(order.id)}` : `/account/payment/result?paymentOrder=${encodeURIComponent(order.id)}`)
     } catch (error) {
-      paymentWindow?.close()
       toast.error(error instanceof Error ? error.message : "创建订单失败")
       setPaying("")
     }

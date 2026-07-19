@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Progress } from "@/components/ui/progress"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { PricingRow, Subscription, User } from "@/types"
 import { durationLabels, formatDate, toDateInputValue } from "@/utils"
@@ -37,6 +37,7 @@ export type UserFormValues = {
   email?: string
   imessage?: string
   subscriptionId?: string
+  allowDisabled?: boolean
   activeGroup?: string
   unlimited?: boolean
   duration?: string
@@ -136,11 +137,6 @@ function durationExpiryLabel(values: UserFormValues, duration: string) {
   return expiry ? `到期 ${formatDate(expiry)}` : duration === "custom" ? "请选择到期日" : "待选择购买日期"
 }
 
-function subscriptionLabel(item: Subscription) {
-  const provider = item.serviceProvider || item.provider || "Provider"
-  return `${provider} - ${item.email || item.url.slice(-8)} · 到期 ${formatDate(item.metrics?.expireAt)}`
-}
-
 function DatePicker({ id, value, onChange }: { id: string; value?: string; onChange: (value: string) => void }) {
   const [open, setOpen] = React.useState(false)
   const selected = parseDateValue(value)
@@ -187,6 +183,7 @@ export function UserFormDialog({
   const [stepIndex, setStepIndex] = React.useState(0)
   const [errors, setErrors] = React.useState<Partial<Record<keyof UserFormValues, string>>>({})
   const [recommendationMessage, setRecommendationMessage] = React.useState("")
+  const [allowDisabledPool, setAllowDisabledPool] = React.useState(false)
   const [recommending, setRecommending] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
   const price = selectedPrice(pricing, values)
@@ -197,6 +194,7 @@ export function UserFormDialog({
     setStepIndex(0)
     setErrors({})
     setRecommendationMessage("")
+    setAllowDisabledPool(false)
   }, [open, user])
 
   function update<K extends keyof UserFormValues>(key: K, value: UserFormValues[K]) {
@@ -253,7 +251,7 @@ export function UserFormDialog({
     if (!validateStep(2)) return
     setSubmitting(true)
     try {
-      await onSubmit({ ...values, actualPaid: values.actualPaid ?? price })
+      await onSubmit({ ...values, allowDisabled: allowDisabledPool, actualPaid: values.actualPaid ?? price })
       onOpenChange(false)
     } finally {
       setSubmitting(false)
@@ -328,15 +326,18 @@ export function UserFormDialog({
               </>
             ) : (
               <>
-                <Field className="min-w-0">
-                  <FieldLabel htmlFor="subscriptionId">订阅池 URL</FieldLabel>
-                  <Select required value={values.subscriptionId || ""} onValueChange={value => update("subscriptionId", value)}>
-                    <SelectTrigger id="subscriptionId" className="min-w-0 w-full [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:truncate" aria-invalid={Boolean(errors.subscriptionId)}><SelectValue placeholder="请选择订阅池" /></SelectTrigger>
-                    <SelectContent>{subscriptions.map(item => <SelectItem key={item.id} value={item.id}>{subscriptionLabel(item)}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <FieldDescription>{recommendationMessage}</FieldDescription>
-                  <FieldError>{errors.subscriptionId}</FieldError>
-                </Field>
+                <SubscriptionPoolSelect
+                  id="subscriptionId"
+                  label="订阅池 URL"
+                  subscriptions={subscriptions}
+                  value={values.subscriptionId || ""}
+                  onValueChange={value => update("subscriptionId", value)}
+                  allowDisabled={allowDisabledPool}
+                  onAllowDisabledChange={setAllowDisabledPool}
+                  group={values.activeGroup}
+                  description={recommendationMessage}
+                  error={errors.subscriptionId}
+                />
               </>
             )}
           </FieldGroup>

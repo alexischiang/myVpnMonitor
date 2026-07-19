@@ -41,6 +41,22 @@ const RELAY_AFTER_EXPIRY_DAYS = Number(process.env.RELAY_AFTER_EXPIRY_DAYS || 10
 const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
+const SUBCONVERTER_BOOLEAN_DEFAULTS = Object.freeze({
+  emoji: true,
+  udp: true,
+  tfo: false,
+  scv: false,
+  sort: false,
+  list: false,
+  fdn: true,
+  insert: true,
+  expand: true,
+  classic: false,
+  new_name: false,
+  append_type: false,
+  append_info: true,
+  strict: false
+});
 const DEFAULT_SERVICE_PROVIDER = "YKK Cloud";
 const DEFAULT_PRICING = [
   { id: "basic", group: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", recommended: false, traffic: "每月 100G", features: ["基础线路", "流媒体支持", "在线客服"], unavailableFeatures: ["稳定 GPT 解锁", "国际内网专线", "独享级带宽体验"], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 39, quarterly: 109, half_yearly: 199, yearly: 369, unlimitedMonthly: 79, unlimitedQuarterly: 219, unlimitedHalfYearly: 399, unlimitedYearly: 599 },
@@ -886,12 +902,12 @@ function legacyPaymentCoupons(value = process.env.PAYMENT_COUPONS || "") {
 }
 
 function initialSalesSettings() {
-  return { id: "default", coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [] };
+  return { id: "default", registrationMode: "open", coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [] };
 }
 
 function currentSalesSettings() {
   const settings = salesSettings[0];
-  return settings ? { ...settings, announcements: settings.announcements || [] } : initialSalesSettings();
+  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", announcements: settings.announcements || [] } : initialSalesSettings();
 }
 
 function paymentCoupons(value) {
@@ -902,7 +918,7 @@ function paymentCoupons(value) {
 
 function couponUsageOrders(code) {
   const normalizedCode = String(code || "").toUpperCase();
-  return paymentOrders.filter(order => String(order.couponCode || "").toUpperCase() === normalizedCode && (order.status === "paid" || (order.status === "pending" && !isPaymentOrderExpired(order))));
+  return paymentOrders.filter(order => String(order.couponCode || "").toUpperCase() === normalizedCode && order.status === "paid");
 }
 
 function validateCouponUsage(coupon, option, accountId = "") {
@@ -930,6 +946,7 @@ function normalizeCouponDate(value, label) {
 }
 
 function normalizeSalesSettings(payload) {
+  const registrationMode = ["open", "invite_only", "disabled"].includes(payload?.registrationMode) ? payload.registrationMode : "open";
   const coupons = Array.isArray(payload?.coupons) ? payload.coupons.slice(0, 50) : [];
   const seenCodes = new Set();
   const couponGroups = new Set(["basic", "pro", "ultra"]);
@@ -971,7 +988,7 @@ function normalizeSalesSettings(payload) {
       enabled: item.enabled !== false
     };
   });
-  return { id: "default", coupons: normalizedCoupons, faqs, announcements };
+  return { id: "default", registrationMode, coupons: normalizedCoupons, faqs, announcements };
 }
 
 function publicAnnouncements() {
@@ -1257,7 +1274,7 @@ async function fulfillPaymentOrder(order, req) {
   const vipSpendBefore = (wallet.vipSpendCents - Math.round(order.amount * 100)) / 100;
   syncWalletVip(account, wallet);
   const expiresAt = nextUserExpiry(user, purchasedAt, selectedOption.duration, order.purchaseAction === "replace");
-  const recommendation = recommendSubscriptionForExpiry(expiresAt);
+  const recommendation = recommendSubscriptionForExpiry(expiresAt, { group: selectedOption.group, ignoredUserId: user?.id || "" });
   if (!recommendation.subscription) throw new Error(recommendation.reason || "No available subscription pool.");
 
   if (user) {
@@ -1394,6 +1411,12 @@ async function notifyPaymentOrder(order) {
   }
 }
 
+function assertPendingPaymentOrderLimit(accountId) {
+  if (paymentOrders.some(order => order.accountId === accountId && order.status === "pending" && !isPaymentOrderExpired(order))) {
+    throw new Error("已有待支付订单，请先完成或取消该订单。");
+  }
+}
+
 function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
   const base = String(config.returnUrl || fallbackUrl || `${requestOrigin(req)}/pricing`).trim();
   if (!base || !/^https?:\/\//i.test(base)) return "";
@@ -1405,9 +1428,7 @@ function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
 async function createPaymentOrder(payload, req, account) {
   const wallet = await walletForAccount(account);
   const selectedOption = paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id);
-  if (paymentOrders.some(order => order.accountId === account.id && order.status === "pending" && !isPaymentOrderExpired(order))) {
-    throw new Error("已有待支付订单，请先完成或等待订单关闭。");
-  }
+  assertPendingPaymentOrderLimit(account.id);
   const email = normalizePaymentEmail(account.email);
   const id = crypto.randomUUID();
   const merOrderTid = makePaymentOrderId();
@@ -1506,9 +1527,7 @@ async function createPaymentOrder(payload, req, account) {
 }
 
 async function createRechargeOrder(payload, req, account) {
-  if (paymentOrders.some(order => order.accountId === account.id && order.status === "pending" && !isPaymentOrderExpired(order))) {
-    throw new Error("已有待支付订单，请先完成或等待订单关闭。");
-  }
+  assertPendingPaymentOrderLimit(account.id);
   const amountCents = moneyCents(payload.amount, "充值金额");
   if (amountCents > 1000000) throw new Error("单次充值不能超过 ¥10,000.00。");
   const config = requirePaymentConfig();
@@ -1592,6 +1611,24 @@ async function refreshPaymentOrder(order) {
   return order;
 }
 
+async function cancelPaymentOrder(order, req) {
+  if (order.status !== "pending" || isPaymentOrderExpired(order)) throw new Error("只有待支付订单可以取消。");
+  const refreshedOrder = await refreshPaymentOrder(order);
+  if (refreshedOrder.status === "paid") {
+    await fulfillPaymentOrder(refreshedOrder, req);
+    throw new Error("订单已经支付，无法取消。");
+  }
+  if (refreshedOrder.status !== "pending") throw new Error("订单已经关闭，无法取消。");
+  const now = new Date().toISOString();
+  refreshedOrder.status = "closed";
+  refreshedOrder.cancelledAt = now;
+  refreshedOrder.paymentError = "";
+  refreshedOrder.updatedAt = now;
+  await dataStore.releaseWalletHold(refreshedOrder.id);
+  await savePaymentOrders();
+  return refreshedOrder;
+}
+
 async function handlePaymentCallback(req) {
   const payload = await readPaymentCallback(req);
   const merOrderTid = String(payload.merOrderTid || "").trim();
@@ -1608,13 +1645,18 @@ async function handlePaymentCallback(req) {
     const now = new Date().toISOString();
     order.tid = String(payload.tid || order.tid || "");
     order.platformStatus = Number(payload.status);
-    order.status = platformStatusToOrderStatus(payload.status);
-    const amountError = order.status === "paid" ? paymentAmountError(order.amount, payload.money) : "";
-    if (amountError) {
+    const callbackStatus = platformStatusToOrderStatus(payload.status);
+    const paidAfterCancellation = Boolean(order.cancelledAt) && callbackStatus === "paid";
+    order.status = order.cancelledAt ? (paidAfterCancellation ? "abnormal" : "closed") : callbackStatus;
+    const amountError = callbackStatus === "paid" && !paidAfterCancellation ? paymentAmountError(order.amount, payload.money) : "";
+    if (paidAfterCancellation) {
+      order.fulfillmentStatus = "failed";
+      order.paymentError = "订单取消后支付平台仍收到款项，请联系客服退款。";
+    } else if (amountError) {
       order.status = "abnormal";
       order.fulfillmentStatus = "failed";
     }
-    order.paymentError = amountError || paymentStatusError(order.status);
+    if (!paidAfterCancellation) order.paymentError = amountError || paymentStatusError(order.status);
     order.callbackPayload = payload;
     order.updatedAt = now;
     if (order.status === "paid" && !order.paidAt) order.paidAt = now;
@@ -1646,9 +1688,18 @@ function normalizeSubscription(input, existing = {}) {
   const customer = String(input.customer || existing.customer || "").trim();
   const note = String(input.note || existing.note || "").trim();
   const enabled = input.enabled !== undefined ? Boolean(input.enabled) : existing.enabled !== false;
+  const useCachedConfigForFallback = input.useCachedConfigForFallback !== undefined
+    ? Boolean(input.useCachedConfigForFallback)
+    : Boolean(existing.useCachedConfigForFallback);
+  const maxUsers = Number(input.maxUsers ?? existing.maxUsers ?? 15);
+  const allowedGroups = [...new Set((Array.isArray(input.allowedGroups) ? input.allowedGroups : (Array.isArray(existing.allowedGroups) ? existing.allowedGroups : USER_GROUPS))
+    .map(value => String(value).trim().toLowerCase())
+    .filter(value => USER_GROUPS.includes(value)))];
 
   if (!url || !/^https?:\/\//i.test(url)) throw new Error("请填写 http 或 https 开头的订阅 URL。");
+  if (!allowedGroups.length) throw new Error("至少选择一个允许的套餐等级。");
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("请填写该 URL 绑定的有效邮箱。");
+  if (!Number.isSafeInteger(maxUsers) || maxUsers <= 0) throw new Error("人数上限必须是大于 0 的整数。");
 
   return {
     ...existing,
@@ -1660,6 +1711,9 @@ function normalizeSubscription(input, existing = {}) {
     customer,
     note,
     enabled,
+    useCachedConfigForFallback,
+    maxUsers,
+    allowedGroups,
     updatedAt: new Date().toISOString()
   };
 }
@@ -1736,6 +1790,23 @@ function calculateGiftExpiry(user, days, now = new Date()) {
   return base.toISOString();
 }
 
+function batchGiftTargets({ days, group = "", allowDisabled = false } = {}) {
+  const giftDays = Number(days);
+  if (!Number.isSafeInteger(giftDays) || giftDays <= 0) throw new Error("赠送天数必须是正整数。");
+  const selectedGroup = ["basic", "pro", "ultra"].includes(String(group)) ? String(group) : "";
+  return users
+    .filter(user => {
+      const expiresAt = Date.parse(user.expiresAt || "");
+      return Number.isFinite(expiresAt) && expiresAt > Date.now() && (!selectedGroup || activeUserGroup(user) === selectedGroup);
+    })
+    .map(user => {
+      const expiresAt = calculateGiftExpiry(user, giftDays);
+      const currentPool = subscriptions.find(item => item.id === user.subscriptionId);
+      const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: user.id, group: activeUserGroup(user), allowDisabled });
+      return { user, giftDays, expiresAt, toSubscription: currentPool || recommendation.subscription };
+    });
+}
+
 function userHasClaimedAccount(userId) {
   return accounts.some(account => account.linkedUserId === userId && account.status === "active");
 }
@@ -1750,6 +1821,15 @@ function subscriptionCustomerCount(subscriptionId, ignoredUserId = "") {
   return users.filter(user => user.subscriptionId === subscriptionId && user.id !== ignoredUserId).length;
 }
 
+function subscriptionAtCapacity(subscription, ignoredUserId = "") {
+  return subscriptionCustomerCount(subscription.id, ignoredUserId) >= Number(subscription.maxUsers ?? 15);
+}
+
+function subscriptionAllowsGroup(subscription, group = "") {
+  const allowedGroups = Array.isArray(subscription.allowedGroups) ? subscription.allowedGroups : USER_GROUPS;
+  return !group || allowedGroups.includes(normalizeUserGroup(group));
+}
+
 function subscriptionsByLatestExpiry() {
   return [...subscriptions].sort((a, b) => {
     const timeA = a.metrics?.expireAt ? new Date(a.metrics.expireAt).getTime() : 0;
@@ -1758,12 +1838,12 @@ function subscriptionsByLatestExpiry() {
   });
 }
 
-function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "" } = {}) {
+function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "", group = "", allowDisabled = false } = {}) {
   const userExpiryTime = startOfUtcDate(expiresAt);
   const dayMs = 86400000;
   let noExpiry = 0;
   let outOfWindow = 0;
-  const eligibleSubscriptions = subscriptions.filter(item => item.enabled !== false && Date.parse(item.metrics?.expireAt || "") > Date.now());
+  const eligibleSubscriptions = subscriptions.filter(item => (allowDisabled || item.enabled !== false) && subscriptionAllowsGroup(item, group) && !subscriptionAtCapacity(item, ignoredUserId) && Date.parse(item.metrics?.expireAt || "") > Date.now());
   const candidates = eligibleSubscriptions
     .map(item => {
       const expireTime = item.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
@@ -1871,6 +1951,8 @@ function normalizeUser(input, existing = {}) {
     isFamilyFriend,
     subscriptionId: subscription.id,
     subscriptionToken: existing.subscriptionToken || relayToken(),
+    planExpiresAt: existing.planExpiresAt || expiresAt,
+    giftedDays: Number.isSafeInteger(existing.giftedDays) ? existing.giftedDays : 0,
     expiresAt,
     placeholderTag: String(input.placeholderTag ?? existing.placeholderTag ?? "").trim() || null,
     showUserInfo: input.showUserInfo !== undefined
@@ -2210,6 +2292,26 @@ function publicItem(item, customerCount = null) {
   };
 }
 
+function publicRegisteredAccount(account) {
+  return {
+    id: `account:${account.id}`,
+    accountId: account.id,
+    registeredOnly: true,
+    accountStatus: account.status,
+    email: account.email,
+    userId: account.email,
+    createdAt: account.createdAt,
+    actualPaid: 0,
+    vipSpend: 0,
+    vipLevel: "vip1",
+    subscriptionId: "",
+    subscription: null,
+    activeGroup: "",
+    expiresAt: null,
+    userLogs: []
+  };
+}
+
 function publicUserLogs(user) {
   const logs = Array.isArray(user.userLogs) ? user.userLogs : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []);
   let currentSubscription = null;
@@ -2496,8 +2598,8 @@ function cacheIsFresh(cache, now = Date.now()) {
   return Boolean(cache?.body || cache?.bodyFile) && Number.isFinite(fetchedAt) && now - fetchedAt < POOL_CONFIG_CACHE_TTL_MS;
 }
 
-async function liveConfigFromCachedPoolConfig(item) {
-  if (!cacheIsFresh(item?.cachedConfig)) return null;
+async function liveConfigFromCachedPoolConfig(item, { allowStale = false } = {}) {
+  if (!allowStale && !cacheIsFresh(item?.cachedConfig)) return null;
   const body = await readPoolCachedBody(item);
   if (!body) return null;
   return {
@@ -3039,6 +3141,7 @@ function appendBillActionLog(bill, reason, req) {
 }
 
 function fallbackCandidateRank(item, user) {
+  if (item?.enabled === false) return null;
   const userTime = user?.expiresAt ? startOfUtcDate(user.expiresAt) : null;
   const poolTime = item?.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
   const dayMs = 86400000;
@@ -3055,7 +3158,7 @@ function fallbackCandidateRank(item, user) {
 
 function fallbackCandidates(user, currentSubscription) {
   const candidates = subscriptions
-    .filter(item => item.id !== currentSubscription?.id)
+    .filter(item => item.id !== currentSubscription?.id && subscriptionAllowsGroup(item, activeUserGroup(user)) && !subscriptionAtCapacity(item, user?.id || ""))
     .map(item => {
       const rank = fallbackCandidateRank(item, user);
       if (rank === null) return null;
@@ -3098,7 +3201,9 @@ async function findFallbackSubscription(user, currentSubscription) {
       candidatePool: poolLogInfo(candidate)
     });
     try {
-      const liveConfig = await fetchLivePoolConfig(candidate);
+      const liveConfig = candidate.useCachedConfigForFallback
+        ? await liveConfigFromCachedPoolConfig(candidate, { allowStale: true }) || await fetchLivePoolConfig(candidate)
+        : await fetchLivePoolConfig(candidate);
       relayLog("fallback-candidate-validate-ok", {
         userId: user?.id || "",
         candidatePool: poolLogInfo(candidate),
@@ -3214,6 +3319,7 @@ async function refreshPoolConfigCache(item, { force = false } = {}) {
       status: best.status,
       client: best.client,
       fetchedAt: new Date().toISOString(),
+      bodyFetchedAt: new Date().toISOString(),
       contentType: best.contentType,
       subscriptionUserinfo: best.subscriptionUserinfo,
       score: best.score,
@@ -3231,6 +3337,7 @@ async function refreshPoolConfigCache(item, { force = false } = {}) {
     item.cachedConfig = {
       ...(item.cachedConfig || {}),
       fetchedAt: new Date().toISOString(),
+      bodyFetchedAt: item.cachedConfig?.bodyFetchedAt || item.cachedConfig?.fetchedAt || null,
       attempts: results.map(result => ({
         client: result.client,
         status: result.status,
@@ -3425,10 +3532,10 @@ function defaultSubconverterPreset() {
   return {
     target: String(preset.target || DEFAULT_SUBCONVERTER_TARGET).trim() || DEFAULT_SUBCONVERTER_TARGET,
     config: normalizeSubconverterConfigParam(preset.config),
-    emoji: preset.emoji !== false,
-    udp: preset.udp !== false,
-    scv: Boolean(preset.scv),
-    sort: Boolean(preset.sort)
+    ...Object.fromEntries(Object.entries(SUBCONVERTER_BOOLEAN_DEFAULTS).map(([key, defaultValue]) => [
+      key,
+      preset[key] === undefined ? defaultValue : Boolean(preset[key])
+    ]))
   };
 }
 
@@ -3845,10 +3952,9 @@ async function handleRelaySubscription(req, res, token) {
     if (sc.config) params.set("config", sc.config);
     if (sc.include) params.set("include", sc.include);
     if (sc.exclude) params.set("exclude", sc.exclude);
-    if (sc.emoji !== undefined) params.set("emoji", String(sc.emoji));
-    if (sc.udp !== undefined) params.set("udp", String(sc.udp));
-    if (sc.scv !== undefined) params.set("scv", String(sc.scv));
-    if (sc.sort !== undefined) params.set("sort", String(sc.sort));
+    for (const key of Object.keys(SUBCONVERTER_BOOLEAN_DEFAULTS)) {
+      if (sc[key] !== undefined) params.set(key, String(sc[key]));
+    }
     if (sc.rename) params.set("rename", sc.rename);
     const subUrl = `${SUB_CONVERTER_URL}/sub?${params.toString()}`;
     relayLog("subconverter-request", {
@@ -4136,6 +4242,8 @@ function publicDeliveryPayload(user, req) {
   const token = user.subscriptionToken || "";
   return {
     expiresAt: user.expiresAt || "",
+    planExpiresAt: user.planExpiresAt || user.expiresAt || "",
+    giftedDays: Number(user.giftedDays) || 0,
     activeGroup: activeUserGroup(user),
     vipLevel: userVipLevel(user),
     subscriptionUrl: `${origin}/sub/${token}`,
@@ -4236,6 +4344,9 @@ async function handleApi(req, res, pathname) {
       const email = normalizeAccountEmail(payload.email);
       const password = validateAccountPassword(payload.password);
       const referralCode = normalizeReferralCode(payload.referralCode);
+      const registrationMode = currentSalesSettings().registrationMode;
+      if (registrationMode === "disabled") throw new Error("当前暂不开放注册");
+      if (registrationMode === "invite_only" && !referralCode) throw new Error("仅限使用推荐码注册");
       if (payload.referralCode && !referralCode) throw new Error("邀请码必须是 6 位数字");
       if (accounts.some(item => item.email === email)) {
         sendJson(res, 409, { error: "该邮箱已有账户，请直接登录或重置密码。" });
@@ -4710,7 +4821,7 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/public/sales-settings" && req.method === "GET") {
     await loadLatestData();
-    sendJson(res, 200, { faqs: currentSalesSettings().faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })) });
+    sendJson(res, 200, { registrationMode: currentSalesSettings().registrationMode, faqs: currentSalesSettings().faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })) });
     return;
   }
 
@@ -4788,6 +4899,21 @@ async function handleApi(req, res, pathname) {
   }
 
   const publicPaymentOrderMatch = pathname.match(/^\/api\/payments\/orders\/([^/]+)$/);
+  if (publicPaymentOrderMatch && req.method === "DELETE") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      const order = paymentOrders.find(item => item.id === publicPaymentOrderMatch[1] && item.accountId === session.accountId);
+      if (!order) {
+        sendJson(res, 404, { error: "Payment order not found." });
+        return;
+      }
+      sendJson(res, 200, publicPaymentOrder(await cancelPaymentOrder(order, req)));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
   if (publicPaymentOrderMatch && req.method === "GET") {
     try {
       const order = paymentOrders.find(item => item.id === publicPaymentOrderMatch[1]);
@@ -4973,7 +5099,8 @@ async function handleApi(req, res, pathname) {
       return;
     }
     const recommendation = recommendSubscriptionForExpiry(expiresAt, {
-      ignoredUserId: payload.ignoredUserId || ""
+      ignoredUserId: payload.ignoredUserId || "",
+      group: payload.group || ""
     });
     sendJson(res, 200, {
       subscription: recommendation.subscription ? publicItem(recommendation.subscription) : null,
@@ -4987,7 +5114,10 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/users" && req.method === "GET") {
     await loadLatestData();
     const subscriptionsById = subscriptionById();
-    sendJson(res, 200, users.map(user => publicUser(user, subscriptionsById)));
+    const registeredAccounts = accounts
+      .filter(account => account.status === "active" && !userForAccount(account))
+      .map(publicRegisteredAccount);
+    sendJson(res, 200, [...users.map(user => publicUser(user, subscriptionsById)), ...registeredAccounts]);
     return;
   }
 
@@ -5172,7 +5302,13 @@ async function handleApi(req, res, pathname) {
       const name = (payload.name || "").trim();
       if (!name) { sendJson(res, 400, { error: "供应商名称不能为空。" }); return; }
       if (vendors.find(v => v.name === name)) { sendJson(res, 400, { error: "供应商已存在。" }); return; }
-      const vendor = { id: `vendor-${Date.now()}`, name };
+      const vendor = {
+        id: `vendor-${Date.now()}`,
+        name,
+        overrideExclude: String(payload.overrideExclude || "").trim(),
+        overrideInclude: String(payload.overrideInclude || "").trim(),
+        overrideRename: String(payload.overrideRename || "").trim()
+      };
       vendors.push(vendor);
       await saveVendors();
       sendJson(res, 201, vendor);
@@ -5225,10 +5361,9 @@ async function handleApi(req, res, pathname) {
       }
       preset.target = String(payload.target || DEFAULT_SUBCONVERTER_TARGET).trim();
       preset.config = String(payload.config || "").trim();
-      preset.emoji = payload.emoji !== false;
-      preset.udp = payload.udp !== false;
-      preset.scv = Boolean(payload.scv);
-      preset.sort = Boolean(payload.sort);
+      for (const [key, defaultValue] of Object.entries(SUBCONVERTER_BOOLEAN_DEFAULTS)) {
+        preset[key] = payload[key] === undefined ? defaultValue : Boolean(payload[key]);
+      }
       await savePresets();
       sendJson(res, 200, preset);
     } catch (error) {
@@ -5470,6 +5605,51 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/users/batch-gift" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const targets = batchGiftTargets(payload);
+      const unavailable = targets.filter(target => !target.toSubscription);
+      if (payload.preview === true) {
+        sendJson(res, 200, {
+          eligibleCount: targets.length,
+          readyCount: targets.length,
+          unavailableCount: unavailable.length,
+          unavailableUsers: unavailable.map(target => target.user.userId || target.user.email || target.user.id),
+          days: Number(payload.days),
+          group: ["basic", "pro", "ultra"].includes(String(payload.group)) ? String(payload.group) : ""
+        });
+        return;
+      }
+      const batchId = crypto.randomUUID();
+      for (const target of targets) {
+        const { user, toSubscription, expiresAt, giftDays } = target;
+        const beforeExpiresAt = user.expiresAt || null;
+        const fromSubscription = subscriptions.find(entry => entry.id === user.subscriptionId) || null;
+        user.planExpiresAt ||= beforeExpiresAt;
+        user.giftedDays = (Number(user.giftedDays) || 0) + giftDays;
+        user.expiresAt = expiresAt;
+        if (toSubscription) user.subscriptionId = toSubscription.id;
+        user.updatedAt = new Date().toISOString();
+        appendUserLogToUser(user, createUserLog({
+          event: "user-action",
+          status: "recorded",
+          reason: "user-gifted",
+          fromSubscription,
+          toSubscription,
+          req,
+          message: userActionMessage("user-gifted", { days: giftDays, beforeExpiresAt, afterExpiresAt: expiresAt }),
+          details: { days: giftDays, beforeExpiresAt, afterExpiresAt: expiresAt, batchId }
+        }));
+      }
+      await saveUsers();
+      sendJson(res, 200, { batchId, updatedCount: targets.length });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift))?$/);
   if (userMatch) {
     const id = userMatch[1];
@@ -5537,7 +5717,7 @@ async function handleApi(req, res, pathname) {
         const payload = await readJson(req);
         const expiresAt = calculateGiftExpiry(item, payload.days);
         if (!expiresAt) throw new Error("请输入正确的赠送天数。");
-        const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id });
+        const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id, group: activeUserGroup(item) });
         if (payload.preview === true) {
           sendJson(res, 200, {
             expiresAt,
@@ -5548,10 +5728,13 @@ async function handleApi(req, res, pathname) {
         }
         const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || recommendation.subscription?.id || ""));
         if (!toSubscription) throw new Error("请选择有效的订阅池。");
+        if (!subscriptionAllowsGroup(toSubscription, activeUserGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
         const poolExpiresAt = Date.parse(toSubscription.metrics?.expireAt || "");
-        if (toSubscription.enabled === false || !Number.isFinite(poolExpiresAt) || poolExpiresAt <= Date.now()) throw new Error("请选择已启用且未过期的订阅池。");
+        if ((toSubscription.enabled === false && payload.allowDisabled !== true) || !Number.isFinite(poolExpiresAt) || poolExpiresAt <= Date.now()) throw new Error("请选择已启用且未过期的订阅池，或勾选使用未启用池。");
         const beforeExpiresAt = item.expiresAt || null;
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
+        item.planExpiresAt ||= beforeExpiresAt;
+        item.giftedDays = (Number(item.giftedDays) || 0) + Number(payload.days);
         item.expiresAt = expiresAt;
         item.subscriptionId = toSubscription.id;
         item.updatedAt = new Date().toISOString();
@@ -5737,6 +5920,7 @@ async function handleApi(req, res, pathname) {
         storage: wasFresh ? "cached" : "live",
         bodyFile: "",
         fetchedAt: cache.fetchedAt || null,
+        bodyFetchedAt: cache.bodyFetchedAt || cache.fetchedAt || null,
         contentType: cache.contentType || "",
         subscriptionUserinfo: cache.subscriptionUserinfo || "",
         error: cache.error || null,
@@ -5766,6 +5950,7 @@ async function handleApi(req, res, pathname) {
         item.lastError = null;
         item.httpStatus = null;
         item.lastRefreshResults = null;
+        item.cachedConfig = null;
       }
       await saveData();
       sendJson(res, 200, publicItem(item));
@@ -5973,6 +6158,7 @@ module.exports = Object.assign(requestHandler, {
   userOutputMode,
   poolMetricUnavailableReason,
   fallbackCandidateRank,
+  liveConfigFromCachedPoolConfig,
   startOfUtcDate,
   paymentQuote,
   vipLevelForSpend,
@@ -5982,5 +6168,6 @@ module.exports = Object.assign(requestHandler, {
   paymentAmountError,
   paymentOrderExpiresAt,
   isPaymentOrderExpired,
-  normalizeSalesSettings
+  normalizeSalesSettings,
+  publicRegisteredAccount
 });
