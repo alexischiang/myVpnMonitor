@@ -2829,6 +2829,12 @@ function poolMetricUnavailableReason(item, now = Date.now()) {
   return "";
 }
 
+function initialPoolFallbackReason(item, useSubconverter) {
+  if (item?.enabled === false) return "pool-disabled";
+  if (!item?.url) return "pool-missing";
+  return useSubconverter ? poolMetricUnavailableReason(item) : "";
+}
+
 const fallbackReasonText = {
   "pool-disabled": "\u539f\u6c60 URL \u5df2\u505c\u7528",
   "pool-expired": "\u539f\u6c60 URL \u5df2\u5230\u671f",
@@ -3417,14 +3423,21 @@ function injectPlaceholderNodes(bodyBuffer, user, groups = placeholderNodes) {
   const defaultNodes = defaultGroup?.nodes?.length ? defaultGroup.nodes : [];
   const customNodes = customGroup?.nodes?.length ? customGroup.nodes : [];
   const userInfoNodes = showUserInfo ? buildUserInfoNodes(user) : [];
-  if (!defaultNodes.length && !customNodes.length && !userInfoNodes.length) return bodyBuffer;
   try {
     const text = bodyBuffer.toString("utf8");
     const doc = yaml.load(text);
     if (!doc || typeof doc !== "object") return bodyBuffer;
+    let normalized = false;
+    for (const [legacyKey, key] of [["Proxy", "proxies"], ["Proxy Group", "proxy-groups"], ["Rule", "rules"]]) {
+      if (!(legacyKey in doc)) continue;
+      if (!(key in doc)) doc[key] = doc[legacyKey];
+      delete doc[legacyKey];
+      normalized = true;
+    }
+    if (!defaultNodes.length && !customNodes.length && !userInfoNodes.length && !normalized) return bodyBuffer;
     const proxies = Array.isArray(doc.proxies)
       ? doc.proxies
-      : (Array.isArray(doc.Proxy) ? doc.Proxy : (doc.proxies = []));
+      : (doc.proxies = []);
     const allNames = [...userInfoNodes, ...defaultNodes, ...customNodes];
     const firstProxy = proxies[0];
     const allProxies = allNames.map(nodeName => {
@@ -3432,9 +3445,7 @@ function injectPlaceholderNodes(bodyBuffer, user, groups = placeholderNodes) {
       return { name: nodeName, type: "ss", server: "127.0.0.1", port: 1, cipher: "aes-128-gcm", password: "placeholder" };
     });
     proxies.unshift(...allProxies);
-    const proxyGroups = Array.isArray(doc["proxy-groups"])
-      ? doc["proxy-groups"]
-      : doc["Proxy Group"];
+    const proxyGroups = doc["proxy-groups"];
     if (Array.isArray(proxyGroups)) {
       for (const pg of proxyGroups) {
         if (Array.isArray(pg.proxies)) {
@@ -3717,7 +3728,7 @@ async function handleRelaySubscription(req, res, token) {
   const sc = (() => {
     // 用户可显式选择直链模式，绕过订阅转换
     if (outputMode === "direct") return null;
-    const base = { ...defaultSubconverterPreset(), include: "", exclude: "", rename: "" };
+    const base = { ...defaultSubconverterPreset(), target: DEFAULT_SUBCONVERTER_TARGET, include: "", exclude: "", rename: "" };
     const sub = subscriptions.find(s => s.id === user.subscriptionId);
     const v = vendors.find(v => v.name === sub?.serviceProvider);
     if (v) {
@@ -3728,9 +3739,7 @@ async function handleRelaySubscription(req, res, token) {
     return base;
   })();
   let precheckedLiveConfig = null;
-  const initialFallbackReason = !subscription?.url
-    ? "pool-missing"
-    : ((subscription.enabled === false || sc?.target) ? poolMetricUnavailableReason(subscription) : "");
+  const initialFallbackReason = initialPoolFallbackReason(subscription, Boolean(sc?.target));
   relayLog("current-pool-selected", {
     relayRequestId,
     userId: user.id,
@@ -3740,7 +3749,7 @@ async function handleRelaySubscription(req, res, token) {
     currentPool: poolLogInfo(subscription),
     initialFallbackReason
   });
-  if (!sc?.target && !subscription?.url) {
+  if (!sc?.target && initialFallbackReason === "pool-missing") {
     relayLog("response-placeholder-pool-missing-before-converter", {
       relayRequestId,
       userId: user.id,
@@ -5818,6 +5827,7 @@ async function handleApi(req, res, pathname) {
         if (!Number.isFinite(poolExpiresAt) || poolExpiresAt <= Date.now()) throw new Error("无有效到期日或已过期的订阅池不能绑定用户。");
         if (toSubscription.enabled === false && payload.allowDisabled !== true) throw new Error("该订阅池尚未启用。");
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
+        if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id)) throw new Error("该URL使用人数已满");
         if (fromSubscription?.id !== toSubscription.id) {
           item.subscriptionId = toSubscription.id;
           item.updatedAt = new Date().toISOString();
@@ -6185,6 +6195,7 @@ module.exports = Object.assign(requestHandler, {
   defaultSubconverterPreset,
   userOutputMode,
   poolMetricUnavailableReason,
+  initialPoolFallbackReason,
   fallbackCandidateRank,
   injectPlaceholderNodes,
   liveConfigFromCachedPoolConfig,
