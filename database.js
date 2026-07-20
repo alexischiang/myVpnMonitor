@@ -7,9 +7,10 @@ function sleep(ms) {
 }
 
 function isRetryablePgError(error) {
-  const codes = new Set(["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENETUNREACH", "EAI_AGAIN"]);
-  if (codes.has(error?.code)) return true;
-  if (Array.isArray(error?.errors) && error.errors.some(item => codes.has(item?.code))) return true;
+  const codes = new Set(["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENETUNREACH", "EAI_AGAIN", "53300", "57P01", "57P02", "57P03"]);
+  const isRetryableCode = code => codes.has(code) || String(code || "").startsWith("08");
+  if (isRetryableCode(error?.code)) return true;
+  if (Array.isArray(error?.errors) && error.errors.some(item => isRetryableCode(item?.code))) return true;
   return /timeout|terminating connection|connection.*closed/i.test(String(error?.message || ""));
 }
 
@@ -35,6 +36,7 @@ class PostgresDataStore {
     this.connectionString = normalizePostgresUrl(connectionString);
     this.ssl = ssl;
     this.pool = null;
+    this.initPromise = null;
   }
 
   loadPg() {
@@ -46,16 +48,32 @@ class PostgresDataStore {
   }
 
   async init() {
+    if (this.initPromise) return this.initPromise;
     if (this.pool) return;
+
+    this.initPromise = this.initializePool();
+    try {
+      await this.initPromise;
+    } finally {
+      this.initPromise = null;
+    }
+  }
+
+  async initializePool() {
     const { Pool } = this.loadPg();
-    this.pool = new Pool({
+    const pool = new Pool({
       connectionString: this.connectionString,
       ssl: this.ssl ? { rejectUnauthorized: false } : undefined,
       idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS || 10000),
       connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 10000),
       max: Number(process.env.DATABASE_POOL_MAX || 5)
     });
-    await withPgRetry(() => this.pool.query(`
+    pool.on("error", error => {
+      console.error("[data] Unexpected idle PostgreSQL client error:", error);
+    });
+    this.pool = pool;
+    try {
+      await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS app_records (
         collection TEXT NOT NULL,
         id TEXT NOT NULL,
@@ -64,8 +82,8 @@ class PostgresDataStore {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (collection, id)
       )
-    `), "postgres init");
-    await withPgRetry(() => this.pool.query(`
+      `), "postgres init");
+      await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS wallet_accounts (
         account_id TEXT PRIMARY KEY,
         cash_cents BIGINT NOT NULL DEFAULT 0 CHECK (cash_cents >= 0),
@@ -109,7 +127,12 @@ class PostgresDataStore {
       ALTER TABLE wallet_accounts ADD COLUMN IF NOT EXISTS referral_cents BIGINT NOT NULL DEFAULT 0 CHECK (referral_cents >= 0);
       ALTER TABLE wallet_entries ADD COLUMN IF NOT EXISTS referral_delta_cents BIGINT NOT NULL DEFAULT 0;
       ALTER TABLE wallet_entries ADD COLUMN IF NOT EXISTS referral_balance_cents BIGINT NOT NULL DEFAULT 0;
-    `), "wallet init");
+      `), "wallet init");
+    } catch (error) {
+      if (this.pool === pool) this.pool = null;
+      await pool.end().catch(() => undefined);
+      throw error;
+    }
   }
 
   walletRow(row = {}) {
@@ -373,6 +396,7 @@ class PostgresDataStore {
   }
 
   async close() {
+    if (this.initPromise) await this.initPromise.catch(() => undefined);
     await this.pool?.end();
     this.pool = null;
   }
@@ -395,6 +419,10 @@ class PostgresDataStore {
       const client = await this.pool.connect();
       try {
         await client.query("BEGIN");
+        // Full-collection rewrites must be serialized. Without this lock, two
+        // concurrent writers can both DELETE the old snapshot and then race to
+        // INSERT the same primary keys.
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`app_records:${collection}`]);
         await client.query("DELETE FROM app_records WHERE collection = $1", [collection]);
         if (rows.length) {
           const ids = [];

@@ -65,8 +65,10 @@ export function SubscriptionDetailPage() {
     try {
       await runAsync(async () => {
         await postJson(`/api/subscriptions/${item.id}/refresh`, {})
+        const payload = await fetchJson<typeof cache>(`/api/subscriptions/${item.id}/cache`)
+        setCache(payload)
         await reload(["subscriptions"])
-      }, "刷新订阅...")
+      }, "刷新配置和指标...")
     } finally {
       setRefreshing(false)
     }
@@ -77,6 +79,7 @@ export function SubscriptionDetailPage() {
     try {
       const payload = await fetchJson<typeof cache>(`/api/subscriptions/${item.id}/cache?force=true`).catch(error => ({ error: error.message }))
       setCache(payload)
+      await reload(["subscriptions"])
     } finally {
       setRefreshingCache(false)
     }
@@ -331,7 +334,8 @@ export function UserDetailPage() {
             <Info label="用户 ID" value={user.userId || "-"} />
             <Info label="邮箱" value={user.email || "-"} />
             <Info label="iMessage" value={user.imessage || "-"} />
-            <Info label="套餐" value={`${user.activeGroup || "-"} / ${user.vipLevel || "-"}`} />
+            <Info label="套餐级别" value={user.registeredOnly ? "未开通" : (user.activeGroup?.toUpperCase() || "-")} />
+            <Info label="VIP 等级" value={user.vipLevel?.toUpperCase() || "-"} />
             <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
             <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
             <Info label="当前到期" value={formatUserExpiry(user)} />

@@ -38,6 +38,7 @@ export type UserFormValues = {
   imessage?: string
   subscriptionId?: string
   allowDisabled?: boolean
+  allowFull?: boolean
   activeGroup?: string
   unlimited?: boolean
   duration?: string
@@ -184,6 +185,7 @@ export function UserFormDialog({
   const [errors, setErrors] = React.useState<Partial<Record<keyof UserFormValues, string>>>({})
   const [recommendationMessage, setRecommendationMessage] = React.useState("")
   const [allowDisabledPool, setAllowDisabledPool] = React.useState(false)
+  const [allowFullPool, setAllowFullPool] = React.useState(false)
   const [recommending, setRecommending] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
   const price = selectedPrice(pricing, values)
@@ -195,6 +197,7 @@ export function UserFormDialog({
     setErrors({})
     setRecommendationMessage("")
     setAllowDisabledPool(false)
+    setAllowFullPool(false)
   }, [open, user])
 
   function update<K extends keyof UserFormValues>(key: K, value: UserFormValues[K]) {
@@ -251,7 +254,7 @@ export function UserFormDialog({
     if (!validateStep(2)) return
     setSubmitting(true)
     try {
-      await onSubmit({ ...values, allowDisabled: allowDisabledPool, actualPaid: values.actualPaid ?? price })
+      await onSubmit({ ...values, allowDisabled: allowDisabledPool, allowFull: allowFullPool, actualPaid: values.actualPaid ?? price })
       onOpenChange(false)
     } finally {
       setSubmitting(false)
@@ -334,6 +337,8 @@ export function UserFormDialog({
                   onValueChange={value => update("subscriptionId", value)}
                   allowDisabled={allowDisabledPool}
                   onAllowDisabledChange={setAllowDisabledPool}
+                  allowFull={allowFullPool}
+                  onAllowFullChange={setAllowFullPool}
                   group={values.activeGroup}
                   description={recommendationMessage}
                   error={errors.subscriptionId}

@@ -26,7 +26,7 @@ import { VipBadge } from "@/components/features/vip-badge"
 import { formatDate, formatDateTime, formatMoney } from "@/utils"
 
 type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge"; planName: string; optionLabel: string; amount: number; totalAmount?: number; walletAmount?: number; status: string; statusText: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
-type Subscription = { status: string; activeGroup: string; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; cashValue: number; traffic: string; devices: number | string; subscriptionUrl: string; vipLevel?: string }
+type Subscription = { status: string; activeGroup: string; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; cashValue: number; traffic: string; unlimited?: boolean; devices: number | string; subscriptionUrl: string; vipLevel?: string }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type Overview = { email: string; createdAt: string; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; vipDelta: number; balance: number; description: string; createdAt: string }

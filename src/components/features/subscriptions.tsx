@@ -65,7 +65,7 @@ export function SubscriptionsPage() {
         else await postJson("/api/subscriptions/cache-refresh", {})
         await reload(["subscriptions"])
         toast.success("刷新完成")
-      }, "刷新订阅指标...")
+      }, "刷新配置和指标...")
     } finally {
       setPendingAction("")
     }
