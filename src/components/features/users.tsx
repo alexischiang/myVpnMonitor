@@ -50,8 +50,10 @@ export function UsersPage() {
   const [poolId, setPoolId] = React.useState("")
   const [poolSaving, setPoolSaving] = React.useState(false)
   const [allowDisabledPool, setAllowDisabledPool] = React.useState(false)
+  const [allowFullPool, setAllowFullPool] = React.useState(false)
   const [giftUser, setGiftUser] = React.useState<User | null>(null)
   const [allowDisabledGiftPool, setAllowDisabledGiftPool] = React.useState(false)
+  const [allowFullGiftPool, setAllowFullGiftPool] = React.useState(false)
   const accountFilter = searchParams.get("account") || "all"
   const planFilter = searchParams.get("plan") || "all"
   const statusFilter = searchParams.get("status") || "all"
@@ -97,7 +99,7 @@ export function UsersPage() {
     if (!poolUser || !poolId || poolId === poolUser.subscriptionId) return
     setPoolSaving(true)
     try {
-      await postJson(`/api/users/${poolUser.id}/pool`, { subscriptionId: poolId, allowDisabled: allowDisabledPool })
+      await postJson(`/api/users/${poolUser.id}/pool`, { subscriptionId: poolId, allowDisabled: allowDisabledPool, allowFull: allowFullPool })
       await reload(["users"])
       toast.success("用户订阅池已更新")
       setPoolUser(null)
@@ -114,6 +116,7 @@ export function UsersPage() {
     setGiftExpiresAt("")
     setGiftPoolId("")
     setAllowDisabledGiftPool(false)
+    setAllowFullGiftPool(false)
     setGiftMessage("")
     setGiftError("")
   }
@@ -144,7 +147,7 @@ export function UsersPage() {
     if (!giftUser || !giftExpiresAt || !giftPoolId) return
     setGiftSaving(true)
     try {
-      await postJson(`/api/users/${giftUser.id}/gift`, { days: Number(giftDays), subscriptionId: giftPoolId, allowDisabled: allowDisabledGiftPool })
+      await postJson(`/api/users/${giftUser.id}/gift`, { days: Number(giftDays), subscriptionId: giftPoolId, allowDisabled: allowDisabledGiftPool, allowFull: allowFullGiftPool })
       await reload(["users"])
       toast.success("赠送时长已生效")
       setGiftUser(null)
@@ -238,7 +241,7 @@ export function UsersPage() {
 
   function renderMobileUser(item: User) {
     const claimed = item.accountStatus === "active"
-    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="truncate">{claimed ? item.email || item.userId || "-" : item.userId || "-"}</span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}</ItemTitle><ItemDescription>{item.registeredOnly ? `注册于 ${formatDate(item.createdAt)}` : `到期 ${formatDate(item.expiresAt)} · 总消费 ${formatMoney(item.actualPaid)}`}</ItemDescription></ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}<DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem><DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
+    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="truncate">{claimed ? item.email || item.userId || "-" : item.userId || "-"}</span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}</ItemTitle><ItemDescription>{item.registeredOnly ? `注册于 ${formatDate(item.createdAt)}` : `到期 ${formatDate(item.expiresAt)} · 总消费 ${formatMoney(item.actualPaid)}`}</ItemDescription></ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}<DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem><DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
   }
 
   const columns = React.useMemo<ColumnDef<User>[]>(() => [
@@ -299,7 +302,7 @@ export function UsersPage() {
                 详情
               </Link>
             </Button>
-            {item.registeredOnly ? null : <>{deliveryUrl(item) && <CopyButton value={deliveryUrl(item)} label="" />}<Button variant="outline" size="sm" onClick={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false) }}><RefreshCw />换池</Button><Button variant="outline" size="sm" onClick={() => openGift(item)}><Gift />赠送</Button>{item.accountStatus !== "active" ? <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>编辑</Button> : null}{item.accountStatus !== "active" ? <Button variant="ghost" size="icon" onClick={() => remove(item)} aria-label="删除用户"><Trash2 /></Button> : null}</>}
+            {item.registeredOnly ? null : <>{deliveryUrl(item) && <CopyButton value={deliveryUrl(item)} label="" />}<Button variant="outline" size="sm" onClick={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />换池</Button><Button variant="outline" size="sm" onClick={() => openGift(item)}><Gift />赠送</Button>{item.accountStatus !== "active" ? <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>编辑</Button> : null}{item.accountStatus !== "active" ? <Button variant="ghost" size="icon" onClick={() => remove(item)} aria-label="删除用户"><Trash2 /></Button> : null}</>}
           </div>
         )
       },
@@ -365,10 +368,20 @@ export function UsersPage() {
         </AlertDialogContent>
       </AlertDialog>
       <Dialog open={Boolean(poolUser)} onOpenChange={open => { if (!open) setPoolUser(null) }}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-xl">
           <form className="grid gap-4" onSubmit={changePool} noValidate>
-            <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription className="break-words">当前套餐到期：{formatDate(poolUser?.expiresAt)}<span className="block">当前池：{currentPool ? `${currentPool.serviceProvider || currentPool.provider || "Provider"} - ${currentPool.email || currentPool.url} · 到期 ${formatDate(currentPool.metrics?.expireAt)}` : "未绑定"}</span></DialogDescription></DialogHeader>
-            <SubscriptionPoolSelect id="manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} group={poolUser?.activeGroup} />
+            <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription className="break-all">为 {poolUser?.userId || poolUser?.email || "当前用户"} 选择新的订阅池。</DialogDescription></DialogHeader>
+            <Item variant="muted" size="sm" className="items-start">
+              <ItemContent className="gap-2">
+                <ItemTitle>当前分配</ItemTitle>
+                <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-[5rem_minmax(0,1fr)]">
+                  <dt className="text-muted-foreground">套餐到期</dt><dd>{formatDate(poolUser?.expiresAt)}</dd>
+                  <dt className="text-muted-foreground">当前池</dt><dd className="min-w-0">{currentPool ? <><span className="block font-medium text-foreground">{currentPool.serviceProvider || currentPool.provider || "Provider"}</span><span className="block break-all text-muted-foreground">{currentPool.email || currentPool.url}</span></> : "未绑定"}</dd>
+                  <dt className="text-muted-foreground">池到期</dt><dd>{currentPool ? formatDate(currentPool.metrics?.expireAt) : "-"}</dd>
+                </dl>
+              </ItemContent>
+            </Item>
+            <SubscriptionPoolSelect id="manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={poolUser?.activeGroup} />
             <DialogFooter><DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose><Button type="submit" disabled={poolSaving || !poolId || poolId === poolUser?.subscriptionId}>{poolSaving ? <RefreshCw className="animate-spin" /> : <RefreshCw />}确认换池</Button></DialogFooter>
           </form>
         </DialogContent>
@@ -390,7 +403,7 @@ export function UsersPage() {
                 </div>
               </Field>
               {giftExpiresAt ? <Field><FieldLabel htmlFor="gift-expires-at">赠送后到期日</FieldLabel><Input id="gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /></Field> : null}
-              {giftExpiresAt ? <SubscriptionPoolSelect id="gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} group={giftUser?.activeGroup} description={giftMessage} /> : null}
+              {giftExpiresAt ? <SubscriptionPoolSelect id="gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={giftUser?.activeGroup} description={giftMessage} /> : null}
             </FieldGroup>
             <DialogFooter><DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose>{giftExpiresAt ? <Button type="submit" disabled={giftSaving || !giftPoolId}>{giftSaving ? <Loader2 className="animate-spin" /> : <Gift />}{giftSaving ? "赠送中..." : "确认赠送"}</Button> : <Button type="button" onClick={previewGift} disabled={giftPreviewing}>{giftPreviewing ? <Loader2 className="animate-spin" /> : <Gift />}{giftPreviewing ? "计算中..." : "推荐订阅池"}</Button>}</DialogFooter>
           </form>

@@ -1,6 +1,11 @@
 const jsonCache = new Map<string, unknown>()
 const jsonRequests = new Map<string, Promise<unknown>>()
 let jsonCacheGeneration = 0
+const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504])
+
+function wait(ms: number) {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
   const response = await fetch(path, {
@@ -21,10 +26,38 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 }
 
 export async function fetchJson<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await apiFetch(path, options)
-  const payload = await response.json()
-  if (!response.ok) throw new Error(payload.error || `Request failed: ${response.status}`)
-  return payload
+  const method = String(options.method || "GET").toUpperCase()
+  const attempts = method === "GET" ? 3 : 1
+  let lastError: unknown
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    let response: Response
+    try {
+      response = await apiFetch(path, options)
+    } catch (error) {
+      lastError = error
+      if (attempt + 1 >= attempts) throw error
+      await wait(300 * (attempt + 1))
+      continue
+    }
+
+    if (retryableStatuses.has(response.status) && attempt + 1 < attempts) {
+      await wait(300 * (attempt + 1))
+      continue
+    }
+
+    try {
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || `Request failed: ${response.status}`)
+      return payload
+    } catch (error) {
+      lastError = error
+      if (!response.ok || attempt + 1 >= attempts) throw error
+      await wait(300 * (attempt + 1))
+    }
+  }
+
+  throw lastError
 }
 
 export function getCachedJson<T>(path: string) {

@@ -300,8 +300,10 @@ async function main() {
     assert.strictEqual(status.data.fulfillmentStatus, "failed");
 
     const paidOrder = await createOrder();
-    await callback(paidOrder.data, 1, "1.03", true);
-    await callback(paidOrder.data, 1, "1.03", true);
+    await Promise.all([
+      callback(paidOrder.data, 1, "1.03", true),
+      callback(paidOrder.data, 1, "1.03", true)
+    ]);
     status = await request(`/api/payments/orders/${paidOrder.data.id}`, { cookie });
     assert.strictEqual(status.data.status, "paid");
     assert.strictEqual(status.data.fulfillmentStatus, "fulfilled");
@@ -313,6 +315,9 @@ async function main() {
     const billCount = await database.query("SELECT COUNT(*)::int AS count FROM app_records WHERE collection = 'bills'");
     assert.strictEqual(userCount.rows[0].count, 1, "duplicate callbacks must not create duplicate users");
     assert.strictEqual(billCount.rows[0].count, 1, "duplicate callbacks must not create duplicate bills");
+    const adminRetry = await request(`/api/admin/orders/${paidOrder.data.id}`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(adminRetry.response.status, 200);
+    assert.strictEqual(adminRetry.data.fulfillmentStatus, "fulfilled");
     const createdUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
     assert.strictEqual(createdUser.userId, "buyer@example.test");
     assert.strictEqual(createdUser.email, "buyer@example.test");
@@ -404,6 +409,12 @@ async function main() {
     const unlimitedQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "basic-unlimited-90" } });
     assert.strictEqual(unlimitedQuote.data.purchaseAction, "replace");
     assert.ok(unlimitedQuote.data.cashCredit > 0);
+
+    const unlimitedOrder = await createOrder({ optionId: "basic-unlimited-30" });
+    await callback(unlimitedOrder.data, 1, String(unlimitedOrder.data.amount), true);
+    const unlimitedOverview = await request("/api/account/overview", { cookie });
+    assert.strictEqual(unlimitedOverview.data.subscription.unlimited, true);
+    assert.strictEqual(unlimitedOverview.data.subscription.traffic, "无限流量");
 
     const zeroQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001" } });
     assert.strictEqual(zeroQuote.data.amount, 0);

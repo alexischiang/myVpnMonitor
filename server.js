@@ -214,7 +214,10 @@ const mimeTypes = {
   ".json": "application/json; charset=utf-8"
 };
 
-async function ensureDataFile() {
+let dataInitializationPromise = null;
+let dataInitialized = false;
+
+async function initializeDataFile() {
   await dataStore.init();
   const state = await dataStore.loadAll();
   subscriptions = state.subscriptions;
@@ -290,6 +293,20 @@ async function ensureDataFile() {
     }
   }
   if (userMigrated) await saveUsers();
+}
+
+async function ensureDataFile() {
+  if (dataInitialized) return;
+  if (dataInitializationPromise) return dataInitializationPromise;
+
+  dataInitializationPromise = initializeDataFile()
+    .then(() => {
+      dataInitialized = true;
+    })
+    .finally(() => {
+      dataInitializationPromise = null;
+    });
+  return dataInitializationPromise;
 }
 
 let lastLoadedAt = 0;
@@ -1245,7 +1262,9 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
   };
 }
 
-async function fulfillPaymentOrder(order, req) {
+const paymentFulfillmentTasks = new Map();
+
+async function fulfillPaymentOrderOnce(order, req) {
   if (!order || order.status !== "paid" || order.fulfilledAt) return order;
   if (order.purpose === "recharge") {
     const account = accounts.find(item => item.id === order.accountId);
@@ -1416,6 +1435,21 @@ async function fulfillPaymentOrder(order, req) {
   await savePaymentOrders();
   await notifyPaymentOrder(order);
   return order;
+}
+
+async function fulfillPaymentOrder(order, req) {
+  if (!order || order.status !== "paid" || order.fulfilledAt) return order;
+  const key = String(order.id || order.merOrderTid || "");
+  const activeTask = paymentFulfillmentTasks.get(key);
+  if (activeTask) return activeTask;
+
+  const task = fulfillPaymentOrderOnce(order, req);
+  paymentFulfillmentTasks.set(key, task);
+  try {
+    return await task;
+  } finally {
+    if (paymentFulfillmentTasks.get(key) === task) paymentFulfillmentTasks.delete(key);
+  }
 }
 
 async function notifyPaymentOrder(order) {
@@ -2362,6 +2396,7 @@ function publicUser(user, subscriptionMap = null) {
   return {
     ...user,
     email: user.email || linkedAccount?.email || "",
+    activeGroup: activeUserGroup(user),
     vipLevel: userVipLevel(user),
     accountStatus: linkedAccount?.status || "unclaimed",
     accountId: linkedAccount?.id || "",
@@ -2416,57 +2451,11 @@ function publicBillDetail(bill) {
 }
 
 async function refreshSubscription(item) {
-  const checkedAt = new Date().toISOString();
-  const results = [];
-  let lastError = null;
-
-  for (const profile of REQUEST_PROFILES) {
-    try {
-      const result = await fetchSubscriptionMetrics(item.url, profile);
-      result.score = metricScore(result.metrics);
-      results.push(result);
-
-      if (result.score >= 300) break;
-    } catch (error) {
-      lastError = error;
-      results.push({ client: profile.name, status: null, metrics: null, score: 0, error: error.message });
-    }
+  try {
+    await fetchLivePoolConfig(item);
+  } catch {
+    // The unified fetch records the failure while preserving the last usable data.
   }
-
-  const bestResult = results
-    .filter(result => result.metrics)
-    .sort((a, b) => b.score - a.score)[0] || results[results.length - 1] || null;
-  const existingScore = metricScore(item.metrics);
-  const bestScore = metricScore(bestResult?.metrics);
-
-  item.lastCheckedAt = checkedAt;
-  item.lastRefreshResults = results.map(result => ({
-    client: result.client,
-    status: result.status,
-    score: result.score || 0,
-    hasExpire: Boolean(result.metrics?.expireAt),
-    hasTotal: result.metrics?.totalBytes !== undefined && result.metrics?.totalBytes !== null,
-    hasUsed: result.metrics?.usedBytes !== undefined && result.metrics?.usedBytes !== null,
-    hasRemaining: result.metrics?.remainingBytes !== undefined && result.metrics?.remainingBytes !== null
-  }));
-
-  if (bestResult) {
-    item.httpStatus = bestResult.status;
-    item.lastClient = bestResult.client;
-
-    if (bestResult.metrics && (bestScore >= existingScore || bestResult.metrics.expireAt)) {
-      item.metrics = bestResult.metrics;
-      item.lastError = null;
-    } else if (bestResult.metrics && item.metrics) {
-      item.lastError = null;
-    } else {
-      item.metrics = item.metrics || null;
-      item.lastError = "已请求订阅，但未识别到流量或到期信息。请确认服务是否返回 subscription-userinfo，或正文是否包含剩余流量/到期时间。";
-    }
-  } else {
-    item.lastError = lastError?.name === "AbortError" ? "检查超时。" : lastError?.message || "请求失败。";
-  }
-
   return item;
 }
 
@@ -2575,40 +2564,6 @@ async function debugSubscription(url) {
   return results;
 }
 
-async function fetchSubscriptionMetrics(url, profile) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        ...profile.headers,
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
-      }
-    });
-
-    const userInfo = response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo");
-    let metrics = parseSubscriptionUserInfo(userInfo);
-
-    if (!metrics) {
-      const body = await response.text();
-      metrics = parseAccountUnavailable(body) || parseBodyHints(body);
-    }
-
-    return {
-      status: response.status,
-      client: profile.name,
-      metrics
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function cacheIsFresh(cache, now = Date.now()) {
   const fetchedAt = cache?.bodyFetchedAt || cache?.fetchedAt;
   const fetchedTime = fetchedAt ? new Date(fetchedAt).getTime() : 0;
@@ -2711,6 +2666,75 @@ function livePoolConfigFailure(results, best) {
   return error;
 }
 
+function poolRefreshAttempts(results) {
+  return results.map(result => ({
+    client: result.client,
+    status: result.status,
+    score: result.score,
+    bodyLength: result.body.length,
+    rawBodyLength: result.rawBodyLength,
+    error: result.error
+  }));
+}
+
+function updatePoolMetrics(item, result, fetchedAt) {
+  const existingScore = metricScore(item.metrics);
+  const nextScore = metricScore(result?.metrics);
+
+  item.lastCheckedAt = fetchedAt;
+  item.httpStatus = result?.status ?? null;
+  item.lastClient = result?.client || "";
+  item.lastRefreshResults = result ? [{
+    client: result.client,
+    status: result.status,
+    score: nextScore,
+    hasExpire: Boolean(result.metrics?.expireAt),
+    hasTotal: result.metrics?.totalBytes !== undefined && result.metrics?.totalBytes !== null,
+    hasUsed: result.metrics?.usedBytes !== undefined && result.metrics?.usedBytes !== null,
+    hasRemaining: result.metrics?.remainingBytes !== undefined && result.metrics?.remainingBytes !== null
+  }] : [];
+
+  if (result?.metrics && (nextScore >= existingScore || result.metrics.expireAt)) {
+    item.metrics = result.metrics;
+    item.lastError = null;
+  } else if (result?.metrics && item.metrics) {
+    item.lastError = null;
+  } else if (result?.body) {
+    item.metrics = item.metrics || null;
+    item.lastError = "已更新配置，但未识别到流量或到期信息。请确认服务是否返回 subscription-userinfo，或正文是否包含剩余流量/到期时间。";
+  }
+}
+
+async function applyPoolRefreshResult(item, result, results, fetchedAt) {
+  updatePoolMetrics(item, result, fetchedAt);
+  const storedBody = await writePoolCachedBody(item, result.body);
+  item.cachedConfig = {
+    ...storedBody,
+    status: result.status,
+    client: result.client,
+    fetchedAt,
+    bodyFetchedAt: fetchedAt,
+    contentType: result.contentType,
+    subscriptionUserinfo: result.subscriptionUserinfo,
+    score: result.score,
+    attempts: poolRefreshAttempts(results),
+    error: null
+  };
+}
+
+function applyPoolRefreshFailure(item, results, error, fetchedAt) {
+  const best = results[0] || null;
+  updatePoolMetrics(item, best, fetchedAt);
+  item.lastError = error.name === "AbortError" ? "检查超时。" : error.message || "请求失败。";
+  item.cachedConfig = {
+    ...(item.cachedConfig || {}),
+    fetchedAt,
+    bodyFetchedAt: item.cachedConfig?.bodyFetchedAt || item.cachedConfig?.fetchedAt || null,
+    attempts: poolRefreshAttempts(results),
+    error: error.message || "没有获取到可用的订阅配置。"
+  };
+}
+
 async function fetchLivePoolConfig(item) {
   const profiles = REQUEST_PROFILES.filter(profile => profile.name === "clash-meta");
   const results = [];
@@ -2742,6 +2766,8 @@ async function fetchLivePoolConfig(item) {
       });
       const rawBody = await response.text();
       const body = response.ok ? extractClashConfigBody(rawBody) : "";
+      const subscriptionUserinfo = response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo") || "";
+      const metrics = parseSubscriptionUserInfo(subscriptionUserinfo) || parseAccountUnavailable(rawBody) || parseBodyHints(rawBody);
       const score = response.ok ? clashConfigScore(body) : -1000;
       relayLog("live-pool-fetch-response", {
         poolId: item?.id || "",
@@ -2752,7 +2778,7 @@ async function fetchLivePoolConfig(item) {
         rawBodyLength: rawBody.length,
         extractedBodyLength: body.length,
         score,
-        subscriptionUserinfo: response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo") || "",
+        subscriptionUserinfo,
         rawBodyPreview: bodyPreview(rawBody),
         extractedBodyPreview: bodyPreview(body)
       });
@@ -2763,8 +2789,11 @@ async function fetchLivePoolConfig(item) {
         score,
         rawBodyLength: rawBody.length,
         contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
-        subscriptionUserinfo: response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo") || "",
-        error: response.ok ? null : `池 URL 获取失败（HTTP ${response.status}）：${rawBody.slice(0, 200)}`
+        subscriptionUserinfo,
+        metrics,
+        error: response.ok
+          ? (body ? null : "响应不是有效的订阅配置。")
+          : `池 URL 获取失败（HTTP ${response.status}）：${rawBody.slice(0, 200)}`
       });
     } catch (error) {
       relayLog("live-pool-fetch-error", {
@@ -2812,14 +2841,17 @@ async function fetchLivePoolConfig(item) {
         error: result.error
       }))
     });
-    throw livePoolConfigFailure(results, best);
+    const error = livePoolConfigFailure(results, best);
+    applyPoolRefreshFailure(item, results, error, new Date().toISOString());
+    throw error;
   }
 
-  return {
+  const fetchedAt = new Date().toISOString();
+  const liveConfig = {
     body: best.body,
     status: best.status,
     client: best.client,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt,
     contentType: best.contentType,
     subscriptionUserinfo: best.subscriptionUserinfo,
     score: best.score,
@@ -2834,6 +2866,8 @@ async function fetchLivePoolConfig(item) {
     })),
     error: null
   };
+  await applyPoolRefreshResult(item, best, results, fetchedAt);
+  return liveConfig;
 }
 
 function poolMetricUnavailableReason(item, now = Date.now()) {
@@ -3292,91 +3326,7 @@ async function switchUserSubscription(user, fromSubscription, toSubscription, re
 
 async function refreshPoolConfigCache(item, { force = false } = {}) {
   if (!force && cacheIsFresh(item.cachedConfig)) return item.cachedConfig;
-
-  const profiles = REQUEST_PROFILES.filter(profile => profile.name === "clash-meta");
-  const results = [];
-  for (const profile of profiles) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    try {
-      const response = await fetch(item.url, {
-        method: "GET",
-        redirect: "follow",
-        signal: controller.signal,
-        headers: {
-          ...profile.headers,
-          "Cache-Control": "no-cache",
-          "Pragma": "no-cache"
-        }
-      });
-      const rawBody = await response.text();
-      const body = response.ok ? extractClashConfigBody(rawBody) : "";
-      results.push({
-        body,
-        client: profile.name,
-        status: response.status,
-        score: clashConfigScore(body),
-        rawBodyLength: rawBody.length,
-        contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
-        subscriptionUserinfo: response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo") || "",
-        error: response.ok
-          ? (body ? null : "\u54cd\u5e94\u4e0d\u662f\u6709\u6548\u7684\u8ba2\u9605\u914d\u7f6e\u3002")
-          : `\u8ba2\u9605\u914d\u7f6e\u83b7\u53d6\u5931\u8d25\uff08HTTP ${response.status}\uff09\u3002`
-      });
-    } catch (error) {
-      results.push({
-        body: "",
-        client: profile.name,
-        status: null,
-        score: -1000,
-        rawBodyLength: 0,
-        contentType: "text/plain; charset=utf-8",
-        subscriptionUserinfo: "",
-        error: error.name === "AbortError" ? "缓存请求超时。" : error.message
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  const best = results.sort((a, b) => b.score - a.score)[0];
-  if (best?.body) {
-    const storedBody = await writePoolCachedBody(item, best.body);
-    item.cachedConfig = {
-      ...storedBody,
-      status: best.status,
-      client: best.client,
-      fetchedAt: new Date().toISOString(),
-      bodyFetchedAt: new Date().toISOString(),
-      contentType: best.contentType,
-      subscriptionUserinfo: best.subscriptionUserinfo,
-      score: best.score,
-      attempts: results.map(result => ({
-        client: result.client,
-        status: result.status,
-        score: result.score,
-        bodyLength: result.body.length,
-        rawBodyLength: result.rawBodyLength || result.body.length,
-        error: result.error
-      })),
-      error: null
-    };
-  } else {
-    item.cachedConfig = {
-      ...(item.cachedConfig || {}),
-      fetchedAt: new Date().toISOString(),
-      bodyFetchedAt: item.cachedConfig?.bodyFetchedAt || item.cachedConfig?.fetchedAt || null,
-      attempts: results.map(result => ({
-        client: result.client,
-        status: result.status,
-        score: result.score,
-        bodyLength: result.body.length,
-        rawBodyLength: result.rawBodyLength || result.body.length,
-        error: result.error
-      })),
-      error: results.find(result => result.error)?.error || "没有获取到可缓存的 Clash 配置。"
-    };
-  }
+  await refreshSubscription(item);
   return item.cachedConfig;
 }
 
@@ -3394,11 +3344,8 @@ async function cachedPoolConfig(item) {
   throw error;
 }
 
-async function refreshAllPoolConfigCaches({ force = false } = {}) {
-  await Promise.all(subscriptions.map(item => Promise.all([
-    refreshSubscription(item),
-    refreshPoolConfigCache(item, { force })
-  ])));
+async function refreshAllPoolConfigCaches() {
+  await Promise.all(subscriptions.map(item => refreshSubscription(item)));
   await saveData();
 }
 
@@ -4168,7 +4115,6 @@ async function handleRelaySubscription(req, res, token) {
 async function refreshAll() {
   for (const item of subscriptions) {
     await refreshSubscription(item);
-    await refreshPoolConfigCache(item);
   }
   await saveData();
   await runLowTrafficCheck();
@@ -4633,7 +4579,8 @@ async function handleApi(req, res, pathname) {
         purchasedAt: user.purchasedAt || "",
         duration: user.duration || "",
         cashValue: remainingPlanCashValue(user),
-        traffic: plan?.traffic || "-",
+        unlimited: Boolean(user.unlimited),
+        traffic: user.unlimited ? "无限流量" : (plan?.traffic || "-"),
         devices: plan?.[`${user.duration}Devices`] || "-"
       } : null,
       orders: paymentOrders.filter(item => item.accountId === account.id).slice(0, 5).map(publicPaymentOrder),
@@ -5165,6 +5112,28 @@ async function handleApi(req, res, pathname) {
   }
 
   const adminOrderMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)$/);
+  if (adminOrderMatch && req.method === "POST") {
+    const order = paymentOrders.find(item => item.id === adminOrderMatch[1]);
+    if (!order) {
+      sendJson(res, 404, { error: "没有找到这个订单。" });
+      return;
+    }
+    if (order.status !== "paid") {
+      sendJson(res, 400, { error: "只有已付款订单可以重新发放。" });
+      return;
+    }
+    try {
+      await fulfillPaymentOrder(order, req);
+      sendJson(res, 200, adminPaymentOrder(order));
+    } catch (error) {
+      order.fulfillmentStatus = "failed";
+      order.fulfillmentError = error.message;
+      order.updatedAt = new Date().toISOString();
+      await savePaymentOrders();
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
   if (adminOrderMatch && req.method === "GET") {
     const order = paymentOrders.find(item => item.id === adminOrderMatch[1]);
     if (!order) {
@@ -5208,6 +5177,8 @@ async function handleApi(req, res, pathname) {
         createdAt: new Date().toISOString()
       };
       const normalized = normalizeUser(payload, item);
+      const selectedSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
+      if (selectedSubscription && subscriptionAtCapacity(selectedSubscription) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
       normalized.outputMode = userOutputMode(payload);
       normalized.blockUserinfo = payload.blockUserinfo !== false;
       users.unshift(normalized);
@@ -5785,8 +5756,9 @@ async function handleApi(req, res, pathname) {
         if (!subscriptionAllowsGroup(toSubscription, activeUserGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
         const poolExpiresAt = Date.parse(toSubscription.metrics?.expireAt || "");
         if ((toSubscription.enabled === false && payload.allowDisabled !== true) || !Number.isFinite(poolExpiresAt) || poolExpiresAt <= Date.now()) throw new Error("请选择已启用且未过期的订阅池，或勾选使用未启用池。");
-        const beforeExpiresAt = item.expiresAt || null;
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
+        if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
+        const beforeExpiresAt = item.expiresAt || null;
         item.planExpiresAt ||= beforeExpiresAt;
         item.giftedDays = (Number(item.giftedDays) || 0) + Number(payload.days);
         item.expiresAt = expiresAt;
@@ -5844,7 +5816,7 @@ async function handleApi(req, res, pathname) {
         if (!Number.isFinite(poolExpiresAt) || poolExpiresAt <= Date.now()) throw new Error("无有效到期日或已过期的订阅池不能绑定用户。");
         if (toSubscription.enabled === false && payload.allowDisabled !== true) throw new Error("该订阅池尚未启用。");
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
-        if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id)) throw new Error("该URL使用人数已满");
+        if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
         if (fromSubscription?.id !== toSubscription.id) {
           item.subscriptionId = toSubscription.id;
           item.updatedAt = new Date().toISOString();
@@ -5881,12 +5853,14 @@ async function handleApi(req, res, pathname) {
         const linkedAccount = accounts.find(account => account.linkedUserId === item.id);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
-        Object.assign(item, normalizeUser(payload, item));
+        const normalized = normalizeUser(payload, item);
+        const toSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
+        if (fromSubscription?.id !== toSubscription?.id && toSubscription && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
+        Object.assign(item, normalized);
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const after = userSnapshotForLog(item);
         const changes = summarizeUserChanges(before, after);
-        const toSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         if (changes.length) {
           const poolChanged = before.subscriptionId !== after.subscriptionId;
           appendUserLogToUser(item, createUserLog({
@@ -6199,6 +6173,7 @@ module.exports = Object.assign(requestHandler, {
   ensureDataFile,
   handleApi,
   sendJson,
+  refreshSubscription,
   parseSubscriptionUserInfo,
   parseBodyHints,
   parseAccountUnavailable,

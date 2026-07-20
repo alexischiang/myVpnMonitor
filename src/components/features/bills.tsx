@@ -3,8 +3,9 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useParams } from "react-router-dom"
 import { AlertCircle, ArrowLeft, Loader2 } from "lucide-react"
 
-import { fetchJson } from "@/api"
+import { fetchJson, postJson } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -159,6 +160,9 @@ export function OrderDetailPage() {
   const { id } = useParams()
   const [order, setOrder] = React.useState<AdminOrder | null>(null)
   const [error, setError] = React.useState("")
+  const [retryError, setRetryError] = React.useState("")
+  const [retryOpen, setRetryOpen] = React.useState(false)
+  const [retrying, setRetrying] = React.useState(false)
 
   React.useEffect(() => {
     if (!id) return
@@ -170,9 +174,34 @@ export function OrderDetailPage() {
   const status = orderStatus(order)
   const failure = order.internalFulfillmentError || order.paymentError
 
+  async function retryFulfillment() {
+    if (!id || retrying) return
+    setRetrying(true)
+    setRetryError("")
+    try {
+      setOrder(await postJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}`))
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "重新发放失败")
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="订单详情" description={order.merOrderTid} actions={<Button asChild variant="outline" size="sm"><Link to="/orders"><ArrowLeft />返回订单</Link></Button>} />
+      <PageHeader title="订单详情" description={order.merOrderTid} actions={<>
+        {status === "unfulfilled" ? <>
+          <Button variant="destructive" size="sm" disabled={retrying} onClick={() => setRetryOpen(true)}>{retrying ? <Loader2 className="animate-spin" /> : null}{retrying ? "正在发放" : "重新发放"}</Button>
+          <AlertDialog open={retryOpen} onOpenChange={setRetryOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader><AlertDialogTitle>确认重新发放套餐？</AlertDialogTitle><AlertDialogDescription>系统会按原订单重新执行套餐发放。已经结算的钱包和 VIP 流水不会重复记账。</AlertDialogDescription></AlertDialogHeader>
+            <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void retryFulfillment()}>确认发放</AlertDialogAction></AlertDialogFooter>
+          </AlertDialogContent>
+          </AlertDialog>
+        </> : null}
+        <Button asChild variant="outline" size="sm"><Link to="/orders"><ArrowLeft />返回订单</Link></Button>
+      </>} />
+      {retryError ? <Alert variant="error"><AlertCircle /><AlertTitle>重新发放失败</AlertTitle><AlertDescription>{retryError}</AlertDescription></Alert> : null}
       {failure ? <Alert variant="error"><AlertCircle /><AlertTitle>{status === "unfulfilled" ? "已付款但套餐未发放" : "订单处理异常"}</AlertTitle><AlertDescription>{failure}</AlertDescription></Alert> : null}
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
