@@ -11,7 +11,7 @@ import { AppShell } from "@/components/features/app-shell"
 import { DashboardPage } from "@/components/features/dashboard"
 import { SubscriptionsPage } from "@/components/features/subscriptions"
 import { UsersPage } from "@/components/features/users"
-import { BillDetailPage, BillsPage } from "@/components/features/bills"
+import { OrderDetailPage, OrdersPage } from "@/components/features/bills"
 import { SubscriptionDetailPage, UserDetailPage } from "@/components/features/details"
 import { EmbyPage } from "@/components/features/emby"
 import { PricingSettingsPage } from "@/components/features/pricing-settings"
@@ -78,8 +78,9 @@ function App() {
               <Route path="urls/detail/:id" element={<SubscriptionDetailPage />} />
               <Route path="users" element={<UsersPage />} />
               <Route path="users/detail/:id" element={<UserDetailPage />} />
-              <Route path="bills" element={<BillsPage />} />
-              <Route path="bills/:id" element={<BillDetailPage />} />
+              <Route path="orders" element={<OrdersPage />} />
+              <Route path="orders/:id" element={<OrderDetailPage />} />
+              <Route path="bills" element={<Navigate to="/orders" replace />} />
               <Route path="pricing-settings" element={<PricingSettingsPage />} />
               <Route path="sales-settings" element={<SalesSettingsPage />} />
               <Route path="emby" element={<EmbyPage />} />

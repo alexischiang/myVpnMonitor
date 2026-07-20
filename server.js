@@ -141,7 +141,7 @@ const REQUEST_PROFILES = [
   {
     name: "clash-meta",
     headers: {
-      "User-Agent": "clash.meta",
+      "User-Agent": "ClashMetaForAndroid/2.11.3.Meta",
       "Accept": "text/plain, application/yaml, */*"
     }
   },
@@ -760,6 +760,11 @@ function publicPaymentOrder(order) {
   const vipSpendAmount = Number(order.vipSpendAmount) || 0;
   const currentVipSpend = userVipSpend(userForAccount(accounts.find(item => item.id === order.accountId)));
   const vipSpendAfter = Number.isFinite(Number(order.vipSpendAfter)) ? Number(order.vipSpendAfter) : currentVipSpend;
+  const poolFulfillmentError = {
+    "没有可用的池 URL。": `目前没有可用 ${order.planName} 池发放。`,
+    "池 URL 缺少到期时间，请手动选择。": `${order.planName} 池缺少有效到期时间，暂时无法发放。`,
+    "没有匹配的池 URL，请手动选择。": `目前没有匹配 ${order.planName} 套餐期限的池发放。`
+  }[order.fulfillmentError];
   return {
     id: order.id,
     merOrderTid: order.merOrderTid,
@@ -796,12 +801,23 @@ function publicPaymentOrder(order) {
     accountId: order.accountId || "",
     deliveryUrl: order.deliveryUrl || "",
     fulfillmentStatus: order.fulfillmentStatus || "",
-    fulfillmentError: order.fulfillmentError ? "支付成功，但套餐发放失败，请联系客服处理。" : "",
+    fulfillmentError: poolFulfillmentError || (order.fulfillmentError ? (order.purpose === "recharge" ? "充值暂未成功入账。" : "套餐暂未成功发放。") : ""),
     paymentError: order.paymentError || "",
     createdAt: order.createdAt,
     expiresAt: paymentOrderExpiresAt(order),
     paidAt: order.paidAt || "",
     updatedAt: order.updatedAt || order.createdAt
+  };
+}
+
+function adminPaymentOrder(order) {
+  const account = accounts.find(item => item.id === order.accountId);
+  return {
+    ...publicPaymentOrder(order),
+    email: order.email || account?.email || "",
+    duration: order.duration || "",
+    group: order.group || "",
+    internalFulfillmentError: order.fulfillmentError || ""
   };
 }
 
@@ -5140,6 +5156,22 @@ async function handleApi(req, res, pathname) {
       .filter(account => account.status === "active" && !userForAccount(account))
       .map(publicRegisteredAccount);
     sendJson(res, 200, [...users.map(user => publicUser(user, subscriptionsById)), ...registeredAccounts]);
+    return;
+  }
+
+  if (pathname === "/api/admin/orders" && req.method === "GET") {
+    sendJson(res, 200, paymentOrders.map(adminPaymentOrder).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+    return;
+  }
+
+  const adminOrderMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)$/);
+  if (adminOrderMatch && req.method === "GET") {
+    const order = paymentOrders.find(item => item.id === adminOrderMatch[1]);
+    if (!order) {
+      sendJson(res, 404, { error: "没有找到这个订单。" });
+      return;
+    }
+    sendJson(res, 200, adminPaymentOrder(order));
     return;
   }
 
