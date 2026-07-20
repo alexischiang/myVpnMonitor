@@ -13,8 +13,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - run: npm ci --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+      - name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci --prefer-offline --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            delay=$((attempt * 30))
+            echo "npm ci failed on attempt $attempt; retrying in ${delay}s..."
+            sleep "$delay"
+          done
 
       - run: npm run build
 
@@ -36,7 +50,17 @@ jobs:
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
             git pull --ff-only origin production
-            npm ci --omit=dev --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+            for attempt in 1 2 3; do
+              if npm ci --omit=dev --prefer-offline --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                exit 1
+              fi
+              delay=$((attempt * 30))
+              echo "npm ci failed on attempt $attempt; retrying in ${delay}s..."
+              sleep "$delay"
+            done
             if [ -f dist/index.html ]; then
               touch dist/index.html
             fi
