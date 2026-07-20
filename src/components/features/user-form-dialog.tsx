@@ -264,7 +264,7 @@ export function UserFormDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex min-w-0 max-h-[calc(100vh-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
-        <DialogHeader className="shrink-0 bg-[#f9f9f9] px-6 pt-6 text-left">
+        <DialogHeader className="shrink-0 bg-card px-6 pt-6 text-left text-card-foreground">
           <DialogTitle>{user ? "编辑用户" : "新增用户"}</DialogTitle>
           <DialogDescription className="sr-only">填写用户购买信息</DialogDescription>
           <FieldGroup className="gap-2 pt-2">
@@ -347,7 +347,7 @@ export function UserFormDialog({
             )}
           </FieldGroup>
 
-          <DialogFooter className="shrink-0 flex-row items-center justify-between border-t bg-[#f9f9f9] px-6 py-4 sm:justify-between">
+          <DialogFooter className="shrink-0 flex-row items-center justify-between border-t bg-card px-6 py-4 text-card-foreground sm:justify-between">
             <DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose>
             <div className="flex gap-2">
               {stepIndex > 0 ? <Button type="button" variant="outline" onClick={() => setStepIndex(current => current - 1)}>上一步</Button> : null}

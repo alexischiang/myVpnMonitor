@@ -1265,7 +1265,7 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
 const paymentFulfillmentTasks = new Map();
 
 async function fulfillPaymentOrderOnce(order, req) {
-  if (!order || order.status !== "paid" || order.fulfilledAt) return order;
+  if (!order || order.status !== "paid" || (order.fulfilledAt && order.fulfillmentStatus !== "failed")) return order;
   if (order.purpose === "recharge") {
     const account = accounts.find(item => item.id === order.accountId);
     if (!account) throw new Error("充值账户不存在。");
@@ -1425,20 +1425,20 @@ async function fulfillPaymentOrderOnce(order, req) {
     await saveAccounts();
   }
   order.deliveryUrl = deliveryUrlForUser(user, req);
-  order.fulfilledAt = new Date().toISOString();
-  order.fulfillmentStatus = "fulfilled";
-  order.fulfillmentError = "";
   await saveUsers();
   await saveAccounts();
   await saveBills();
   await createReferralReward(order, account);
+  order.fulfilledAt = new Date().toISOString();
+  order.fulfillmentStatus = "fulfilled";
+  order.fulfillmentError = "";
   await savePaymentOrders();
   await notifyPaymentOrder(order);
   return order;
 }
 
 async function fulfillPaymentOrder(order, req) {
-  if (!order || order.status !== "paid" || order.fulfilledAt) return order;
+  if (!order || order.status !== "paid" || (order.fulfilledAt && order.fulfillmentStatus !== "failed")) return order;
   const key = String(order.id || order.merOrderTid || "");
   const activeTask = paymentFulfillmentTasks.get(key);
   if (activeTask) return activeTask;
@@ -1447,6 +1447,9 @@ async function fulfillPaymentOrder(order, req) {
   paymentFulfillmentTasks.set(key, task);
   try {
     return await task;
+  } catch (error) {
+    order.fulfilledAt = "";
+    throw error;
   } finally {
     if (paymentFulfillmentTasks.get(key) === task) paymentFulfillmentTasks.delete(key);
   }
@@ -3372,7 +3375,7 @@ function buildUserInfoNodes(user) {
   }
   const level = userVipLevel(user);
   const group = activeUserGroup(user).toUpperCase();
-  nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group}`);
+  nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group} | 前几个不要选`);
   return nodes;
 }
 
@@ -5113,6 +5116,9 @@ async function handleApi(req, res, pathname) {
 
   const adminOrderMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)$/);
   if (adminOrderMatch && req.method === "POST") {
+    // A failed fulfillment may have already mutated the in-memory snapshot.
+    // Always retry from the last successfully persisted state.
+    await loadLatestData({ force: true });
     const order = paymentOrders.find(item => item.id === adminOrderMatch[1]);
     if (!order) {
       sendJson(res, 404, { error: "没有找到这个订单。" });

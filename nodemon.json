@@ -1,6 +1,7 @@
 {
   "watch": [
     "server.js",
+    "database.js",
     "public"
   ],
   "ext": "js,html,css,json",
