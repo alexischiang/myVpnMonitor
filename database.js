@@ -416,6 +416,14 @@ class PostgresDataStore {
 
   async saveCollection(collection, rows) {
     return withPgRetry(async () => {
+      const uniqueRows = [];
+      const seenIds = new Set();
+      rows.forEach((row, index) => {
+        const id = row.id || `${collection}-${index}`;
+        if (seenIds.has(id)) return;
+        seenIds.add(id);
+        uniqueRows.push({ id, row });
+      });
       const client = await this.pool.connect();
       try {
         await client.query("BEGIN");
@@ -424,12 +432,12 @@ class PostgresDataStore {
         // INSERT the same primary keys.
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`app_records:${collection}`]);
         await client.query("DELETE FROM app_records WHERE collection = $1", [collection]);
-        if (rows.length) {
+        if (uniqueRows.length) {
           const ids = [];
           const positions = [];
           const datas = [];
-          rows.forEach((row, index) => {
-            ids.push(row.id || `${collection}-${index}`);
+          uniqueRows.forEach(({ id, row }, index) => {
+            ids.push(id);
             positions.push(index);
             datas.push(JSON.stringify(row));
           });
