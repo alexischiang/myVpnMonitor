@@ -20,7 +20,7 @@ export const navItems: NavItem[] = [
   { title: "Dashboard", url: "/dashboard", icon: IconDashboard },
   { title: "Pool", url: "/urls", icon: IconRoute },
   { title: "Users", url: "/users", icon: IconUsers },
-  { title: "Bills", url: "/bills", icon: IconCreditCard },
+  { title: "Orders", url: "/orders", icon: IconCreditCard },
   { title: "套餐管理", url: "/pricing-settings", icon: IconCurrencyDollar },
   { title: "销售设置", url: "/sales-settings", icon: IconTag },
   { title: "Emby", url: "/emby", icon: IconVideo },

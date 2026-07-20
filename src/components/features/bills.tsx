@@ -1,11 +1,10 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, Loader2 } from "lucide-react"
-import { toast } from "sonner"
+import { AlertCircle, ArrowLeft, Loader2 } from "lucide-react"
 
-import { deleteJson, fetchJson, postJson } from "@/api"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { fetchJson } from "@/api"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,186 +13,194 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
-import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader } from "@/components/features/shared"
-import type { Bill } from "@/types"
-import { billTypeLabels, durationLabels, formatDate, formatDateTime, formatMoney } from "@/utils"
+import { durationLabels, formatDateTime, formatMoney } from "@/utils"
 
-export function BillsPage() {
-  const { bills, reload, runAsync } = useData()
-  const [pendingAction, setPendingAction] = React.useState<{ item: Bill; action: "reverse" | "delete" } | null>(null)
-  const [confirming, setConfirming] = React.useState(false)
-  const [typeFilter, setTypeFilter] = React.useState("all")
+type AdminOrder = {
+  id: string
+  merOrderTid: string
+  purpose: "plan" | "recharge"
+  planName: string
+  optionLabel: string
+  duration?: string
+  amount: number
+  totalAmount?: number
+  walletAmount?: number
+  walletCashAmount?: number
+  walletGiftAmount?: number
+  originalAmount?: number
+  discountAmount?: number
+  vipDiscountAmount?: number
+  subtotal?: number
+  taxAmount?: number
+  cashCredit?: number
+  channelCode?: string
+  couponCode?: string
+  email?: string
+  status: string
+  statusText: string
+  fulfillmentStatus?: string
+  fulfillmentError?: string
+  internalFulfillmentError?: string
+  paymentError?: string
+  deliveryUrl?: string
+  createdAt: string
+  paidAt?: string
+}
+
+const orderStatusLabels: Record<string, string> = {
+  pending: "待付款",
+  closed: "已取消",
+  failed: "支付失败",
+  abnormal: "支付异常",
+  unfulfilled: "已付款未发放套餐",
+  fulfilled: "已完成",
+}
+
+const paymentChannelLabels: Record<string, string> = { "100": "支付宝", "200": "微信支付", wallet: "账户余额", "cash-credit": "现金价值全额抵扣" }
+
+function orderStatus(order: AdminOrder) {
+  if (order.status === "paid" && order.fulfillmentStatus === "fulfilled") return "fulfilled"
+  if (order.status === "paid") return "unfulfilled"
+  return order.status
+}
+
+function statusBadgeVariant(status: string) {
+  if (status === "fulfilled") return "success" as const
+  if (["failed", "abnormal", "unfulfilled"].includes(status)) return "destructive" as const
+  if (["pending", "paid"].includes(status)) return "warning" as const
+  return "secondary" as const
+}
+
+export function OrdersPage() {
+  const [orders, setOrders] = React.useState<AdminOrder[] | null>(null)
+  const [error, setError] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState("all")
-  const [durationFilter, setDurationFilter] = React.useState("all")
-  const typeOptions = React.useMemo(() => [...new Set(bills.map(item => item.type).filter((value): value is string => Boolean(value)))].sort(), [bills])
-  const durationOptions = React.useMemo(() => [...new Set(bills.map(item => item.duration).filter((value): value is string => Boolean(value)))].sort(), [bills])
-  const filteredBills = React.useMemo(() => bills.filter(item =>
-    (typeFilter === "all" || item.type === typeFilter) &&
-    (statusFilter === "all" || (item.reversedAt ? "reversed" : "normal") === statusFilter) &&
-    (durationFilter === "all" || item.duration === durationFilter)
-  ), [bills, typeFilter, statusFilter, durationFilter])
+  const [purposeFilter, setPurposeFilter] = React.useState("all")
 
-  async function mutate(item: Bill, action: "reverse" | "delete") {
-    await runAsync(async () => {
-      if (action === "delete") await deleteJson(`/api/bills/${item.id}`)
-      else await postJson(`/api/bills/${item.id}/reverse`, {})
-      await reload(["bills", "users"])
-      toast.success(action === "delete" ? "账单已删除" : "账单已冲正")
-    }, "处理账单...")
-  }
+  React.useEffect(() => {
+    fetchJson<AdminOrder[]>("/api/admin/orders").then(setOrders).catch(error => setError(error.message))
+  }, [])
 
-  async function confirmAction() {
-    if (!pendingAction) return
-    setConfirming(true)
-    try {
-      await mutate(pendingAction.item, pendingAction.action)
-      setPendingAction(null)
-    } finally {
-      setConfirming(false)
-    }
-  }
+  const filteredOrders = React.useMemo(() => (orders || []).filter(order =>
+    (statusFilter === "all" || orderStatus(order) === statusFilter) &&
+    (purposeFilter === "all" || order.purpose === purposeFilter)
+  ), [orders, purposeFilter, statusFilter])
 
-  const columns = React.useMemo<ColumnDef<Bill>[]>(() => [
+  const columns = React.useMemo<ColumnDef<AdminOrder>[]>(() => [
     {
-      accessorKey: "occurredAt",
-      header: DataTableColumnHeader({ title: "时间" }),
-      meta: { label: "时间" },
-      cell: ({ row }) => formatDate(row.original.occurredAt),
+      accessorKey: "createdAt",
+      header: DataTableColumnHeader({ title: "创建时间" }),
+      meta: { label: "创建时间" },
+      cell: ({ row }) => formatDateTime(row.original.createdAt),
     },
     {
-      id: "user",
-      accessorFn: item => `${item.user?.userId || ""} ${item.userId || ""} ${item.description || ""}`,
-      header: DataTableColumnHeader({ title: "用户" }),
-      meta: { label: "用户" },
-      cell: ({ row }) => row.original.user?.userId || row.original.userId || "-",
+      accessorKey: "merOrderTid",
+      header: DataTableColumnHeader({ title: "订单号" }),
+      meta: { label: "订单号" },
+      cell: ({ row }) => <span className="font-mono text-xs">{row.original.merOrderTid}</span>,
     },
     {
-      accessorKey: "type",
-      header: DataTableColumnHeader({ title: "类型" }),
-      meta: { label: "类型" },
-      cell: ({ row }) => billTypeLabels[row.original.type || ""] || row.original.type || "-",
+      id: "customer",
+      accessorFn: order => `${order.email || ""} ${order.merOrderTid} ${order.planName} ${order.optionLabel}`,
+      header: DataTableColumnHeader({ title: "客户" }),
+      meta: { label: "客户" },
+      cell: ({ row }) => row.original.email || "-",
     },
     {
-      accessorKey: "duration",
-      header: DataTableColumnHeader({ title: "周期" }),
-      meta: { label: "周期" },
-      cell: ({ row }) => row.original.duration || "-",
+      id: "product",
+      accessorFn: order => `${order.planName} ${order.optionLabel}`,
+      header: DataTableColumnHeader({ title: "商品" }),
+      meta: { label: "商品" },
+      cell: ({ row }) => `${row.original.planName} / ${row.original.optionLabel}`,
     },
     {
-      accessorKey: "amount",
+      accessorKey: "totalAmount",
       header: DataTableColumnHeader({ title: "金额" }),
       meta: { label: "金额" },
-      cell: ({ row }) => formatMoney(row.original.amount),
+      cell: ({ row }) => formatMoney(row.original.totalAmount ?? row.original.amount),
     },
     {
-      accessorKey: "description",
-      header: "备注",
-      meta: { label: "备注" },
-      cell: ({ row }) => row.original.reversedAt ? "已冲正" : row.original.description || "-",
-      enableSorting: false,
+      id: "status",
+      accessorFn: orderStatus,
+      header: DataTableColumnHeader({ title: "状态" }),
+      meta: { label: "状态" },
+      cell: ({ row }) => {
+        const status = orderStatus(row.original)
+        return <Badge variant={statusBadgeVariant(status)}>{orderStatusLabels[status] || row.original.statusText}</Badge>
+      },
     },
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => {
-        const item = row.original
-        return (
-          <div className="flex items-center gap-1">
-            <Button asChild variant="outline" size="sm"><Link to={`/bills/${item.id}`}>查看</Link></Button>
-            {item.user?.accountStatus !== "active" && !item.reversedAt && (
-              <Button variant="outline" size="sm" className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setPendingAction({ item, action: "reverse" })}>
-                撤销
-              </Button>
-            )}
-            {item.user?.accountStatus !== "active" ? <Button variant="destructive" size="sm" onClick={() => setPendingAction({ item, action: "delete" })}>删除</Button> : null}
-          </div>
-        )
-      },
+      cell: ({ row }) => <Button asChild variant="outline" size="sm"><Link to={`/orders/${row.original.id}`}>查看</Link></Button>,
       enableHiding: false,
       enableSorting: false,
     },
   ], [])
 
+  if (error) return <div className="px-4 lg:px-6"><EmptyState title="订单加载失败" description={error} /></div>
+  if (!orders) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
+
   return (
     <div className="grid gap-4 px-4 lg:px-6">
+      <PageHeader title="Orders" description="显示所有客户创建的订单，包括待付款、取消、失败、未发放和已完成订单。" />
       <DataTableCard filters={<>
-        <Field><FieldLabel htmlFor="bill-type-filter">账单类型</FieldLabel><Select value={typeFilter} onValueChange={setTypeFilter}><SelectTrigger id="bill-type-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{typeOptions.map(type => <SelectItem key={type} value={type}>{billTypeLabels[type] || type}</SelectItem>)}</SelectContent></Select></Field>
-        <Field><FieldLabel htmlFor="bill-status-filter">账单状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="bill-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="normal">正常</SelectItem><SelectItem value="reversed">已冲正</SelectItem></SelectContent></Select></Field>
-        <Field><FieldLabel htmlFor="bill-duration-filter">计费周期</FieldLabel><Select value={durationFilter} onValueChange={setDurationFilter}><SelectTrigger id="bill-duration-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{durationOptions.map(duration => <SelectItem key={duration} value={duration}>{durationLabels[duration] || duration}</SelectItem>)}</SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="order-status-filter">订单状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="order-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(orderStatusLabels).map(([status, label]) => <SelectItem key={status} value={status}>{label}</SelectItem>)}</SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="order-purpose-filter">订单类型</FieldLabel><Select value={purposeFilter} onValueChange={setPurposeFilter}><SelectTrigger id="order-purpose-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem value="plan">套餐购买</SelectItem><SelectItem value="recharge">余额充值</SelectItem></SelectContent></Select></Field>
       </>}>
-        <DataTable
-          columns={columns}
-          data={filteredBills}
-          searchKey="user"
-          searchPlaceholder="搜索账单..."
-          emptyTitle="暂无账单"
-          pageSize={10}
-          frame="card"
-        />
+        <DataTable columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={10} frame="card" />
       </DataTableCard>
-      <AlertDialog open={Boolean(pendingAction)} onOpenChange={open => { if (!open) setPendingAction(null) }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认{pendingAction?.action === "delete" ? "删除" : "撤销"}账单？</AlertDialogTitle>
-            <AlertDialogDescription>{pendingAction?.action === "delete" ? "删除后无法恢复。" : "撤销后将冲正该账单，并同步扣减用户消费金额。"}</AlertDialogDescription>
-          </AlertDialogHeader>
-        <AlertDialogFooter><AlertDialogCancel disabled={confirming}>取消</AlertDialogCancel><AlertDialogAction className="bg-destructive/10 text-destructive hover:bg-destructive/20" onClick={() => void confirmAction()} disabled={confirming}>{confirming ? <Loader2 className="animate-spin" /> : null}确认{pendingAction?.action === "delete" ? "删除" : "撤销"}</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   )
 }
 
-const purchaseTypeLabels = { initial: "新购", extend: "续费延长", replace: "覆盖" }
-const paymentChannelLabels: Record<string, string> = { "100": "支付宝", "200": "微信支付", "cash-credit": "现金价值全额抵扣" }
-
-export function BillDetailPage() {
+export function OrderDetailPage() {
   const { id } = useParams()
-  const [bill, setBill] = React.useState<Bill | null>(null)
+  const [order, setOrder] = React.useState<AdminOrder | null>(null)
   const [error, setError] = React.useState("")
 
   React.useEffect(() => {
     if (!id) return
-    fetchJson<Bill>(`/api/bills/${encodeURIComponent(id)}`).then(setBill).catch(error => setError(error.message))
+    fetchJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}`).then(setOrder).catch(error => setError(error.message))
   }, [id])
 
-  if (error) return <div className="px-4 lg:px-6"><EmptyState title="账单加载失败" description={error} /></div>
-  if (!bill) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
-  const payment = bill.payment
+  if (error) return <div className="px-4 lg:px-6"><EmptyState title="订单加载失败" description={error} /></div>
+  if (!order) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
+  const status = orderStatus(order)
+  const failure = order.internalFulfillmentError || order.paymentError
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="账单详情" description={bill.id} actions={<Button asChild variant="outline" size="sm"><Link to="/bills"><ArrowLeft />返回账单</Link></Button>} />
+      <PageHeader title="订单详情" description={order.merOrderTid} actions={<Button asChild variant="outline" size="sm"><Link to="/orders"><ArrowLeft />返回订单</Link></Button>} />
+      {failure ? <Alert variant="error"><AlertCircle /><AlertTitle>{status === "unfulfilled" ? "已付款但套餐未发放" : "订单处理异常"}</AlertTitle><AlertDescription>{failure}</AlertDescription></Alert> : null}
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle>账单信息</CardTitle></CardHeader>
+          <CardHeader><CardTitle>订单信息</CardTitle></CardHeader>
           <CardContent><Table><TableBody>
-            <DetailRow label="用户" value={bill.user?.userId || bill.userId || "-"} />
-            <DetailRow label="账单时间" value={formatDateTime(bill.occurredAt)} />
-            <DetailRow label="购买类型" value={payment ? <Badge variant="outline">{purchaseTypeLabels[payment.purchaseAction]}</Badge> : billTypeLabels[bill.type || ""] || bill.type || "-"} />
-            <DetailRow label="计费周期" value={durationLabels[bill.duration || ""] || bill.duration || "-"} />
-            <DetailRow label="状态" value={<Badge variant={bill.reversedAt ? "destructive" : "secondary"}>{bill.reversedAt ? "已冲正" : "正常"}</Badge>} />
-            <DetailRow label="备注" value={bill.description || "-"} />
+            <DetailRow label="客户" value={order.email || "-"} />
+            <DetailRow label="订单状态" value={<Badge variant={statusBadgeVariant(status)}>{orderStatusLabels[status] || order.statusText}</Badge>} />
+            <DetailRow label="发放状态" value={order.fulfillmentStatus === "fulfilled" ? "已发放" : order.fulfillmentStatus === "failed" ? "发放失败" : "尚未发放"} />
+            <DetailRow label="创建时间" value={formatDateTime(order.createdAt)} />
+            <DetailRow label="支付时间" value={order.paidAt ? formatDateTime(order.paidAt) : "尚未支付"} />
+            <DetailRow label="套餐周期" value={durationLabels[order.duration || ""] || order.optionLabel} />
           </TableBody></Table></CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle>支付详情</CardTitle></CardHeader>
-          <CardContent>{payment ? <Table><TableBody>
-            <DetailRow label="商品" value={`${payment.planName} · ${payment.optionLabel}`} />
-            <DetailRow label="支付渠道" value={paymentChannelLabels[payment.channelCode] || payment.channelCode || "未知"} />
-            <DetailRow label="支付时间" value={formatDateTime(payment.paidAt)} />
-            <DetailRow label="商品原价" value={formatMoney(payment.originalAmount)} />
-            <DetailRow label={payment.couponCode ? `优惠码 ${payment.couponCode}（${payment.discountPercent}%）` : "优惠码折扣"} value={`-${formatMoney(payment.discountAmount)}`} />
-            <DetailRow label={`${payment.vipLevel.replace(/^vip/i, "VIP ")} 专属折扣（${payment.vipDiscountPercent}%）`} value={`-${formatMoney(payment.vipDiscountAmount)}`} />
-            <DetailRow label="优惠后小计" value={formatMoney(payment.subtotal)} />
-            <DetailRow label={`税费（${payment.taxRate}%）`} value={formatMoney(payment.taxAmount)} />
-            <DetailRow label="剩余现金价值抵扣" value={`-${formatMoney(payment.cashCredit)}`} />
-            {payment.walletGiftAmount ? <DetailRow label="赠送余额支付" value={formatMoney(payment.walletGiftAmount)} /> : null}
-            {payment.walletCashAmount ? <DetailRow label="充值余额支付" value={formatMoney(payment.walletCashAmount)} /> : null}
-            <DetailRow label="第三方实付" value={formatMoney(payment.amount)} />
-            <DetailRow label="订单支付合计" value={<strong>{formatMoney(payment.totalAmount ?? payment.amount)}</strong>} />
-          </TableBody></Table> : <EmptyState title="无支付订单信息" description="该账单由后台手工创建，未记录支付渠道和折扣。" />}</CardContent>
+          <CardContent><Table><TableBody>
+            <DetailRow label="商品" value={`${order.planName} · ${order.optionLabel}`} />
+            <DetailRow label="支付渠道" value={paymentChannelLabels[order.channelCode || ""] || order.channelCode || "未知"} />
+            <DetailRow label="商品原价" value={formatMoney(order.originalAmount ?? order.totalAmount ?? order.amount)} />
+            <DetailRow label="优惠金额" value={`-${formatMoney((order.discountAmount || 0) + (order.vipDiscountAmount || 0))}`} />
+            <DetailRow label="优惠后小计" value={formatMoney(order.subtotal ?? order.totalAmount ?? order.amount)} />
+            <DetailRow label="税费" value={formatMoney(order.taxAmount || 0)} />
+            <DetailRow label="现金价值抵扣" value={`-${formatMoney(order.cashCredit || 0)}`} />
+            {order.walletGiftAmount ? <DetailRow label="赠送余额支付" value={formatMoney(order.walletGiftAmount)} /> : null}
+            {order.walletCashAmount ? <DetailRow label="充值余额支付" value={formatMoney(order.walletCashAmount)} /> : null}
+            <DetailRow label="第三方实付" value={formatMoney(order.amount)} />
+            <DetailRow label="订单支付合计" value={<strong>{formatMoney(order.totalAmount ?? order.amount)}</strong>} />
+          </TableBody></Table></CardContent>
         </Card>
       </div>
     </div>

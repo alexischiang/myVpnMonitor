@@ -392,7 +392,7 @@ export function AccountOrderDetailPage() {
         </CardHeader>
         <CardContent className="grid gap-5">
           {order.status === "pending" ? <Alert variant="warning"><Clock3 /><AlertDescription className="block">请在 <strong className="font-mono text-foreground">{countdown}</strong> 内完成付款，超时后订单将自动关闭。</AlertDescription></Alert> : null}
-          {order.paymentError || order.fulfillmentError ? <Alert variant="error"><AlertCircle /><AlertTitle>支付处理失败</AlertTitle><AlertDescription>{order.paymentError || order.fulfillmentError}</AlertDescription></Alert> : null}
+          {order.paymentError || order.fulfillmentError ? <PaymentOrderErrorAlert order={order} /> : null}
           <Separator />
           <div className="grid gap-3 sm:grid-cols-2">
             <OrderInfo label="套餐" value={`${order.planName} / ${order.optionLabel}`} />
@@ -422,6 +422,11 @@ export function AccountOrderDetailPage() {
 
 function OrderInfo({ label, value, emphasis = false }: { label: string; value: React.ReactNode; emphasis?: boolean }) {
   return <Item variant="muted"><ItemContent><ItemDescription>{label}</ItemDescription><ItemTitle className={emphasis ? "text-lg" : "text-base"}>{value}</ItemTitle></ItemContent></Item>
+}
+
+function PaymentOrderErrorAlert({ order }: { order: PaymentOrder }) {
+  if (order.fulfillmentError) return <Alert variant="error"><AlertCircle /><AlertTitle>{order.purpose === "recharge" ? "充值处理失败" : "套餐发放失败"}</AlertTitle><AlertDescription><strong>支付已成功，款项已经扣除。</strong> <strong>{order.fulfillmentError}</strong> <strong>请勿再次下单。</strong> 请联系网页右下角的 <strong>在线客服</strong> 处理。</AlertDescription></Alert>
+  return <Alert variant="error"><AlertCircle /><AlertTitle>支付处理失败</AlertTitle><AlertDescription>{order.paymentError}</AlertDescription></Alert>
 }
 
 export function AccountSettingsPage() {
@@ -483,7 +488,7 @@ export function PaymentResultPage() {
       </Card>
     </div>
   )
-  return <div className="px-4 lg:px-6"><Card className="mx-auto max-w-xl"><CardHeader className="text-center">{failed || error ? <AlertCircle className="mx-auto size-10" /> : <Clock3 className="mx-auto size-10" />}<CardTitle>{order?.statusText || "正在确认支付"}</CardTitle><CardDescription>{order?.optionLabel || "正在确认订单状态"}</CardDescription></CardHeader><CardContent className="grid gap-4">{error ? <Alert variant="error"><AlertCircle /><AlertTitle>支付处理失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}<div className="flex justify-center gap-2"><Button onClick={refresh} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : null}刷新状态</Button><Button asChild variant="outline"><Link to="/account/orders">查看订单</Link></Button></div></CardContent></Card></div>
+  return <div className="px-4 lg:px-6"><Card className="mx-auto max-w-xl"><CardHeader className="text-center">{failed || error ? <AlertCircle className="mx-auto size-10" /> : <Clock3 className="mx-auto size-10" />}<CardTitle>{order?.statusText || "正在确认支付"}</CardTitle><CardDescription>{order?.optionLabel || "正在确认订单状态"}</CardDescription></CardHeader><CardContent className="grid gap-4">{order && error ? <PaymentOrderErrorAlert order={order} /> : null}<div className="flex justify-center gap-2"><Button onClick={refresh} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : null}刷新状态</Button><Button asChild variant="outline"><Link to="/account/orders">查看订单</Link></Button></div></CardContent></Card></div>
 }
 
 function PaymentVipProgress({ order }: { order: PaymentOrder }) {

@@ -171,6 +171,8 @@ async function main() {
 
     const forbiddenSettings = await request("/api/sales-settings", { cookie });
     assert.strictEqual(forbiddenSettings.response.status, 403);
+    const forbiddenAdminOrders = await request("/api/admin/orders", { cookie });
+    assert.strictEqual(forbiddenAdminOrders.response.status, 403);
     const adminLogin = await request("/api/auth/login", {
       method: "POST",
       body: { account: "payment-admin", password: "payment-admin-password" }
@@ -418,6 +420,27 @@ async function main() {
     assert.strictEqual(couponSettings.data.coupons.find(item => item.code === "SAVE20").usedCount, 1);
     const exhaustedCoupon = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001", couponCode: "SAVE20" } });
     assert.strictEqual(exhaustedCoupon.response.status, 400);
+
+    await request(`/api/subscriptions/${subscription.id}`, { method: "PUT", cookie: adminCookie, body: { enabled: false } });
+    const noPoolOrder = await createOrder({ optionId: "basic-360" });
+    assert.strictEqual(noPoolOrder.response.status, 201);
+    await callback(noPoolOrder.data, 1, String(noPoolOrder.data.amount), true);
+    status = await request(`/api/payments/orders/${noPoolOrder.data.id}`, { cookie });
+    assert.strictEqual(status.data.fulfillmentError, "目前没有可用 BASIC 池发放。");
+
+    const visiblePendingOrder = await createOrder({ optionId: "ultra-360", useBalance: false });
+    assert.strictEqual(visiblePendingOrder.response.status, 201);
+    assert.strictEqual(visiblePendingOrder.data.status, "pending");
+    const adminOrders = await request("/api/admin/orders", { cookie: adminCookie });
+    assert.strictEqual(adminOrders.response.status, 200);
+    const adminOrderIds = new Set(adminOrders.data.map(item => item.id));
+    for (const order of [visiblePendingOrder.data, cancelledOrder.data, failedOrder.data, paidOrder.data, noPoolOrder.data]) assert.ok(adminOrderIds.has(order.id));
+    const noPoolAdminOrder = adminOrders.data.find(item => item.id === noPoolOrder.data.id);
+    assert.strictEqual(noPoolAdminOrder.status, "paid");
+    assert.strictEqual(noPoolAdminOrder.fulfillmentStatus, "failed");
+    assert.strictEqual(noPoolAdminOrder.internalFulfillmentError, "没有可用的池 URL。");
+    const adminOrderDetail = await request(`/api/admin/orders/${noPoolOrder.data.id}`, { cookie: adminCookie });
+    assert.strictEqual(adminOrderDetail.data.id, noPoolOrder.data.id);
 
     const passwordChange = await request("/api/auth/password", {
       method: "PUT",
