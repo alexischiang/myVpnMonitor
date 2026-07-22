@@ -41,7 +41,7 @@ export function SubscriptionPoolSelect({
   error,
 }: SubscriptionPoolSelectProps) {
   const pools = React.useMemo(() => subscriptions
-    .filter(item => Boolean(item.url) && Date.parse(item.metrics?.expireAt || "") > Date.now() && (allowDisabled || item.enabled !== false) && (allowFull || !subscriptionPoolIsFull(item)) && (!item.allowedGroups || !group || item.allowedGroups.includes(group)))
+    .filter(item => subscriptionPoolHasUsableSource(item) && subscriptionPoolCanBeAssigned(item) && (allowDisabled || item.enabled !== false) && (allowFull || !subscriptionPoolIsFull(item)) && (!item.allowedGroups || !group || item.allowedGroups.includes(group)))
     .sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions, allowDisabled, allowFull, group])
 
   function setAllowDisabled(next: boolean) {
@@ -68,7 +68,7 @@ export function SubscriptionPoolSelect({
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent className="max-w-[calc(100vw-3rem)]">
-          {pools.map(item => <SelectItem className="whitespace-normal break-all" key={item.id} value={item.id}>{item.serviceProvider || item.provider || "Provider"} - {item.email || item.url} · 当前人数 {customerCountLabel(item)} · 到期 {formatDate(item.metrics?.expireAt)}{item.enabled === false ? " · 未启用" : ""}</SelectItem>)}
+          {pools.map(item => <SelectItem className="whitespace-normal break-all" key={item.id} value={item.id}>{item.serviceProvider || item.provider || "Provider"} - {item.email || item.url || "手动 Base64"} · 当前人数 {customerCountLabel(item)} · {item.sourceType === "manual" ? "手动内容" : `到期 ${formatDate(item.metrics?.expireAt)}`}{item.enabled === false ? " · 未启用" : ""}</SelectItem>)}
         </SelectContent>
       </Select>
       <div className="flex flex-wrap gap-x-4 gap-y-2">
@@ -85,4 +85,12 @@ function subscriptionPoolIsFull(item?: Subscription) {
   if (!item) return false
   const maximum = Number(item.maxUsers)
   return Number.isSafeInteger(maximum) && maximum > 0 && (Number(item.customerCount) || 0) >= maximum
+}
+
+function subscriptionPoolHasUsableSource(item: Subscription) {
+  return item.sourceType === "manual" ? Boolean(item.manualContent) : Boolean(item.url)
+}
+
+function subscriptionPoolCanBeAssigned(item: Subscription) {
+  return item.sourceType === "manual" || Date.parse(item.metrics?.expireAt || "") > Date.now()
 }

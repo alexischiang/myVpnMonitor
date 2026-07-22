@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DataTableCard } from "@/components/features/data-table-card"
@@ -33,6 +34,11 @@ export function SubscriptionsPage() {
     await runAsync(async () => {
       if (editing?.id) {
         await putJson(`/api/subscriptions/${editing.id}`, payload)
+        const nextSourceType = values.sourceType === "manual" ? "manual" : "url"
+        const sourceChanged = nextSourceType !== (editing.sourceType || "url")
+          || (nextSourceType === "manual" && String(values.manualContent || "").replace(/\s+/g, "") !== editing.manualContent)
+          || (nextSourceType === "url" && String(values.url || "").trim() !== editing.url)
+        if (sourceChanged) await postJson(`/api/subscriptions/${editing.id}/refresh`, {})
         toast.success("订阅已更新")
       } else {
         const created = await postJson<Subscription>("/api/subscriptions", payload)
@@ -89,7 +95,29 @@ export function SubscriptionsPage() {
   const statusOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.status).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
   const providerOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.serviceProvider || item.provider).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
   const fields = React.useMemo<SimpleField[]>(() => [
-    { name: "url", label: "订阅 URL", type: "url", required: true, placeholder: "https://...", className: "sm:col-span-2" },
+    {
+      name: "sourceType",
+      label: "配置来源",
+      type: "select",
+      required: true,
+      className: "sm:col-span-2",
+      options: [
+        { value: "url", label: "远程订阅 URL" },
+        { value: "manual", label: "手动 Base64 内容" },
+      ],
+    },
+    { name: "url", label: "订阅 URL", type: "url", required: true, placeholder: "https://...", className: "sm:col-span-2", visibleWhen: { field: "sourceType", equals: "url" } },
+    {
+      name: "manualContent",
+      label: "Base64 订阅内容",
+      type: "textarea",
+      required: true,
+      rows: 5,
+      placeholder: "粘贴完整的 Base64 字符串，解码后应包含 trojan://、vless:// 等节点",
+      className: "sm:col-span-2",
+      controlClassName: "field-sizing-fixed h-32 min-h-24 max-h-48 resize-y overflow-auto break-all font-mono text-xs",
+      visibleWhen: { field: "sourceType", equals: "manual" },
+    },
     { name: "email", label: "邮箱", type: "email", placeholder: "customer@example.com" },
     {
       name: "serviceProvider",
@@ -111,6 +139,7 @@ export function SubscriptionsPage() {
       type: "checkbox",
       description: "已有 YAML 缓存时，无需验证远端即可换入。",
       className: "items-start rounded-md border p-3 sm:col-span-2",
+      visibleWhen: { field: "sourceType", equals: "url" },
     },
   ], [providerOptions])
   const filteredSubscriptions = React.useMemo(() => sortedSubscriptions.filter(item =>
@@ -122,7 +151,7 @@ export function SubscriptionsPage() {
   const columns = React.useMemo<ColumnDef<Subscription>[]>(() => [
     {
       id: "subscription",
-      accessorFn: item => `${item.email || item.name || ""} ${item.serviceProvider || item.provider || ""} ${item.note || ""} ${item.url || ""}`,
+      accessorFn: item => `${item.email || item.name || ""} ${item.serviceProvider || item.provider || ""} ${item.note || ""} ${item.url || ""} ${item.sourceType === "manual" ? "手动 Base64" : ""}`,
       header: DataTableColumnHeader({ title: "订阅" }),
       meta: { label: "订阅" },
       cell: ({ row }) => {
@@ -139,7 +168,7 @@ export function SubscriptionsPage() {
       accessorKey: "url",
       header: "URL",
       meta: { label: "URL" },
-      cell: ({ row }) => <UrlCell value={row.original.url} />,
+      cell: ({ row }) => row.original.sourceType === "manual" ? <Badge variant="secondary">手动 Base64</Badge> : <UrlCell value={row.original.url} />,
       enableSorting: false,
     },
     {
@@ -232,15 +261,16 @@ export function SubscriptionsPage() {
       <SimpleFormDialog
         open={open}
         title={editing ? "编辑订阅" : "新增订阅"}
-        description="粘贴上游订阅地址，保存后会自动刷新一次指标。"
+        description="选择远程 URL 或直接保存 Base64 节点内容；手动内容不会访问任何上游地址。"
         fields={fields}
         initialValues={editing ? {
           ...editing,
+          sourceType: editing.sourceType || "url",
           maxUsers: editing.maxUsers ?? 15,
           allow_basic: !editing.allowedGroups || editing.allowedGroups.includes("basic"),
           allow_pro: !editing.allowedGroups || editing.allowedGroups.includes("pro"),
           allow_ultra: !editing.allowedGroups || editing.allowedGroups.includes("ultra"),
-        } : { maxUsers: 15, allow_basic: true, allow_pro: true, allow_ultra: true }}
+        } : { sourceType: "url", maxUsers: 15, allow_basic: true, allow_pro: true, allow_ultra: true }}
         submitLabel={editing ? "保存修改" : "保存并刷新"}
         contentClassName="sm:max-w-2xl"
         onOpenChange={setOpen}
