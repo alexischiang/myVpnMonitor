@@ -1730,12 +1730,42 @@ async function handlePaymentCallback(req) {
   return { ok: true, statusCode: 200, body: "success" };
 }
 
+function subscriptionSourceType(item = {}) {
+  return String(item.sourceType || "").trim().toLowerCase() === "manual" ? "manual" : "url";
+}
+
+function subscriptionHasUsableSource(item = {}) {
+  return subscriptionSourceType(item) === "manual" ? Boolean(item.manualContent) : Boolean(item.url);
+}
+
+function normalizeManualSubscriptionContent(value) {
+  const content = String(value || "").replace(/\s+/g, "");
+  if (!content) throw new Error("请粘贴 Base64 订阅内容。");
+  if (content.length > 750_000) throw new Error("Base64 订阅内容不能超过 750 KB。");
+  if (!/^[A-Za-z0-9+/_=-]+$/.test(content)) throw new Error("手动订阅内容不是有效的 Base64。");
+
+  const decoded = Buffer.from(content.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+  if (!/(?:^|\s)(?:ss|ssr|vmess|vless|trojan|hysteria2?|tuic):\/\//im.test(decoded)) {
+    throw new Error("Base64 内容中没有识别到可用的代理节点。");
+  }
+  return content;
+}
+
 function normalizeSubscription(input, existing = {}) {
-  const rawUrl = String(input.url || existing.url || "").trim();
+  if (input.sourceType !== undefined && !["url", "manual"].includes(String(input.sourceType).trim().toLowerCase())) {
+    throw new Error("配置来源必须是远程 URL 或手动 Base64。");
+  }
+  const sourceType = input.sourceType !== undefined
+    ? subscriptionSourceType({ sourceType: input.sourceType })
+    : subscriptionSourceType(existing);
+  const rawUrl = sourceType === "url" ? String(input.url ?? existing.url ?? "").trim() : "";
   const email = String(input.email || existing.email || "").trim();
-  const generatedName = email || safeHostName(rawUrl) || existing.name || "";
+  const generatedName = email || safeHostName(rawUrl) || existing.name || (sourceType === "manual" ? "手动订阅" : "");
   const name = String(input.name || generatedName).trim();
-  const url = String(input.url || existing.url || "").trim();
+  const url = sourceType === "url" ? rawUrl : "";
+  const manualContent = sourceType === "manual"
+    ? normalizeManualSubscriptionContent(input.manualContent ?? existing.manualContent ?? "")
+    : "";
   const serviceProvider = normalizeServiceProvider(input, existing);
   const serviceProviderWebsite = normalizeServiceProviderWebsite(input, existing, serviceProvider);
   const customer = String(input.customer || existing.customer || "").trim();
@@ -1749,15 +1779,17 @@ function normalizeSubscription(input, existing = {}) {
     .map(value => String(value).trim().toLowerCase())
     .filter(value => USER_GROUPS.includes(value)))];
 
-  if (!url || !/^https?:\/\//i.test(url)) throw new Error("请填写 http 或 https 开头的订阅 URL。");
+  if (sourceType === "url" && (!url || !/^https?:\/\//i.test(url))) throw new Error("请填写 http 或 https 开头的订阅 URL。");
   if (!allowedGroups.length) throw new Error("至少选择一个允许的套餐等级。");
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("请填写该 URL 绑定的有效邮箱。");
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("请填写该订阅绑定的有效邮箱。");
   if (!Number.isSafeInteger(maxUsers) || maxUsers <= 0) throw new Error("人数上限必须是大于 0 的整数。");
 
   return {
     ...existing,
     name,
+    sourceType,
     url,
+    manualContent,
     email,
     serviceProvider,
     serviceProviderWebsite,
@@ -2284,6 +2316,9 @@ function toBytes(value, unit) {
 }
 
 function statusFor(item, customerCount = 0) {
+  if (subscriptionSourceType(item) === "manual") {
+    return item.lastError || !item.manualContent ? "invalid" : "ok";
+  }
   const metrics = item.metrics;
   if (item.lastError || !metrics || metrics.unavailable) return "invalid";
 
@@ -2697,7 +2732,10 @@ function updatePoolMetrics(item, result, fetchedAt) {
     hasRemaining: result.metrics?.remainingBytes !== undefined && result.metrics?.remainingBytes !== null
   }] : [];
 
-  if (result?.metrics && (nextScore >= existingScore || result.metrics.expireAt)) {
+  if (subscriptionSourceType(item) === "manual" && result?.body) {
+    item.metrics = result.metrics || item.metrics || null;
+    item.lastError = null;
+  } else if (result?.metrics && (nextScore >= existingScore || result.metrics.expireAt)) {
     item.metrics = result.metrics;
     item.lastError = null;
   } else if (result?.metrics && item.metrics) {
@@ -2739,6 +2777,29 @@ function applyPoolRefreshFailure(item, results, error, fetchedAt) {
 }
 
 async function fetchLivePoolConfig(item) {
+  if (subscriptionSourceType(item) === "manual") {
+    const body = normalizeManualSubscriptionContent(item.manualContent);
+    const fetchedAt = new Date().toISOString();
+    const result = {
+      body,
+      client: "manual-base64",
+      status: 200,
+      score: clashConfigScore(body),
+      rawBodyLength: body.length,
+      contentType: "text/plain; charset=utf-8",
+      subscriptionUserinfo: "",
+      metrics: parseBodyHints(body),
+      error: null
+    };
+    await applyPoolRefreshResult(item, result, [result], fetchedAt);
+    return {
+      ...result,
+      fetchedAt,
+      bodyLength: body.length,
+      attempts: poolRefreshAttempts([result])
+    };
+  }
+
   const profiles = REQUEST_PROFILES.filter(profile => profile.name === "clash-meta");
   const results = [];
   relayLog("live-pool-fetch-start", {
@@ -2884,7 +2945,7 @@ function poolMetricUnavailableReason(item, now = Date.now()) {
 
 function initialPoolFallbackReason(item, useSubconverter) {
   if (item?.enabled === false) return "pool-disabled";
-  if (!item?.url) return "pool-missing";
+  if (!subscriptionHasUsableSource(item)) return "pool-missing";
   return useSubconverter ? poolMetricUnavailableReason(item) : "";
 }
 
@@ -3572,6 +3633,23 @@ function copyUpstreamHeaders(response, req) {
   return headers;
 }
 
+function subscriptionCanBeManuallyAssigned(subscription, now = Date.now()) {
+  if (subscriptionSourceType(subscription) === "manual") return Boolean(subscription?.manualContent);
+  const expiresAt = Date.parse(subscription?.metrics?.expireAt || "");
+  return Number.isFinite(expiresAt) && expiresAt > now;
+}
+
+function manualSubscriptionHeaders(req) {
+  const browserInline = isBrowserNavigationRequest(req);
+  return {
+    "content-type": "text/plain; charset=utf-8",
+    "cache-control": "no-store, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0",
+    "content-disposition": browserInline ? "inline; filename*=UTF-8''NEXORA.txt" : "attachment; filename*=UTF-8''NEXORA"
+  };
+}
+
 async function fallbackToUsableSubscription(user, currentSubscription, reason, req, target = "") {
   const fallback = await findFallbackSubscription(user, currentSubscription);
   if (!fallback.subscription) return fallback;
@@ -3589,6 +3667,15 @@ async function findDirectFallbackSubscription(user, currentSubscription, req) {
     forwardedHeaders: headersForLog(headers)
   });
   for (const candidate of fallbackCandidates(user, currentSubscription)) {
+    if (subscriptionSourceType(candidate) === "manual") {
+      try {
+        const body = Buffer.from(normalizeManualSubscriptionContent(candidate.manualContent), "utf8");
+        return { subscription: candidate, body, headers: manualSubscriptionHeaders(req), errors };
+      } catch (error) {
+        errors.push({ subscriptionId: candidate.id, subscriptionLabel: subscriptionLogLabel(candidate), error: error.message });
+        continue;
+      }
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
     relayLog("direct-fallback-request", {
@@ -3804,7 +3891,7 @@ async function handleRelaySubscription(req, res, token) {
       });
     }
   }
-  if (!subscription?.url) {
+  if (!subscriptionHasUsableSource(subscription)) {
     relayLog("response-error-no-pool-url", {
       relayRequestId,
       userId: user.id,
@@ -3817,7 +3904,7 @@ async function handleRelaySubscription(req, res, token) {
       req,
       target: sc?.target || "",
       stage: "pool-url-check",
-      message: "\u7528\u6237\u5f53\u524d\u7ed1\u5b9a\u7684\u6c60 URL \u4e0d\u5b58\u5728\u3002"
+      message: "\u7528\u6237\u5f53\u524d\u7ed1\u5b9a\u7684\u6c60\u914d\u7f6e\u4e0d\u5b58\u5728\u3002"
     });
     sendSubscriptionMessage(res, 503, "订阅暂时不可用，请联系客服处理。");
     return;
@@ -4035,6 +4122,17 @@ async function handleRelaySubscription(req, res, token) {
         : `Subconverter request failed: ${error.message}`);
     } finally {
       clearTimeout(timer);
+    }
+    return;
+  }
+
+  if (subscriptionSourceType(subscription) === "manual") {
+    try {
+      const body = Buffer.from(normalizeManualSubscriptionContent(subscription.manualContent), "utf8");
+      res.writeHead(200, manualSubscriptionHeaders(req));
+      res.end(body);
+    } catch (error) {
+      sendSubscriptionMessage(res, 502, `手动订阅内容无效：${error.message}`);
     }
     return;
   }
@@ -5760,8 +5858,7 @@ async function handleApi(req, res, pathname) {
         const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || recommendation.subscription?.id || ""));
         if (!toSubscription) throw new Error("请选择有效的订阅池。");
         if (!subscriptionAllowsGroup(toSubscription, activeUserGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
-        const poolExpiresAt = Date.parse(toSubscription.metrics?.expireAt || "");
-        if ((toSubscription.enabled === false && payload.allowDisabled !== true) || !Number.isFinite(poolExpiresAt) || poolExpiresAt <= Date.now()) throw new Error("请选择已启用且未过期的订阅池，或勾选使用未启用池。");
+        if ((toSubscription.enabled === false && payload.allowDisabled !== true) || !subscriptionCanBeManuallyAssigned(toSubscription)) throw new Error("请选择已启用且未过期的订阅池，或有效的手动 Base64 池。");
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
         if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
         const beforeExpiresAt = item.expiresAt || null;
@@ -5818,8 +5915,8 @@ async function handleApi(req, res, pathname) {
         const payload = await readJson(req);
         const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || ""));
         if (!toSubscription) throw new Error("请选择有效的订阅池。");
-        const poolExpiresAt = Date.parse(toSubscription.metrics?.expireAt || "");
-        if (!Number.isFinite(poolExpiresAt) || poolExpiresAt <= Date.now()) throw new Error("无有效到期日或已过期的订阅池不能绑定用户。");
+        if (!subscriptionAllowsGroup(toSubscription, activeUserGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
+        if (!subscriptionCanBeManuallyAssigned(toSubscription)) throw new Error("无有效到期日、已过期或内容无效的订阅池不能绑定用户。");
         if (toSubscription.enabled === false && payload.allowDisabled !== true) throw new Error("该订阅池尚未启用。");
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
         if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
@@ -5934,7 +6031,16 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname.endsWith("/debug") && req.method === "GET") {
-    sendJson(res, 200, await debugSubscription(item.url));
+    if (subscriptionSourceType(item) === "manual") {
+      try {
+        const body = normalizeManualSubscriptionContent(item.manualContent);
+        sendJson(res, 200, [{ client: "manual-base64", status: 200, bodyLength: body.length }]);
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+    } else {
+      sendJson(res, 200, await debugSubscription(item.url));
+    }
     return;
   }
 
@@ -5975,9 +6081,11 @@ async function handleApi(req, res, pathname) {
   if (req.method === "PUT") {
     try {
       const payload = await readJson(req);
+      const previousSourceType = subscriptionSourceType(item);
       const previousUrl = item.url;
+      const previousManualContent = item.manualContent;
       Object.assign(item, normalizeSubscription(payload, item));
-      if (item.url !== previousUrl) {
+      if (subscriptionSourceType(item) !== previousSourceType || item.url !== previousUrl || item.manualContent !== previousManualContent) {
         // 订阅链接已变更：旧 metrics/状态属于上一个链接，清空避免展示陈旧信息。
         // 实时重新拉取由前端保存后显式调用 /refresh 完成，避免保存请求长时间阻塞。
         item.metrics = null;
@@ -6209,5 +6317,10 @@ module.exports = Object.assign(requestHandler, {
   paymentOrderExpiresAt,
   isPaymentOrderExpired,
   normalizeSalesSettings,
-  publicRegisteredAccount
+  publicRegisteredAccount,
+  subscriptionSourceType,
+  normalizeManualSubscriptionContent,
+  normalizeSubscription,
+  subscriptionCanBeManuallyAssigned,
+  subscriptionHasUsableSource
 });

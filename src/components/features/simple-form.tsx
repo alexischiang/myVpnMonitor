@@ -11,11 +11,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
-export type Field =
+type FieldVisibility = { visibleWhen?: { field: string; equals: string | number | boolean } }
+
+export type Field = (
   | { name: string; label: string; type?: "text" | "email" | "number" | "date" | "password" | "url"; placeholder?: string; required?: boolean; className?: string }
-  | { name: string; label: string; type: "textarea"; placeholder?: string; required?: boolean; rows?: number; className?: string }
+  | { name: string; label: string; type: "textarea"; placeholder?: string; required?: boolean; rows?: number; className?: string; controlClassName?: string }
   | { name: string; label: string; type: "select"; placeholder?: string; required?: boolean; options: Array<{ value: string; label: string }>; allowCustom?: boolean; customLabel?: string; customPlaceholder?: string; className?: string }
   | { name: string; label: string; type: "checkbox"; description?: string; className?: string }
+  ) & FieldVisibility
 
 export type FormValues = Record<string, string | number | boolean | undefined>
 
@@ -67,7 +70,8 @@ export function SimpleFormDialog({
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const nextErrors: Record<string, string> = {}
-    for (const field of fields) {
+    const visibleFields = fields.filter(field => !field.visibleWhen || values[field.visibleWhen.field] === field.visibleWhen.equals)
+    for (const field of visibleFields) {
       const value = String(values[field.name] ?? "").trim()
       const control = event.currentTarget.elements.namedItem(field.name)
       if (field.required && !value) nextErrors[field.name] = `请输入${field.label}。`
@@ -88,14 +92,14 @@ export function SimpleFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={contentClassName}>
-        <form className="grid gap-5" onSubmit={submit} noValidate>
+      <DialogContent className={cn("max-h-[calc(100dvh-2rem)] overflow-hidden", contentClassName)}>
+        <form className="grid max-h-[calc(100dvh-5rem)] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-5" onSubmit={submit} noValidate>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             {description && <DialogDescription>{description}</DialogDescription>}
           </DialogHeader>
-          <FieldGroup className="grid gap-4 sm:grid-cols-2">
-            {fields.map(field => {
+          <FieldGroup className="grid min-h-0 gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
+            {fields.filter(field => !field.visibleWhen || values[field.visibleWhen.field] === field.visibleWhen.equals).map(field => {
               const value = values[field.name]
               return (
                 <Field
@@ -130,6 +134,7 @@ export function SimpleFormDialog({
                         <Textarea
                           id={field.name}
                           name={field.name}
+                          className={field.controlClassName}
                           required={field.required}
                           aria-invalid={Boolean(errors[field.name])}
                           rows={field.rows || 4}

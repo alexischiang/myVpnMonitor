@@ -12,8 +12,40 @@ const {
   injectPlaceholderNodes,
   liveConfigFromCachedPoolConfig,
   publicRegisteredAccount,
-  startOfUtcDate
+  startOfUtcDate,
+  refreshSubscription,
+  subscriptionSourceType,
+  normalizeManualSubscriptionContent,
+  normalizeSubscription,
+  subscriptionCanBeManuallyAssigned,
+  subscriptionHasUsableSource
 } = require("./server");
+
+const manualNodeText = [
+  "trojan://password@example.com:443?security=tls#manual-one",
+  "vless://uuid@example.net:443?security=tls#manual-two"
+].join("\n");
+const manualBase64 = Buffer.from(manualNodeText).toString("base64");
+assert.strictEqual(subscriptionSourceType({ sourceType: "manual" }), "manual");
+assert.strictEqual(subscriptionSourceType({}), "url");
+assert.strictEqual(normalizeManualSubscriptionContent(`  ${manualBase64}\n`), manualBase64);
+assert.throws(() => normalizeManualSubscriptionContent(Buffer.from("not a node list").toString("base64")), /没有识别到/);
+const normalizedManual = normalizeSubscription({
+  sourceType: "manual",
+  manualContent: manualBase64,
+  email: "manual@example.com",
+  maxUsers: 15,
+  allowedGroups: ["basic"]
+});
+assert.strictEqual(normalizedManual.url, "");
+assert.strictEqual(normalizedManual.manualContent, manualBase64);
+assert.strictEqual(initialPoolFallbackReason(normalizedManual, true), "");
+assert.strictEqual(subscriptionCanBeManuallyAssigned(normalizedManual), true);
+assert.strictEqual(subscriptionHasUsableSource(normalizedManual), true);
+assert.strictEqual(subscriptionHasUsableSource({ sourceType: "manual", manualContent: "" }), false);
+assert.strictEqual(subscriptionHasUsableSource({ url: "https://example.com/sub" }), true);
+assert.strictEqual(subscriptionCanBeManuallyAssigned({ url: "https://example.com/sub", metrics: {} }), false);
+assert.strictEqual(subscriptionCanBeManuallyAssigned({ url: "https://example.com/sub", metrics: { expireAt: "2099-01-01T00:00:00.000Z" } }), true);
 
 assert.strictEqual(
   poolMetricUnavailableReason({ enabled: false, metrics: { expireAt: "2030-01-01T00:00:00.000Z", remainingBytes: 1000000 } }),
@@ -233,15 +265,20 @@ assert.strictEqual(injectedLegacyConfig.Proxy, undefined);
 assert.strictEqual(injectedLegacyConfig["Proxy Group"], undefined);
 assert.strictEqual(injectedLegacyConfig.Rule, undefined);
 
+const refreshableManual = { ...normalizedManual };
 Promise.all([
   liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: "2020-01-01T00:00:00.000Z" } }),
   liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: "2020-01-01T00:00:00.000Z" } }, { allowStale: true }),
-  liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: new Date().toISOString(), bodyFetchedAt: "2020-01-01T00:00:00.000Z" } })
+  liveConfigFromCachedPoolConfig({ cachedConfig: { body: "proxies:\n  - name: cached\n", fetchedAt: new Date().toISOString(), bodyFetchedAt: "2020-01-01T00:00:00.000Z" } }),
+  refreshSubscription(refreshableManual)
 ]).then(([stale, allowed, failedRefresh]) => {
   assert.strictEqual(stale, null);
   assert.strictEqual(failedRefresh, null);
   assert.strictEqual(allowed.cached, true);
   assert.match(allowed.body, /name: cached/);
+  assert.strictEqual(refreshableManual.cachedConfig.client, "manual-base64");
+  assert.strictEqual(refreshableManual.cachedConfig.body, manualBase64);
+  assert.strictEqual(refreshableManual.lastError, null);
   console.log("All fallback logic tests passed.");
 }).catch(error => {
   console.error(error);

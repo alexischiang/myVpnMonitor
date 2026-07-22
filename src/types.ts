@@ -5,6 +5,8 @@ export type Subscription = {
   name?: string
   email?: string
   url: string
+  sourceType?: "url" | "manual"
+  manualContent?: string
   provider?: string
   serviceProvider?: string
   note?: string

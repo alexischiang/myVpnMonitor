@@ -89,7 +89,7 @@ export function SubscriptionDetailPage() {
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader
         title="订阅详情"
-        description={item.email || item.serviceProvider || item.url}
+        description={item.email || item.serviceProvider || item.url || "手动 Base64 订阅"}
         actions={
           <>
             <Button asChild variant="outline" size="sm"><Link to="/urls"><ArrowLeft />返回</Link></Button>
@@ -101,7 +101,7 @@ export function SubscriptionDetailPage() {
         <Card>
           <CardHeader><CardTitle>基础信息</CardTitle></CardHeader>
           <CardContent className="grid gap-4">
-            <UrlCell value={item.url} />
+            {item.sourceType === "manual" ? <Info label="配置来源" value="手动 Base64" /> : <UrlCell value={item.url} />}
             <div className="grid gap-3">
               <Info label="HTTP" value={item.httpStatus || "-"} />
               <Info label="最后检查" value={formatDateTime(item.lastCheckedAt)} />
