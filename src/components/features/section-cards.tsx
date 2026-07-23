@@ -51,7 +51,7 @@ export function SectionCards({
   activeUserRate,
 }: SectionCardsProps) {
   return (
-    <div className="grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:shadow-xs md:grid-cols-2 lg:px-6 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 px-4 md:grid-cols-2 lg:px-6 xl:grid-cols-4">
       <SummaryCard label="累计收入" value={formatMoney(income)} detail={`有效账单 ${bills} 笔`} />
       <SummaryCard label="本月收入" value={formatMoney(monthlyIncome)} detail={`本日收入 ${formatMoney(dailyIncome)}`} action={<GrowthBadge value={monthlyIncomeGrowth} />} />
       <SummaryCard label="总客户数" value={users} detail={`累计客户 ${users} 位`} />

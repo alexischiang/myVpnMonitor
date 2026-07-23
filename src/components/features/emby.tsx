@@ -5,8 +5,9 @@ import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
+import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { SimpleFormDialog, type Field, type FormValues } from "@/components/features/simple-form"
 import { PageHeader } from "@/components/features/shared"
@@ -102,16 +103,12 @@ function EmbyUsers() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => (
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>
-            编辑
-          </Button>
-          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} disabled={Boolean(deletingId)} aria-label="删除 Emby 用户">
-            {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
-          </Button>
-        </div>
-      ),
+      cell: ({ row }) => <DataTableRowActions>
+        <DropdownMenuItem onSelect={() => { setEditing(row.original); setOpen(true) }}>编辑</DropdownMenuItem>
+        <DropdownMenuItem variant="destructive" onSelect={() => remove(row.original)} disabled={Boolean(deletingId)}>
+          {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}删除
+        </DropdownMenuItem>
+      </DataTableRowActions>,
       enableHiding: false,
       enableSorting: false,
     },
@@ -190,16 +187,12 @@ function EmbyVendors() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => (
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>
-            编辑
-          </Button>
-          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} disabled={Boolean(deletingId)} aria-label="删除供应商">
-            {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
-          </Button>
-        </div>
-      ),
+      cell: ({ row }) => <DataTableRowActions>
+        <DropdownMenuItem onSelect={() => { setEditing(row.original); setOpen(true) }}>编辑</DropdownMenuItem>
+        <DropdownMenuItem variant="destructive" onSelect={() => remove(row.original)} disabled={Boolean(deletingId)}>
+          {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}删除
+        </DropdownMenuItem>
+      </DataTableRowActions>,
       enableHiding: false,
       enableSorting: false,
     },

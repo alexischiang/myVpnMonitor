@@ -204,7 +204,7 @@ async function main() {
 
     for (const body of [
       { optionId: "missing", channelCode: "100" },
-      { optionId: "pro-test-001", channelCode: "300" },
+      { optionId: "pro-test-001", channelCode: "bad channel" },
       { optionId: "pro-test-001", channelCode: "100", couponCode: "INVALID" }
     ]) {
       const invalid = await request("/api/payments/orders", { method: "POST", cookie, body });

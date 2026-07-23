@@ -1,28 +1,28 @@
 import * as React from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ArrowLeft, Eye, Gift, Loader2, MailCheck, MoreHorizontal, Power, RefreshCw } from "lucide-react"
+import { ArrowLeft, Eye, Gift, Loader2, MailCheck, Power, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { ButtonGroup } from "@/components/ui/button-group"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
+import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
-import type { Bill, User, UserLog } from "@/types"
+import { UserBillsCard } from "@/components/features/user-bills-card"
+import type { User, UserLog } from "@/types"
 import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, userStatus } from "@/utils"
 
 type GiftPreview = {
@@ -49,10 +49,10 @@ export function SubscriptionDetailPage() {
   const boundUserColumns = React.useMemo<ColumnDef<User>[]>(() => [
     {
       id: "user",
-      accessorFn: user => `${user.userId || ""} ${user.wechatName || ""} ${user.email || ""}`,
+      accessorFn: user => `${user.customerID || ""} ${user.userId || ""} ${user.wechatName || ""} ${user.email || ""}`,
       header: DataTableColumnHeader({ title: "用户" }),
       meta: { label: "用户" },
-      cell: ({ row }) => row.original.userId || row.original.wechatName || "-",
+      cell: ({ row }) => row.original.customerID || row.original.userId || row.original.wechatName || "-",
     },
     {
       accessorKey: "expiresAt",
@@ -70,7 +70,7 @@ export function SubscriptionDetailPage() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => <Button asChild variant="ghost" size="icon"><Link to={`/users/detail/${row.original.id}`} aria-label="查看用户详情"><Eye /></Link></Button>,
+      cell: ({ row }) => <DataTableRowActions detail={<Button asChild variant="ghost" size="icon"><Link to={`/users/detail/${row.original.id}`} aria-label="查看用户详情"><Eye /></Link></Button>} />,
       enableHiding: false,
       enableSorting: false,
     },
@@ -217,40 +217,13 @@ export function UserDetailPage() {
   const [accountStatusSaving, setAccountStatusSaving] = React.useState(false)
   const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
+  const purchaseCount = userBills.filter(item => !item.reversedAt).length
   const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed" || log.reason === "user-created")
 
   React.useEffect(() => {
     setReferralRate(user?.referralRate ?? 10)
     setRecurringReferral(user?.recurringReferral === true)
   }, [user?.referralRate, user?.recurringReferral])
-
-  const billColumns = React.useMemo<ColumnDef<Bill>[]>(() => [
-    {
-      accessorKey: "occurredAt",
-      header: DataTableColumnHeader({ title: "时间" }),
-      meta: { label: "时间" },
-      cell: ({ row }) => formatDate(row.original.occurredAt),
-    },
-    {
-      accessorKey: "type",
-      header: DataTableColumnHeader({ title: "类型" }),
-      meta: { label: "类型" },
-      cell: ({ row }) => row.original.type || "-",
-    },
-    {
-      accessorKey: "amount",
-      header: DataTableColumnHeader({ title: "金额" }),
-      meta: { label: "金额" },
-      cell: ({ row }) => formatMoney(row.original.amount),
-    },
-    {
-      accessorKey: "description",
-      header: "备注",
-      meta: { label: "备注" },
-      cell: ({ row }) => row.original.description || "-",
-      enableSorting: false,
-    },
-  ], [])
 
   const poolLogColumns = React.useMemo<ColumnDef<UserLog>[]>(() => [
     {
@@ -435,7 +408,6 @@ export function UserDetailPage() {
 
   return (
     <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
-      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex w-full items-center"><Button asChild variant="outline" size="icon-sm"><Link to={`/users${location.search}`} aria-label="返回用户列表"><ArrowLeft /></Link></Button>{user.registeredOnly ? null : <ButtonGroup className="ml-auto"><Button variant="outline" size="sm" onClick={openPoolDialog}><RefreshCw />Switch</Button><DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="sm"><MoreHorizontal />Actions</Button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuItem onSelect={openGiftDialog}><Gift />赠送时长</DropdownMenuItem>{user.accountStatus === "active" ? <><DropdownMenuItem onSelect={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" onSelect={() => setAccountStatusOpen(true)}><Power />停用账户</DropdownMenuItem></> : user.accountStatus === "disabled" ? <DropdownMenuItem onSelect={() => setAccountStatusOpen(true)}><Power />恢复账户</DropdownMenuItem> : <DropdownMenuItem onSelect={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu></ButtonGroup>}</div>} />
       <Dialog open={giftBalanceOpen} onOpenChange={setGiftBalanceOpen}>
         <DialogContent>
           <form className="grid gap-4" onSubmit={giftBalance}>
@@ -484,67 +456,111 @@ export function UserDetailPage() {
           <AlertDialogFooter><AlertDialogCancel disabled={accountStatusSaving}>取消</AlertDialogCancel><AlertDialogAction className={user.accountStatus === "active" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined} onClick={event => { event.preventDefault(); void toggleAccountStatus() }} disabled={accountStatusSaving}>{accountStatusSaving ? <Loader2 className="animate-spin" /> : <Power />}{accountStatusSaving ? "处理中..." : user.accountStatus === "active" ? "确认停用" : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <Tabs defaultValue="overview" className="min-w-0 w-full gap-4">
-        <TabsList variant="line" className="w-full justify-start overflow-x-auto">
-          <TabsTrigger value="overview" className="flex-none">基本信息</TabsTrigger>
-          <TabsTrigger value="bills" className="flex-none">账单记录</TabsTrigger>
-          <TabsTrigger value="referral" className="flex-none">邀请返利</TabsTrigger>
-          <TabsTrigger value="logs" className="flex-none">换池日志</TabsTrigger>
-        </TabsList>
-        <TabsContent value="overview" className="min-w-0">
-          <Card>
-          <CardHeader className="gap-6"><CardTitle>订阅信息</CardTitle><Separator /></CardHeader>
-          <CardContent className="grid gap-3">
-            <Info label="用户 ID" value={user.userId || "-"} />
-            <Info label="邮箱" value={user.email || "-"} />
-            <Info label="iMessage" value={user.imessage || "-"} />
-            <Info label="套餐级别" value={user.registeredOnly ? "未开通" : (user.activeGroup?.toUpperCase() || "-")} />
-            <Info label="VIP 等级" value={user.vipLevel?.toUpperCase() || "-"} />
-            <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
-            <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
-            <Info label="当前到期" value={formatUserExpiry(user)} />
-            <Info label="订阅池" value={user.subscription?.email || user.subscription?.serviceProvider || "-"} />
-            <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
-            <Info label="状态" value={<UserStatusBadge user={user} />} />
-            <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "disabled" ? "已停用" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
+      <main className="grid min-w-0 gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
+        <Card className="self-start xl:sticky xl:top-4">
+          <CardHeader className="relative justify-items-center text-center">
+            <Button asChild variant="ghost" size="icon-sm" className="absolute top-4 left-4">
+              <Link to={`/users${location.search}`} aria-label="返回用户列表"><ArrowLeft /></Link>
+            </Button>
+            <Avatar className="size-20">
+              <AvatarFallback className="text-xl">{(user.wechatName || user.userId || user.email || "用户").slice(0, 2).toUpperCase()}</AvatarFallback>
+            </Avatar>
+            <CardTitle className="break-all text-lg">{user.wechatName || user.userId || user.email || "用户"}</CardTitle>
+            <CardDescription className="flex flex-wrap justify-center gap-2">
+              <UserStatusBadge user={user} />
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Card className="gap-2 py-4">
+                <CardContent className="grid justify-items-center gap-1 px-3 text-center">
+                  <p className="text-lg font-semibold">{purchaseCount}</p>
+                  <p className="text-xs text-muted-foreground">购买次数</p>
+                </CardContent>
+              </Card>
+              <Card className="gap-2 py-4">
+                <CardContent className="grid justify-items-center gap-1 px-3 text-center">
+                  <p className="text-lg font-semibold">{formatMoney(user.actualPaid)}</p>
+                  <p className="text-xs text-muted-foreground">总消费金额</p>
+                </CardContent>
+              </Card>
+            </div>
+            <Separator />
+            <div className="grid gap-3 [&>div]:grid-cols-[5rem_minmax(0,1fr)] [&>div]:items-start [&>div]:gap-3 [&>div>div]:text-right [&>div>div]:text-sm [&>div>div]:font-normal [&>div>p]:text-sm">
+              <Info label="用户名" value={user.userId || "-"} />
+              <Info label="ID" value={user.customerID || "-"} />
+              <Info label="邮箱" value={user.email || "-"} />
+              <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "disabled" ? "已停用" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
+              <Info label="套餐" value={user.registeredOnly ? "未开通" : (user.activeGroup?.toUpperCase() || "-")} />
+              <Info label="VIP" value={user.vipLevel?.toUpperCase() || "-"} />
+              <Info label="当前到期" value={formatUserExpiry(user)} />
+            </div>
           </CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="bills" className="min-w-0">
-          <Card>
-          <CardHeader className="gap-6"><CardTitle>账单记录</CardTitle><Separator /></CardHeader>
-          <CardContent>
-            <DataTable
-              columns={billColumns}
-              data={userBills}
-              searchKey="description"
-              searchPlaceholder="搜索账单..."
-              emptyTitle="暂无账单"
-            />
-          </CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="referral" className="min-w-0">
-          <Card>
-          <CardHeader className="gap-6"><CardTitle>邀请返利设置</CardTitle><Separator /></CardHeader>
-          <CardContent>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="referral-rate">收到返利比例（%）</Label><Input id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /></div><div className="flex items-center gap-2 self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} /><Label htmlFor="recurring-referral">享受循环返利</Label></div><Button className="sm:w-fit" onClick={() => void saveReferralSettings()} disabled={referralSaving}>{referralSaving ? <Loader2 className="animate-spin" /> : null}{referralSaving ? "保存中..." : "保存返利设置"}</Button></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="logs" className="min-w-0">
-          <Card>
-          <CardHeader className="gap-6"><CardTitle>换池日志</CardTitle><Separator /></CardHeader>
-          <CardContent>
-            <DataTable
-              columns={poolLogColumns}
-              data={poolLogs}
-              searchKey="reasonText"
-              searchPlaceholder="搜索换池原因..."
-              emptyTitle="暂无换池日志"
-            />
-          </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+          {user.registeredOnly ? null : (
+            <CardFooter className="grid gap-2">
+              <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>
+              <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
+              {user.accountStatus === "active" ? <>
+                <Button variant="outline" className="w-full" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button>
+                <Button variant="destructive" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />停用账户</Button>
+              </> : user.accountStatus === "disabled" ? (
+                <Button variant="outline" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />恢复账户</Button>
+              ) : (
+                <Button variant="outline" className="w-full" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button>
+              )}
+            </CardFooter>
+          )}
+        </Card>
+
+        <Tabs defaultValue="overview" className="min-w-0 gap-4">
+          <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4">
+            <TabsTrigger value="overview">基本信息</TabsTrigger>
+            <TabsTrigger value="bills">账单记录</TabsTrigger>
+            <TabsTrigger value="referral">邀请返利</TabsTrigger>
+            <TabsTrigger value="logs">换池日志</TabsTrigger>
+          </TabsList>
+          <TabsContent value="overview" className="grid min-w-0 gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>当前套餐</CardTitle>
+                <CardDescription>{user.registeredOnly ? "尚未开通订阅" : `${user.activeGroup?.toUpperCase() || "未设置"} 套餐`}</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 sm:grid-cols-2">
+                <Info label="当前到期" value={formatUserExpiry(user)} />
+                <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
+                <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
+                <Info label="订阅池" value={user.subscription?.email || user.subscription?.serviceProvider || "-"} />
+                <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
+                <Info label="订阅状态" value={<UserStatusBadge user={user} />} />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle>账户信息</CardTitle></CardHeader>
+              <CardContent className="grid gap-4 sm:grid-cols-2">
+                <Info label="ID" value={user.customerID || "-"} />
+                <Info label="邮箱" value={user.email || "-"} />
+                <Info label="iMessage" value={user.imessage || "-"} />
+                <Info label="VIP 等级" value={user.vipLevel?.toUpperCase() || "-"} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="bills" className="min-w-0">
+            <UserBillsCard bills={userBills} />
+          </TabsContent>
+          <TabsContent value="referral" className="min-w-0">
+            <Card>
+              <CardHeader className="gap-6"><CardTitle>邀请返利设置</CardTitle><Separator /></CardHeader>
+              <CardContent>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="referral-rate">收到返利比例（%）</Label><Input id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /></div><div className="flex items-center gap-2 self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} /><Label htmlFor="recurring-referral">享受循环返利</Label></div><Button className="sm:w-fit" onClick={() => void saveReferralSettings()} disabled={referralSaving}>{referralSaving ? <Loader2 className="animate-spin" /> : null}{referralSaving ? "保存中..." : "保存返利设置"}</Button></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="logs" className="min-w-0">
+            <Card>
+              <CardHeader className="gap-6"><CardTitle>换池日志</CardTitle><Separator /></CardHeader>
+              <CardContent><DataTable columns={poolLogColumns} data={poolLogs} searchKey="reasonText" searchPlaceholder="搜索换池原因..." emptyTitle="暂无换池日志" /></CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </main>
     </div>
   )
 }

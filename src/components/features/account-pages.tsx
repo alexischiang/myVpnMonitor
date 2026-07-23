@@ -22,6 +22,7 @@ import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { DataTableRowActions } from "@/components/features/data-table"
 import { VipBadge } from "@/components/features/vip-badge"
 import { formatDate, formatDateTime, formatMoney } from "@/utils"
 
@@ -30,7 +31,7 @@ type Subscription = { status: string; activeGroup: string; planExpiresAt?: strin
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type Overview = { email: string; createdAt: string; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; vipDelta: number; balance: number; description: string; createdAt: string }
-type WalletData = { balance: number; cashBalance: number; giftBalance: number; availableBalance: number; heldBalance: number; vipSpend: number; entries: WalletEntry[] }
+type WalletData = { balance: number; cashBalance: number; giftBalance: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
 
 const clientGuides = [
   { client: "Shadowrocket", platform: "iPhone / iPad", resources: [{ label: "点击查看教程👉https://pan.baidu.com/s/1EfxrUShiOj5Zmx9TEMIdlw?pwd=nT76", href: "https://pan.baidu.com/s/1EfxrUShiOj5Zmx9TEMIdlw?pwd=nT76", suffix: " [美区账号请联系右下角客服获取]" }] },
@@ -275,7 +276,7 @@ export function AccountWalletPage() {
       </section>
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><WalletCards />充值余额</CardTitle><CardDescription>支持任意金额充值，充值成功后立即累计 VIP 成长值。</CardDescription></CardHeader>
-        <CardContent><Field><FieldLabel htmlFor="recharge-amount">充值金额</FieldLabel><Input id="recharge-amount" inputMode="decimal" placeholder="0.00" value={amount} onChange={event => setAmount(event.target.value)} disabled={Boolean(paying)} /><FieldDescription>单次充值范围 ¥0.01–¥10,000.00</FieldDescription><div className="flex flex-col gap-2 sm:flex-row"><Button type="button" onClick={() => recharge("100")} disabled={Boolean(paying)}>{paying === "100" ? <Loader2 className="animate-spin" /> : null}支付宝充值</Button><Button type="button" variant="outline" onClick={() => recharge("200")} disabled={Boolean(paying)}>{paying === "200" ? <Loader2 className="animate-spin" /> : null}微信充值</Button></div></Field></CardContent>
+        <CardContent><Field><FieldLabel htmlFor="recharge-amount">充值金额</FieldLabel><Input id="recharge-amount" inputMode="decimal" placeholder="0.00" value={amount} onChange={event => setAmount(event.target.value)} disabled={Boolean(paying)} /><FieldDescription>单次充值范围 ¥0.01–¥10,000.00</FieldDescription><div className="flex flex-col gap-2 sm:flex-row"><Button type="button" onClick={() => recharge("100")} disabled={Boolean(paying) || !data.paymentMethods.alipay}>{paying === "100" ? <Loader2 className="animate-spin" /> : null}{data.paymentMethods.alipay ? "支付宝充值" : "支付宝维护中"}</Button><Button type="button" variant="outline" onClick={() => recharge("200")} disabled={Boolean(paying) || !data.paymentMethods.wechat}>{paying === "200" ? <Loader2 className="animate-spin" /> : null}{data.paymentMethods.wechat ? "微信充值" : "微信支付维护中"}</Button></div></Field></CardContent>
       </Card>
       <Card>
         <CardHeader><CardTitle>余额流水</CardTitle><CardDescription>充值、赠送、消费和返利都会保留不可删除的记录。</CardDescription></CardHeader>
@@ -524,5 +525,5 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function OrdersTable({ orders }: { orders: PaymentOrder[] }) {
-  return <Table><TableHeader><TableRow><TableHead>订单</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{orders.map(order => <TableRow key={order.id}><TableCell className="font-mono text-xs">{order.merOrderTid}</TableCell><TableCell>{order.planName} / {order.optionLabel}</TableCell><TableCell>{formatMoney(order.totalAmount ?? order.amount)}</TableCell><TableCell><Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge></TableCell><TableCell>{formatDate(order.createdAt)}</TableCell><TableCell className="text-right"><Button asChild size="sm" variant="outline"><Link to={`/account/orders/${encodeURIComponent(order.id)}`}>查看详情</Link></Button></TableCell></TableRow>)}</TableBody></Table>
+  return <Table><TableHeader><TableRow><TableHead>订单</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{orders.map(order => <TableRow key={order.id}><TableCell className="font-mono text-xs">{order.merOrderTid}</TableCell><TableCell>{order.planName} / {order.optionLabel}</TableCell><TableCell>{formatMoney(order.totalAmount ?? order.amount)}</TableCell><TableCell><Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge></TableCell><TableCell>{formatDate(order.createdAt)}</TableCell><TableCell><div className="flex justify-end"><DataTableRowActions detail={<Button asChild variant="ghost" size="icon"><Link to={`/account/orders/${encodeURIComponent(order.id)}`} aria-label="查看订单详情"><Eye /></Link></Button>} /></div></TableCell></TableRow>)}</TableBody></Table>
 }

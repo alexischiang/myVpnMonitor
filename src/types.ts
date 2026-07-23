@@ -35,6 +35,7 @@ export type Subscription = {
 
 export type User = {
   id: string
+  customerID: number
   registeredOnly?: boolean
   accountId?: string
   createdAt?: string
@@ -229,6 +230,19 @@ export type SalesSettings = {
   coupons: CouponSetting[]
   faqs: FaqSetting[]
   announcements: AnnouncementSetting[]
+}
+
+export type PaymentSettings = {
+  apiBaseUrl: string
+  merchantId: string
+  merchantSecret?: string
+  merchantSecretConfigured: boolean
+  alipayChannelCode: string
+  wechatChannelCode: string
+  alipayEnabled: boolean
+  wechatEnabled: boolean
+  notifyUrl: string
+  returnUrl: string
 }
 
 export type AppMeta = {

@@ -16,6 +16,7 @@ import { SubscriptionDetailPage, UserDetailPage } from "@/components/features/de
 import { EmbyPage } from "@/components/features/emby"
 import { PricingSettingsPage } from "@/components/features/pricing-settings"
 import { SalesSettingsPage } from "@/components/features/sales-settings"
+import { PaymentSettingsPage } from "@/components/features/payment-settings"
 import { StatusPage } from "@/components/features/status-page"
 import { SubconverterPage } from "@/components/features/subconverter"
 import { CheckoutPage, DeliveryPage, PricingPage } from "@/components/features/public-pages"
@@ -83,6 +84,7 @@ function App() {
               <Route path="bills" element={<Navigate to="/orders" replace />} />
               <Route path="pricing-settings" element={<PricingSettingsPage />} />
               <Route path="sales-settings" element={<SalesSettingsPage />} />
+              <Route path="payment-settings" element={<PaymentSettingsPage />} />
               <Route path="emby" element={<EmbyPage />} />
               <Route path="subconverter" element={<SubconverterPage />} />
             </Route>

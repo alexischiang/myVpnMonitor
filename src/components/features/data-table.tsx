@@ -22,6 +22,7 @@ import {
   ChevronsRight,
   ChevronsUpDown,
   Columns3,
+  EllipsisVertical,
   Search,
 } from "lucide-react"
 
@@ -208,7 +209,8 @@ export function DataTable<TData, TValue>({
                 key={column.id}
                 className={cn(
                   "w-40 min-w-40",
-                  index === 0 && "w-48 min-w-48"
+                  index === 0 && "w-48 min-w-48",
+                  column.id === "actions" && "w-24 min-w-24"
                 )}
               />
             ))}
@@ -220,9 +222,11 @@ export function DataTable<TData, TValue>({
                   <TableHead
                     key={header.id}
                     colSpan={header.colSpan}
-                    className="w-40 min-w-40 overflow-hidden px-4 font-semibold first:w-48 first:min-w-48 first:pl-6"
+                    className={cn("w-40 min-w-40 overflow-hidden px-4 text-left font-semibold first:w-48 first:min-w-48 first:pl-6", header.column.id === "actions" && "w-24 min-w-24 pr-4 pl-2 text-right")}
                   >
-                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                    {header.isPlaceholder ? null : typeof header.column.columnDef.header === "string"
+                      ? <div className="text-xs font-semibold">{header.column.columnDef.header}</div>
+                      : flexRender(header.column.columnDef.header, header.getContext())}
                   </TableHead>
                 ))}
               </TableRow>
@@ -233,7 +237,7 @@ export function DataTable<TData, TValue>({
               table.getRowModel().rows.map(row => (
                 <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
                   {row.getVisibleCells().map(cell => (
-                    <TableCell key={cell.id} className="w-40 min-w-40 overflow-hidden px-4 text-sm first:w-48 first:min-w-48 first:pl-6">
+                    <TableCell key={cell.id} className={cn("w-40 min-w-40 overflow-hidden px-4 text-left text-sm first:w-48 first:min-w-48 first:pl-6", cell.column.id === "actions" && "w-24 min-w-24 px-2 text-right")}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}
@@ -352,6 +356,28 @@ export function DataTableColumnHeader({
       </Button>
     )
   }
+}
+
+export function DataTableRowActions({
+  detail,
+  children,
+}: {
+  detail?: React.ReactNode
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="ml-auto flex w-max items-center gap-1">
+      {detail}
+      {children ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="更多操作"><EllipsisVertical /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">{children}</DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
+  )
 }
 
 declare module "@tanstack/react-table" {
