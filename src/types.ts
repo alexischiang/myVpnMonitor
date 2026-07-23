@@ -11,8 +11,9 @@ export type Subscription = {
   serviceProvider?: string
   note?: string
   enabled?: boolean
+  excludeFromAutoSwitch?: boolean
   useCachedConfigForFallback?: boolean
-  accountStatus?: "unclaimed" | "invited" | "active"
+  accountStatus?: "unclaimed" | "invited" | "active" | "disabled"
   accountId?: string
   referralCode?: string
   referralRate?: number
@@ -37,7 +38,7 @@ export type User = {
   registeredOnly?: boolean
   accountId?: string
   createdAt?: string
-  accountStatus?: "unclaimed" | "invited" | "active"
+  accountStatus?: "unclaimed" | "invited" | "active" | "disabled"
   userId?: string
   wechatName?: string
   imessage?: string

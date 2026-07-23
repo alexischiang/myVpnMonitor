@@ -5,26 +5,45 @@ import { Eye, Loader2, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
-import { Button } from "@/components/ui/button"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
+import { ProviderBadge } from "@/components/features/provider-badge"
 import { SimpleFormDialog, type Field as SimpleField, type FormValues } from "@/components/features/simple-form"
 import { StatusBadge, TrafficProgress, UrlCell } from "@/components/features/shared"
 import type { Subscription } from "@/types"
 import { formatDate, statusLabels } from "@/utils"
 
+type ProviderSummary = {
+  name: string
+  subscriptions: Subscription[]
+  poolCount: number
+  enabledCount: number
+  customerCount: number
+  capacity: number
+  autoSwitchCount: number
+  latestExpiry: string
+}
+
+const subscriptionProvider = (item: Subscription) => item.serviceProvider || item.provider || "未填写供应商"
+
 export function SubscriptionsPage() {
   const { subscriptions, reload, runAsync, busy } = useData()
   const [editing, setEditing] = React.useState<Subscription | null>(null)
+  const [disabling, setDisabling] = React.useState<Subscription | null>(null)
+  const [disablingProvider, setDisablingProvider] = React.useState<ProviderSummary | null>(null)
   const [open, setOpen] = React.useState(false)
   const [pendingAction, setPendingAction] = React.useState("")
   const [enabledFilter, setEnabledFilter] = React.useState("all")
   const [statusFilter, setStatusFilter] = React.useState("ok")
   const [providerFilter, setProviderFilter] = React.useState("all")
+  const [activeTab, setActiveTab] = React.useState("urls")
 
   async function save(values: FormValues) {
     const payload = {
@@ -91,9 +110,37 @@ export function SubscriptionsPage() {
     }
   }
 
+  async function toggleProviderAutoSwitch(provider: ProviderSummary) {
+    const excludeFromAutoSwitch = provider.autoSwitchCount > 0
+    setPendingAction(`provider:${provider.name}`)
+    try {
+      await runAsync(async () => {
+        await Promise.all(provider.subscriptions.map(item => putJson(`/api/subscriptions/${item.id}`, { excludeFromAutoSwitch })))
+        await reload(["subscriptions"])
+        toast.success(excludeFromAutoSwitch ? `已禁止 ${provider.name} 自动切入` : `已恢复 ${provider.name} 自动切入`)
+      }, excludeFromAutoSwitch ? "批量禁止自动切入..." : "批量恢复自动切入...")
+    } finally {
+      setPendingAction("")
+    }
+  }
+
   const sortedSubscriptions = React.useMemo(() => [...subscriptions].sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions])
   const statusOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.status).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
   const providerOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.serviceProvider || item.provider).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
+  const providerSummaries = React.useMemo<ProviderSummary[]>(() => {
+    const groups = new Map<string, Subscription[]>()
+    subscriptions.forEach(item => groups.set(subscriptionProvider(item), [...(groups.get(subscriptionProvider(item)) || []), item]))
+    return [...groups].map(([name, items]) => ({
+      name,
+      subscriptions: items,
+      poolCount: items.length,
+      enabledCount: items.filter(item => item.enabled !== false).length,
+      customerCount: items.reduce((total, item) => total + (Number(item.customerCount) || 0), 0),
+      capacity: items.reduce((total, item) => total + (Number(item.maxUsers) || 0), 0),
+      autoSwitchCount: items.filter(item => !item.excludeFromAutoSwitch).length,
+      latestExpiry: items.reduce((latest, item) => (Date.parse(item.metrics?.expireAt || "") || 0) > (Date.parse(latest) || 0) ? item.metrics?.expireAt || "" : latest, ""),
+    })).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
+  }, [subscriptions])
   const fields = React.useMemo<SimpleField[]>(() => [
     {
       name: "sourceType",
@@ -141,11 +188,19 @@ export function SubscriptionsPage() {
       className: "items-start rounded-md border p-3 sm:col-span-2",
       visibleWhen: { field: "sourceType", equals: "url" },
     },
+    {
+      name: "excludeFromAutoSwitch",
+      label: "禁止自动换池切换到此 URL",
+      type: "checkbox",
+      description: "不影响已绑定用户，也不影响手动选择此池。",
+      className: "items-start rounded-md border p-3 sm:col-span-2",
+      visibleWhen: { field: "sourceType", equals: "url" },
+    },
   ], [providerOptions])
   const filteredSubscriptions = React.useMemo(() => sortedSubscriptions.filter(item =>
     (enabledFilter === "all" || (item.enabled === false ? "disabled" : "enabled") === enabledFilter) &&
     (statusFilter === "all" || item.status === statusFilter) &&
-    (providerFilter === "all" || (item.serviceProvider || item.provider) === providerFilter)
+    (providerFilter === "all" || subscriptionProvider(item) === providerFilter)
   ), [sortedSubscriptions, enabledFilter, statusFilter, providerFilter])
 
   const columns = React.useMemo<ColumnDef<Subscription>[]>(() => [
@@ -159,7 +214,7 @@ export function SubscriptionsPage() {
         return (
           <div className="grid gap-1">
             <div className="truncate font-medium">{item.email || item.name || "未命名订阅"}</div>
-            <div className="truncate text-sm text-muted-foreground">{item.serviceProvider || item.provider || "Provider"}</div>
+            <ProviderBadge name={subscriptionProvider(item)} />
           </div>
         )
       },
@@ -224,7 +279,7 @@ export function SubscriptionsPage() {
             <Button variant="ghost" size="icon" onClick={() => refresh(item)} disabled={Boolean(pendingAction)} aria-label="刷新订阅">
               {pendingAction === `refresh:${item.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => toggleEnabled(item)} disabled={Boolean(pendingAction)}>{pendingAction === `toggle:${item.id}` ? <Loader2 className="animate-spin" /> : <Power />}{item.enabled === false ? "启用" : "停用"}</Button>
+            <Button variant="ghost" size="sm" onClick={() => item.enabled === false ? toggleEnabled(item) : setDisabling(item)} disabled={Boolean(pendingAction)}>{pendingAction === `toggle:${item.id}` ? <Loader2 className="animate-spin" /> : <Power />}{item.enabled === false ? "启用" : "停用"}</Button>
             <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>
               编辑
             </Button>
@@ -239,24 +294,117 @@ export function SubscriptionsPage() {
     },
   ], [pendingAction])
 
+  const providerColumns = React.useMemo<ColumnDef<ProviderSummary>[]>(() => [
+    {
+      accessorKey: "name",
+      header: DataTableColumnHeader({ title: "供应商" }),
+      meta: { label: "供应商" },
+      cell: ({ row }) => <ProviderBadge name={row.original.name} />,
+    },
+    {
+      accessorKey: "poolCount",
+      header: DataTableColumnHeader({ title: "池 URL" }),
+      meta: { label: "池 URL" },
+    },
+    {
+      accessorKey: "enabledCount",
+      header: DataTableColumnHeader({ title: "启用" }),
+      meta: { label: "启用" },
+      cell: ({ row }) => `${row.original.enabledCount}/${row.original.poolCount}`,
+    },
+    {
+      accessorKey: "customerCount",
+      header: DataTableColumnHeader({ title: "客户/容量" }),
+      meta: { label: "客户/容量" },
+      cell: ({ row }) => `${row.original.customerCount}/${row.original.capacity}`,
+    },
+    {
+      accessorKey: "autoSwitchCount",
+      header: DataTableColumnHeader({ title: "自动切入" }),
+      meta: { label: "自动切入" },
+      cell: ({ row }) => <Badge variant={row.original.autoSwitchCount ? "success" : "secondary"}>{row.original.autoSwitchCount}/{row.original.poolCount} 允许</Badge>,
+    },
+    {
+      accessorKey: "latestExpiry",
+      header: DataTableColumnHeader({ title: "最晚到期" }),
+      meta: { label: "最晚到期" },
+      cell: ({ row }) => formatDate(row.original.latestExpiry),
+    },
+    {
+      id: "actions",
+      header: "操作",
+      cell: ({ row }) => {
+        const provider = row.original
+        const pending = pendingAction === `provider:${provider.name}`
+        return (
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => { setProviderFilter(provider.name); setActiveTab("urls") }}>查看 URL</Button>
+            <Button variant="ghost" size="sm" onClick={() => provider.autoSwitchCount ? setDisablingProvider(provider) : toggleProviderAutoSwitch(provider)} disabled={Boolean(pendingAction)}>{pending ? <Loader2 className="animate-spin" /> : null}{provider.autoSwitchCount ? "禁止自动切入" : "恢复自动切入"}</Button>
+          </div>
+        )
+      },
+      enableHiding: false,
+      enableSorting: false,
+    },
+  ], [pendingAction])
+
   return (
-    <div className="grid gap-4 px-4 lg:px-6">
-      <DataTableCard filters={<>
-        <Field><FieldLabel htmlFor="pool-enabled-filter">启用状态</FieldLabel><Select value={enabledFilter} onValueChange={setEnabledFilter}><SelectTrigger id="pool-enabled-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="enabled">已启用</SelectItem><SelectItem value="disabled">已停用</SelectItem></SelectContent></Select></Field>
-        <Field><FieldLabel htmlFor="pool-status-filter">运行状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="pool-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{statusOptions.map(status => <SelectItem key={status} value={status}>{statusLabels[status] || status}</SelectItem>)}</SelectContent></Select></Field>
-        <Field><FieldLabel htmlFor="pool-provider-filter">供应商</FieldLabel><Select value={providerFilter} onValueChange={setProviderFilter}><SelectTrigger id="pool-provider-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{providerOptions.map(provider => <SelectItem key={provider} value={provider}>{provider}</SelectItem>)}</SelectContent></Select></Field>
-      </>}>
-        <DataTable
-          columns={columns}
-          data={filteredSubscriptions}
-          searchKey="subscription"
-          searchPlaceholder="搜索订阅..."
-          emptyTitle="暂无订阅"
-          pageSize={10}
-          frame="card"
-          toolbar={<><Button variant="outline" size="sm" onClick={() => refresh()} disabled={!!busy || Boolean(pendingAction)}>{pendingAction === "refresh:all" ? <Loader2 className="animate-spin" /> : <RefreshCw />}全部刷新</Button><Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增订阅</Button></>}
-        />
-      </DataTableCard>
+    <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0 w-full gap-4">
+        <TabsList variant="line">
+          <TabsTrigger value="urls">URL 管理</TabsTrigger>
+          <TabsTrigger value="providers">供应商管理</TabsTrigger>
+        </TabsList>
+        <TabsContent value="urls" className="min-w-0">
+          <DataTableCard filters={<>
+            <Field><FieldLabel htmlFor="pool-enabled-filter">启用状态</FieldLabel><Select value={enabledFilter} onValueChange={setEnabledFilter}><SelectTrigger id="pool-enabled-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="enabled">已启用</SelectItem><SelectItem value="disabled">已停用</SelectItem></SelectContent></Select></Field>
+            <Field><FieldLabel htmlFor="pool-status-filter">运行状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="pool-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{statusOptions.map(status => <SelectItem key={status} value={status}>{statusLabels[status] || status}</SelectItem>)}</SelectContent></Select></Field>
+            <Field><FieldLabel htmlFor="pool-provider-filter">供应商</FieldLabel><Select value={providerFilter} onValueChange={setProviderFilter}><SelectTrigger id="pool-provider-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{providerSummaries.map(provider => <SelectItem key={provider.name} value={provider.name}>{provider.name}</SelectItem>)}</SelectContent></Select></Field>
+          </>}>
+            <DataTable
+              columns={columns}
+              data={filteredSubscriptions}
+              searchKey="subscription"
+              searchPlaceholder="搜索订阅..."
+              emptyTitle="暂无订阅"
+              pageSize={10}
+              frame="card"
+              toolbar={<><Button variant="outline" size="sm" onClick={() => refresh()} disabled={!!busy || Boolean(pendingAction)}>{pendingAction === "refresh:all" ? <Loader2 className="animate-spin" /> : <RefreshCw />}全部刷新</Button><Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增订阅</Button></>}
+            />
+          </DataTableCard>
+        </TabsContent>
+        <TabsContent value="providers" className="min-w-0">
+          <DataTableCard>
+            <DataTable columns={providerColumns} data={providerSummaries} searchKey="name" searchPlaceholder="搜索供应商..." emptyTitle="暂无供应商" pageSize={10} frame="card" />
+          </DataTableCard>
+        </TabsContent>
+      </Tabs>
+
+      <AlertDialog open={Boolean(disabling)} onOpenChange={open => { if (!open) setDisabling(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认停用该池 URL？</AlertDialogTitle>
+            <AlertDialogDescription>停用后，该池不会继续提供订阅；已绑定用户下次请求时会触发自动换池。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction className={buttonVariants({ variant: "destructive" })} onClick={() => disabling && toggleEnabled(disabling)}>确认停用</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={Boolean(disablingProvider)} onOpenChange={open => { if (!open) setDisablingProvider(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认禁止该供应商自动切入？</AlertDialogTitle>
+            <AlertDialogDescription>将批量禁止 {disablingProvider?.name} 下 {disablingProvider?.poolCount || 0} 个池 URL 被自动换池或续费推荐切入；已绑定用户和手动选择不受影响。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction className={buttonVariants({ variant: "destructive" })} onClick={() => disablingProvider && toggleProviderAutoSwitch(disablingProvider)}>确认禁止</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <SimpleFormDialog
         open={open}

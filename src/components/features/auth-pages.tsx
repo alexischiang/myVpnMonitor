@@ -93,6 +93,11 @@ export function RegisterPage() {
   const [error, setError] = React.useState("")
   const [registrationMode, setRegistrationMode] = React.useState<"open" | "invite_only" | "disabled">("open")
   const [referralCode, setReferralCode] = React.useState(() => searchParams.get("ref") || "")
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  const emailInvalid = email.trim().length > 0 && !emailValid
+  const passwordTooShort = password.length > 0 && password.length < 8
+  const passwordMismatch = confirmPassword.length > 0 && password !== confirmPassword
+  const canSubmit = registrationMode !== "disabled" && emailValid && password.length >= 8 && confirmPassword.length >= 8 && !passwordMismatch && (registrationMode !== "invite_only" || referralCode.length > 0) && !loading
 
   React.useEffect(() => {
     void fetchJson<{ registrationMode: "open" | "invite_only" | "disabled" }>("/api/public/sales-settings")
@@ -102,7 +107,7 @@ export function RegisterPage() {
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (password !== confirmPassword) return setError("两次输入的密码不一致。")
+    if (passwordMismatch) return
     setLoading(true)
     setError("")
     try {
@@ -116,15 +121,15 @@ export function RegisterPage() {
   }
 
   return (
-    <AuthLayout title="创建账户" description={registrationMode === "invite_only" ? "请输入有效的推荐码" : registrationMode === "disabled" ? "当前暂时不开放注册" : "请输入有效的邮箱"}>
+    <AuthLayout title="创建账户" description={registrationMode === "invite_only" ? "本站仅接受邀请制注册，请向推荐你的好友询问邀请码。" : registrationMode === "disabled" ? "当前暂时不开放注册" : "请输入有效的邮箱"}>
       {registrationMode === "disabled" ? <FieldError>当前暂时不开放注册</FieldError> : null}
       <form className="grid gap-4" onSubmit={submit} noValidate>
-        <div className="grid gap-2"><Label htmlFor="email">邮箱</Label><Input id="email" type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} required /></div>
-        <div className="grid gap-2"><Label htmlFor="new-password">密码</Label><Input id="new-password" type="password" minLength={8} autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} required /></div>
-        <div className="grid gap-2"><Label htmlFor="confirm-password">确认密码</Label><Input id="confirm-password" type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required /></div>
-        <div className="grid gap-2"><Label htmlFor="referral-code">推荐码{registrationMode === "invite_only" ? "" : "（可选）"}</Label><Input id="referral-code" inputMode="numeric" required={registrationMode === "invite_only"} maxLength={6} value={referralCode} onChange={event => setReferralCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /></div>
+        <div className="grid gap-2"><Label htmlFor="email">邮箱</Label><Input id="email" type="email" autoComplete="email" value={email} onChange={event => { setEmail(event.target.value); setError("") }} aria-invalid={emailInvalid} required /><FieldError>{emailInvalid ? "请输入有效邮箱。" : null}</FieldError></div>
+        <div className="grid gap-2"><Label htmlFor="new-password">密码</Label><Input id="new-password" type="password" minLength={8} autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} aria-invalid={passwordTooShort} required /><FieldError>{passwordTooShort ? "密码至少需要 8 位。" : null}</FieldError></div>
+        <div className="grid gap-2"><Label htmlFor="confirm-password">确认密码</Label><Input id="confirm-password" type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} aria-invalid={passwordMismatch} required /><FieldError>{passwordMismatch ? "两次输入的密码不一致。" : null}</FieldError></div>
+        <div className="grid gap-2"><Label htmlFor="referral-code">邀请码{registrationMode === "invite_only" ? "" : "（可选）"}</Label><Input id="referral-code" inputMode="numeric" placeholder={registrationMode === "invite_only" ? "必填邀请码" : undefined} required={registrationMode === "invite_only"} maxLength={6} value={referralCode} onChange={event => setReferralCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /></div>
         <FieldError>{error}</FieldError>
-        <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />注册中</> : "注册"}</Button>
+        <Button type="submit" disabled={!canSubmit}>{loading ? <><Loader2 className="animate-spin" />注册中</> : "注册"}</Button>
         <p className="text-center text-sm">已有账户？ <Link to="/login" className="underline underline-offset-4">返回登录</Link></p>
       </form>
     </AuthLayout>

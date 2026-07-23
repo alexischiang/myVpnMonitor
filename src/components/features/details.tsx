@@ -1,16 +1,19 @@
 import * as React from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ArrowLeft, Gift, Loader2, MailCheck, RefreshCw } from "lucide-react"
+import { ArrowLeft, Eye, Gift, Loader2, MailCheck, MoreHorizontal, Power, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
@@ -18,8 +21,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
+import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import type { Bill, User, UserLog } from "@/types"
 import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, userStatus } from "@/utils"
+
+type GiftPreview = {
+  expiresAt: string
+  subscription: User["subscription"] | null
+  reason?: string
+}
 
 export function SubscriptionDetailPage() {
   const { id } = useParams()
@@ -27,6 +37,7 @@ export function SubscriptionDetailPage() {
   const [cache, setCache] = React.useState<{ body?: string; error?: string; fetchedAt?: string; bodyFetchedAt?: string; bodyLength?: number; storage?: string } | null>(null)
   const [refreshing, setRefreshing] = React.useState(false)
   const [refreshingCache, setRefreshingCache] = React.useState(false)
+  const [togglingAutoSwitch, setTogglingAutoSwitch] = React.useState(false)
   const item = subscriptions.find(entry => entry.id === id)
   const boundUsers = users.filter(user => user.subscriptionId === id)
 
@@ -55,6 +66,13 @@ export function SubscriptionDetailPage() {
       header: DataTableColumnHeader({ title: "状态" }),
       meta: { label: "状态" },
       cell: ({ row }) => <UserStatusBadge user={row.original} />,
+    },
+    {
+      id: "actions",
+      header: "操作",
+      cell: ({ row }) => <Button asChild variant="ghost" size="icon"><Link to={`/users/detail/${row.original.id}`} aria-label="查看用户详情"><Eye /></Link></Button>,
+      enableHiding: false,
+      enableSorting: false,
     },
   ], [])
 
@@ -85,14 +103,28 @@ export function SubscriptionDetailPage() {
     }
   }
 
+  async function toggleAutoSwitch() {
+    setTogglingAutoSwitch(true)
+    try {
+      await runAsync(async () => {
+        await putJson(`/api/subscriptions/${item.id}`, { excludeFromAutoSwitch: !item.excludeFromAutoSwitch })
+        await reload(["subscriptions"])
+        toast.success(item.excludeFromAutoSwitch ? "已恢复自动换池切入" : "已禁止自动换池切入")
+      }, item.excludeFromAutoSwitch ? "恢复自动换池切入..." : "禁止自动换池切入...")
+    } finally {
+      setTogglingAutoSwitch(false)
+    }
+  }
+
   return (
-    <div className="grid gap-4 px-4 lg:px-6">
+    <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
       <PageHeader
         title="订阅详情"
         description={item.email || item.serviceProvider || item.url || "手动 Base64 订阅"}
         actions={
           <>
             <Button asChild variant="outline" size="sm"><Link to="/urls"><ArrowLeft />返回</Link></Button>
+            {item.sourceType !== "manual" ? <Button variant="outline" size="sm" onClick={toggleAutoSwitch} disabled={togglingAutoSwitch}>{togglingAutoSwitch ? <Loader2 className="animate-spin" /> : null}{item.excludeFromAutoSwitch ? "恢复自动切入" : "禁止自动切入"}</Button> : null}
             <Button size="sm" onClick={refresh} disabled={refreshing}>{refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新</Button>
           </>
         }
@@ -152,7 +184,7 @@ export function SubscriptionDetailPage() {
 export function UserDetailPage() {
   const { id } = useParams()
   const location = useLocation()
-  const { users, bills, reload, runAsync } = useData()
+  const { users, subscriptions, bills, reload, runAsync } = useData()
   const user = users.find(entry => entry.id === id)
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteEmail, setInviteEmail] = React.useState("")
@@ -166,6 +198,24 @@ export function UserDetailPage() {
   const [giftBalanceNote, setGiftBalanceNote] = React.useState("")
   const [giftBalanceError, setGiftBalanceError] = React.useState("")
   const [giftBalanceSaving, setGiftBalanceSaving] = React.useState(false)
+  const [poolOpen, setPoolOpen] = React.useState(false)
+  const [poolId, setPoolId] = React.useState("")
+  const [poolSaving, setPoolSaving] = React.useState(false)
+  const [allowDisabledPool, setAllowDisabledPool] = React.useState(false)
+  const [allowFullPool, setAllowFullPool] = React.useState(false)
+  const [giftOpen, setGiftOpen] = React.useState(false)
+  const [giftDays, setGiftDays] = React.useState("")
+  const [giftExpiresAt, setGiftExpiresAt] = React.useState("")
+  const [giftPoolId, setGiftPoolId] = React.useState("")
+  const [giftMessage, setGiftMessage] = React.useState("")
+  const [giftError, setGiftError] = React.useState("")
+  const [giftPreviewing, setGiftPreviewing] = React.useState(false)
+  const [giftSaving, setGiftSaving] = React.useState(false)
+  const [allowDisabledGiftPool, setAllowDisabledGiftPool] = React.useState(false)
+  const [allowFullGiftPool, setAllowFullGiftPool] = React.useState(false)
+  const [accountStatusOpen, setAccountStatusOpen] = React.useState(false)
+  const [accountStatusSaving, setAccountStatusSaving] = React.useState(false)
+  const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed" || log.reason === "user-created")
 
@@ -298,9 +348,94 @@ export function UserDetailPage() {
     }
   }
 
+  function openPoolDialog() {
+    setPoolId("")
+    setAllowDisabledPool(false)
+    setAllowFullPool(false)
+    setPoolOpen(true)
+  }
+
+  async function changePool(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!poolId || poolId === user.subscriptionId) return
+    setPoolSaving(true)
+    try {
+      await postJson(`/api/users/${user.id}/pool`, { subscriptionId: poolId, allowDisabled: allowDisabledPool, allowFull: allowFullPool })
+      await reload(["users"])
+      setPoolOpen(false)
+      toast.success("用户订阅池已更新")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "换池失败")
+    } finally {
+      setPoolSaving(false)
+    }
+  }
+
+  function openGiftDialog() {
+    setGiftDays("")
+    setGiftExpiresAt("")
+    setGiftPoolId("")
+    setGiftMessage("")
+    setGiftError("")
+    setAllowDisabledGiftPool(false)
+    setAllowFullGiftPool(false)
+    setGiftOpen(true)
+  }
+
+  async function previewGift() {
+    const days = Number(giftDays)
+    if (!Number.isSafeInteger(days) || days <= 0) {
+      setGiftError("请输入正确的赠送天数")
+      return
+    }
+    setGiftPreviewing(true)
+    setGiftError("")
+    try {
+      const preview = await postJson<GiftPreview>(`/api/users/${user.id}/gift`, { days, preview: true })
+      setGiftExpiresAt(preview.expiresAt)
+      setGiftPoolId(preview.subscription?.id || "")
+      setGiftMessage(preview.subscription ? "已根据赠送后的到期日推荐订阅池，可手动更换。" : preview.reason || "暂无推荐订阅池，请手动选择。")
+    } catch (error) {
+      setGiftError(error instanceof Error ? error.message : "计算赠送时长失败")
+    } finally {
+      setGiftPreviewing(false)
+    }
+  }
+
+  async function submitGift(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!giftExpiresAt || !giftPoolId) return
+    setGiftSaving(true)
+    try {
+      await postJson(`/api/users/${user.id}/gift`, { days: Number(giftDays), subscriptionId: giftPoolId, allowDisabled: allowDisabledGiftPool, allowFull: allowFullGiftPool })
+      await reload(["users"])
+      setGiftOpen(false)
+      toast.success("赠送时长已生效")
+    } catch (error) {
+      setGiftError(error instanceof Error ? error.message : "赠送时长失败")
+    } finally {
+      setGiftSaving(false)
+    }
+  }
+
+  async function toggleAccountStatus() {
+    const disabling = user.accountStatus === "active"
+    setAccountStatusSaving(true)
+    try {
+      await postJson(`/api/users/${user.id}/account-status`, { disabled: disabling })
+      await reload(["users"], { silent: true })
+      setAccountStatusOpen(false)
+      toast.success(disabling ? "账户已停用" : "账户已恢复")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "账户状态更新失败")
+    } finally {
+      setAccountStatusSaving(false)
+    }
+  }
+
   return (
-    <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex gap-2">{user.registeredOnly ? null : user.accountStatus === "active" ? <Button size="sm" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button> : <Button size="sm" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button>}<Button asChild variant="outline" size="sm"><Link to={`/users${location.search}`}><ArrowLeft />返回</Link></Button></div>} />
+    <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
+      <PageHeader title="用户详情" description={user.userId || user.wechatName || user.email} actions={<div className="flex w-full items-center"><Button asChild variant="outline" size="icon-sm"><Link to={`/users${location.search}`} aria-label="返回用户列表"><ArrowLeft /></Link></Button>{user.registeredOnly ? null : <ButtonGroup className="ml-auto"><Button variant="outline" size="sm" onClick={openPoolDialog}><RefreshCw />Switch</Button><DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="sm"><MoreHorizontal />Actions</Button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuItem onSelect={openGiftDialog}><Gift />赠送时长</DropdownMenuItem>{user.accountStatus === "active" ? <><DropdownMenuItem onSelect={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" onSelect={() => setAccountStatusOpen(true)}><Power />停用账户</DropdownMenuItem></> : user.accountStatus === "disabled" ? <DropdownMenuItem onSelect={() => setAccountStatusOpen(true)}><Power />恢复账户</DropdownMenuItem> : <DropdownMenuItem onSelect={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu></ButtonGroup>}</div>} />
       <Dialog open={giftBalanceOpen} onOpenChange={setGiftBalanceOpen}>
         <DialogContent>
           <form className="grid gap-4" onSubmit={giftBalance}>
@@ -320,14 +455,43 @@ export function UserDetailPage() {
           </form>
         </DialogContent>
       </Dialog>
-      <Tabs defaultValue="overview" className="gap-4">
+      <Dialog open={poolOpen} onOpenChange={setPoolOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <form className="grid gap-4" onSubmit={changePool} noValidate>
+            <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription className="break-all">当前订阅池：{currentPool?.email || currentPool?.serviceProvider || "未绑定"}</DialogDescription></DialogHeader>
+            <SubscriptionPoolSelect id="detail-manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={user.activeGroup} />
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={poolSaving}>取消</Button></DialogClose><Button type="submit" disabled={poolSaving || !poolId || poolId === user.subscriptionId}>{poolSaving ? <RefreshCw className="animate-spin" /> : <RefreshCw />}{poolSaving ? "换池中..." : "确认换池"}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={giftOpen} onOpenChange={setGiftOpen}>
+        <DialogContent>
+          <form className="grid gap-4" onSubmit={submitGift} noValidate>
+            <DialogHeader><DialogTitle>赠送时长</DialogTitle><DialogDescription>{user.userId || user.email || "用户"} · 当前到期 {formatDate(user.expiresAt)}</DialogDescription></DialogHeader>
+            <FieldGroup>
+              <Field><FieldLabel htmlFor="detail-gift-days">赠送天数</FieldLabel><Input id="detail-gift-days" type="number" min="1" step="1" value={giftDays} onChange={event => { setGiftDays(event.target.value); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }} /><FieldError>{giftError}</FieldError></Field>
+              <Field><FieldLabel>快捷选择</FieldLabel><div className="flex flex-wrap gap-2">{[7, 15, 30].map(days => <Button key={days} type="button" variant={giftDays === String(days) ? "default" : "outline"} size="sm" onClick={() => { setGiftDays(String(days)); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }}>{days} 天</Button>)}</div></Field>
+              {giftExpiresAt ? <Field><FieldLabel htmlFor="detail-gift-expires-at">赠送后到期日</FieldLabel><Input id="detail-gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /></Field> : null}
+              {giftExpiresAt ? <SubscriptionPoolSelect id="detail-gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={user.activeGroup} description={giftMessage} /> : <FieldDescription>输入天数后先计算到期日和推荐订阅池。</FieldDescription>}
+            </FieldGroup>
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={giftSaving}>取消</Button></DialogClose>{giftExpiresAt ? <Button type="submit" disabled={giftSaving || !giftPoolId}>{giftSaving ? <Loader2 className="animate-spin" /> : <Gift />}{giftSaving ? "赠送中..." : "确认赠送"}</Button> : <Button type="button" onClick={() => void previewGift()} disabled={giftPreviewing}>{giftPreviewing ? <Loader2 className="animate-spin" /> : <Gift />}{giftPreviewing ? "计算中..." : "推荐订阅池"}</Button>}</DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={accountStatusOpen} onOpenChange={setAccountStatusOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>{user.accountStatus === "active" ? "确认停用账户？" : "确认恢复账户？"}</AlertDialogTitle><AlertDialogDescription>{user.accountStatus === "active" ? "停用后用户将无法登录，当前登录状态也会失效；已绑定的订阅链接仍然有效。" : "恢复后用户可以重新登录账户，原有订阅和余额保持不变。"}</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={accountStatusSaving}>取消</AlertDialogCancel><AlertDialogAction className={user.accountStatus === "active" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined} onClick={event => { event.preventDefault(); void toggleAccountStatus() }} disabled={accountStatusSaving}>{accountStatusSaving ? <Loader2 className="animate-spin" /> : <Power />}{accountStatusSaving ? "处理中..." : user.accountStatus === "active" ? "确认停用" : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <Tabs defaultValue="overview" className="min-w-0 w-full gap-4">
         <TabsList variant="line" className="w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview" className="flex-none">基本信息</TabsTrigger>
           <TabsTrigger value="bills" className="flex-none">账单记录</TabsTrigger>
           <TabsTrigger value="referral" className="flex-none">邀请返利</TabsTrigger>
           <TabsTrigger value="logs" className="flex-none">换池日志</TabsTrigger>
         </TabsList>
-        <TabsContent value="overview">
+        <TabsContent value="overview" className="min-w-0">
           <Card>
           <CardHeader className="gap-6"><CardTitle>订阅信息</CardTitle><Separator /></CardHeader>
           <CardContent className="grid gap-3">
@@ -342,11 +506,11 @@ export function UserDetailPage() {
             <Info label="订阅池" value={user.subscription?.email || user.subscription?.serviceProvider || "-"} />
             <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
             <Info label="状态" value={<UserStatusBadge user={user} />} />
-            <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
+            <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "disabled" ? "已停用" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
           </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="bills">
+        <TabsContent value="bills" className="min-w-0">
           <Card>
           <CardHeader className="gap-6"><CardTitle>账单记录</CardTitle><Separator /></CardHeader>
           <CardContent>
@@ -360,13 +524,13 @@ export function UserDetailPage() {
           </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="referral">
+        <TabsContent value="referral" className="min-w-0">
           <Card>
           <CardHeader className="gap-6"><CardTitle>邀请返利设置</CardTitle><Separator /></CardHeader>
           <CardContent>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="referral-rate">收到返利比例（%）</Label><Input id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /></div><div className="flex items-center gap-2 self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} /><Label htmlFor="recurring-referral">享受循环返利</Label></div><Button className="sm:w-fit" onClick={() => void saveReferralSettings()} disabled={referralSaving}>{referralSaving ? <Loader2 className="animate-spin" /> : null}{referralSaving ? "保存中..." : "保存返利设置"}</Button></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="logs">
+        <TabsContent value="logs" className="min-w-0">
           <Card>
           <CardHeader className="gap-6"><CardTitle>换池日志</CardTitle><Separator /></CardHeader>
           <CardContent>
@@ -387,9 +551,9 @@ export function UserDetailPage() {
 
 function Info({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="grid gap-1">
+    <div className="grid min-w-0 gap-1">
       <p className="text-sm text-muted-foreground">{label}</p>
-      <div className="text-sm font-medium">{value}</div>
+      <div className="min-w-0 break-words text-sm font-medium">{value}</div>
     </div>
   )
 }

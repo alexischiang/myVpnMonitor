@@ -54,6 +54,7 @@ assert.strictEqual(
 assert.strictEqual(initialPoolFallbackReason({ enabled: false }, false), "pool-disabled");
 assert.strictEqual(initialPoolFallbackReason({ enabled: false, url: "" }, true), "pool-disabled");
 assert.strictEqual(initialPoolFallbackReason({ url: "" }, false), "pool-missing");
+assert.strictEqual(initialPoolFallbackReason({ url: "https://example.com/sub", allowedGroups: ["basic"] }, false, "pro"), "pool-group-mismatch");
 
 // ─── poolMetricUnavailableReason ────────────────────────────────────────
 
