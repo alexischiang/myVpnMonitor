@@ -8,11 +8,12 @@ import { deleteJson, postJson, putJson } from "@/api"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTableCard } from "@/components/features/data-table-card"
-import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
+import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { ProviderBadge } from "@/components/features/provider-badge"
 import { SimpleFormDialog, type Field as SimpleField, type FormValues } from "@/components/features/simple-form"
@@ -270,23 +271,18 @@ export function SubscriptionsPage() {
       cell: ({ row }) => {
         const item = row.original
         return (
-          <div className="flex items-center gap-1">
-            <Button asChild variant="ghost" size="icon">
-              <Link to={`/urls/detail/${item.id}`} aria-label="查看订阅">
-                <Eye />
-              </Link>
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => refresh(item)} disabled={Boolean(pendingAction)} aria-label="刷新订阅">
-              {pendingAction === `refresh:${item.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => item.enabled === false ? toggleEnabled(item) : setDisabling(item)} disabled={Boolean(pendingAction)}>{pendingAction === `toggle:${item.id}` ? <Loader2 className="animate-spin" /> : <Power />}{item.enabled === false ? "启用" : "停用"}</Button>
-            <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>
-              编辑
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => remove(item)} disabled={Boolean(pendingAction)} aria-label="删除订阅">
-              {pendingAction === `delete:${item.id}` ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            </Button>
-          </div>
+          <DataTableRowActions detail={<Button asChild variant="ghost" size="icon"><Link to={`/urls/detail/${item.id}`} aria-label="查看订阅详情"><Eye /></Link></Button>}>
+            <DropdownMenuItem onSelect={() => refresh(item)} disabled={Boolean(pendingAction)}>
+              {pendingAction === `refresh:${item.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => item.enabled === false ? toggleEnabled(item) : setDisabling(item)} disabled={Boolean(pendingAction)}>
+              {pendingAction === `toggle:${item.id}` ? <Loader2 className="animate-spin" /> : <Power />}{item.enabled === false ? "启用" : "停用"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}>编辑</DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onSelect={() => remove(item)} disabled={Boolean(pendingAction)}>
+              {pendingAction === `delete:${item.id}` ? <Loader2 className="animate-spin" /> : <Trash2 />}删除
+            </DropdownMenuItem>
+          </DataTableRowActions>
         )
       },
       enableHiding: false,
@@ -337,10 +333,11 @@ export function SubscriptionsPage() {
         const provider = row.original
         const pending = pendingAction === `provider:${provider.name}`
         return (
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={() => { setProviderFilter(provider.name); setActiveTab("urls") }}>查看 URL</Button>
-            <Button variant="ghost" size="sm" onClick={() => provider.autoSwitchCount ? setDisablingProvider(provider) : toggleProviderAutoSwitch(provider)} disabled={Boolean(pendingAction)}>{pending ? <Loader2 className="animate-spin" /> : null}{provider.autoSwitchCount ? "禁止自动切入" : "恢复自动切入"}</Button>
-          </div>
+          <DataTableRowActions detail={<Button variant="ghost" size="icon" onClick={() => { setProviderFilter(provider.name); setActiveTab("urls") }} aria-label="查看供应商 URL"><Eye /></Button>}>
+            <DropdownMenuItem onSelect={() => provider.autoSwitchCount ? setDisablingProvider(provider) : toggleProviderAutoSwitch(provider)} disabled={Boolean(pendingAction)}>
+              {pending ? <Loader2 className="animate-spin" /> : null}{provider.autoSwitchCount ? "禁止自动切入" : "恢复自动切入"}
+            </DropdownMenuItem>
+          </DataTableRowActions>
         )
       },
       enableHiding: false,

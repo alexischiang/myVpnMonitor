@@ -10,11 +10,13 @@ const {
   toBytes,
   paymentQuote,
   paymentChannelCode,
+  configuredPaymentChannel,
   paymentStatusError,
   paymentAmountError,
   paymentOrderExpiresAt,
   isPaymentOrderExpired,
-  normalizeSalesSettings
+  normalizeSalesSettings,
+  normalizePaymentSettings
 } = require("./server");
 
 function near(actual, expected, tolerance = 2) {
@@ -49,12 +51,12 @@ const unavailableMetrics = parseAccountUnavailable('{"message":"Account unavaila
 assert.strictEqual(unavailableMetrics.unavailable, true);
 assert.strictEqual(unavailableMetrics.source, "account-unavailable");
 assert.strictEqual(statusFor({ metrics: statusMetrics, lastError: null }), "ok");
-assert.strictEqual(statusFor({ metrics: null, lastError: "请求失败" }), "warning");
-assert.strictEqual(statusFor({ metrics: unavailableMetrics, lastError: null }), "expired");
-assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(49, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }), "warning");
+assert.strictEqual(statusFor({ metrics: null, lastError: "请求失败" }), "invalid");
+assert.strictEqual(statusFor({ metrics: unavailableMetrics, lastError: null }), "invalid");
+assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(49, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }), "ok");
 assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(50, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }), "ok");
-assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(100, "gb"), expireAt: new Date(Date.now() + 2 * 86400000).toISOString() }, lastError: null }), "warning");
-assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(100, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }, 8), "warning");
+assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(100, "gb"), expireAt: new Date(Date.now() + 2 * 86400000).toISOString() }, lastError: null }), "expiring");
+assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(100, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }, 8), "ok");
 assert.strictEqual(calculateExpiry("2026-06-02T00:00:00.000Z", "monthly").slice(0, 10), "2026-07-02");
 assert.strictEqual(calculateExpiry("2026-07-02T00:00:00.000Z", "monthly").slice(0, 10), "2026-08-01");
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "quarterly").slice(0, 10), "2026-08-26");
@@ -73,7 +75,12 @@ assert.deepStrictEqual(discountedQuote.cycles.map(cycle => cycle.devices), [1, 2
 assert.throws(() => paymentQuote("basic-30", "invalid", "SAVE10:10"), /优惠码无效/);
 assert.strictEqual(paymentChannelCode("100"), "100");
 assert.strictEqual(paymentChannelCode("200"), "200");
-assert.throws(() => paymentChannelCode("300"), /不支持的支付方式/);
+assert.strictEqual(paymentChannelCode("custom-channel"), "custom-channel");
+assert.throws(() => paymentChannelCode("bad channel"), /不能包含空格/);
+assert.strictEqual(configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code" }, "100"), "ali-code");
+assert.strictEqual(configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code" }, "200"), "wx-code");
+assert.throws(() => configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code", alipayEnabled: false }, "100"), /支付宝支付维护中/);
+assert.throws(() => configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code", wechatEnabled: false }, "200"), /微信支付维护中/);
 assert.strictEqual(paymentStatusError("failed"), "支付平台返回支付失败。");
 assert.strictEqual(paymentStatusError("paid"), "");
 assert.strictEqual(paymentAmountError(10, "10.00"), "");
@@ -86,6 +93,22 @@ assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T0
 const announcementSettings = normalizeSalesSettings({ announcements: [{ title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true }] });
 assert.deepStrictEqual(announcementSettings.announcements[0], { id: announcementSettings.announcements[0].id, title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true });
 assert.throws(() => normalizeSalesSettings({ announcements: [{ title: "", content: "内容" }] }), /不能为空/);
+const normalizedPaymentSettings = normalizePaymentSettings({
+  apiBaseUrl: "https://pay.example.com/",
+  merchantId: "merchant-1",
+  merchantSecret: "",
+  alipayChannelCode: "custom-alipay",
+  wechatChannelCode: "custom-wechat",
+  alipayEnabled: false,
+  wechatEnabled: true,
+  notifyUrl: "https://example.com/api/payments/callback",
+  returnUrl: "https://example.com/account/payment/result"
+}, { merchantSecret: "existing-secret" });
+assert.strictEqual(normalizedPaymentSettings.apiBaseUrl, "https://pay.example.com");
+assert.strictEqual(normalizedPaymentSettings.merchantSecret, "existing-secret");
+assert.strictEqual(normalizedPaymentSettings.wechatChannelCode, "custom-wechat");
+assert.strictEqual(normalizedPaymentSettings.alipayEnabled, false);
+assert.throws(() => normalizePaymentSettings({ merchantId: "merchant-1", alipayChannelCode: "100", wechatChannelCode: "200", apiBaseUrl: "not-a-url" }), /HTTP 或 HTTPS/);
 
 const extracted = extractClashConfigBody("prefix\nmixed-port: 7890\nproxies:\n  - name: node\nrules:\n  - MATCH,PROXY\nextra:\n  value: ignored\n");
 assert.ok(extracted.startsWith("mixed-port: 7890"));

@@ -60,6 +60,7 @@ export function AppShell() {
     ["Telegram API", services.telegram],
     ["Resend", services.resend],
   ] as const).filter(([, service]) => service.status === "error") : []
+  const showHealthAlerts = location.pathname === "/dashboard" && (healthError || failedServices.length > 0)
 
   async function logout() {
     await apiFetch("/api/auth/logout", { method: "POST" })
@@ -85,13 +86,13 @@ export function AppShell() {
         <SiteHeader title={pageTitle} dark={dark} onToggleTheme={toggleTheme} onLogout={logout} />
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="@container/main flex min-w-0 flex-1 flex-col gap-2">
-            <div className="flex min-w-0 flex-col gap-4 pt-6 pb-4 md:gap-6 md:pt-8 md:pb-6">
-              {(healthError || failedServices.length > 0) && (
+            <div className="mx-auto flex w-full max-w-[1440px] min-w-0 flex-col gap-4 pt-6 pb-4 md:gap-6 md:pt-8 md:pb-6">
+              {showHealthAlerts ? (
                 <div className="grid gap-2 px-4 lg:px-6">
                   {healthError && <Alert variant="error"><AlertCircle /><AlertDescription>服务监控 API 连接异常：{healthError}</AlertDescription></Alert>}
                   {failedServices.map(([name, service]) => <Alert key={name} variant="error"><AlertCircle /><AlertDescription>{name} 连接异常{service.message ? `：${service.message}` : ""}</AlertDescription></Alert>)}
                 </div>
-              )}
+              ) : null}
               {data.error && (
                 <div className="px-4 lg:px-6">
                   <Alert variant="destructive">

@@ -1,7 +1,7 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useParams } from "react-router-dom"
-import { AlertCircle, ArrowLeft, Loader2 } from "lucide-react"
+import { AlertCircle, ArrowLeft, Eye, Loader2 } from "lucide-react"
 
 import { fetchJson, postJson } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -13,7 +13,7 @@ import { Field, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import { DataTableCard } from "@/components/features/data-table-card"
-import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
+import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { EmptyState, PageHeader } from "@/components/features/shared"
 import { durationLabels, formatDateTime, formatMoney } from "@/utils"
 
@@ -134,7 +134,7 @@ export function OrdersPage() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => <Button asChild variant="outline" size="sm"><Link to={`/orders/${row.original.id}`}>查看</Link></Button>,
+      cell: ({ row }) => <DataTableRowActions detail={<Button asChild variant="ghost" size="icon"><Link to={`/orders/${row.original.id}`} aria-label="查看订单详情"><Eye /></Link></Button>} />,
       enableHiding: false,
       enableSorting: false,
     },

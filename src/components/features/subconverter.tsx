@@ -7,10 +7,11 @@ import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { DataTable, DataTableColumnHeader } from "@/components/features/data-table"
+import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { SimpleFormDialog, type Field, type FormValues } from "@/components/features/simple-form"
 import { PageHeader } from "@/components/features/shared"
@@ -148,7 +149,7 @@ function VendorOverrides() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>编辑</Button>,
+      cell: ({ row }) => <DataTableRowActions><DropdownMenuItem onSelect={() => { setEditing(row.original); setOpen(true) }}>编辑</DropdownMenuItem></DataTableRowActions>,
       enableHiding: false,
       enableSorting: false,
     },
@@ -215,16 +216,12 @@ function PlaceholderNodes() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => (
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => { setEditing(row.original); setOpen(true) }}>
-            编辑
-          </Button>
-          <Button variant="ghost" size="icon" onClick={() => remove(row.original)} disabled={Boolean(deletingId)} aria-label="删除占位节点">
-            {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
-          </Button>
-        </div>
-      ),
+      cell: ({ row }) => <DataTableRowActions>
+        <DropdownMenuItem onSelect={() => { setEditing(row.original); setOpen(true) }}>编辑</DropdownMenuItem>
+        <DropdownMenuItem variant="destructive" onSelect={() => remove(row.original)} disabled={Boolean(deletingId)}>
+          {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}删除
+        </DropdownMenuItem>
+      </DataTableRowActions>,
       enableHiding: false,
       enableSorting: false,
     },

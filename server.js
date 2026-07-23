@@ -6,6 +6,7 @@ const path = require("path");
 const crypto = require("crypto");
 const zlib = require("zlib");
 const { createDataStore } = require("./database");
+const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const yaml = require("js-yaml");
 const notifier = require("./notifier");
 const packageJson = require("./package.json");
@@ -196,6 +197,7 @@ let embyVendors = [];
 let pricing = [];
 let paymentOrders = [];
 let salesSettings = [];
+let paymentSettings = [];
 let referralRewards = [];
 const dataStore = createDataStore({
   databaseUrl: DATABASE_URL,
@@ -232,6 +234,7 @@ async function initializeDataFile() {
   pricing = state.pricing || [];
   paymentOrders = state.paymentOrders || [];
   salesSettings = state.salesSettings || [];
+  paymentSettings = state.paymentSettings || [];
   referralRewards = state.referralRewards || [];
   if (ensureReferralAccountFields()) await saveAccounts();
   lastLoadedAt = Date.now();
@@ -331,6 +334,7 @@ function _doLoad() {
     pricing = state.pricing || [];
     paymentOrders = state.paymentOrders || [];
     salesSettings = state.salesSettings || [];
+    paymentSettings = state.paymentSettings || [];
     referralRewards = state.referralRewards || [];
     lastLoadedAt = Date.now();
   }).catch(error => {
@@ -404,6 +408,11 @@ async function savePricing() {
 async function saveSalesSettings() {
   _markWritten();
   await dataStore.saveCollection("salesSettings", salesSettings);
+}
+
+async function savePaymentSettings() {
+  _markWritten();
+  await dataStore.saveCollection("paymentSettings", paymentSettings);
 }
 
 async function savePaymentOrders() {
@@ -725,14 +734,59 @@ async function readPaymentCallback(req) {
 
 function paymentConfig() {
   loadLocalEnv({ override: false });
+  const settings = paymentSettings[0] || {};
+  const legacyChannelCode = settings.channelCode || process.env.PAYMENT_CHANNEL_CODE || "";
   const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
   return {
-    apiBaseUrl: (process.env.PAYMENT_API_BASE_URL || DEFAULT_PAYMENT_API_BASE_URL).replace(/\/+$/, ""),
-    merchantId: process.env.PAYMENT_MERCHANT_ID || "",
-    merchantSecret: process.env.PAYMENT_MERCHANT_SECRET || "",
-    channelCode: process.env.PAYMENT_CHANNEL_CODE || "",
-    notifyUrl: process.env.PAYMENT_NOTIFY_URL || (publicBaseUrl ? `${publicBaseUrl}/api/payments/callback` : ""),
-    returnUrl: process.env.PAYMENT_RETURN_URL || (publicBaseUrl ? `${publicBaseUrl}/account/payment/result` : "")
+    apiBaseUrl: (settings.apiBaseUrl || process.env.PAYMENT_API_BASE_URL || DEFAULT_PAYMENT_API_BASE_URL).replace(/\/+$/, ""),
+    merchantId: settings.merchantId || process.env.PAYMENT_MERCHANT_ID || "",
+    merchantSecret: settings.merchantSecret || process.env.PAYMENT_MERCHANT_SECRET || "",
+    alipayChannelCode: settings.alipayChannelCode || legacyChannelCode,
+    wechatChannelCode: settings.wechatChannelCode || process.env.PAYMENT_WECHAT_CHANNEL_CODE || "200",
+    alipayEnabled: settings.alipayEnabled !== false,
+    wechatEnabled: settings.wechatEnabled !== false,
+    notifyUrl: settings.notifyUrl || process.env.PAYMENT_NOTIFY_URL || (publicBaseUrl ? `${publicBaseUrl}/api/payments/callback` : ""),
+    returnUrl: settings.returnUrl || process.env.PAYMENT_RETURN_URL || (publicBaseUrl ? `${publicBaseUrl}/account/payment/result` : "")
+  };
+}
+
+function normalizePaymentSettings(payload, current = paymentSettings[0] || {}) {
+  const url = (value, label) => {
+    const normalized = String(value || "").trim().replace(/\/+$/, "");
+    if (normalized && !/^https?:\/\//i.test(normalized)) throw new Error(`${label}必须是 HTTP 或 HTTPS 地址。`);
+    return normalized;
+  };
+  const alipayChannelCode = paymentChannelCode(payload?.alipayChannelCode || payload?.channelCode);
+  const wechatChannelCode = paymentChannelCode(payload?.wechatChannelCode);
+  const merchantId = String(payload?.merchantId || "").trim();
+  if (!merchantId) throw new Error("商户 ID 不能为空。");
+  return {
+    id: "default",
+    apiBaseUrl: url(payload?.apiBaseUrl, "支付平台地址"),
+    merchantId,
+    merchantSecret: String(payload?.merchantSecret || "").trim() || current.merchantSecret || "",
+    alipayChannelCode,
+    wechatChannelCode,
+    alipayEnabled: payload?.alipayEnabled !== false,
+    wechatEnabled: payload?.wechatEnabled !== false,
+    notifyUrl: url(payload?.notifyUrl, "异步通知地址"),
+    returnUrl: url(payload?.returnUrl, "支付完成返回地址")
+  };
+}
+
+function publicPaymentSettings() {
+  const config = paymentConfig();
+  return {
+    apiBaseUrl: config.apiBaseUrl,
+    merchantId: config.merchantId,
+    merchantSecret: config.merchantSecret,
+    merchantSecretConfigured: Boolean(config.merchantSecret),
+    alipayChannelCode: config.alipayChannelCode,
+    wechatChannelCode: config.wechatChannelCode,
+    alipayEnabled: config.alipayEnabled,
+    wechatEnabled: config.wechatEnabled,
+    notifyUrl: config.notifyUrl,
+    returnUrl: config.returnUrl
   };
 }
 
@@ -756,7 +810,8 @@ function requirePaymentConfig() {
   const missing = [];
   if (!config.merchantId) missing.push("PAYMENT_MERCHANT_ID");
   if (!config.merchantSecret) missing.push("PAYMENT_MERCHANT_SECRET");
-  if (!config.channelCode) missing.push("PAYMENT_CHANNEL_CODE");
+  if (!config.alipayChannelCode) missing.push("PAYMENT_CHANNEL_CODE");
+  if (!config.wechatChannelCode) missing.push("PAYMENT_WECHAT_CHANNEL_CODE");
   if (missing.length) throw new Error(`Payment config missing: ${missing.join(", ")}`);
   return config;
 }
@@ -926,8 +981,25 @@ function resolvePaymentPlanOption(optionId) {
 
 function paymentChannelCode(value) {
   const channelCode = String(value || "").trim();
-  if (!new Set(["100", "200"]).has(channelCode)) throw new Error("不支持的支付方式。");
+  if (!/^\S{1,64}$/.test(channelCode)) throw new Error("支付通道码必须为 1-64 位且不能包含空格。");
   return channelCode;
+}
+
+function configuredPaymentChannel(config, method) {
+  if (method === "200") {
+    if (config.wechatEnabled === false) throw new Error("微信支付维护中，请选择其他支付方式。");
+    return paymentChannelCode(config.wechatChannelCode);
+  }
+  if (!method || method === "100") {
+    if (config.alipayEnabled === false) throw new Error("支付宝支付维护中，请选择其他支付方式。");
+    return paymentChannelCode(config.alipayChannelCode);
+  }
+  throw new Error("不支持的支付方式。");
+}
+
+function publicPaymentMethods() {
+  const config = paymentConfig();
+  return { alipay: config.alipayEnabled, wechat: config.wechatEnabled };
 }
 
 function legacyPaymentCoupons(value = process.env.PAYMENT_COUPONS || "") {
@@ -1189,6 +1261,7 @@ async function paymentQuoteForAccount(payload, account) {
     walletCashAmount: walletCashCents / 100,
     walletAmount: (walletGiftCents + walletCashCents) / 100,
     amount: (payableCents - walletGiftCents - walletCashCents) / 100,
+    paymentMethods: publicPaymentMethods(),
     wallet: publicWallet(wallet)
   };
 }
@@ -1363,6 +1436,7 @@ async function fulfillPaymentOrderOnce(order, req) {
   } else {
     const item = {
       id: crypto.randomUUID(),
+      customerID: account?.customerID,
       createdAt: new Date().toISOString()
     };
     user = normalizeUser({
@@ -1498,7 +1572,7 @@ async function createPaymentOrder(payload, req, account) {
   let result = {};
   try {
     config = gatewayCents > 0 ? requirePaymentConfig() : null;
-    channelCode = config ? paymentChannelCode(payload.channelCode || config.channelCode) : hold.cashCents + hold.giftCents > 0 ? "wallet" : "cash-credit";
+    channelCode = config ? configuredPaymentChannel(config, payload.channelCode) : hold.cashCents + hold.giftCents > 0 ? "wallet" : "cash-credit";
     if (config) {
       const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
       if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
@@ -1584,7 +1658,7 @@ async function createRechargeOrder(payload, req, account) {
   const amountCents = moneyCents(payload.amount, "充值金额");
   if (amountCents > 1000000) throw new Error("单次充值不能超过 ¥10,000.00。");
   const config = requirePaymentConfig();
-  const channelCode = paymentChannelCode(payload.channelCode || config.channelCode);
+  const channelCode = configuredPaymentChannel(config, payload.channelCode);
   const id = crypto.randomUUID();
   const merOrderTid = makePaymentOrderId();
   const amount = (amountCents / 100).toFixed(2);
@@ -2020,6 +2094,7 @@ function normalizeUser(input, existing = {}) {
 
   return {
     ...existing,
+    customerID: existing.customerID || nextCustomerID(existing.id, [...users, ...accounts]),
     userId,
     wechatName,
     email,
@@ -2385,8 +2460,10 @@ function publicItem(item, customerCount = null) {
 }
 
 function publicRegisteredAccount(account) {
+  const id = `account:${account.id}`;
   return {
-    id: `account:${account.id}`,
+    id,
+    customerID: account.customerID,
     accountId: account.id,
     registeredOnly: true,
     accountStatus: account.status,
@@ -2437,6 +2514,7 @@ function publicUser(user, subscriptionMap = null) {
   const linkedAccount = accounts.find(item => item.linkedUserId === user.id);
   return {
     ...user,
+    customerID: user.customerID,
     email: user.email || linkedAccount?.email || "",
     activeGroup: activeUserGroup(user),
     vipLevel: userVipLevel(user),
@@ -4454,6 +4532,7 @@ async function handleApi(req, res, pathname) {
         return;
       }
       const account = { id: crypto.randomUUID(), email, passwordHash: hashAccountPassword(password), status: "active", linkedUserId: "", referralCode: randomReferralCode(), referredByAccountId: inviter?.id || "", referralRate: 10, recurringReferral: false, referralBoundAt: inviter ? now : "", createdAt: now, updatedAt: now };
+      account.customerID = nextCustomerID(account.id, [...users, ...accounts]);
       accounts.unshift(account);
       await saveAccounts();
       const token = makeSessionToken({ role: "user", accountId: account.id, email }, REMEMBER_MAX_AGE_SECONDS);
@@ -4726,6 +4805,7 @@ async function handleApi(req, res, pathname) {
     ]);
     sendJson(res, 200, {
       ...publicWallet(wallet),
+      paymentMethods: publicPaymentMethods(),
       entries: entries.map(entry => ({
         id: entry.id,
         type: entry.type,
@@ -4899,7 +4979,10 @@ async function handleApi(req, res, pathname) {
       apiBaseUrl: config.apiBaseUrl,
       merchantId: Boolean(config.merchantId),
       merchantSecret: Boolean(config.merchantSecret),
-      channelCode: Boolean(config.channelCode),
+      alipayChannelCode: Boolean(config.alipayChannelCode),
+      wechatChannelCode: Boolean(config.wechatChannelCode),
+      alipayEnabled: config.alipayEnabled,
+      wechatEnabled: config.wechatEnabled,
       notifyUrl: config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`
     });
     return;
@@ -5060,6 +5143,22 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/payment-settings" && req.method === "GET") {
+    sendJson(res, 200, publicPaymentSettings());
+    return;
+  }
+
+  if (pathname === "/api/payment-settings" && req.method === "PUT") {
+    try {
+      paymentSettings = [normalizePaymentSettings(await readJson(req))];
+      await savePaymentSettings();
+      sendJson(res, 200, publicPaymentSettings());
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const accountInviteMatch = pathname.match(/^\/api\/users\/([^/]+)\/account-invite$/);
   if (accountInviteMatch && req.method === "POST") {
     const user = users.find(item => item.id === accountInviteMatch[1]);
@@ -5077,7 +5176,7 @@ async function handleApi(req, res, pathname) {
       }
       const now = new Date().toISOString();
       if (!account) {
-        account = { id: crypto.randomUUID(), email, passwordHash: "", status: "invited", linkedUserId: user.id, createdAt: now, updatedAt: now };
+        account = { id: crypto.randomUUID(), customerID: user.customerID, email, passwordHash: "", status: "invited", linkedUserId: user.id, createdAt: now, updatedAt: now };
         accounts.unshift(account);
       }
       const token = crypto.randomBytes(32).toString("base64url");
@@ -6104,7 +6203,7 @@ async function handleApi(req, res, pathname) {
       const payload = await readJson(req);
       const previousSourceType = subscriptionSourceType(item);
       const previousUrl = item.url;
-      const previousManualContent = item.manualContent;
+      const previousManualContent = item.manualContent || "";
       Object.assign(item, normalizeSubscription(payload, item));
       if (subscriptionSourceType(item) !== previousSourceType || item.url !== previousUrl || item.manualContent !== previousManualContent) {
         // 订阅链接已变更：旧 metrics/状态属于上一个链接，清空避免展示陈旧信息。
@@ -6333,11 +6432,14 @@ module.exports = Object.assign(requestHandler, {
   vipLevelForSpend,
   vipDiscountPercent,
   paymentChannelCode,
+  configuredPaymentChannel,
   paymentStatusError,
   paymentAmountError,
   paymentOrderExpiresAt,
   isPaymentOrderExpired,
   normalizeSalesSettings,
+  normalizePaymentSettings,
+  customerIDFromUUID,
   publicRegisteredAccount,
   subscriptionSourceType,
   normalizeManualSubscriptionContent,

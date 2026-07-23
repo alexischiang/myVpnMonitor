@@ -158,6 +158,7 @@ type CheckoutQuote = {
   amount: number
   couponCode: string
   discountPercent: number
+  paymentMethods: { alipay: boolean; wechat: boolean }
   cycles: Array<{ optionId: string; label: string; amount: number; devices: number }>
 }
 
@@ -278,7 +279,7 @@ export function CheckoutPage() {
               {quote.wallet.availableBalance > 0 ? <Field orientation="horizontal"><Checkbox id="use-wallet" checked={useBalance} onCheckedChange={checked => { const enabled = checked === true; setUseBalance(enabled); void loadQuote(quote.couponCode, optionId, enabled) }} disabled={loading || Boolean(paying)} /><FieldContent><FieldLabel htmlFor="use-wallet">使用账户余额</FieldLabel><FieldDescription>可用 {formatMoney(quote.wallet.availableBalance)}，优先使用赠送余额</FieldDescription></FieldContent></Field> : null}
               <Separator />
               <p className="flex justify-between text-base font-semibold"><span>第三方支付</span><span>{formatMoney(quote.amount)}</span></p>
-              {quote.amount === 0 ? <Button onClick={() => pay("100")} disabled={Boolean(paying) || loading}>{paying ? <Loader2 className="animate-spin" /> : <Check />}{quote.walletAmount ? "余额支付" : "确认覆盖"}</Button> : <div className="grid gap-2"><Button className="w-full bg-[#1677ff] text-white hover:bg-[#1677ff]/90" onClick={() => pay("100")} disabled={Boolean(paying) || loading}>{paying === "100" ? <Loader2 className="animate-spin" /> : <IconBrandAlipay />}支付宝支付 {formatMoney(quote.amount)}</Button><Button className="w-full bg-[#07c160] text-white hover:bg-[#07c160]/90" onClick={() => pay("200")} disabled={Boolean(paying) || loading}>{paying === "200" ? <Loader2 className="animate-spin" /> : <IconBrandWechat />}微信支付 {formatMoney(quote.amount)}</Button></div>}
+              {quote.amount === 0 ? <Button onClick={() => pay("100")} disabled={Boolean(paying) || loading}>{paying ? <Loader2 className="animate-spin" /> : <Check />}{quote.walletAmount ? "余额支付" : "确认覆盖"}</Button> : <div className="grid gap-2"><Button className="w-full bg-[#1677ff] text-white hover:bg-[#1677ff]/90" onClick={() => pay("100")} disabled={Boolean(paying) || loading || !quote.paymentMethods.alipay}>{paying === "100" ? <Loader2 className="animate-spin" /> : <IconBrandAlipay />}{quote.paymentMethods.alipay ? `支付宝支付 ${formatMoney(quote.amount)}` : "支付宝维护中"}</Button><Button className="w-full bg-[#07c160] text-white hover:bg-[#07c160]/90" onClick={() => pay("200")} disabled={Boolean(paying) || loading || !quote.paymentMethods.wechat}>{paying === "200" ? <Loader2 className="animate-spin" /> : <IconBrandWechat />}{quote.paymentMethods.wechat ? `微信支付 ${formatMoney(quote.amount)}` : "微信支付维护中"}</Button></div>}
               <Button variant="outline" onClick={() => navigate(-1)}><ArrowLeft />返回套餐选择</Button>
               <p className="text-xs text-muted-foreground">付款成功后套餐立即生效，数字商品不支持退款。</p>
             </CardContent>

@@ -3,6 +3,7 @@ import {
   IconDashboard,
   IconCurrencyDollar,
   IconRoute,
+  IconReceiptDollar,
   IconSettings,
   IconTag,
   IconUsers,
@@ -23,6 +24,7 @@ export const navItems: NavItem[] = [
   { title: "Orders", url: "/orders", icon: IconCreditCard },
   { title: "套餐管理", url: "/pricing-settings", icon: IconCurrencyDollar },
   { title: "销售设置", url: "/sales-settings", icon: IconTag },
+  { title: "支付设置", url: "/payment-settings", icon: IconReceiptDollar },
   { title: "Emby", url: "/emby", icon: IconVideo },
   { title: "Subconverter", url: "/subconverter", icon: IconSettings },
 ]
