@@ -153,13 +153,13 @@ export function DataTable<TData, TValue>({
           {frame === "default" ? toolbar : null}
           {frame === "card" ? (
             <Select value={`${table.getState().pagination.pageSize}`} onValueChange={value => table.setPageSize(Number(value))}>
-              <SelectTrigger size="sm" aria-label="每页行数"><SelectValue /></SelectTrigger>
+              <SelectTrigger size="sm" className="hidden md:flex" aria-label="每页行数"><SelectValue /></SelectTrigger>
               <SelectContent align="end">{[10, 20, 30, 40, 50].map(size => <SelectItem key={size} value={`${size}`}>{size}</SelectItem>)}</SelectContent>
             </Select>
           ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" className="hidden md:inline-flex">
                 <Columns3 />
                 <span className="hidden lg:inline">自定义列</span>
                 <span className="lg:hidden">列</span>
@@ -186,7 +186,7 @@ export function DataTable<TData, TValue>({
         </div>
       </div>
       {frame === "card" ? <Separator /> : null}
-      <ItemGroup className={cn("md:hidden", frame === "card" && "gap-0 divide-y [&>[data-slot=item]]:rounded-none [&>[data-slot=item]]:border-0")}>
+      <ItemGroup className={cn("md:hidden", frame === "card" && "gap-0 [&>[data-slot=item]]:rounded-none [&>[data-slot=item]]:border-x-0 [&>[data-slot=item]]:border-t-0")}>
         {table.getRowModel().rows.length ? table.getRowModel().rows.map(row => renderMobileItem ? <React.Fragment key={row.id}>{renderMobileItem(row.original)}</React.Fragment> : (
           <Item key={row.id} variant="outline" className="items-start">
             <ItemContent className="gap-3">

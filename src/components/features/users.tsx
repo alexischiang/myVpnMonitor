@@ -79,7 +79,7 @@ export function UsersPage() {
     (statusFilter === "all" || userStatus(item) === statusFilter)
   ), [users, accountFilter, planFilter, statusFilter])
   const totalUsers = users.length
-  const unclaimedUsers = users.filter(item => item.accountStatus !== "active").length
+  const unclaimedUsers = users.filter(item => !["active", "disabled"].includes(item.accountStatus || "unclaimed")).length
   const registeredUsers = users.filter(item => item.registeredOnly).length
   const activeUsers = users.filter(item => !item.registeredOnly && userStatus(item) !== "expired").length
   const addedToday = users.filter(item => item.createdAt && new Date(item.createdAt).toDateString() === new Date().toDateString()).length
@@ -240,8 +240,8 @@ export function UsersPage() {
   }
 
   function renderMobileUser(item: User) {
-    const claimed = item.accountStatus === "active"
-    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="truncate">{claimed ? item.email || item.userId || "-" : item.userId || "-"}</span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}</ItemTitle><ItemDescription>{item.registeredOnly ? `注册于 ${formatDate(item.createdAt)}` : `到期 ${formatDate(item.expiresAt)} · 总消费 ${formatMoney(item.actualPaid)}`}</ItemDescription></ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}<DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem><DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
+    const claimed = ["active", "disabled"].includes(item.accountStatus || "unclaimed")
+    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="truncate">{claimed ? item.email || item.userId || "-" : item.userId || "-"}</span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}</ItemTitle><ItemDescription className="text-xs">{item.registeredOnly ? formatDate(item.createdAt) : `${formatDate(item.expiresAt)} · ${formatMoney(item.actualPaid)} · ${(item.activeGroup || "-").toUpperCase()}`}</ItemDescription></ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}<DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem><DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
   }
 
   const columns = React.useMemo<ColumnDef<User>[]>(() => [
@@ -254,10 +254,10 @@ export function UsersPage() {
     },
     {
       id: "email",
-      accessorFn: item => item.accountStatus === "active" ? item.email || "" : "未认领",
+      accessorFn: item => ["active", "disabled"].includes(item.accountStatus || "unclaimed") ? item.email || "" : "未认领",
       header: DataTableColumnHeader({ title: "邮箱" }),
       meta: { label: "邮箱" },
-      cell: ({ row }) => row.original.accountStatus === "active" ? row.original.email || "-" : "未认领",
+      cell: ({ row }) => ["active", "disabled"].includes(row.original.accountStatus || "unclaimed") ? row.original.email || "-" : "未认领",
     },
     {
       id: "subscription",
@@ -294,6 +294,7 @@ export function UsersPage() {
       header: "操作",
       cell: ({ row }) => {
         const item = row.original
+        const claimed = ["active", "disabled"].includes(item.accountStatus || "unclaimed")
         return (
           <div className="flex w-max items-center gap-2">
             <Button asChild variant="outline" size="sm">
@@ -302,7 +303,7 @@ export function UsersPage() {
                 详情
               </Link>
             </Button>
-            {item.registeredOnly ? null : <>{deliveryUrl(item) && <CopyButton value={deliveryUrl(item)} label="" />}<Button variant="outline" size="sm" onClick={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />换池</Button><Button variant="outline" size="sm" onClick={() => openGift(item)}><Gift />赠送</Button>{item.accountStatus !== "active" ? <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>编辑</Button> : null}{item.accountStatus !== "active" ? <Button variant="ghost" size="icon" onClick={() => remove(item)} aria-label="删除用户"><Trash2 /></Button> : null}</>}
+            {item.registeredOnly ? null : <>{deliveryUrl(item) && <CopyButton value={deliveryUrl(item)} label="" />}<Button variant="outline" size="sm" onClick={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />换池</Button><Button variant="outline" size="sm" onClick={() => openGift(item)}><Gift />赠送</Button>{!claimed ? <Button variant="ghost" size="sm" onClick={() => { setEditing(item); setOpen(true) }}>编辑</Button> : null}{!claimed ? <Button variant="ghost" size="icon" onClick={() => remove(item)} aria-label="删除用户"><Trash2 /></Button> : null}</>}
           </div>
         )
       },
@@ -313,14 +314,14 @@ export function UsersPage() {
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="hidden gap-4 md:grid md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard label="总用户数" value={totalUsers} detail={`未认领 ${unclaimedUsers} · 未购买 ${registeredUsers}`} />
         <SummaryCard label="活跃用户" value={activeUsers} detail={`占总用户 ${totalUsers ? Math.round(activeUsers / totalUsers * 100) : 0}%`} />
         <SummaryCard label="本日新增用户" value={addedToday} />
         <SummaryCard label="即将过期用户" value={expiringUsers} />
       </div>
       <DataTableCard filters={<>
-        <Field><FieldLabel htmlFor="account-filter">账户状态</FieldLabel><Select value={accountFilter} onValueChange={value => updateSearchParam("account", value, "all")}><SelectTrigger id="account-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="active">已认领</SelectItem><SelectItem value="invited">等待认领</SelectItem><SelectItem value="unclaimed">未认领</SelectItem></SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="account-filter">账户状态</FieldLabel><Select value={accountFilter} onValueChange={value => updateSearchParam("account", value, "all")}><SelectTrigger id="account-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="active">已认领</SelectItem><SelectItem value="disabled">已停用</SelectItem><SelectItem value="invited">等待认领</SelectItem><SelectItem value="unclaimed">未认领</SelectItem></SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="plan-filter">套餐</FieldLabel><Select value={planFilter} onValueChange={value => updateSearchParam("plan", value, "all")}><SelectTrigger id="plan-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{planOptions.map(plan => <SelectItem key={plan} value={plan}>{plan}</SelectItem>)}</SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="status-filter">用户状态</FieldLabel><Select value={statusFilter} onValueChange={value => updateSearchParam("status", value, "all")}><SelectTrigger id="status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="registered">未购买</SelectItem><SelectItem value="ok">Active</SelectItem><SelectItem value="warning">Expiring</SelectItem><SelectItem value="expired">Expired</SelectItem></SelectContent></Select></Field>
       </>}>

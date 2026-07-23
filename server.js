@@ -1771,6 +1771,9 @@ function normalizeSubscription(input, existing = {}) {
   const customer = String(input.customer || existing.customer || "").trim();
   const note = String(input.note || existing.note || "").trim();
   const enabled = input.enabled !== undefined ? Boolean(input.enabled) : existing.enabled !== false;
+  const excludeFromAutoSwitch = input.excludeFromAutoSwitch !== undefined
+    ? Boolean(input.excludeFromAutoSwitch)
+    : Boolean(existing.excludeFromAutoSwitch);
   const useCachedConfigForFallback = input.useCachedConfigForFallback !== undefined
     ? Boolean(input.useCachedConfigForFallback)
     : Boolean(existing.useCachedConfigForFallback);
@@ -1796,6 +1799,7 @@ function normalizeSubscription(input, existing = {}) {
     customer,
     note,
     enabled,
+    excludeFromAutoSwitch,
     useCachedConfigForFallback,
     maxUsers,
     allowedGroups,
@@ -1893,7 +1897,7 @@ function batchGiftTargets({ days, group = "", allowDisabled = false } = {}) {
 }
 
 function userHasClaimedAccount(userId) {
-  return accounts.some(account => account.linkedUserId === userId && account.status === "active");
+  return accounts.some(account => account.linkedUserId === userId && ["active", "disabled"].includes(account.status));
 }
 
 function startOfUtcDate(value) {
@@ -1928,7 +1932,7 @@ function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "", group =
   const dayMs = 86400000;
   let noExpiry = 0;
   let outOfWindow = 0;
-  const eligibleSubscriptions = subscriptions.filter(item => (allowDisabled || item.enabled !== false) && subscriptionAllowsGroup(item, group) && !subscriptionAtCapacity(item, ignoredUserId) && Date.parse(item.metrics?.expireAt || "") > Date.now());
+  const eligibleSubscriptions = subscriptions.filter(item => (allowDisabled || item.enabled !== false) && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, group) && !subscriptionAtCapacity(item, ignoredUserId) && Date.parse(item.metrics?.expireAt || "") > Date.now());
   const candidates = eligibleSubscriptions
     .map(item => {
       const expireTime = item.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
@@ -2943,9 +2947,10 @@ function poolMetricUnavailableReason(item, now = Date.now()) {
   return "";
 }
 
-function initialPoolFallbackReason(item, useSubconverter) {
+function initialPoolFallbackReason(item, useSubconverter, group = "") {
   if (item?.enabled === false) return "pool-disabled";
   if (!subscriptionHasUsableSource(item)) return "pool-missing";
+  if (!subscriptionAllowsGroup(item, group)) return "pool-group-mismatch";
   return useSubconverter ? poolMetricUnavailableReason(item) : "";
 }
 
@@ -2954,6 +2959,7 @@ const fallbackReasonText = {
   "pool-expired": "\u539f\u6c60 URL \u5df2\u5230\u671f",
   "pool-depleted": "\u539f\u6c60 URL \u6d41\u91cf\u5df2\u7528\u5c3d",
   "pool-fetch-failed": "\u539f\u6c60 URL \u5b9e\u65f6\u83b7\u53d6\u5931\u8d25",
+  "pool-group-mismatch": "\u539f\u6c60 URL \u4e0d\u9002\u7528\u4e8e\u5f53\u524d\u5957\u9910\u7b49\u7ea7",
   "pool-missing": "\u539f\u6c60 URL \u4e0d\u5b58\u5728"
 };
 
@@ -3282,7 +3288,7 @@ function fallbackCandidateRank(item, user) {
 
 function fallbackCandidates(user, currentSubscription) {
   const candidates = subscriptions
-    .filter(item => item.id !== currentSubscription?.id && subscriptionAllowsGroup(item, activeUserGroup(user)) && !subscriptionAtCapacity(item, user?.id || ""))
+    .filter(item => item.id !== currentSubscription?.id && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, activeUserGroup(user)) && !subscriptionAtCapacity(item, user?.id || ""))
     .map(item => {
       const rank = fallbackCandidateRank(item, user);
       if (rank === null) return null;
@@ -3792,7 +3798,7 @@ async function handleRelaySubscription(req, res, token) {
     return outputMode === "direct" ? null : relaySubconverterConfig(subscription);
   })();
   let precheckedLiveConfig = null;
-  const initialFallbackReason = initialPoolFallbackReason(subscription, Boolean(sc?.target));
+  const initialFallbackReason = initialPoolFallbackReason(subscription, Boolean(sc?.target), activeUserGroup(user));
   relayLog("current-pool-selected", {
     relayRequestId,
     userId: user.id,
@@ -3821,7 +3827,7 @@ async function handleRelaySubscription(req, res, token) {
     return;
   }
   if (initialFallbackReason) {
-    if (subscription?.url && subscription.enabled !== false) {
+    if (initialFallbackReason !== "pool-group-mismatch" && subscription?.url && subscription.enabled !== false) {
       try {
         precheckedLiveConfig = await cachedPoolConfig(subscription);
         relayLog("current-pool-live-precheck-ok", {
@@ -5065,7 +5071,7 @@ async function handleApi(req, res, pathname) {
       const payload = await readJson(req);
       const email = normalizeAccountEmail(payload.email || user.email || userImessageIds(user).find(value => value.includes("@")) || user.userId);
       let account = accounts.find(item => item.email === email || item.linkedUserId === user.id);
-      if (account?.status === "active") {
+      if (["active", "disabled"].includes(account?.status)) {
         sendJson(res, 409, { error: "该用户已经认领账户。" });
         return;
       }
@@ -5779,7 +5785,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift|account-status))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -5904,6 +5910,21 @@ async function handleApi(req, res, pathname) {
           initialVipCents: initialWalletVipCents(account)
         });
         sendJson(res, 200, publicWallet(wallet));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "account-status" && req.method === "POST") {
+      try {
+        const account = accounts.find(entry => entry.linkedUserId === item.id);
+        if (!account || !["active", "disabled"].includes(account.status)) throw new Error("该用户尚未认领账户。");
+        const payload = await readJson(req);
+        account.status = payload.disabled === true ? "disabled" : "active";
+        account.updatedAt = new Date().toISOString();
+        await saveAccounts();
+        sendJson(res, 200, publicUser(item));
       } catch (error) {
         sendJson(res, 400, { error: error.message });
       }
