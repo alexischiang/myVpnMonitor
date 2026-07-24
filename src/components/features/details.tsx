@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ArrowLeft, Eye, Gift, Loader2, MailCheck, Power, RefreshCw } from "lucide-react"
+import { ArrowLeft, ArrowRight, Eye, Gift, Loader2, MailCheck, Power, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -14,15 +14,17 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
+import { ProviderBadge } from "@/components/features/provider-badge"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserBillsCard } from "@/components/features/user-bills-card"
-import type { User, UserLog } from "@/types"
+import type { User } from "@/types"
 import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, userStatus } from "@/utils"
 
 type GiftPreview = {
@@ -224,40 +226,6 @@ export function UserDetailPage() {
     setReferralRate(user?.referralRate ?? 10)
     setRecurringReferral(user?.recurringReferral === true)
   }, [user?.referralRate, user?.recurringReferral])
-
-  const poolLogColumns = React.useMemo<ColumnDef<UserLog>[]>(() => [
-    {
-      accessorKey: "at",
-      header: DataTableColumnHeader({ title: "时间" }),
-      meta: { label: "时间" },
-      cell: ({ row }) => formatDateTime(row.original.at),
-    },
-    {
-      accessorKey: "statusText",
-      header: "类型",
-      meta: { label: "类型" },
-      cell: ({ row }) => row.original.reason === "user-created" ? "新购绑定" : row.original.reason === "manual-pool-changed" ? "手动换池" : "自动换池",
-    },
-    {
-      accessorKey: "fromSubscriptionLabel",
-      header: "原池",
-      meta: { label: "原池" },
-      cell: ({ row }) => row.original.fromSubscriptionLabel || "-",
-    },
-    {
-      accessorKey: "toSubscriptionLabel",
-      header: "目标池",
-      meta: { label: "目标池" },
-      cell: ({ row }) => row.original.toSubscriptionLabel || "-",
-    },
-    {
-      accessorKey: "reasonText",
-      header: "原因",
-      meta: { label: "原因" },
-      cell: ({ row }) => row.original.reasonText || row.original.message || "-",
-      enableSorting: false,
-    },
-  ], [])
 
   if (!user) return <EmptyState title="未找到用户" />
 
@@ -513,11 +481,11 @@ export function UserDetailPage() {
         </Card>
 
         <Tabs defaultValue="overview" className="min-w-0 gap-4">
-          <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4">
-            <TabsTrigger value="overview">基本信息</TabsTrigger>
-            <TabsTrigger value="bills">账单记录</TabsTrigger>
-            <TabsTrigger value="referral">邀请返利</TabsTrigger>
-            <TabsTrigger value="logs">换池日志</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-4">
+            <TabsTrigger value="overview" className="h-9">基本信息</TabsTrigger>
+            <TabsTrigger value="bills" className="h-9">账单记录</TabsTrigger>
+            <TabsTrigger value="referral" className="h-9">邀请返利</TabsTrigger>
+            <TabsTrigger value="logs" className="h-9">换池日志</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="grid min-w-0 gap-4">
             <Card>
@@ -556,7 +524,30 @@ export function UserDetailPage() {
           <TabsContent value="logs" className="min-w-0">
             <Card>
               <CardHeader className="gap-6"><CardTitle>换池日志</CardTitle><Separator /></CardHeader>
-              <CardContent><DataTable columns={poolLogColumns} data={poolLogs} searchKey="reasonText" searchPlaceholder="搜索换池原因..." emptyTitle="暂无换池日志" /></CardContent>
+              <CardContent>
+                {poolLogs.length ? (
+                  <ItemGroup className="gap-0">
+                    {poolLogs.map((log, index) => (
+                      <Item key={log.id} className="items-start gap-4 rounded-none p-0 pb-6 last:pb-0">
+                        <span className="relative flex w-3 shrink-0 justify-center self-stretch pt-1.5">
+                          <span className="size-3 shrink-0 rounded-full bg-primary ring-4 ring-muted" />
+                          {index < poolLogs.length - 1 ? <span className="absolute top-7 -bottom-6 w-px bg-border" /> : null}
+                        </span>
+                        <ItemContent className="gap-2">
+                          <ItemTitle>{log.reason === "user-created" ? "新购绑定" : log.reason === "manual-pool-changed" ? "手动换池" : "自动换池"}</ItemTitle>
+                          <ItemDescription className="flex flex-wrap items-center gap-2 break-all">
+                            {renderPoolLabel(log.fromSubscriptionLabel)}
+                            <ArrowRight className="size-3.5 shrink-0" aria-hidden="true" />
+                            {renderPoolLabel(log.toSubscriptionLabel)}
+                          </ItemDescription>
+                          {log.reasonText || log.message ? <ItemDescription>{log.reasonText || log.message}</ItemDescription> : null}
+                        </ItemContent>
+                        <ItemActions><time className="whitespace-nowrap text-xs text-muted-foreground" dateTime={log.at}>{formatDateTime(log.at)}</time></ItemActions>
+                      </Item>
+                    ))}
+                  </ItemGroup>
+                ) : <EmptyState title="暂无换池日志" />}
+              </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
@@ -572,4 +563,11 @@ function Info({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="min-w-0 break-words text-sm font-medium">{value}</div>
     </div>
   )
+}
+
+function renderPoolLabel(label?: string) {
+  if (!label || label === "-") return <span>未绑定</span>
+  const separator = label.indexOf(" - ")
+  if (separator < 0) return <span>{label}</span>
+  return <><ProviderBadge name={label.slice(0, separator)} /><span>{label.slice(separator + 3)}</span></>
 }

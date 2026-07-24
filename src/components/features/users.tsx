@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
+import { ProviderBadge } from "@/components/features/provider-badge"
 import { UserStatusBadge } from "@/components/features/shared"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserFormDialog, type UserFormValues } from "@/components/features/user-form-dialog"
@@ -259,14 +260,15 @@ export function UsersPage() {
     },
     {
       id: "subscription",
-      accessorFn: item => `${item.subscription?.email || ""} ${item.subscription?.serviceProvider || ""}`,
+      accessorFn: item => `${item.subscription?.serviceProvider || item.subscription?.provider || ""} ${item.subscription?.email || ""}`,
       header: DataTableColumnHeader({ title: "订阅池" }),
       meta: { label: "订阅池" },
-      cell: ({ row }) => (
-        <div className="truncate">
-          {row.original.subscription?.email || row.original.subscription?.serviceProvider || "-"}
+      cell: ({ row }) => row.original.subscription ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <ProviderBadge name={row.original.subscription.serviceProvider || row.original.subscription.provider} />
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{row.original.subscription.email || "-"}</span>
         </div>
-      ),
+      ) : "-",
     },
     {
       accessorKey: "expiresAt",
