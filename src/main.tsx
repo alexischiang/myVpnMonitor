@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { lazy, Suspense, useEffect } from "react"
 import { createRoot } from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { ThemeProvider } from "next-themes"
@@ -6,23 +6,39 @@ import { ThemeProvider } from "next-themes"
 import "./styles.css"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Toaster } from "@/components/ui/sonner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { DataProvider } from "@/components/features/data-provider"
 import { AppShell } from "@/components/features/app-shell"
-import { DashboardPage } from "@/components/features/dashboard"
-import { SubscriptionsPage } from "@/components/features/subscriptions"
-import { UsersPage } from "@/components/features/users"
-import { OrderDetailPage, OrdersPage } from "@/components/features/bills"
-import { SubscriptionDetailPage, UserDetailPage } from "@/components/features/details"
-import { EmbyPage } from "@/components/features/emby"
-import { PricingSettingsPage } from "@/components/features/pricing-settings"
-import { SalesSettingsPage } from "@/components/features/sales-settings"
-import { PaymentSettingsPage } from "@/components/features/payment-settings"
-import { StatusPage } from "@/components/features/status-page"
-import { SubconverterPage } from "@/components/features/subconverter"
-import { CheckoutPage, DeliveryPage, PricingPage } from "@/components/features/public-pages"
-import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from "@/components/features/auth-pages"
-import { AccountShell } from "@/components/features/account-shell"
-import { AccountDocsPage, AccountOrderDetailPage, AccountOrdersPage, AccountOverviewPage, AccountReferralPage, AccountSettingsPage, AccountWalletPage, PaymentResultPage } from "@/components/features/account-pages"
+
+const DashboardPage = lazy(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
+const SubscriptionsPage = lazy(() => import("@/components/features/subscriptions").then(module => ({ default: module.SubscriptionsPage })))
+const UsersPage = lazy(() => import("@/components/features/users").then(module => ({ default: module.UsersPage })))
+const OrdersPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrdersPage })))
+const OrderDetailPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrderDetailPage })))
+const SubscriptionDetailPage = lazy(() => import("@/components/features/details").then(module => ({ default: module.SubscriptionDetailPage })))
+const UserDetailPage = lazy(() => import("@/components/features/details").then(module => ({ default: module.UserDetailPage })))
+const EmbyPage = lazy(() => import("@/components/features/emby").then(module => ({ default: module.EmbyPage })))
+const PricingSettingsPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingSettingsPage })))
+const SalesSettingsPage = lazy(() => import("@/components/features/sales-settings").then(module => ({ default: module.SalesSettingsPage })))
+const PaymentSettingsPage = lazy(() => import("@/components/features/payment-settings").then(module => ({ default: module.PaymentSettingsPage })))
+const StatusPage = lazy(() => import("@/components/features/status-page").then(module => ({ default: module.StatusPage })))
+const SubconverterPage = lazy(() => import("@/components/features/subconverter").then(module => ({ default: module.SubconverterPage })))
+const CheckoutPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.CheckoutPage })))
+const DeliveryPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.DeliveryPage })))
+const PricingPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.PricingPage })))
+const ForgotPasswordPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.ForgotPasswordPage })))
+const LoginPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.LoginPage })))
+const RegisterPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.RegisterPage })))
+const ResetPasswordPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.ResetPasswordPage })))
+const AccountShell = lazy(() => import("@/components/features/account-shell").then(module => ({ default: module.AccountShell })))
+const AccountDocsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountDocsPage })))
+const AccountOrderDetailPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrderDetailPage })))
+const AccountOrdersPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrdersPage })))
+const AccountOverviewPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOverviewPage })))
+const AccountReferralPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountReferralPage })))
+const AccountSettingsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountSettingsPage })))
+const AccountWalletPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountWalletPage })))
+const PaymentResultPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.PaymentResultPage })))
 
 if (import.meta.env.DEV) document.title = `[LOCAL] ${document.title}`
 
@@ -49,6 +65,7 @@ function App() {
       <TooltipProvider>
         <BrowserRouter>
           <ScrollToTop />
+          <Suspense fallback={<Skeleton className="m-6 min-h-24" />}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
@@ -90,6 +107,7 @@ function App() {
             </Route>
             <Route path="*" element={<StatusPage code="404" title="页面不存在" description="没有找到你访问的页面，它可能已被移动或删除。" />} />
           </Routes>
+          </Suspense>
         </BrowserRouter>
         <Toaster position="bottom-right" richColors />
       </TooltipProvider>

@@ -55,8 +55,9 @@ const initialState: Omit<DataState, "reload" | "runAsync"> = {
   busy: "",
 }
 
-const defaultCollections: Collection[] = ["subscriptions", "users", "bills", "meta"]
-const supplementalCollections: Collection[] = ["vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing"]
+const initialCollections: Collection[] = ["users", "bills", "meta"]
+const defaultCollections: Collection[] = ["subscriptions", ...initialCollections]
+const supplementalCollections: Collection[] = ["subscriptions", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing"]
 const loadedCollections = new Set<Collection>()
 const collectionRequests = new Map<Collection, Promise<unknown>>()
 
@@ -133,21 +134,22 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     accountRequest = accountRequest || fetchJson<{ account?: string; role?: string }>("/api/auth/me").finally(() => {
       accountRequest = null
     })
-    accountRequest.then(me => {
+    const hasInitialData = initialCollections.every(key => loadedCollections.has(key))
+    const initialRequest = hasInitialData ? null : reload(initialCollections)
+
+    accountRequest.then(async me => {
       if (me.role !== "admin") {
         navigate("/account", { replace: true })
         return
       }
       commitState(current => ({ ...current, account: me.account || "" }))
 
-      const hasDefaultData = defaultCollections.every(key => loadedCollections.has(key))
       const missingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
 
-      if (!hasDefaultData) {
-        reload().then(() => {
-          const nextMissingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
-          if (nextMissingSupplemental.length) void reload(nextMissingSupplemental, { silent: true })
-        })
+      if (initialRequest) {
+        await initialRequest
+        const nextMissingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
+        if (nextMissingSupplemental.length) void reload(nextMissingSupplemental, { silent: true })
         return
       }
 
