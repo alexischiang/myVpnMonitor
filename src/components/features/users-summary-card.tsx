@@ -21,7 +21,7 @@ export function UsersSummaryCard({ total, active, addedToday, expiring }: UsersS
   ]
 
   return (
-    <Card className="gap-0 py-0">
+    <Card className="hidden gap-0 py-0 md:flex">
       <CardContent className="grid p-0 sm:grid-cols-2 xl:flex xl:items-center">
         {items.map((item, index) => (
           <React.Fragment key={item.label}>

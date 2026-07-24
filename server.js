@@ -4746,6 +4746,7 @@ async function handleApi(req, res, pathname) {
     const walletVipLevel = vipLevelForSpend(wallet.vipSpendCents / 100);
     const plan = user ? publicPricing().find(item => item.group === activeUserGroup(user)) : null;
     sendJson(res, 200, {
+      customerID: account.customerID,
       email: account.email,
       createdAt: account.createdAt,
       vipLevel: walletVipLevel,
@@ -4867,71 +4868,76 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/health" && req.method === "GET") {
     const services = {};
-
-    // Database check
-    try {
-      if (dataStore.kind === "postgres") {
-        const startedAt = Date.now();
-        await dataStore.ping();
-        services.database = { status: "ok", latency: Date.now() - startedAt };
-      } else {
-        services.database = { status: "ok", kind: "json" };
-      }
-    } catch (e) {
-      services.database = { status: "error", message: e.message };
-    }
-
-    // Subconverter check
-    if (SUB_CONVERTER_URL) {
-      try {
-        const t0 = Date.now();
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 5000);
-        const resp = await fetch(`${SUB_CONVERTER_URL}/version`, { signal: ctrl.signal });
-        clearTimeout(timer);
-        services.subconverter = { status: resp.ok ? "ok" : "error", latency: Date.now() - t0, url: SUB_CONVERTER_URL };
-      } catch (e) {
-        services.subconverter = { status: "error", message: e.message, url: SUB_CONVERTER_URL };
-      }
-    } else {
-      services.subconverter = { status: "unconfigured" };
-    }
-
-    if (notifier.isTelegramConfigured()) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-      const startedAt = Date.now();
-      try {
-        await notifier.checkTelegram({ signal: controller.signal });
-        services.telegram = { status: "ok", latency: Date.now() - startedAt };
-      } catch (error) {
-        services.telegram = { status: "error", message: error.message };
-      } finally {
-        clearTimeout(timer);
-      }
-    } else {
-      services.telegram = { status: "unconfigured" };
-    }
-
     const mailConfig = notifier.getMailerConfig();
-    if (mailConfig.resendApiKey) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-      const startedAt = Date.now();
-      try {
-        const response = await fetch("https://api.resend.com/domains", {
-          headers: { authorization: `Bearer ${mailConfig.resendApiKey}` },
-          signal: controller.signal
-        });
-        services.resend = { status: response.status < 500 ? "ok" : "error", latency: Date.now() - startedAt };
-      } catch (error) {
-        services.resend = { status: "error", message: error.message };
-      } finally {
-        clearTimeout(timer);
-      }
-    } else {
-      services.resend = { status: "unconfigured" };
-    }
+    await Promise.all([
+      (async () => {
+        try {
+          if (dataStore.kind !== "postgres") {
+            services.database = { status: "ok", kind: "json" };
+            return;
+          }
+          const startedAt = Date.now();
+          await dataStore.ping();
+          services.database = { status: "ok", latency: Date.now() - startedAt };
+        } catch (error) {
+          services.database = { status: "error", message: error.message };
+        }
+      })(),
+      (async () => {
+        if (!SUB_CONVERTER_URL) {
+          services.subconverter = { status: "unconfigured" };
+          return;
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const startedAt = Date.now();
+        try {
+          const response = await fetch(`${SUB_CONVERTER_URL}/version`, { signal: controller.signal });
+          services.subconverter = { status: response.ok ? "ok" : "error", latency: Date.now() - startedAt, url: SUB_CONVERTER_URL };
+        } catch (error) {
+          services.subconverter = { status: "error", message: error.message, url: SUB_CONVERTER_URL };
+        } finally {
+          clearTimeout(timer);
+        }
+      })(),
+      (async () => {
+        if (!notifier.isTelegramConfigured()) {
+          services.telegram = { status: "unconfigured" };
+          return;
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const startedAt = Date.now();
+        try {
+          await notifier.checkTelegram({ signal: controller.signal });
+          services.telegram = { status: "ok", latency: Date.now() - startedAt };
+        } catch (error) {
+          services.telegram = { status: "error", message: error.message };
+        } finally {
+          clearTimeout(timer);
+        }
+      })(),
+      (async () => {
+        if (!mailConfig.resendApiKey) {
+          services.resend = { status: "unconfigured" };
+          return;
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const startedAt = Date.now();
+        try {
+          const response = await fetch("https://api.resend.com/domains", {
+            headers: { authorization: `Bearer ${mailConfig.resendApiKey}` },
+            signal: controller.signal
+          });
+          services.resend = { status: response.status < 500 ? "ok" : "error", latency: Date.now() - startedAt };
+        } catch (error) {
+          services.resend = { status: "error", message: error.message };
+        } finally {
+          clearTimeout(timer);
+        }
+      })()
+    ]);
 
     const allOk = Object.values(services).every(s => s.status === "ok" || s.status === "unconfigured");
     sendJson(res, 200, {
@@ -6286,13 +6292,15 @@ async function serveStatic(req, res, pathname) {
     const ext = path.extname(filePath);
     const contentType = mimeTypes[ext] || "application/octet-stream";
     const acceptEncoding = (req.headers["accept-encoding"] || "");
+    const cacheControl = requestedPath.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+    const responseHeaders = { "content-type": contentType, "cache-control": cacheControl };
 
     // 对可压缩类型优先尝试预压缩文件（.br / .gz）
     if (COMPRESSIBLE_EXTS.has(ext)) {
       if (acceptEncoding.includes("br")) {
         try {
           const brContent = await fs.readFile(filePath + ".br");
-          res.writeHead(200, { "content-type": contentType, "content-encoding": "br", "vary": "Accept-Encoding" });
+          res.writeHead(200, { ...responseHeaders, "content-encoding": "br", "vary": "Accept-Encoding" });
           res.end(brContent);
           return;
         } catch {}
@@ -6300,7 +6308,7 @@ async function serveStatic(req, res, pathname) {
       if (acceptEncoding.includes("gzip")) {
         try {
           const gzContent = await fs.readFile(filePath + ".gz");
-          res.writeHead(200, { "content-type": contentType, "content-encoding": "gzip", "vary": "Accept-Encoding" });
+          res.writeHead(200, { ...responseHeaders, "content-encoding": "gzip", "vary": "Accept-Encoding" });
           res.end(gzContent);
           return;
         } catch {}
@@ -6314,11 +6322,11 @@ async function serveStatic(req, res, pathname) {
       if (acceptEncoding.includes("br")) {
         zlib.brotliCompress(content, (err, compressed) => {
           if (!err) {
-            res.writeHead(200, { "content-type": contentType, "content-encoding": "br", "vary": "Accept-Encoding" });
+            res.writeHead(200, { ...responseHeaders, "content-encoding": "br", "vary": "Accept-Encoding" });
             res.end(compressed);
             return;
           }
-          res.writeHead(200, { "content-type": contentType });
+          res.writeHead(200, responseHeaders);
           res.end(content);
         });
         return;
@@ -6326,18 +6334,18 @@ async function serveStatic(req, res, pathname) {
       if (acceptEncoding.includes("gzip")) {
         zlib.gzip(content, (err, compressed) => {
           if (!err) {
-            res.writeHead(200, { "content-type": contentType, "content-encoding": "gzip", "vary": "Accept-Encoding" });
+            res.writeHead(200, { ...responseHeaders, "content-encoding": "gzip", "vary": "Accept-Encoding" });
             res.end(compressed);
             return;
           }
-          res.writeHead(200, { "content-type": contentType });
+          res.writeHead(200, responseHeaders);
           res.end(content);
         });
         return;
       }
     }
 
-    res.writeHead(200, { "content-type": contentType });
+    res.writeHead(200, responseHeaders);
     res.end(content);
   } catch {
     if (!path.extname(requestedPath)) {
