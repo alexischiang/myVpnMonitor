@@ -21,6 +21,7 @@ type AdminOrder = {
   id: string
   merOrderTid: string
   purpose: "plan" | "recharge"
+  purchaseAction?: "initial" | "extend" | "replace"
   planName: string
   optionLabel: string
   duration?: string
@@ -59,6 +60,24 @@ const orderStatusLabels: Record<string, string> = {
 }
 
 const paymentChannelLabels: Record<string, string> = { "100": "支付宝", "200": "微信支付", wallet: "账户余额", "cash-credit": "现金价值全额抵扣" }
+
+const orderTypeLabels: Record<string, string> = {
+  initial: "新购",
+  extend: "续费",
+  replace: "升级 / 变更",
+  recharge: "余额充值",
+}
+
+const orderTypeVariants = {
+  initial: "success",
+  extend: "default",
+  replace: "warning",
+  recharge: "secondary",
+} as const
+
+function orderType(order: AdminOrder) {
+  return order.purpose === "recharge" ? "recharge" : order.purchaseAction || "initial"
+}
 
 function orderStatus(order: AdminOrder) {
   if (order.status === "paid" && order.fulfillmentStatus === "fulfilled") return "fulfilled"
@@ -114,6 +133,13 @@ export function OrdersPage() {
       header: DataTableColumnHeader({ title: "商品" }),
       meta: { label: "商品" },
       cell: ({ row }) => `${row.original.planName} / ${row.original.optionLabel}`,
+    },
+    {
+      id: "type",
+      accessorFn: orderType,
+      header: DataTableColumnHeader({ title: "账单种类" }),
+      meta: { label: "账单种类" },
+      cell: ({ row }) => <Badge variant={orderTypeVariants[orderType(row.original)]}>{orderTypeLabels[orderType(row.original)]}</Badge>,
     },
     {
       accessorKey: "totalAmount",
@@ -208,6 +234,7 @@ export function OrderDetailPage() {
           <CardHeader><CardTitle>订单信息</CardTitle></CardHeader>
           <CardContent><Table><TableBody>
             <DetailRow label="客户" value={order.email || "-"} />
+            <DetailRow label="账单种类" value={<Badge variant={orderTypeVariants[orderType(order)]}>{orderTypeLabels[orderType(order)]}</Badge>} />
             <DetailRow label="订单状态" value={<Badge variant={statusBadgeVariant(status)}>{orderStatusLabels[status] || order.statusText}</Badge>} />
             <DetailRow label="发放状态" value={order.fulfillmentStatus === "fulfilled" ? "已发放" : order.fulfillmentStatus === "failed" ? "发放失败" : "尚未发放"} />
             <DetailRow label="创建时间" value={formatDateTime(order.createdAt)} />

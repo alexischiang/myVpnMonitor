@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -59,7 +60,6 @@ export function UsersPage() {
   const planFilter = searchParams.get("plan") || "all"
   const statusFilter = searchParams.get("status") || "all"
   const searchQuery = searchParams.get("q") || ""
-  const searchScope = searchQuery.startsWith("#") ? "id" : searchQuery.startsWith("@") ? "identity" : searchQuery.startsWith("!") ? "provider" : "all"
   const [giftDays, setGiftDays] = React.useState("")
   const [giftExpiresAt, setGiftExpiresAt] = React.useState("")
   const [giftPoolId, setGiftPoolId] = React.useState("")
@@ -248,13 +248,10 @@ export function UsersPage() {
   const columns = React.useMemo<ColumnDef<User>[]>(() => [
     {
       id: "user",
-      accessorFn: item => searchScope === "id"
-        ? `#${item.customerID || ""}`
-        : searchScope === "identity"
-          ? `@${item.userId || ""} @${item.email || ""}`
-          : searchScope === "provider"
-            ? `!${item.subscription?.serviceProvider || item.subscription?.provider || ""}`
-          : `${item.userId || ""} ${item.customerID || ""} ${item.wechatName || ""} ${item.imessage || ""} ${item.email || ""}`,
+      accessorFn: item => {
+        const provider = item.subscription?.serviceProvider || item.subscription?.provider || ""
+        return `${item.userId || ""} ${item.customerID || ""} ${item.wechatName || ""} ${item.imessage || ""} ${item.email || ""} ${provider} #${item.customerID || ""} @${item.userId || ""} @${item.email || ""} !${provider}`
+      },
       header: DataTableColumnHeader({ title: "用户" }),
       meta: { label: "用户" },
       cell: ({ row }) => <div className="flex min-w-0 items-center whitespace-nowrap leading-5">{row.original.userId ? <span className="truncate font-medium">{row.original.userId}</span> : null}<span className={`${row.original.userId ? "ml-1 " : ""}shrink-0 text-xs font-normal text-muted-foreground`}>#{row.original.customerID}</span></div>,
@@ -277,6 +274,12 @@ export function UsersPage() {
           <span className="min-w-0 truncate text-xs text-muted-foreground">{row.original.subscription.email || "-"}</span>
         </div>
       ) : "-",
+    },
+    {
+      accessorKey: "activeGroup",
+      header: DataTableColumnHeader({ title: "套餐等级" }),
+      meta: { label: "套餐等级" },
+      cell: ({ row }) => row.original.activeGroup ? <Badge variant="outline">{row.original.activeGroup.toUpperCase()}</Badge> : "-",
     },
     {
       accessorKey: "expiresAt",
@@ -320,7 +323,7 @@ export function UsersPage() {
       enableHiding: false,
       enableSorting: false,
     },
-  ], [location.search, searchScope])
+  ], [location.search])
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
@@ -328,7 +331,7 @@ export function UsersPage() {
       <DataTableCard filters={<>
         <Field><FieldLabel htmlFor="account-filter">账户状态</FieldLabel><Select value={accountFilter} onValueChange={value => updateSearchParam("account", value, "all")}><SelectTrigger id="account-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="active">已认领</SelectItem><SelectItem value="disabled">已停用</SelectItem><SelectItem value="invited">等待认领</SelectItem><SelectItem value="unclaimed">未认领</SelectItem></SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="plan-filter">套餐</FieldLabel><Select value={planFilter} onValueChange={value => updateSearchParam("plan", value, "all")}><SelectTrigger id="plan-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{planOptions.map(plan => <SelectItem key={plan} value={plan}>{plan}</SelectItem>)}</SelectContent></Select></Field>
-        <Field><FieldLabel htmlFor="status-filter">用户状态</FieldLabel><Select value={statusFilter} onValueChange={value => updateSearchParam("status", value, "all")}><SelectTrigger id="status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="registered">未购买</SelectItem><SelectItem value="ok">Active</SelectItem><SelectItem value="warning">Expiring</SelectItem><SelectItem value="expired">Expired</SelectItem></SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="status-filter">套餐状态</FieldLabel><Select value={statusFilter} onValueChange={value => updateSearchParam("status", value, "all")}><SelectTrigger id="status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="registered">未购买</SelectItem><SelectItem value="ok">Active</SelectItem><SelectItem value="warning">Expiring</SelectItem><SelectItem value="expired">Expired</SelectItem></SelectContent></Select></Field>
       </>}>
         <DataTable
           columns={columns}
