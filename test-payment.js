@@ -178,6 +178,18 @@ async function main() {
       body: { account: "payment-admin", password: "payment-admin-password" }
     });
     const adminCookie = adminLogin.response.headers.get("set-cookie").split(";", 1)[0];
+    const registeredUsers = await request("/api/users", { cookie: adminCookie });
+    const registeredOnly = registeredUsers.data.find(item => item.email === "buyer@example.test");
+    assert.ok(registeredOnly?.id.startsWith("account:"));
+    const disabledAccount = await request(`/api/users/${registeredOnly.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
+    assert.strictEqual(disabledAccount.data.accountStatus, "disabled");
+    const disabledUsers = await request("/api/users", { cookie: adminCookie });
+    assert.strictEqual(disabledUsers.data.find(item => item.id === registeredOnly.id)?.accountStatus, "disabled");
+    const disabledLogin = await request("/api/auth/login", { method: "POST", body: { account: "buyer@example.test", password: "payment-test-password" } });
+    assert.strictEqual(disabledLogin.response.status, 403);
+    assert.strictEqual(disabledLogin.data.error, "该账户已停用，请联系右下角客服。");
+    const restoredAccount = await request(`/api/users/${registeredOnly.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: false } });
+    assert.strictEqual(restoredAccount.data.accountStatus, "active");
     const savedSettings = await request("/api/sales-settings", {
       method: "PUT",
       cookie: adminCookie,

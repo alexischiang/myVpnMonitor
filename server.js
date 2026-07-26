@@ -4558,8 +4558,16 @@ async function handleApi(req, res, pathname) {
       }
       void loadLatestData();
       const email = normalizeAccountEmail(account);
-      const userAccount = accounts.find(item => item.email === email && item.status === "active");
+      const userAccount = accounts.find(item => item.email === email);
       if (!userAccount || !verifyAccountPassword(password, userAccount.passwordHash)) {
+        sendJson(res, 401, { error: "邮箱或密码不正确。" });
+        return;
+      }
+      if (userAccount.status === "disabled") {
+        sendJson(res, 403, { error: "该账户已停用，请联系右下角客服。" });
+        return;
+      }
+      if (userAccount.status !== "active") {
         sendJson(res, 401, { error: "邮箱或密码不正确。" });
         return;
       }
@@ -5312,7 +5320,7 @@ async function handleApi(req, res, pathname) {
     await loadLatestData();
     const subscriptionsById = subscriptionById();
     const registeredAccounts = accounts
-      .filter(account => account.status === "active" && !userForAccount(account))
+      .filter(account => ["active", "disabled"].includes(account.status) && !userForAccount(account))
       .map(publicRegisteredAccount);
     sendJson(res, 200, [...users.map(user => publicUser(user, subscriptionsById)), ...registeredAccounts]);
     return;
@@ -5895,7 +5903,10 @@ async function handleApi(req, res, pathname) {
     const id = userMatch[1];
     const action = userMatch[2];
     const item = users.find(entry => entry.id === id);
-    if (!item) {
+    const registeredAccount = action === "account-status" && id.startsWith("account:")
+      ? accounts.find(entry => entry.id === id.slice("account:".length))
+      : null;
+    if (!item && !registeredAccount) {
       sendJson(res, 404, { error: "没有找到这个用户。" });
       return;
     }
@@ -6023,13 +6034,13 @@ async function handleApi(req, res, pathname) {
 
     if (action === "account-status" && req.method === "POST") {
       try {
-        const account = accounts.find(entry => entry.linkedUserId === item.id);
+        const account = registeredAccount || accounts.find(entry => entry.linkedUserId === item.id);
         if (!account || !["active", "disabled"].includes(account.status)) throw new Error("该用户尚未认领账户。");
         const payload = await readJson(req);
         account.status = payload.disabled === true ? "disabled" : "active";
         account.updatedAt = new Date().toISOString();
         await saveAccounts();
-        sendJson(res, 200, publicUser(item));
+        sendJson(res, 200, registeredAccount ? publicRegisteredAccount(account) : publicUser(item));
       } catch (error) {
         sendJson(res, 400, { error: error.message });
       }

@@ -134,10 +134,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     accountRequest = accountRequest || fetchJson<{ account?: string; role?: string }>("/api/auth/me").finally(() => {
       accountRequest = null
     })
-    const hasInitialData = initialCollections.every(key => loadedCollections.has(key))
-    const initialRequest = hasInitialData ? null : reload(initialCollections)
+    const hasInitialData = cachedState !== null && !cachedState.loading && initialCollections.every(key => loadedCollections.has(key))
+    const initialRequest = hasInitialData ? Promise.resolve() : reload(initialCollections)
 
-    accountRequest.then(async me => {
+    Promise.all([accountRequest, initialRequest]).then(async ([me]) => {
       if (me.role !== "admin") {
         navigate("/account", { replace: true })
         return
@@ -146,15 +146,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
       const missingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
 
-      if (initialRequest) {
-        await initialRequest
-        const nextMissingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
-        if (nextMissingSupplemental.length) void reload(nextMissingSupplemental, { silent: true })
-        return
-      }
-
       commitState(current => ({ ...current, loading: false, error: "" }))
-      void reload(defaultCollections, { silent: true })
       if (missingSupplemental.length) void reload(missingSupplemental, { silent: true })
     }).catch(() => navigate("/login", { replace: true }))
   }, [commitState, navigate, reload])

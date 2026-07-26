@@ -59,12 +59,34 @@ function ScrollToTop() {
   return null
 }
 
+function AuthCrispChat() {
+  const { pathname } = useLocation()
+  const visible = pathname === "/login" || pathname === "/register"
+  useEffect(() => {
+    if (!visible) return
+    const crispWindow = window as typeof window & { $crisp?: { push(command: ["do", "chat:show" | "chat:hide" | "session:reset"]): number }; CRISP_WEBSITE_ID?: string }
+    crispWindow.$crisp ||= []
+    crispWindow.CRISP_WEBSITE_ID = "149a15d1-aa5b-471e-9da6-fa37c8b17f68"
+    crispWindow.$crisp.push(["do", "session:reset"])
+    crispWindow.$crisp.push(["do", "chat:show"])
+    if (!document.querySelector('script[src="https://client.crisp.chat/l.js"]')) {
+      const script = document.createElement("script")
+      script.src = "https://client.crisp.chat/l.js"
+      script.async = true
+      document.head.appendChild(script)
+    }
+    return () => { crispWindow.$crisp?.push(["do", "chat:hide"]) }
+  }, [visible])
+  return null
+}
+
 function App() {
   return (
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} storageKey="themeMode">
       <TooltipProvider>
         <BrowserRouter>
           <ScrollToTop />
+          <AuthCrispChat />
           <Suspense fallback={<Skeleton className="m-6 min-h-24" />}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />

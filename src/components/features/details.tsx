@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { ArrowLeft, ArrowRight, Eye, Gift, Loader2, MailCheck, Power, RefreshCw } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Eye, Gift, Loader2, MailCheck, Power, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -424,6 +424,7 @@ export function UserDetailPage() {
           <AlertDialogFooter><AlertDialogCancel disabled={accountStatusSaving}>取消</AlertDialogCancel><AlertDialogAction className={user.accountStatus === "active" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined} onClick={event => { event.preventDefault(); void toggleAccountStatus() }} disabled={accountStatusSaving}>{accountStatusSaving ? <Loader2 className="animate-spin" /> : <Power />}{accountStatusSaving ? "处理中..." : user.accountStatus === "active" ? "确认停用" : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {user.accountStatus === "disabled" ? <Alert variant="warning"><AlertCircle /><AlertDescription>该用户已停用</AlertDescription></Alert> : null}
       <main className="grid min-w-0 gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
         <Card className="self-start xl:sticky xl:top-4">
           <CardHeader className="relative justify-items-center text-center">
@@ -464,12 +465,14 @@ export function UserDetailPage() {
               <Info label="当前到期" value={formatUserExpiry(user)} />
             </div>
           </CardContent>
-          {user.registeredOnly ? null : (
+          {user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : (
             <CardFooter className="grid gap-2">
-              <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>
-              <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
+              {user.registeredOnly ? null : <>
+                <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>
+                <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
+              </>}
               {user.accountStatus === "active" ? <>
-                <Button variant="outline" className="w-full" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button>
+                {user.registeredOnly ? null : <Button variant="outline" className="w-full" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button>}
                 <Button variant="destructive" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />停用账户</Button>
               </> : user.accountStatus === "disabled" ? (
                 <Button variant="outline" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />恢复账户</Button>
