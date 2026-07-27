@@ -49,10 +49,11 @@ export function AppShell() {
   }, [])
 
   React.useEffect(() => {
+    if (location.pathname !== "/dashboard") return
     void refreshHealth()
     const timer = window.setInterval(refreshHealth, 180_000)
     return () => window.clearInterval(timer)
-  }, [refreshHealth])
+  }, [location.pathname, refreshHealth])
 
   const failedServices = services ? ([
     ["数据库", services.database],

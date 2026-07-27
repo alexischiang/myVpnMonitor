@@ -9,8 +9,7 @@ npm run dev:docs
 npm run build:docs
 ```
 
-一个用于管理 VPN 订阅 URL、客户、购买账单和订阅监控的后台系统。项目支持本地运行，也支持部署到 Vercel 并连接 Neon PostgreSQL。
-
+一个用于管理 VPN 订阅 URL、客户、购买账单和订阅监控的后台系统。
 ## 功能概览
 
 - URL 管理：新增、编辑、删除、刷新订阅 URL，查看监控返回内容。
@@ -134,46 +133,7 @@ https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://your-dom
 npm run sync:neon-to-local
 ```
 
-## Vercel 部署
 
-项目已包含 Vercel 部署结构：
-
-```text
-api/[...path].js
-vercel.json
-```
-
-Vercel 会托管 `public/` 中的前端文件，所有 `/api/*` 请求会进入 `api/[...path].js`，并复用本地 API 逻辑。
-
-Vercel 环境变量：
-
-```text
-DATABASE_URL=你的 Neon PostgreSQL 连接串
-DATABASE_SSL=true
-LOW_TRAFFIC_BYTES=53687091200
-EXPIRING_SOON_DAYS=3
-REFRESH_INTERVAL_MS=1800000
-```
-
-云端必须配置 `DATABASE_URL`。
-
-Vercel Hobby 账号的 Cron 限制为每天一次，因此当前配置为每日刷新：
-
-```text
-/api/cron/refresh
-```
-
-如需保护 Cron 接口，可设置：
-
-```text
-CRON_SECRET=一段随机字符串
-```
-
-然后调用接口时带上：
-
-```text
-Authorization: Bearer 一段随机字符串
-```
 
 ## 订阅解析规则
 

@@ -1,4 +1,5 @@
 const assert = require("assert");
+const zlib = require("zlib");
 const {
   parseSubscriptionUserInfo,
   parseBodyHints,
@@ -16,8 +17,20 @@ const {
   paymentOrderExpiresAt,
   isPaymentOrderExpired,
   normalizeSalesSettings,
-  normalizePaymentSettings
+  normalizePaymentSettings,
+  sendJson,
+  batchItems
 } = require("./server");
+
+const compressedResponse = {
+  req: { headers: { "accept-encoding": "gzip, deflate" } },
+  writeHead(status, headers) { this.status = status; this.headers = headers; },
+  end(body) { this.body = body; }
+};
+sendJson(compressedResponse, 200, { data: "x".repeat(2000) });
+assert.strictEqual(compressedResponse.headers["content-encoding"], "gzip");
+assert.strictEqual(JSON.parse(zlib.gunzipSync(compressedResponse.body)).data.length, 2000);
+assert.deepStrictEqual(batchItems([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
 
 function near(actual, expected, tolerance = 2) {
   assert.ok(

@@ -11,19 +11,18 @@ sidebar_position: 2
 :::tip
 intel芯片
 
-- 下载链接1：[https://file.1995.ovh/s/ZjCm](https://file.1995.ovh/s/ZjCm) 
+- 下载链接：[https://file.1995.ovh/s/ZjCm](https://file.1995.ovh/s/ZjCm)
 
 m芯片下载：
 
-- 下载链接1：[https://oka.lanzouu.com/i9EcT3yvg8ng](https://oka.lanzouu.com/i9EcT3yvg8ng)  
-- 下载链接2：[https://file.1995.ovh/s/kqI6](https://file.1995.ovh/s/kqI6) 
+- 下载链接：[https://file.1995.ovh/s/kqI6](https://file.1995.ovh/s/kqI6)
 :::
 
 
 ### windows下载
 
 :::tip
-- 下载链接：[https://oka.lanzouu.com/iSbJJ3xo5hxg](https://oka.lanzouu.com/iSbJJ3xo5hxg) 
+- 下载链接：https://dl.kook1.com.cn/download_share.php?code=lQSCfcYZD0SVbNsX
 :::
 ## 2.打开软件
 

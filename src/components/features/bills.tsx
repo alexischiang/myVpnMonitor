@@ -176,7 +176,7 @@ export function OrdersPage() {
         <Field><FieldLabel htmlFor="order-status-filter">订单状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="order-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(orderStatusLabels).map(([status, label]) => <SelectItem key={status} value={status}>{label}</SelectItem>)}</SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="order-purpose-filter">订单类型</FieldLabel><Select value={purposeFilter} onValueChange={setPurposeFilter}><SelectTrigger id="order-purpose-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem value="plan">套餐购买</SelectItem><SelectItem value="recharge">余额充值</SelectItem></SelectContent></Select></Field>
       </>}>
-        <DataTable columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={10} frame="card" />
+        <DataTable columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={30} frame="card" />
       </DataTableCard>
     </div>
   )

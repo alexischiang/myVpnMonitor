@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Loader2, Percent, RefreshCw, Users, WalletCards, XCircle, type LucideIcon } from "lucide-react"
+import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Loader2, Percent, RefreshCw, Users, WalletCards, XCircle, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { clearJsonCache, deleteJson, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
@@ -21,6 +21,7 @@ import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DataTableRowActions } from "@/components/features/data-table"
 import { MarkdownContent } from "@/components/features/markdown-content"
 import { VipBadge } from "@/components/features/vip-badge"
@@ -109,6 +110,10 @@ export function AccountOverviewPage() {
     return () => { carouselApi.off("select", select) }
   }, [carouselApi])
 
+  React.useEffect(() => {
+    if (data && window.location.hash === "#subscription") document.getElementById("subscription")?.scrollIntoView()
+  }, [data?.email])
+
   function changeAnnouncementOpen(open: boolean) {
     if (!open && reminderDialog && muteToday && data) localStorage.setItem(`account-announcement-muted:${data.email}`, todayKey())
     if (!open) setReminderDialog(false)
@@ -163,7 +168,7 @@ export function AccountOverviewPage() {
             <div className="grid gap-1.5"><div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground"><span>{vipTarget ? `距离 ${vipTarget.level}` : "已达到最高等级"}</span><span>{vipTarget ? `还差 ${formatMoney(vipTarget.amount - vipSpend)}` : "100%"}</span></div><Progress value={vipProgress} aria-label={`VIP 消费进度 ${Math.round(vipProgress)}%`} /></div>
           </CardContent>
         </Card>
-        <Card>
+        <Card id="subscription" className="scroll-mt-16">
           <CardHeader className="flex-row items-start justify-between gap-4"><div><CardDescription>当前订阅</CardDescription><CardTitle className="mt-1 text-2xl">{subscription ? subscription.activeGroup.toUpperCase() : "暂无订阅"}</CardTitle></div><Badge variant={subscription?.status === "active" ? "success" : subscription?.status === "expired" ? "destructive" : "warning"}>{subscription?.status === "active" ? <><BadgeCheck />生效中</> : subscription?.status === "expired" ? "已过期" : "未开通"}</Badge></CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 xl:grid-cols-4">
           <Metric label="原套餐到期" value={subscription ? formatDate(subscription.planExpiresAt) : "-"} />
@@ -171,7 +176,7 @@ export function AccountOverviewPage() {
           <Metric label="当前到期" value={subscription ? formatDate(subscription.expiresAt) : "-"} />
             <Metric label="流量" value={subscription?.traffic || "-"} />
             <Metric label="可绑定设备" value={subscription ? `${subscription.devices} 台` : "-"} />
-            <Metric label="剩余现金价值" value={subscription ? formatMoney(subscription.cashValue) : "-"} />
+            <Metric label="剩余现金价值" value={subscription ? formatMoney(subscription.cashValue) : "-"} description="根据当前套餐剩余有效期折算，更换套餐时可用于抵扣。" />
             <div className="col-span-2 flex flex-wrap gap-2 xl:col-span-4"><Button asChild><Link to="/account/plans">{subscription ? "续费或更换套餐" : "购买套餐"}</Link></Button></div>
             {subscription ? <><Separator className="col-span-2 xl:col-span-4" /><Field className="col-span-2 xl:col-span-4"><FieldLabel htmlFor="subscription-url">订阅链接</FieldLabel><FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription><Input id="subscription-url" readOnly value={subscription.subscriptionUrl} /><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></> : null}
           </CardContent>
@@ -490,8 +495,8 @@ function PaymentVipProgress({ order }: { order: PaymentOrder }) {
   )
 }
 
-function Metric({ label, value }: { label: string; value: React.ReactNode }) {
-  return <div className="grid gap-1"><span className="text-sm text-muted-foreground">{label}</span><strong className="text-sm font-medium">{value}</strong></div>
+function Metric({ label, value, description }: { label: string; value: React.ReactNode; description?: string }) {
+  return <div className="grid gap-1"><span className="flex items-center gap-1 text-sm text-muted-foreground">{label}{description ? <Tooltip><TooltipTrigger aria-label={`${label}说明`}><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>{description}</TooltipContent></Tooltip> : null}</span><strong className="text-sm font-medium">{value}</strong></div>
 }
 
 function OrdersTable({ orders }: { orders: PaymentOrder[] }) {

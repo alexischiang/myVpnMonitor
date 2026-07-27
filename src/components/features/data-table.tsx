@@ -50,13 +50,24 @@ import { EmptyState } from "@/components/features/shared"
 import { cn } from "@/lib/utils"
 
 const normalizeSearchText = (value: unknown) => String(value ?? "").toLocaleLowerCase().replace(/\s+/g, "")
+const searchVariants = new Map<string, string[]>()
+
+function searchableText(text: string) {
+  const cached = searchVariants.get(text)
+  if (cached) return cached
+  // ponytail: bounded whole-cache reset; use LRU only if search diversity grows substantially.
+  if (searchVariants.size >= 2000) searchVariants.clear()
+  const variants = [text, pinyin(text, { toneType: "none", separator: "" }), pinyin(text, { toneType: "none", pattern: "first", separator: "" })]
+    .map(normalizeSearchText)
+  searchVariants.set(text, variants)
+  return variants
+}
 
 const fuzzyTextFilter: FilterFn<unknown> = (row, columnId, filterValue) => {
   const text = String(row.getValue(columnId) ?? "")
   const query = normalizeSearchText(filterValue)
   if (!query) return true
-  return [text, pinyin(text, { toneType: "none", separator: "" }), pinyin(text, { toneType: "none", pattern: "first", separator: "" })]
-    .some(value => normalizeSearchText(value).includes(query))
+  return searchableText(text).some(value => value.includes(query))
 }
 
 type DataTableProps<TData, TValue> = {
@@ -97,7 +108,7 @@ export function DataTable<TData, TValue>({
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
-    pageSize,
+    pageSize: window.matchMedia("(min-width: 768px)").matches ? pageSize : Math.min(pageSize, 10),
   })
   const tableTopRef = React.useRef<HTMLDivElement>(null)
   const previousPageIndex = React.useRef(0)

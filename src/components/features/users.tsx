@@ -342,7 +342,7 @@ export function UsersPage() {
           renderMobileItem={renderMobileUser}
           searchPlaceholder="搜索用户，#ID，@用户名/邮箱，!供应商"
           emptyTitle="暂无用户"
-          pageSize={10}
+          pageSize={30}
           frame="card"
           toolbar={<div className="flex gap-2"><Button size="sm" variant="outline" onClick={openBatchGift}><Gift />批量赠送</Button><Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增用户</Button></div>}
         />

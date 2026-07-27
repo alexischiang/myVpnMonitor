@@ -57,11 +57,13 @@ const initialState: Omit<DataState, "reload" | "runAsync"> = {
 
 const initialCollections: Collection[] = ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "meta"]
 const defaultCollections: Collection[] = ["subscriptions", "users", "bills", "meta"]
+const focusRefreshIntervalMs = 60_000
 const loadedCollections = new Set<Collection>()
 const collectionRequests = new Map<Collection, Promise<unknown>>()
 
 let cachedState: Omit<DataState, "reload" | "runAsync"> | null = null
 let accountRequest: Promise<{ account?: string; role?: string }> | null = null
+let lastLoadedAt = 0
 
 function fetchCollection(key: Collection) {
   const existing = collectionRequests.get(key)
@@ -113,8 +115,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const keys = collections || defaultCollections
     commitState(current => ({ ...current, loading: !collections && !silent, error: silent ? current.error : "" }))
     try {
-      const results = await Promise.all(keys.map(key => collections ? fetchJson(apis[key]) : fetchCollection(key)))
+      const results = !collections || collections === initialCollections || collections === defaultCollections
+        ? await fetchJson<Record<Collection, unknown>>("/api/admin-data").then(data => keys.map(key => data[key]))
+        : await Promise.all(keys.map(key => collections ? fetchJson(apis[key]) : fetchCollection(key)))
       keys.forEach(key => loadedCollections.add(key))
+      lastLoadedAt = Date.now()
       commitState(current => {
         const patch: Partial<DataState> = {}
         keys.forEach((key, index) => {
@@ -148,7 +153,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [commitState, navigate, reload])
 
   React.useEffect(() => {
-    const refresh = () => { void reload(defaultCollections, { silent: true }) }
+    const refresh = () => {
+      if (Date.now() - lastLoadedAt >= focusRefreshIntervalMs) void reload(defaultCollections, { silent: true })
+    }
     window.addEventListener("focus", refresh)
     return () => window.removeEventListener("focus", refresh)
   }, [reload])
