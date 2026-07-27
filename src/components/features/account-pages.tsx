@@ -4,7 +4,6 @@ import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, Cloc
 import { toast } from "sonner"
 
 import { clearJsonCache, deleteJson, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -23,6 +22,7 @@ import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DataTableRowActions } from "@/components/features/data-table"
+import { MarkdownContent } from "@/components/features/markdown-content"
 import { VipBadge } from "@/components/features/vip-badge"
 import { formatDate, formatDateTime, formatMoney } from "@/utils"
 
@@ -32,12 +32,6 @@ type Announcement = { id: string; title: string; content: string; publishedAt: s
 type Overview = { customerID: number; email: string; createdAt: string; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; vipDelta: number; balance: number; description: string; createdAt: string }
 type WalletData = { balance: number; cashBalance: number; giftBalance: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
-
-const clientGuides = [
-  { client: "Shadowrocket", platform: "iPhone / iPad", resources: [{ label: "点击查看教程👉https://pan.baidu.com/s/1EfxrUShiOj5Zmx9TEMIdlw?pwd=nT76", href: "https://pan.baidu.com/s/1EfxrUShiOj5Zmx9TEMIdlw?pwd=nT76", suffix: " [美区账号请联系右下角客服获取]" }] },
-  { client: "Sparkle", platform: "Windows / macOS", resources: [{ label: "mac👉 https://oka.lanzouu.com/iVJA93lp0mre", href: "https://oka.lanzouu.com/iVJA93lp0mre" }, { label: "win👉https://oka.lanzouu.com/ijFzd39od4sh", href: "https://oka.lanzouu.com/ijFzd39od4sh" }] },
-  { client: "Clash", platform: "Android", resources: [{ label: "点击查看教程👉https://oka.lanzouy.com/iq07G2xbb65e", href: "https://oka.lanzouy.com/iq07G2xbb65e" }] },
-] as const
 
 function todayKey() {
   const now = new Date()
@@ -147,7 +141,7 @@ export function AccountOverviewPage() {
           <CardContent>
             <Carousel opts={{ loop: data.announcements.length > 1 }} setApi={setCarouselApi} aria-label="网站公告">
               <CarouselContent>
-                {data.announcements.map(announcement => <CarouselItem key={announcement.id}><Item asChild variant="muted"><article className="grid gap-3"><header className="grid gap-1"><h3 className="font-medium">{announcement.title}</h3><time className="text-sm text-muted-foreground" dateTime={announcement.publishedAt}>{formatDateTime(announcement.publishedAt)}</time></header><p className="line-clamp-2 whitespace-pre-wrap text-sm leading-6">{announcement.content}</p></article></Item></CarouselItem>)}
+                {data.announcements.map(announcement => <CarouselItem key={announcement.id}><Item asChild variant="muted"><article className="grid gap-3"><header className="grid gap-1"><h3 className="font-medium">{announcement.title}</h3><time className="text-sm text-muted-foreground" dateTime={announcement.publishedAt}>{formatDateTime(announcement.publishedAt)}</time></header><MarkdownContent content={announcement.content} className="line-clamp-2 max-h-14 overflow-hidden" /></article></Item></CarouselItem>)}
               </CarouselContent>
               <div className="mt-4 flex items-center justify-between gap-2">
                 <Button variant="outline" size="sm" onClick={() => { if (currentAnnouncement) viewAnnouncement(currentAnnouncement) }}><Eye />查看公告</Button>
@@ -186,7 +180,7 @@ export function AccountOverviewPage() {
       <Dialog open={announcementOpen} onOpenChange={changeAnnouncementOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{selectedAnnouncement?.title}</DialogTitle><DialogDescription>{formatDateTime(selectedAnnouncement?.publishedAt)}</DialogDescription></DialogHeader>
-          <p className="whitespace-pre-wrap text-sm leading-6">{selectedAnnouncement?.content}</p>
+          {selectedAnnouncement ? <MarkdownContent content={selectedAnnouncement.content} /> : null}
           <DialogFooter>
             {reminderDialog ? <label className="flex items-center gap-2 text-sm sm:mr-auto"><Checkbox checked={muteToday} onCheckedChange={checked => setMuteToday(checked === true)} />今日不再提醒</label> : null}
             <DialogClose asChild><Button variant={reminderDialog ? "default" : "outline"}>{reminderDialog ? "我知道了" : "关闭"}</Button></DialogClose>
@@ -210,32 +204,8 @@ export function AccountOverviewPage() {
 }
 
 export function AccountDocsPage() {
-  const { data, error } = useOverview()
-  return (
-    <div className="grid gap-4 px-4 lg:px-6">
-      <Card>
-        <CardHeader><CardTitle>客户端使用文档</CardTitle><CardDescription>选择你正在使用的客户端，查看对应教程或下载地址。</CardDescription></CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          {data?.subscription ? <CopySubscription value={data.subscription.subscriptionUrl} /> : <Button asChild><Link to="/account/plans">查看套餐</Link></Button>}
-          <Button asChild variant="outline"><Link to="/account">返回总览</Link></Button>
-          {error ? <p className="w-full text-sm text-destructive">{error}</p> : null}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader><CardTitle>选择客户端</CardTitle><CardDescription>不同系统的菜单名称可能略有差异，导入时使用同一条订阅链接。</CardDescription></CardHeader>
-        <CardContent>
-          <Accordion type="single" collapsible>
-            {clientGuides.map(guide => (
-              <AccordionItem key={guide.client} value={guide.client}>
-                <AccordionTrigger><span className="flex min-w-0 flex-wrap items-center gap-2"><span>{guide.client}</span><Badge variant="secondary">{guide.platform}</Badge></span></AccordionTrigger>
-                <AccordionContent><div className="grid gap-2">{guide.resources.map(resource => <p key={resource.href}><a className="text-primary underline underline-offset-4" href={resource.href} target="_blank" rel="noreferrer">{resource.label}</a>{"suffix" in resource ? resource.suffix : ""}</p>)}</div></AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
-        </CardContent>
-      </Card>
-    </div>
-  )
+  React.useEffect(() => { window.location.replace("/docs/") }, [])
+  return <PageLoading />
 }
 
 export function AccountWalletPage() {

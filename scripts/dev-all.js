@@ -43,3 +43,4 @@ process.on("SIGTERM", () => shutdown(0));
 
 run("backend", ["run", "dev:server"]);
 run("frontend", ["run", "dev"]);
+run("docs", ["run", "dev:docs"]);

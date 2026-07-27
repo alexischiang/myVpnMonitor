@@ -13,7 +13,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     credentials: "same-origin",
     ...options,
     headers: {
-      ...(options.body && !(options.body instanceof FormData) ? { "content-type": "application/json" } : {}),
+      ...(typeof options.body === "string" ? { "content-type": "application/json" } : {}),
       ...(options.headers || {}),
     },
   })

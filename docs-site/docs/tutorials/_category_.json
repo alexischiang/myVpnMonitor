@@ -1,0 +1,8 @@
+{
+  "label": "使用教程",
+  "position": 2,
+  "link": {
+    "type": "generated-index",
+    "description": "按设备系统选择对应教程。"
+  }
+}

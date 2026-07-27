@@ -224,12 +224,22 @@ export type AnnouncementSetting = {
   enabled: boolean
 }
 
+export type MarkdownDocumentSetting = {
+  id: string
+  category: string
+  title: string
+  description: string
+  content: string
+  enabled: boolean
+}
+
 export type SalesSettings = {
   id: string
   registrationMode: "open" | "invite_only" | "disabled"
   coupons: CouponSetting[]
   faqs: FaqSetting[]
   announcements: AnnouncementSetting[]
+  advertisements: MarkdownDocumentSetting[]
 }
 
 export type PaymentSettings = {

@@ -21,13 +21,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PageHeader } from "@/components/features/shared"
+import { MarkdownEditor } from "@/components/features/markdown-editor"
 import { useData } from "@/components/features/data-provider"
-import type { AnnouncementSetting, CouponSetting, FaqSetting, SalesSettings } from "@/types"
+import type { AnnouncementSetting, CouponSetting, FaqSetting, MarkdownDocumentSetting, SalesSettings } from "@/types"
 
 type Editor =
   | { type: "coupon"; value: CouponSetting; isNew: boolean }
   | { type: "faq"; value: FaqSetting; isNew: boolean }
   | { type: "announcement"; value: AnnouncementSetting; isNew: boolean }
+  | { type: "advertisement"; value: MarkdownDocumentSetting; isNew: boolean }
 
 const couponGroups = [
   { value: "basic", label: "BASIC" },
@@ -68,6 +70,15 @@ function couponLimit(coupon: CouponSetting) {
   const total = coupon.totalLimit ? `总量 ${coupon.totalLimit}（已占用 ${coupon.usedCount || 0}）` : "不限总量"
   const account = coupon.perAccountLimit ? `每账户 ${coupon.perAccountLimit} 次` : "不限账户次数"
   return `${total} · ${account}`
+}
+
+function MarkdownDocumentList({ title, description, empty, items, onAdd, onEdit }: { title: string; description: string; empty: string; items: MarkdownDocumentSetting[]; onAdd: () => void; onEdit: (value: MarkdownDocumentSetting) => void }) {
+  return (
+    <section className="grid gap-4">
+      <header className="flex flex-wrap items-end justify-between gap-3"><div className="grid gap-1"><h2 className="text-lg font-semibold">{title}</h2><p className="text-sm text-muted-foreground">{description}</p></div><Button variant="outline" size="sm" onClick={onAdd}><Plus />添加内容</Button></header>
+      {items.length ? <ItemGroup>{items.map(item => <Item key={item.id} variant="outline"><ItemContent><ItemTitle>{item.title}<Badge variant="outline">{item.category || "未分类"}</Badge><Badge variant={item.enabled ? "default" : "secondary"}>{item.enabled ? "已启用" : "草稿"}</Badge></ItemTitle>{item.description ? <ItemDescription>{item.description}</ItemDescription> : null}</ItemContent><ItemActions><Button variant="link" size="sm" onClick={() => onEdit(item)}>编辑</Button></ItemActions></Item>)}</ItemGroup> : <p className="py-6 text-sm text-muted-foreground">{empty}</p>}
+    </section>
+  )
 }
 
 export function SalesSettingsPage() {
@@ -125,7 +136,9 @@ export function SalesSettingsPage() {
       ? { ...settings, coupons: editor.isNew ? [...settings.coupons, editor.value] : settings.coupons.map(item => item.id === editor.value.id ? editor.value : item) }
       : editor.type === "faq"
         ? { ...settings, faqs: editor.isNew ? [...settings.faqs, editor.value] : settings.faqs.map(item => item.id === editor.value.id ? editor.value : item) }
-        : { ...settings, announcements: editor.isNew ? [...settings.announcements, editor.value] : settings.announcements.map(item => item.id === editor.value.id ? editor.value : item) }
+        : editor.type === "announcement"
+          ? { ...settings, announcements: editor.isNew ? [...settings.announcements, editor.value] : settings.announcements.map(item => item.id === editor.value.id ? editor.value : item) }
+          : { ...settings, advertisements: editor.isNew ? [...settings.advertisements, editor.value] : settings.advertisements.map(item => item.id === editor.value.id ? editor.value : item) }
     setSavingAction("save")
     try {
       if (await persist(next, editor.isNew ? "已添加" : "修改已保存")) setEditor(null)
@@ -140,7 +153,9 @@ export function SalesSettingsPage() {
       ? { ...settings, coupons: settings.coupons.filter(item => item.id !== editor.value.id) }
       : editor.type === "faq"
         ? { ...settings, faqs: settings.faqs.filter(item => item.id !== editor.value.id) }
-        : { ...settings, announcements: settings.announcements.filter(item => item.id !== editor.value.id) }
+        : editor.type === "announcement"
+          ? { ...settings, announcements: settings.announcements.filter(item => item.id !== editor.value.id) }
+          : { ...settings, advertisements: settings.advertisements.filter(item => item.id !== editor.value.id) }
     setSavingAction("delete")
     try {
       if (await persist(next, "已删除")) setEditor(null)
@@ -203,6 +218,7 @@ export function SalesSettingsPage() {
           <TabsTrigger value="coupons">优惠码</TabsTrigger>
           <TabsTrigger value="faqs">价格页 FAQ</TabsTrigger>
           <TabsTrigger value="announcements">网站公告</TabsTrigger>
+          <TabsTrigger value="advertisements">广告草稿</TabsTrigger>
         </TabsList>
         <TabsContent value="coupons">
           <section className="grid gap-4">
@@ -222,11 +238,21 @@ export function SalesSettingsPage() {
             {settings.announcements.length ? <ItemGroup>{settings.announcements.slice().sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt)).map(announcement => <Item key={announcement.id} variant="outline"><ItemContent><ItemTitle>{announcement.title}<Badge variant={announcement.enabled ? "default" : "secondary"}>{announcement.enabled ? "已启用" : "已停用"}</Badge></ItemTitle><ItemDescription>{format(new Date(announcement.publishedAt), "yyyy/MM/dd HH:mm")}</ItemDescription></ItemContent><ItemActions><Button variant="link" size="sm" onClick={() => setEditor({ type: "announcement", value: { ...announcement }, isNew: false })}>编辑</Button></ItemActions></Item>)}</ItemGroup> : <p className="py-6 text-sm text-muted-foreground">暂无公告</p>}
           </section>
         </TabsContent>
+        <TabsContent value="advertisements">
+          <MarkdownDocumentList
+            title="广告草稿"
+            description="先用 Markdown 编写和保存，暂不在前台展示。"
+            empty="暂无广告草稿"
+            items={settings.advertisements}
+            onAdd={() => setEditor({ type: "advertisement", value: { id: crypto.randomUUID(), category: "广告", title: "", description: "", content: "", enabled: false }, isNew: true })}
+            onEdit={value => setEditor({ type: "advertisement", value: { ...value }, isNew: false })}
+          />
+        </TabsContent>
       </Tabs>
       <Sheet open={Boolean(editor)} onOpenChange={open => { if (!open && !saving) setEditor(null) }}>
-        <SheetContent className="w-full sm:max-w-md">
+        <SheetContent className="w-full sm:max-w-4xl">
           {editor ? <>
-            <SheetHeader><SheetTitle>{editor.isNew ? "添加" : "编辑"}{editor.type === "coupon" ? "优惠码" : editor.type === "faq" ? " FAQ" : "公告"}</SheetTitle><SheetDescription>{editor.type === "coupon" ? "设置折扣、适用范围、使用限制、有效期和状态。" : editor.type === "faq" ? "设置价格页显示的问题、回答和状态。" : "设置用户中心公告的标题、正文、发布时间和状态。"}</SheetDescription></SheetHeader>
+            <SheetHeader><SheetTitle>{editor.isNew ? "添加" : "编辑"}{editor.type === "coupon" ? "优惠码" : editor.type === "faq" ? " FAQ" : editor.type === "announcement" ? "公告" : "广告"}</SheetTitle><SheetDescription>{editor.type === "coupon" ? "设置折扣、适用范围、使用限制、有效期和状态。" : editor.type === "faq" ? "设置价格页显示的问题、回答和状态。" : "使用 Markdown 编写正文，可在编辑器中实时预览。"}</SheetDescription></SheetHeader>
             <div className="grid gap-4 overflow-y-auto px-4">
               {editor.type === "coupon" ? <FieldGroup>
                 <Field><FieldLabel htmlFor="sales-coupon-code">优惠码</FieldLabel><Input id="sales-coupon-code" autoFocus value={editor.value.code} onChange={event => setEditor({ ...editor, value: { ...editor.value, code: event.target.value.toUpperCase() } })} /></Field>
@@ -287,11 +313,17 @@ export function SalesSettingsPage() {
                 <Field><FieldLabel htmlFor="sales-faq-question">问题</FieldLabel><Input id="sales-faq-question" autoFocus maxLength={120} value={editor.value.question} onChange={event => setEditor({ ...editor, value: { ...editor.value, question: event.target.value } })} /></Field>
                 <Field><FieldLabel htmlFor="sales-faq-answer">回答</FieldLabel><Textarea id="sales-faq-answer" maxLength={500} rows={8} value={editor.value.answer} onChange={event => setEditor({ ...editor, value: { ...editor.value, answer: event.target.value } })} /></Field>
                 <label className="flex items-center gap-2 text-sm"><Checkbox checked={editor.value.enabled !== false} onCheckedChange={checked => setEditor({ ...editor, value: { ...editor.value, enabled: checked === true } })} />在价格页显示</label>
-              </FieldGroup> : <FieldGroup>
+              </FieldGroup> : editor.type === "announcement" ? <FieldGroup>
                 <Field><FieldLabel htmlFor="sales-announcement-title">标题</FieldLabel><Input id="sales-announcement-title" autoFocus maxLength={80} value={editor.value.title} onChange={event => setEditor({ ...editor, value: { ...editor.value, title: event.target.value } })} /></Field>
-                <Field><FieldLabel htmlFor="sales-announcement-content">正文</FieldLabel><Textarea id="sales-announcement-content" maxLength={2000} rows={10} value={editor.value.content} onChange={event => setEditor({ ...editor, value: { ...editor.value, content: event.target.value } })} /></Field>
+                <Field><FieldLabel htmlFor="sales-announcement-content">Markdown 正文</FieldLabel><MarkdownEditor id="sales-announcement-content" value={editor.value.content} onChange={content => setEditor({ ...editor, value: { ...editor.value, content } })} /></Field>
                 <Field><FieldLabel htmlFor="sales-announcement-published-at">发布时间</FieldLabel><Input id="sales-announcement-published-at" type="datetime-local" required value={format(new Date(editor.value.publishedAt), "yyyy-MM-dd'T'HH:mm")} onChange={event => { if (event.target.value) setEditor({ ...editor, value: { ...editor.value, publishedAt: new Date(event.target.value).toISOString() } }) }} /></Field>
                 <label className="flex items-center gap-2 text-sm"><Checkbox checked={editor.value.enabled} onCheckedChange={checked => setEditor({ ...editor, value: { ...editor.value, enabled: checked === true } })} />在用户中心显示</label>
+              </FieldGroup> : <FieldGroup>
+                <Field><FieldLabel htmlFor="sales-markdown-category">分类</FieldLabel><Input id="sales-markdown-category" maxLength={40} value={editor.value.category || ""} onChange={event => setEditor({ ...editor, value: { ...editor.value, category: event.target.value } })} /></Field>
+                <Field><FieldLabel htmlFor="sales-markdown-title">标题</FieldLabel><Input id="sales-markdown-title" autoFocus maxLength={80} value={editor.value.title} onChange={event => setEditor({ ...editor, value: { ...editor.value, title: event.target.value } })} /></Field>
+                <Field><FieldLabel htmlFor="sales-markdown-description">简介</FieldLabel><Input id="sales-markdown-description" maxLength={200} value={editor.value.description} onChange={event => setEditor({ ...editor, value: { ...editor.value, description: event.target.value } })} /></Field>
+                <Field><FieldLabel htmlFor="sales-markdown-content">Markdown 正文</FieldLabel><MarkdownEditor id="sales-markdown-content" value={editor.value.content} onChange={content => setEditor({ ...editor, value: { ...editor.value, content } })} /></Field>
+                <label className="flex items-center gap-2 text-sm"><Checkbox checked={editor.value.enabled} onCheckedChange={checked => setEditor({ ...editor, value: { ...editor.value, enabled: checked === true } })} />标记为可用</label>
               </FieldGroup>}
             </div>
             <SheetFooter>

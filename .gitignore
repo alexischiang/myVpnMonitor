@@ -6,3 +6,5 @@ dist/
 build-meta.json
 design-template/
 data/
+docs-site/.docusaurus/
+docs-site/build/
