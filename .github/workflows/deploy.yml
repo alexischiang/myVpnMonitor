@@ -57,7 +57,7 @@ jobs:
             cd ${{ secrets.DEPLOY_PATH }}
             previous_sha=$(git rev-parse HEAD)
             git pull --ff-only origin production
-            if [ ! -d node_modules ] || ! git diff --quiet "$previous_sha" HEAD -- package-lock.json; then
+            if ! node -e "require('js-yaml'); require('pg'); require('nodemailer')" || ! git diff --quiet "$previous_sha" HEAD -- package-lock.json; then
               for attempt in 1 2 3; do
                 if npm ci --omit=dev --workspaces=false --prefer-offline --registry=https://registry.npmjs.org --replace-registry-host=always --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000; then
                   break
@@ -74,3 +74,11 @@ jobs:
               touch dist/index.html
             fi
             pm2 restart nexora --update-env
+            for attempt in $(seq 1 12); do
+              if curl --fail --silent --max-time 5 http://127.0.0.1:3000/api/health > /dev/null; then
+                exit 0
+              fi
+              sleep 5
+            done
+            pm2 logs nexora --lines 50 --nostream
+            exit 1
