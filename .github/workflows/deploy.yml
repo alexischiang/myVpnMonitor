@@ -59,7 +59,7 @@ jobs:
             git pull --ff-only origin production
             if [ ! -d node_modules ] || ! git diff --quiet "$previous_sha" HEAD -- package-lock.json; then
               for attempt in 1 2 3; do
-                if npm ci --omit=dev --prefer-offline --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000; then
+                if npm ci --omit=dev --workspaces=false --prefer-offline --registry=https://registry.npmjs.org --replace-registry-host=always --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000; then
                   break
                 fi
                 if [ "$attempt" -eq 3 ]; then
