@@ -55,18 +55,21 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
+            previous_sha=$(git rev-parse HEAD)
             git pull --ff-only origin production
-            for attempt in 1 2 3; do
-              if npm ci --omit=dev --prefer-offline --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000; then
-                break
-              fi
-              if [ "$attempt" -eq 3 ]; then
-                exit 1
-              fi
-              delay=$((attempt * 30))
-              echo "npm ci failed on attempt $attempt; retrying in ${delay}s..."
-              sleep "$delay"
-            done
+            if [ ! -d node_modules ] || ! git diff --quiet "$previous_sha" HEAD -- package-lock.json; then
+              for attempt in 1 2 3; do
+                if npm ci --omit=dev --prefer-offline --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000; then
+                  break
+                fi
+                if [ "$attempt" -eq 3 ]; then
+                  exit 1
+                fi
+                delay=$((attempt * 30))
+                echo "npm ci failed on attempt $attempt; retrying in ${delay}s..."
+                sleep "$delay"
+              done
+            fi
             if [ -f dist/index.html ]; then
               touch dist/index.html
             fi
