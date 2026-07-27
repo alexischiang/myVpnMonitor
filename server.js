@@ -33,6 +33,8 @@ const LOCAL_DATABASE_URL = process.env.VERCEL === "1" ? "" : process.env.LOCAL_D
 const DATABASE_URL = LOCAL_DATABASE_URL || process.env.DATABASE_URL || "";
 const DIST_DIR = path.join(__dirname, "dist");
 const PUBLIC_DIR = fsSync.existsSync(path.join(DIST_DIR, "index.html")) ? DIST_DIR : path.join(__dirname, "public");
+const MARKDOWN_UPLOAD_DIR = path.resolve(process.env.MARKDOWN_UPLOAD_DIR || path.join(__dirname, "data", "markdown-uploads"));
+const MARKDOWN_IMAGE_MAX_BYTES = Number(process.env.MARKDOWN_IMAGE_MAX_BYTES || 8 * 1024 * 1024);
 const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "build-meta.json");
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 24 * 60 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 10 * 1024 * 1024 * 1024);
@@ -213,7 +215,11 @@ const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8"
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif"
 };
 
 let dataInitializationPromise = null;
@@ -1007,12 +1013,38 @@ function legacyPaymentCoupons(value = process.env.PAYMENT_COUPONS || "") {
 }
 
 function initialSalesSettings() {
-  return { id: "default", registrationMode: "open", coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [] };
+  return { id: "default", registrationMode: "open", coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [] };
+}
+
+function readBuffer(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", chunk => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new Error("图片不能超过 8MB。"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+function imageExtension(content) {
+  if (content.length >= 8 && content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return ".png";
+  if (content.length >= 3 && content[0] === 0xff && content[1] === 0xd8 && content[2] === 0xff) return ".jpg";
+  if (content.length >= 12 && content.subarray(0, 4).toString("ascii") === "RIFF" && content.subarray(8, 12).toString("ascii") === "WEBP") return ".webp";
+  if (content.length >= 6 && ["GIF87a", "GIF89a"].includes(content.subarray(0, 6).toString("ascii"))) return ".gif";
+  return "";
 }
 
 function currentSalesSettings() {
   const settings = salesSettings[0];
-  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", announcements: settings.announcements || [] } : initialSalesSettings();
+  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", announcements: settings.announcements || [], advertisements: settings.advertisements || [] } : initialSalesSettings();
 }
 
 function paymentCoupons(value) {
@@ -1084,7 +1116,7 @@ function normalizeSalesSettings(payload) {
     const title = String(item.title || "").trim();
     const content = String(item.content || "").trim();
     if (!title || !content) throw new Error("公告标题和正文不能为空。");
-    if (title.length > 80 || content.length > 2000) throw new Error("公告标题最多 80 字，正文最多 2000 字。");
+    if (title.length > 80 || content.length > 20000) throw new Error("公告标题最多 80 字，正文最多 20000 字。");
     return {
       id: String(item.id || crypto.randomUUID()),
       title,
@@ -1093,7 +1125,16 @@ function normalizeSalesSettings(payload) {
       enabled: item.enabled !== false
     };
   });
-  return { id: "default", registrationMode, coupons: normalizedCoupons, faqs, announcements };
+  const advertisements = (Array.isArray(payload?.advertisements) ? payload.advertisements : []).slice(0, 50).map(item => {
+    const category = String(item.category || "广告").trim();
+    const title = String(item.title || "").trim();
+    const description = String(item.description || "").trim();
+    const content = String(item.content || "").trim();
+    if (!category || (item.enabled !== false && (!title || !content))) throw new Error("广告分类、标题和正文不能为空。");
+    if (category.length > 40 || title.length > 80 || description.length > 200 || content.length > 20000) throw new Error("广告分类最多 40 字，标题最多 80 字，简介最多 200 字，正文最多 20000 字。");
+    return { id: String(item.id || crypto.randomUUID()), category, title, description, content, enabled: item.enabled !== false };
+  });
+  return { id: "default", registrationMode, coupons: normalizedCoupons, faqs, announcements, advertisements };
 }
 
 function publicAnnouncements() {
@@ -5141,6 +5182,23 @@ async function handleApi(req, res, pathname) {
   if (!requireAdmin(req, res)) return;
   await loadLatestData();
 
+  if (pathname === "/api/markdown/images" && req.method === "POST") {
+    try {
+      const contentLength = Number(req.headers["content-length"] || 0);
+      if (!contentLength || contentLength > MARKDOWN_IMAGE_MAX_BYTES) throw new Error("请选择不超过 8MB 的图片。");
+      const content = await readBuffer(req, MARKDOWN_IMAGE_MAX_BYTES);
+      const extension = imageExtension(content);
+      if (!extension) throw new Error("仅支持 PNG、JPEG、WebP 和 GIF 图片。");
+      await fs.mkdir(MARKDOWN_UPLOAD_DIR, { recursive: true });
+      const filename = `${crypto.randomUUID()}${extension}`;
+      await fs.writeFile(path.join(MARKDOWN_UPLOAD_DIR, filename), content, { flag: "wx" });
+      sendJson(res, 201, { url: `/uploads/markdown/${filename}` });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/sales-settings" && req.method === "GET") {
     sendJson(res, 200, salesSettingsWithCouponUsage());
     return;
@@ -6254,10 +6312,17 @@ const COMPRESSIBLE_EXTS = new Set([".html", ".css", ".js", ".json", ".svg", ".xm
 
 async function serveStatic(req, res, pathname) {
   const requestedPath = pathname === "/" ? "/index.html" : pathname;
-  const isAppRoute = !path.extname(requestedPath);
+  const isDocsRoute = requestedPath === "/docs" || requestedPath.startsWith("/docs/");
+  const isAppRoute = !isDocsRoute && !path.extname(requestedPath);
   const isLoginRoute = /^\/(?:login|register|forgot-password|reset-password)\/?$/.test(requestedPath) || requestedPath === "/login.html";
   const isPublicAppRoute = /^\/delivery\/[^/]+\/?$/.test(requestedPath) || /^\/(?:pricing|buy)\/?$/.test(requestedPath) || isLoginRoute;
   const session = currentSession(req);
+  const markdownImageMatch = requestedPath.match(/^\/uploads\/markdown\/([0-9a-f-]+\.(?:png|jpg|webp|gif))$/);
+  if (requestedPath === "/docs") {
+    res.writeHead(302, { "location": "/docs/", "cache-control": "no-cache" });
+    res.end();
+    return;
+  }
   if (requestedPath === "/login.html") {
     res.writeHead(302, {
       "location": "/login",
@@ -6290,10 +6355,17 @@ async function serveStatic(req, res, pathname) {
     return;
   }
 
-  const staticPath = isAppRoute ? "/index.html" : requestedPath;
-  const filePath = path.normalize(path.join(PUBLIC_DIR, staticPath));
+  if (requestedPath.startsWith("/uploads/markdown/") && (!markdownImageMatch || !session)) {
+    res.writeHead(session ? 404 : 403);
+    res.end(session ? "Not found" : "Forbidden");
+    return;
+  }
 
-  if (!filePath.startsWith(PUBLIC_DIR)) {
+  const staticPath = isAppRoute ? "/index.html" : isDocsRoute && !path.extname(requestedPath) ? `${requestedPath.replace(/\/$/, "")}/index.html` : requestedPath;
+  const baseDir = markdownImageMatch ? MARKDOWN_UPLOAD_DIR : PUBLIC_DIR;
+  const filePath = markdownImageMatch ? path.join(baseDir, markdownImageMatch[1]) : path.normalize(path.join(baseDir, staticPath));
+
+  if (!filePath.startsWith(baseDir)) {
     res.writeHead(403);
     res.end("Forbidden");
     return;
@@ -6303,7 +6375,7 @@ async function serveStatic(req, res, pathname) {
     const ext = path.extname(filePath);
     const contentType = mimeTypes[ext] || "application/octet-stream";
     const acceptEncoding = (req.headers["accept-encoding"] || "");
-    const cacheControl = requestedPath.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+    const cacheControl = markdownImageMatch ? "private, max-age=31536000, immutable" : requestedPath.includes("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
     const responseHeaders = { "content-type": contentType, "cache-control": cacheControl };
 
     // 对可压缩类型优先尝试预压缩文件（.br / .gz）
@@ -6359,7 +6431,7 @@ async function serveStatic(req, res, pathname) {
     res.writeHead(200, responseHeaders);
     res.end(content);
   } catch {
-    if (!path.extname(requestedPath)) {
+    if (!isDocsRoute && !path.extname(requestedPath)) {
       try {
         const content = await fs.readFile(path.join(PUBLIC_DIR, "index.html"));
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

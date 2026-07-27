@@ -20,8 +20,13 @@ export default defineConfig({
     compression({ algorithm: "gzip", ext: ".gz", threshold: 1024, deleteOriginFile: false })
   ],
   server: {
+    watch: {
+      ignored: ["**/docs-site/**"]
+    },
     proxy: {
       "/api": "http://127.0.0.1:3000",
+      "/uploads": "http://127.0.0.1:3000",
+      "/docs": "http://localhost:3001",
       "/sub": "http://127.0.0.1:3000",
       "/c": "http://127.0.0.1:3000",
       "/custom": "http://127.0.0.1:3000"

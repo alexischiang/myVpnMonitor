@@ -55,9 +55,8 @@ const initialState: Omit<DataState, "reload" | "runAsync"> = {
   busy: "",
 }
 
-const initialCollections: Collection[] = ["users", "bills", "meta"]
-const defaultCollections: Collection[] = ["subscriptions", ...initialCollections]
-const supplementalCollections: Collection[] = ["subscriptions", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing"]
+const initialCollections: Collection[] = ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "meta"]
+const defaultCollections: Collection[] = ["subscriptions", "users", "bills", "meta"]
 const loadedCollections = new Set<Collection>()
 const collectionRequests = new Map<Collection, Promise<unknown>>()
 
@@ -86,7 +85,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const mountedRef = React.useRef(true)
   const [state, setState] = React.useState<Omit<DataState, "reload" | "runAsync">>(() => {
     if (!cachedState) return initialState
-    return { ...cachedState, loading: false, error: "" }
+    return { ...cachedState, loading: !initialCollections.every(key => loadedCollections.has(key)), error: "" }
   })
   const [busy, setBusy] = React.useState("")
 
@@ -114,7 +113,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const keys = collections || defaultCollections
     commitState(current => ({ ...current, loading: !collections && !silent, error: silent ? current.error : "" }))
     try {
-      const results = await Promise.all(keys.map(fetchCollection))
+      const results = await Promise.all(keys.map(key => collections ? fetchJson(apis[key]) : fetchCollection(key)))
       keys.forEach(key => loadedCollections.add(key))
       commitState(current => {
         const patch: Partial<DataState> = {}
@@ -144,10 +143,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
       commitState(current => ({ ...current, account: me.account || "" }))
 
-      const missingSupplemental = supplementalCollections.filter(key => !loadedCollections.has(key))
-
       commitState(current => ({ ...current, loading: false, error: "" }))
-      if (missingSupplemental.length) void reload(missingSupplemental, { silent: true })
     }).catch(() => navigate("/login", { replace: true }))
   }, [commitState, navigate, reload])
 

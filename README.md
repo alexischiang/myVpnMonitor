@@ -1,5 +1,14 @@
 # XELA monitor
 
+## Docusaurus 文档中心
+
+文档源码位于 `docs-site/docs/`，生产环境随主应用构建并发布到 `/docs/`，无需独立服务。
+
+```bash
+npm run dev:docs
+npm run build:docs
+```
+
 一个用于管理 VPN 订阅 URL、客户、购买账单和订阅监控的后台系统。项目支持本地运行，也支持部署到 Vercel 并连接 Neon PostgreSQL。
 
 ## 功能概览
