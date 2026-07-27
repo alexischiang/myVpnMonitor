@@ -41,7 +41,9 @@ const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 10 * 1024 * 10
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
 const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 10);
 const RELAY_AFTER_EXPIRY_DAYS = Number(process.env.RELAY_AFTER_EXPIRY_DAYS || 10);
+const RELAY_DEBUG_LOGS = process.env.RELAY_DEBUG_LOGS === "true";
 const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
+const REFRESH_CONCURRENCY = Math.max(1, Number(process.env.REFRESH_CONCURRENCY || 5));
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const SUBCONVERTER_BOOLEAN_DEFAULTS = Object.freeze({
@@ -321,7 +323,7 @@ async function ensureDataFile() {
 let lastLoadedAt = 0;
 let _loadingPromise = null;
 let _writeGen = 0;
-const DATA_CACHE_TTL_MS = Number(process.env.DATA_CACHE_TTL_MS || 30000);
+const DATA_CACHE_TTL_MS = Number(process.env.DATA_CACHE_TTL_MS || 5 * 60 * 1000);
 
 function _doLoad() {
   if (_loadingPromise) return _loadingPromise;
@@ -369,6 +371,11 @@ async function saveData() {
 async function saveUsers() {
   _markWritten();
   await dataStore.saveCollection("users", users);
+}
+
+async function saveUser(user) {
+  _markWritten();
+  await dataStore.setRecord("users", user.id, user);
 }
 
 async function saveAccounts() {
@@ -489,14 +496,20 @@ function ensureSubscriptionServiceProviders() {
 }
 
 function sendJson(res, status, payload, headers = {}) {
+  let body = Buffer.from(JSON.stringify(payload));
+  if (body.length >= 1024 && /\bgzip\b/.test(String(res.req?.headers?.["accept-encoding"] || ""))) {
+    body = zlib.gzipSync(body);
+    headers = { ...headers, "content-encoding": "gzip", "vary": "Accept-Encoding" };
+  }
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
+    "content-length": body.length,
     "cache-control": "no-store, max-age=0",
     "pragma": "no-cache",
     "expires": "0",
     ...headers
   });
-  res.end(JSON.stringify(payload));
+  res.end(body);
 }
 
 function requestOrigin(req) {
@@ -2492,8 +2505,10 @@ function userById() {
 
 function publicItem(item, customerCount = null) {
   const resolvedCustomerCount = customerCount ?? users.filter(user => user.subscriptionId === item.id).length;
+  const publicFields = { ...item };
+  delete publicFields.cachedConfig;
   return {
-    ...item,
+    ...publicFields,
     serviceProvider: normalizeServiceProvider({}, item),
     customerCount: resolvedCustomerCount,
     status: item.enabled === false ? "disabled" : statusFor(item, resolvedCustomerCount)
@@ -2553,8 +2568,10 @@ function publicUser(user, subscriptionMap = null) {
     ? subscriptionMap.get(user.subscriptionId)
     : subscriptions.find(item => item.id === user.subscriptionId);
   const linkedAccount = accounts.find(item => item.linkedUserId === user.id);
+  const publicFields = { ...user };
+  delete publicFields.fallbackLogs;
   return {
-    ...user,
+    ...publicFields,
     customerID: user.customerID,
     email: user.email || linkedAccount?.email || "",
     activeGroup: activeUserGroup(user),
@@ -2730,6 +2747,17 @@ function cacheIsFresh(cache, now = Date.now()) {
   const fetchedTime = fetchedAt ? new Date(fetchedAt).getTime() : 0;
   const body = typeof cache?.body === "string" ? extractClashConfigBody(cache.body) : cache?.bodyFile;
   return Boolean(body) && Number.isFinite(fetchedTime) && now - fetchedTime < POOL_CONFIG_CACHE_TTL_MS;
+}
+
+function batchItems(items, size) {
+  const batchSize = Math.max(1, Math.floor(Number(size) || 1));
+  return Array.from({ length: Math.ceil(items.length / batchSize) }, (_, index) => items.slice(index * batchSize, (index + 1) * batchSize));
+}
+
+async function refreshSubscriptions(items) {
+  for (const batch of batchItems(items, REFRESH_CONCURRENCY)) {
+    await Promise.all(batch.map(item => refreshSubscription(item)));
+  }
 }
 
 async function liveConfigFromCachedPoolConfig(item, { allowStale = false } = {}) {
@@ -3121,6 +3149,7 @@ function subscriptionLogLabel(item) {
 }
 
 function relayLog(event, details = {}) {
+  if (!RELAY_DEBUG_LOGS) return;
   try {
     console.log(`[relay:${event}] ${JSON.stringify({
       at: new Date().toISOString(),
@@ -3250,7 +3279,7 @@ async function recordUserLog(user, options = {}) {
     latest.message = log.message || latest.message;
     user.userLogs = logs;
     user.lastUserLogAt = log.at;
-    await saveUsers();
+    await saveUser(user);
     relayLog("user-log-deduped", {
       userId: user?.id || "",
       log: latest
@@ -3258,7 +3287,7 @@ async function recordUserLog(user, options = {}) {
     return latest;
   }
   appendUserLogToUser(user, log);
-  await saveUsers();
+  await saveUser(user);
   relayLog("user-log-saved", {
     userId: user?.id || "",
     log
@@ -3275,7 +3304,7 @@ async function recordUserActionLog(user, options = {}) {
   });
   appendUserLogToUser(user, log);
   user.updatedAt = log.at;
-  await saveUsers();
+  await saveUser(user);
   relayLog("user-action-log-saved", {
     userId: user?.id || "",
     log
@@ -3504,7 +3533,7 @@ async function switchUserSubscription(user, fromSubscription, toSubscription, re
   appendUserLogToUser(user, log);
   user.fallbackLogs = dedupeUserLogs([log, ...(Array.isArray(user.fallbackLogs) ? user.fallbackLogs : [])]).slice(0, 50);
   user.updatedAt = log.at;
-  await saveUsers();
+  await saveUser(user);
   relayLog("fallback-switch-saved", {
     userId: user?.id || "",
     log,
@@ -3534,7 +3563,7 @@ async function cachedPoolConfig(item) {
 }
 
 async function refreshAllPoolConfigCaches() {
-  await Promise.all(subscriptions.map(item => refreshSubscription(item)));
+  await refreshSubscriptions(subscriptions);
   await saveData();
 }
 
@@ -4339,9 +4368,7 @@ async function handleRelaySubscription(req, res, token) {
 }
 
 async function refreshAll() {
-  for (const item of subscriptions) {
-    await refreshSubscription(item);
-  }
+  await refreshSubscriptions(subscriptions);
   await saveData();
   await runLowTrafficCheck();
 }
@@ -5182,6 +5209,28 @@ async function handleApi(req, res, pathname) {
   if (!requireAdmin(req, res)) return;
   await loadLatestData();
 
+  if (pathname === "/api/admin-data" && req.method === "GET") {
+    const customerCounts = customerCountBySubscriptionId();
+    const subscriptionsById = subscriptionById();
+    const usersById = userById();
+    const registeredAccounts = accounts
+      .filter(account => ["active", "disabled"].includes(account.status) && !userForAccount(account))
+      .map(publicRegisteredAccount);
+    sendJson(res, 200, {
+      subscriptions: subscriptions.map(item => publicItem(item, customerCounts.get(item.id) || 0)),
+      users: [...users.map(user => ({ ...publicUser(user, subscriptionsById), userLogs: [] })), ...registeredAccounts],
+      bills: bills.map(bill => publicBill(bill, usersById)).sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)),
+      vendors,
+      presets,
+      placeholderNodes,
+      embyUsers,
+      embyVendors,
+      pricing: publicPricing(),
+      meta: appMeta()
+    });
+    return;
+  }
+
   if (pathname === "/api/markdown/images" && req.method === "POST") {
     try {
       const contentLength = Number(req.headers["content-length"] || 0);
@@ -5961,11 +6010,16 @@ async function handleApi(req, res, pathname) {
     const id = userMatch[1];
     const action = userMatch[2];
     const item = users.find(entry => entry.id === id);
-    const registeredAccount = action === "account-status" && id.startsWith("account:")
+    const registeredAccount = id.startsWith("account:")
       ? accounts.find(entry => entry.id === id.slice("account:".length))
       : null;
     if (!item && !registeredAccount) {
       sendJson(res, 404, { error: "没有找到这个用户。" });
+      return;
+    }
+
+    if (!action && req.method === "GET") {
+      sendJson(res, 200, registeredAccount ? publicRegisteredAccount(registeredAccount) : publicUser(item));
       return;
     }
 
@@ -6530,6 +6584,7 @@ module.exports = Object.assign(requestHandler, {
   isPaymentOrderExpired,
   normalizeSalesSettings,
   normalizePaymentSettings,
+  batchItems,
   customerIDFromUUID,
   publicRegisteredAccount,
   subscriptionSourceType,

@@ -5,12 +5,16 @@ import { toast } from "sonner"
 import { postJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ChartAreaInteractive, DailyIncomeChart, UserGrowthChart } from "@/components/features/chart-area-interactive"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useServiceHealth } from "@/components/features/app-shell"
 import { useData } from "@/components/features/data-provider"
 import { SectionCards } from "@/components/features/section-cards"
 import { EmptyState, StatusBadge } from "@/components/features/shared"
 import { formatDate, formatDateTime, userStatus } from "@/utils"
+
+const ChartAreaInteractive = React.lazy(() => import("@/components/features/chart-area-interactive").then(module => ({ default: module.ChartAreaInteractive })))
+const DailyIncomeChart = React.lazy(() => import("@/components/features/chart-area-interactive").then(module => ({ default: module.DailyIncomeChart })))
+const UserGrowthChart = React.lazy(() => import("@/components/features/chart-area-interactive").then(module => ({ default: module.UserGrowthChart })))
 
 function billIncomeForMonthDays(bills: Array<{ amount?: number; occurredAt?: string }>, date: Date, days: number) {
   const start = new Date(date.getFullYear(), date.getMonth(), 1)
@@ -92,13 +96,19 @@ export function DashboardPage() {
       />
 
       <div className="grid gap-4 px-4 lg:grid-cols-4 lg:px-6">
-        <div className="min-w-0 lg:col-span-3"><ChartAreaInteractive bills={activeBills} /></div>
+        <div className="min-w-0 lg:col-span-3">
+          <React.Suspense fallback={<Skeleton className="h-80" />}>
+            <ChartAreaInteractive bills={activeBills} />
+          </React.Suspense>
+        </div>
         <ServiceMonitor />
       </div>
 
       <div className="grid gap-4 px-4 lg:grid-cols-2 lg:px-6">
-        <DailyIncomeChart bills={activeBills} />
-        <UserGrowthChart users={users} />
+        <React.Suspense fallback={<><Skeleton className="h-80" /><Skeleton className="h-80" /></>}>
+          <DailyIncomeChart bills={activeBills} />
+          <UserGrowthChart users={users} />
+        </React.Suspense>
       </div>
 
       <div className="grid gap-4 px-4 lg:px-6">

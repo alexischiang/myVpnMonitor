@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
-import { AlertCircle, ArrowRight, BookOpen, CreditCard, Gauge, Gift, LogOut, ReceiptText, ShieldCheck, UserRound, WalletCards } from "lucide-react"
+import { AlertCircle, ArrowRight, BookOpen, CreditCard, ExternalLink, Gauge, Gift, LogOut, ReceiptText, ShieldCheck, UserRound, WalletCards } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { apiFetch, clearJsonCache, fetchJson, setCachedJson } from "@/api"
@@ -99,7 +99,7 @@ export function AccountShell() {
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup><SidebarGroupContent><SidebarMenu>{accountNav.map(item => (
-            <SidebarMenuItem key={item.url}><SidebarMenuButton asChild tooltip={item.title} isActive={item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)}><NavLink to={item.url}><item.icon /><span>{item.title}</span></NavLink></SidebarMenuButton></SidebarMenuItem>
+            <SidebarMenuItem key={item.url}><SidebarMenuButton asChild tooltip={item.title} isActive={item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)}><NavLink to={item.url === "/account/docs" ? "/docs/" : item.url} target={item.url === "/account/docs" ? "_blank" : undefined} rel={item.url === "/account/docs" ? "noopener noreferrer" : undefined}><item.icon /><span>{item.title}</span>{item.url === "/account/docs" ? <ExternalLink className="ml-auto" /> : null}</NavLink></SidebarMenuButton></SidebarMenuItem>
           ))}</SidebarMenu></SidebarGroupContent></SidebarGroup>
         </SidebarContent>
         <SidebarFooter>

@@ -364,7 +364,7 @@ export function SubscriptionsPage() {
               searchKey="subscription"
               searchPlaceholder="搜索订阅..."
               emptyTitle="暂无订阅"
-              pageSize={10}
+              pageSize={30}
               frame="card"
               toolbar={<><Button variant="outline" size="sm" onClick={() => refresh()} disabled={!!busy || Boolean(pendingAction)}>{pendingAction === "refresh:all" ? <Loader2 className="animate-spin" /> : <RefreshCw />}全部刷新</Button><Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增订阅</Button></>}
             />

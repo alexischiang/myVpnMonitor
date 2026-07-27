@@ -187,7 +187,11 @@ export function UserDetailPage() {
   const { id } = useParams()
   const location = useLocation()
   const { users, subscriptions, bills, reload, runAsync } = useData()
-  const user = users.find(entry => entry.id === id)
+  const summaryUser = users.find(entry => entry.id === id)
+  const [loadedUser, setLoadedUser] = React.useState<User | null>(null)
+  const user = summaryUser && loadedUser?.id === id
+    ? { ...loadedUser, ...summaryUser, userLogs: summaryUser.userLogs?.length ? summaryUser.userLogs : loadedUser.userLogs }
+    : summaryUser || (loadedUser?.id === id ? loadedUser : undefined)
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteEmail, setInviteEmail] = React.useState("")
   const [inviteEmailError, setInviteEmailError] = React.useState("")
@@ -221,6 +225,13 @@ export function UserDetailPage() {
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const purchaseCount = userBills.filter(item => !item.reversedAt).length
   const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed" || log.reason === "user-created")
+
+  React.useEffect(() => {
+    if (!id || id.startsWith("account:")) return
+    let active = true
+    void fetchJson<User>(`/api/users/${id}`).then(data => { if (active) setLoadedUser(data) }).catch(() => undefined)
+    return () => { active = false }
+  }, [id])
 
   React.useEffect(() => {
     setReferralRate(user?.referralRate ?? 10)
