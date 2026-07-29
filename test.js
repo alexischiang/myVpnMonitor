@@ -9,6 +9,7 @@ const {
   extractClashConfigBody,
   statusFor,
   toBytes,
+  remainingPlanCashValue,
   paymentQuote,
   paymentChannelCode,
   configuredPaymentChannel,
@@ -19,8 +20,19 @@ const {
   normalizeSalesSettings,
   normalizePaymentSettings,
   sendJson,
-  batchItems
+  batchItems,
+  classifyCurrentPoolFit,
+  restoreUpstreamClashConfig,
+  injectPlaceholderNodes,
+  postSubconverter,
+  normalizeSubscription,
+  clearSubscriptionSourceState
 } = require("./server");
+
+assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: 20 }).status, "high");
+assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: 21 }).status, "adjust");
+assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: -21 }).status, "incompatible");
+assert.match(classifyCurrentPoolFit({ expiryDiffDays: -21 }).reasons[0], /21 天/);
 
 const compressedResponse = {
   req: { headers: { "accept-encoding": "gzip, deflate" } },
@@ -31,6 +43,53 @@ sendJson(compressedResponse, 200, { data: "x".repeat(2000) });
 assert.strictEqual(compressedResponse.headers["content-encoding"], "gzip");
 assert.strictEqual(JSON.parse(zlib.gunzipSync(compressedResponse.body)).data.length, 2000);
 assert.deepStrictEqual(batchItems([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+
+const legacyCashValueUser = {
+  id: "legacy-user",
+  purchasedAt: "2026-06-29T00:00:00.000Z",
+  expiresAt: "2027-06-24T00:00:00.000Z",
+  actualPaid: 1198
+};
+const legacyCashValueBills = [
+  { userId: "legacy-user", type: "initial", amount: 599, occurredAt: "2025-06-01T00:00:00.000Z", afterExpiresAt: "2026-05-26T16:00:00.000Z" },
+  { userId: "legacy-user", type: "renewal", amount: 599, occurredAt: "2026-06-29T00:00:00.000Z", afterExpiresAt: "2027-06-24T00:00:00.000Z" }
+];
+assert.strictEqual(remainingPlanCashValue(legacyCashValueUser, new Date("2026-07-29T00:00:00.000Z"), legacyCashValueBills), 549.08);
+const outOfOrderBills = [
+  { userId: "legacy-user", type: "renewal", amount: 40.17, occurredAt: "2026-07-20T09:21:15.184Z", createdAt: "2026-07-20T09:43:11.162Z", afterExpiresAt: "2026-09-18T09:25:23.894Z" },
+  { userId: "legacy-user", type: "renewal", amount: 40.17, occurredAt: "2026-07-20T09:25:23.894Z", createdAt: "2026-07-20T09:42:46.861Z", afterExpiresAt: "2026-08-19T09:25:23.894Z" }
+];
+assert.strictEqual(remainingPlanCashValue({ ...legacyCashValueUser, expiresAt: "2026-09-18T09:25:23.894Z" }, new Date("2026-07-20T09:25:23.894Z"), outOfOrderBills), 80.34);
+assert.strictEqual(remainingPlanCashValue({ ...legacyCashValueUser, expiresAt: "2026-08-19T09:25:23.894Z" }, new Date("2026-07-20T09:25:23.894Z"), [{ ...outOfOrderBills[0], reversedAt: "2026-07-21T00:00:00.000Z" }, outOfOrderBills[1]]), 40.17);
+
+const manualYamlSubscription = normalizeSubscription({
+  sourceType: "yaml",
+  manualContent: "mixed-port: 7890\nproxies:\n  - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }\n",
+  expiresAt: "2027-12-31",
+  email: "yaml@example.com",
+  maxUsers: 15
+});
+assert.strictEqual(manualYamlSubscription.sourceType, "yaml");
+assert.match(manualYamlSubscription.manualContent, /^mixed-port: 7890/);
+assert.strictEqual(manualYamlSubscription.metrics.expireAt, "2027-12-31T23:59:59.999Z");
+const changedManualSubscription = { ...manualYamlSubscription, metrics: { ...manualYamlSubscription.metrics, remainingBytes: 100 }, cachedConfig: {}, lastError: "old" };
+clearSubscriptionSourceState(changedManualSubscription);
+assert.deepStrictEqual(changedManualSubscription.metrics, { expireAt: "2027-12-31T23:59:59.999Z" });
+assert.strictEqual(changedManualSubscription.cachedConfig, null);
+assert.strictEqual(changedManualSubscription.lastError, null);
+assert.throws(() => normalizeSubscription({
+  sourceType: "yaml",
+  manualContent: manualYamlSubscription.manualContent,
+  email: "yaml@example.com",
+  maxUsers: 15
+}), /到期日/);
+assert.throws(() => normalizeSubscription({
+  sourceType: "yaml",
+  manualContent: "rules:\n  - MATCH,DIRECT\n",
+  expiresAt: "2027-12-31",
+  email: "yaml@example.com",
+  maxUsers: 15
+}), /proxies/);
 
 function near(actual, expected, tolerance = 2) {
   assert.ok(
@@ -129,5 +188,97 @@ assert.ok(extracted.includes("proxies:\n  - name: node"));
 assert.ok(extracted.includes("rules:\n  - MATCH,PROXY"));
 assert.ok(!extracted.includes("extra:"));
 assert.strictEqual(extractClashConfigBody("<!doctype html><html><title>403</title></html>"), "");
+
+const restoredConfig = require("js-yaml").load(restoreUpstreamClashConfig(
+  Buffer.from(`port: 7890
+proxies:
+  - { name: shared, type: trojan, skip-cert-verify: false, tfo: false }
+  - { name: notice, type: ss }
+proxy-groups:
+  - { name: Converted, type: select, proxies: [shared] }
+rules: ["MATCH,Converted"]
+`),
+  Buffer.from(`mixed-port: 7890
+sniffer: { enable: true }
+dns: { enable: true }
+proxies:
+  - { name: shared, type: trojan, skip-cert-verify: true, client-fingerprint: chrome }
+  - { name: missing, type: anytls, min-idle-session: 0 }
+proxy-groups:
+  - { name: Upstream, type: select, proxies: [shared, missing] }
+rules: ["MATCH,Upstream"]
+`)
+).toString("utf8"));
+assert.strictEqual(restoredConfig.proxies.find(item => item.name === "shared")["skip-cert-verify"], true);
+assert.strictEqual(restoredConfig.proxies.find(item => item.name === "shared")["client-fingerprint"], "chrome");
+assert.ok(restoredConfig.proxies.some(item => item.name === "missing"));
+assert.ok(!restoredConfig.proxies.some(item => item.name === "notice"));
+assert.deepStrictEqual(restoredConfig.rules, ["MATCH,Converted"]);
+assert.strictEqual(restoredConfig["proxy-groups"][0].name, "Converted");
+assert.strictEqual(restoredConfig.dns.enable, true);
+assert.strictEqual(restoredConfig.sniffer.enable, true);
+assert.ok(!("port" in restoredConfig));
+
+const filteredConfig = require("js-yaml").load(restoreUpstreamClashConfig(
+  Buffer.from(`port: 7890
+external-controller: 127.0.0.1:9090
+Proxy:
+  - { name: renamed, type: trojan, server: example.com, port: 443, password: secret, skip-cert-verify: false }
+Proxy Group:
+  - { name: Filtered, type: select, proxies: [renamed] }
+Rule: ["MATCH,Filtered"]
+`),
+  Buffer.from(`dns: { enable: true }
+proxies:
+  - { name: shared, type: trojan, server: example.com, port: 443, password: secret, skip-cert-verify: true }
+  - { name: excluded, type: anytls }
+proxy-groups:
+  - { name: Upstream, type: select, proxies: [shared, excluded] }
+rules: ["MATCH,Upstream"]
+`),
+  { exclude: "excluded" }
+).toString("utf8"));
+assert.deepStrictEqual(filteredConfig.proxies.map(item => item.name), ["shared"]);
+assert.strictEqual(filteredConfig.proxies[0]["skip-cert-verify"], true);
+assert.strictEqual(filteredConfig["proxy-groups"][0].name, "Filtered");
+assert.deepStrictEqual(filteredConfig["proxy-groups"][0].proxies, ["shared"]);
+assert.deepStrictEqual(filteredConfig.rules, ["MATCH,Filtered"]);
+assert.strictEqual(filteredConfig.dns.enable, true);
+assert.ok(!("port" in filteredConfig));
+assert.ok(!("external-controller" in filteredConfig));
+
+const pinnedGroups = require("js-yaml").load(injectPlaceholderNodes(Buffer.from(`proxies:
+  - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }
+proxy-groups:
+  - { name: 🎯 全球直连, type: select, proxies: [node, DIRECT] }
+  - { name: 🛑 全球拦截, type: select, proxies: [node, REJECT] }
+  - { name: 🚀 节点选择, type: select, proxies: [node] }
+rules: ["MATCH,🚀 节点选择"]
+`), { showUserInfo: false }, [{ tag: "default", nodes: ["notice"] }]).toString("utf8"));
+assert.deepStrictEqual(pinnedGroups["proxy-groups"][0].proxies, ["DIRECT"]);
+assert.deepStrictEqual(pinnedGroups["proxy-groups"][1].proxies, ["REJECT"]);
+assert.deepStrictEqual(pinnedGroups["proxy-groups"][2].proxies, ["notice", "node"]);
+
+const pinnedWithoutPlaceholders = require("js-yaml").load(injectPlaceholderNodes(Buffer.from(`proxies:
+  - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }
+proxy-groups:
+  - { name: 全球直连, type: select, proxies: [node, DIRECT] }
+  - { name: 全球拦截, type: select, proxies: [node, REJECT] }
+`), { useDefaultPlaceholder: false, showUserInfo: false }, []).toString("utf8"));
+assert.deepStrictEqual(pinnedWithoutPlaceholders["proxy-groups"][0].proxies, ["DIRECT"]);
+assert.deepStrictEqual(pinnedWithoutPlaceholders["proxy-groups"][1].proxies, ["REJECT"]);
+assert.throws(() => postSubconverter(
+  Buffer.from("proxies: []\n"),
+  Buffer.from("proxies:\n  - { name: node, type: ss }\n"),
+  { useDefaultPlaceholder: false, showUserInfo: false },
+  { exclude: ".*" }
+), /removed every upstream node/);
+const nativeSubconverterOutput = Buffer.from("proxies: []\n");
+assert.strictEqual(postSubconverter(
+  nativeSubconverterOutput,
+  Buffer.from("not valid yaml: ["),
+  {},
+  { postSubconverter: false }
+), nativeSubconverterOutput);
 
 console.log("All checks passed.");

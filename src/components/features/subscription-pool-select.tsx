@@ -42,7 +42,8 @@ export function SubscriptionPoolSelect({
 }: SubscriptionPoolSelectProps) {
   const pools = React.useMemo(() => subscriptions
     .filter(item => subscriptionPoolHasUsableSource(item) && subscriptionPoolCanBeAssigned(item) && (allowDisabled || item.enabled !== false) && (allowFull || !subscriptionPoolIsFull(item)) && (!item.allowedGroups || !group || item.allowedGroups.includes(group)))
-    .sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions, allowDisabled, allowFull, group])
+    .sort((left, right) => vendorRatingRank(left.serviceProviderRating) - vendorRatingRank(right.serviceProviderRating)
+      || (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions, allowDisabled, allowFull, group])
 
   function setAllowDisabled(next: boolean) {
     onAllowDisabledChange(next)
@@ -68,7 +69,7 @@ export function SubscriptionPoolSelect({
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent className="max-w-[calc(100vw-3rem)]">
-          {pools.map(item => <SelectItem className="whitespace-normal break-all" key={item.id} value={item.id}>{item.serviceProvider || item.provider || "Provider"} - {item.email || item.url || "手动 Base64"} · 当前人数 {customerCountLabel(item)} · {item.sourceType === "manual" ? "手动内容" : `到期 ${formatDate(item.metrics?.expireAt)}`}{item.enabled === false ? " · 未启用" : ""}</SelectItem>)}
+          {pools.map(item => <SelectItem className="whitespace-normal break-all" key={item.id} value={item.id}>{item.serviceProviderRating ? `${item.serviceProviderRating} 级 · ` : "未评级 · "}{item.serviceProvider || item.provider || "Provider"} - {item.email || item.url || "手动 Base64"} · 当前人数 {customerCountLabel(item)} · {item.sourceType === "manual" ? "手动内容" : `到期 ${formatDate(item.metrics?.expireAt)}`}{item.enabled === false ? " · 未启用" : ""}</SelectItem>)}
         </SelectContent>
       </Select>
       <div className="flex flex-wrap gap-x-4 gap-y-2">
@@ -88,9 +89,17 @@ function subscriptionPoolIsFull(item?: Subscription) {
 }
 
 function subscriptionPoolHasUsableSource(item: Subscription) {
-  return item.sourceType === "manual" ? Boolean(item.manualContent) : Boolean(item.url)
+  return subscriptionPoolIsManual(item) ? Boolean(item.manualContent) : Boolean(item.url)
 }
 
 function subscriptionPoolCanBeAssigned(item: Subscription) {
-  return item.sourceType === "manual" || Date.parse(item.metrics?.expireAt || "") > Date.now()
+  return subscriptionPoolIsManual(item) || Date.parse(item.metrics?.expireAt || "") > Date.now()
+}
+
+function subscriptionPoolIsManual(item: Subscription) {
+  return item.sourceType === "manual" || item.sourceType === "yaml"
+}
+
+function vendorRatingRank(rating?: string | null) {
+  return ({ S: 0, A: 1, B: 2, C: 3 } as Record<string, number>)[rating || ""] ?? 4
 }

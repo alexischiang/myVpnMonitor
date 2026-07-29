@@ -22,7 +22,8 @@ m芯片下载：
 ### windows下载
 
 :::tip
-- 下载链接：https://dl.kook1.com.cn/download_share.php?code=lQSCfcYZD0SVbNsX
+- 下载链接：https://oka.lanzouu.com/ioR6d3z3i52h
+
 :::
 ## 2.打开软件
 

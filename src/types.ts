@@ -5,10 +5,11 @@ export type Subscription = {
   name?: string
   email?: string
   url: string
-  sourceType?: "url" | "manual"
+  sourceType?: "url" | "manual" | "yaml"
   manualContent?: string
   provider?: string
   serviceProvider?: string
+  serviceProviderRating?: VendorRating | null
   note?: string
   enabled?: boolean
   excludeFromAutoSwitch?: boolean
@@ -30,6 +31,32 @@ export type Subscription = {
     usedBytes?: number
     remainingBytes?: number
     expireAt?: string
+  } | null
+}
+
+export type VendorRating = "S" | "A" | "B" | "C"
+
+export type PoolCompatibility = {
+  status: "high" | "usable" | "adjust" | "unknown" | "incompatible"
+  statusText: string
+  reasons: string[]
+  provider?: string
+  rating?: VendorRating | null
+  poolExpiresAt?: string | null
+  expiryDiffDays?: number | null
+  customerCount?: number
+  maxUsers?: number
+  groupAllowed?: boolean
+  binding?: {
+    type: "manual" | "system"
+    at?: string | null
+  } | null
+  recommendedPool?: {
+    id: string
+    label: string
+    provider?: string
+    rating?: VendorRating | null
+    expiryDiffDays?: number | null
   } | null
 }
 
@@ -64,6 +91,7 @@ export type User = {
   note?: string
   logs?: Array<Record<string, unknown>>
   userLogs?: UserLog[]
+  poolCompatibility?: PoolCompatibility | null
 }
 
 export type UserLog = {
@@ -122,12 +150,14 @@ export type Vendor = {
   overrideExclude?: string
   overrideInclude?: string
   overrideRename?: string
+  rating?: VendorRating | ""
 }
 
 export type Preset = {
   id: string
   target?: string
   config?: string
+  postSubconverter?: boolean
   emoji?: boolean
   udp?: boolean
   tfo?: boolean

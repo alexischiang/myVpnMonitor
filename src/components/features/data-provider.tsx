@@ -1,5 +1,5 @@
 ﻿import * as React from "react"
-import { useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 
 import { fetchJson } from "@/api"
 import type { AppMeta, Bill, EmbyUser, EmbyVendor, PlaceholderNode, Preset, PricingRow, Subscription, User, Vendor } from "@/types"
@@ -19,7 +19,7 @@ type DataState = {
   loading: boolean
   error: string
   busy: string
-  reload: (collections?: Collection[], options?: { silent?: boolean }) => Promise<void>
+  reload: (collections?: Collection[], options?: { silent?: boolean; loading?: boolean }) => Promise<void>
   runAsync: <T>(task: () => Promise<T>, label?: string) => Promise<T>
 }
 
@@ -55,8 +55,17 @@ const initialState: Omit<DataState, "reload" | "runAsync"> = {
   busy: "",
 }
 
-const initialCollections: Collection[] = ["subscriptions", "users", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "meta"]
 const defaultCollections: Collection[] = ["subscriptions", "users", "bills", "meta"]
+const pageCollections: [string, Collection[]][] = [
+  ["/users/detail/", ["users", "subscriptions", "bills"]],
+  ["/users", ["users", "subscriptions", "pricing"]],
+  ["/urls/detail/", ["subscriptions", "users"]],
+  ["/urls", ["subscriptions", "vendors"]],
+  ["/dashboard", ["users", "bills"]],
+  ["/pricing-settings", ["pricing"]],
+  ["/emby", ["embyUsers", "embyVendors"]],
+  ["/subconverter", ["presets", "subscriptions", "vendors", "placeholderNodes"]],
+]
 const focusRefreshIntervalMs = 60_000
 const loadedCollections = new Set<Collection>()
 const collectionRequests = new Map<Collection, Promise<unknown>>()
@@ -84,10 +93,11 @@ const DataContext = React.createContext<DataState>({
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const mountedRef = React.useRef(true)
   const [state, setState] = React.useState<Omit<DataState, "reload" | "runAsync">>(() => {
     if (!cachedState) return initialState
-    return { ...cachedState, loading: !initialCollections.every(key => loadedCollections.has(key)), error: "" }
+    return { ...cachedState, loading: false, error: "" }
   })
   const [busy, setBusy] = React.useState("")
 
@@ -111,13 +121,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
-  const reload = React.useCallback(async (collections?: Collection[], { silent = false } = {}) => {
+  const reload = React.useCallback(async (collections?: Collection[], { silent = false, loading = !collections && !silent } = {}) => {
     const keys = collections || defaultCollections
-    commitState(current => ({ ...current, loading: !collections && !silent, error: silent ? current.error : "" }))
+    commitState(current => ({ ...current, loading, error: silent ? current.error : "" }))
     try {
-      const results = !collections || collections === initialCollections || collections === defaultCollections
-        ? await fetchJson<Record<Collection, unknown>>("/api/admin-data").then(data => keys.map(key => data[key]))
-        : await Promise.all(keys.map(key => collections ? fetchJson(apis[key]) : fetchCollection(key)))
+      const results = await Promise.all(keys.map(fetchCollection))
       keys.forEach(key => loadedCollections.add(key))
       lastLoadedAt = Date.now()
       commitState(current => {
@@ -135,11 +143,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [commitState])
 
   React.useEffect(() => {
-    accountRequest = accountRequest || fetchJson<{ account?: string; role?: string }>("/api/auth/me").finally(() => {
-      accountRequest = null
-    })
-    const hasInitialData = cachedState !== null && !cachedState.loading && initialCollections.every(key => loadedCollections.has(key))
-    const initialRequest = hasInitialData ? Promise.resolve() : reload(initialCollections)
+    accountRequest = accountRequest || fetchJson<{ account?: string; role?: string }>("/api/auth/me")
+    const requiredCollections = pageCollections.find(([path]) => location.pathname.startsWith(path))?.[1] || []
+    const missingCollections = requiredCollections.filter(key => !loadedCollections.has(key))
+    const initialRequest = missingCollections.length ? reload(missingCollections, { loading: true }) : Promise.resolve()
 
     Promise.all([accountRequest, initialRequest]).then(async ([me]) => {
       if (me.role !== "admin") {
@@ -150,7 +157,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
       commitState(current => ({ ...current, loading: false, error: "" }))
     }).catch(() => navigate("/login", { replace: true }))
-  }, [commitState, navigate, reload])
+  }, [commitState, location.pathname, navigate, reload])
 
   React.useEffect(() => {
     const refresh = () => {
