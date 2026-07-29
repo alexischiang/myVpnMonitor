@@ -9,6 +9,7 @@ import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLab
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { DatePicker } from "@/components/features/date-picker"
 import { cn } from "@/lib/utils"
 
 type FieldVisibility = { visibleWhen?: { field: string; equals: string | number | boolean } }
@@ -130,7 +131,14 @@ export function SimpleFormDialog({
                   ) : (
                     <>
                       <FieldLabel htmlFor={field.name}>{field.label}</FieldLabel>
-                      {field.type === "textarea" ? (
+                      {field.type === "date" ? (
+                        <DatePicker
+                          id={field.name}
+                          value={String(value || "")}
+                          invalid={Boolean(errors[field.name])}
+                          onChange={value => update(field.name, value)}
+                        />
+                      ) : field.type === "textarea" ? (
                         <Textarea
                           id={field.name}
                           name={field.name}

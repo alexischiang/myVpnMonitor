@@ -112,6 +112,8 @@ const DEFAULT_PRICING_FAQS = [
 ];
 const DEFAULT_PAYMENT_API_BASE_URL = "http://RfBseViEKZlMAmu7ArWO.itxt002.xyz";
 const USER_GROUPS = ["basic", "pro", "ultra"];
+const VENDOR_RATINGS = ["S", "A", "B", "C"];
+const RATING_OVERRIDE_WINDOW_DAYS = 20;
 const AUTH_COOKIE_NAME = "xela_session";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
@@ -260,7 +262,9 @@ async function initializeDataFile() {
   if (embyVendorsMigrated) await saveEmbyVendors();
 
   if (ensureSubscriptionServiceProviders()) await saveData();
-  if (ensureUserRelayTokens()) await saveUsers();
+  const usersMigrated = ensureUserRelayTokens();
+  const cashValuesMigrated = ensureUserCashValues();
+  if (usersMigrated || cashValuesMigrated) await saveUsers();
 
   // 预设解耦迁移：将 vendor.defaultSubconverterConfig 拆为全局预设 + 供应商覆盖字段
   const existingPreset = presets.find(p => p.id === "default");
@@ -480,6 +484,27 @@ function normalizeServiceProviderWebsite(input = {}, existing = {}, serviceProvi
   const value = String(raw || "").trim();
   if (value && !/^https?:\/\//i.test(value)) throw new Error("服务商官网需以 http 或 https 开头。");
   return value;
+}
+
+function normalizeVendorRating(value) {
+  const rating = String(value || "").trim().toUpperCase();
+  return VENDOR_RATINGS.includes(rating) ? rating : "";
+}
+
+function vendorRatingByName(name) {
+  const vendor = vendors.find(item => item.name === name);
+  return !vendor || vendor.rating === undefined ? "C" : normalizeVendorRating(vendor.rating);
+}
+
+function vendorRatingIndex() {
+  const ratings = new Map(subscriptions.map(item => [normalizeServiceProvider({}, item), "C"]));
+  for (const vendor of vendors) ratings.set(vendor.name, vendor.rating === undefined ? "C" : normalizeVendorRating(vendor.rating));
+  return ratings;
+}
+
+function vendorRatingRank(rating) {
+  const index = VENDOR_RATINGS.indexOf(normalizeVendorRating(rating));
+  return index < 0 ? VENDOR_RATINGS.length : index;
 }
 
 function ensureSubscriptionServiceProviders() {
@@ -1320,12 +1345,55 @@ async function paymentQuoteForAccount(payload, account) {
   };
 }
 
-function remainingPlanCashValue(user, now = new Date()) {
+function planCashValueFromBills(user, userBills = bills) {
+  let cashValue = 0;
+  let valuedAt = 0;
+  let expiresAt = 0;
+  let found = false;
+
+  for (const bill of userBills
+    .filter(item => item.userId === user.id && !item.reversedAt)
+    .sort((a, b) => new Date(a.createdAt || a.occurredAt) - new Date(b.createdAt || b.occurredAt))) {
+    const occurredAt = new Date(bill.occurredAt || 0).getTime();
+    const afterExpiresAt = new Date(bill.afterExpiresAt || 0).getTime();
+    const amount = Number(bill.amount);
+    if (!Number.isFinite(occurredAt) || !Number.isFinite(afterExpiresAt) || !Number.isFinite(amount)) continue;
+
+    const nextValuedAt = Math.max(occurredAt, valuedAt);
+    const replaces = bill.type === "initial" || bill.type === "replacement";
+    const remaining = !replaces && expiresAt > nextValuedAt && expiresAt > valuedAt
+      ? cashValue * (expiresAt - nextValuedAt) / (expiresAt - valuedAt)
+      : 0;
+    cashValue = Math.max(remaining + amount, 0);
+    valuedAt = nextValuedAt;
+    expiresAt = afterExpiresAt;
+    found = true;
+  }
+
+  return found ? { cashValue: Math.round(cashValue * 100) / 100, valuedAt } : null;
+}
+
+function ensureUserCashValues() {
+  let changed = false;
+  for (const user of users) {
+    if (user.cashValue !== undefined && user.cashValue !== null) continue;
+    const rebuilt = planCashValueFromBills(user);
+    const valuedAt = rebuilt?.valuedAt ?? new Date(user.purchasedAt || 0).getTime();
+    if (!Number.isFinite(valuedAt)) continue;
+    user.cashValue = rebuilt?.cashValue ?? Math.max(Number(user.actualPaid) || 0, 0);
+    user.cashValueAt = new Date(valuedAt).toISOString();
+    changed = true;
+  }
+  return changed;
+}
+
+function remainingPlanCashValue(user, now = new Date(), userBills = bills) {
   if (!user) return 0;
-  const valuedAt = new Date(user.cashValueAt || user.purchasedAt || 0).getTime();
+  const legacyValue = user.cashValue === undefined || user.cashValue === null ? planCashValueFromBills(user, userBills) : null;
+  const valuedAt = legacyValue?.valuedAt ?? new Date(user.cashValueAt || user.purchasedAt || 0).getTime();
   const expiresAt = new Date(user.expiresAt || 0).getTime();
   const currentTime = now.getTime();
-  const cashValue = Math.max(Number(user.cashValue ?? user.actualPaid) || 0, 0);
+  const cashValue = Math.max(Number(user.cashValue ?? legacyValue?.cashValue ?? user.actualPaid) || 0, 0);
   if (!Number.isFinite(valuedAt) || !Number.isFinite(expiresAt) || expiresAt <= currentTime || expiresAt <= valuedAt) return 0;
   return Math.round(cashValue * Math.min(Math.max((expiresAt - currentTime) / (expiresAt - valuedAt), 0), 1) * 100) / 100;
 }
@@ -1484,7 +1552,8 @@ async function fulfillPaymentOrderOnce(order, req) {
         merOrderTid: order.merOrderTid,
         amount: renewal.amount,
         duration: user.duration,
-        afterExpiresAt: renewal.afterExpiresAt
+        afterExpiresAt: renewal.afterExpiresAt,
+        recommendation: recommendation.details || null
       }
     }));
   } else {
@@ -1537,7 +1606,8 @@ async function fulfillPaymentOrderOnce(order, req) {
         snapshot: userSnapshotForLog(user),
         amount: user.actualPaid,
         duration: user.duration,
-        afterExpiresAt: user.expiresAt
+        afterExpiresAt: user.expiresAt,
+        recommendation: recommendation.details || null
       }
     }));
   }
@@ -1859,11 +1929,16 @@ async function handlePaymentCallback(req) {
 }
 
 function subscriptionSourceType(item = {}) {
-  return String(item.sourceType || "").trim().toLowerCase() === "manual" ? "manual" : "url";
+  const sourceType = String(item.sourceType || "").trim().toLowerCase();
+  return sourceType === "manual" || sourceType === "yaml" ? sourceType : "url";
+}
+
+function isManualSubscription(item = {}) {
+  return subscriptionSourceType(item) !== "url";
 }
 
 function subscriptionHasUsableSource(item = {}) {
-  return subscriptionSourceType(item) === "manual" ? Boolean(item.manualContent) : Boolean(item.url);
+  return isManualSubscription(item) ? Boolean(item.manualContent) : Boolean(item.url);
 }
 
 function normalizeManualSubscriptionContent(value) {
@@ -1879,20 +1954,50 @@ function normalizeManualSubscriptionContent(value) {
   return content;
 }
 
+function normalizeManualYamlContent(value) {
+  const content = String(value || "").trim();
+  if (!content) throw new Error("请粘贴完整的 YAML 配置。");
+  if (Buffer.byteLength(content, "utf8") > 750_000) throw new Error("手动 YAML 配置不能超过 750 KB。");
+  let doc;
+  try {
+    doc = yaml.load(content);
+  } catch (error) {
+    throw new Error(`手动 YAML 配置无法解析：${error.message}`);
+  }
+  if (!doc || typeof doc !== "object") throw new Error("手动 YAML 配置必须是一个配置对象。");
+  normalizeClashKeys(doc);
+  if (!Array.isArray(doc.proxies) || !doc.proxies.length) throw new Error("手动 YAML 配置中没有找到 proxies 节点。");
+  return content;
+}
+
+function normalizeManualContent(item, value = item?.manualContent) {
+  return subscriptionSourceType(item) === "yaml"
+    ? normalizeManualYamlContent(value)
+    : normalizeManualSubscriptionContent(value);
+}
+
+function normalizeManualExpiry(value) {
+  const input = String(value || "").trim();
+  if (!input) return "";
+  const timestamp = Date.parse(input);
+  if (!Number.isFinite(timestamp)) throw new Error("手动订阅到期日无效。");
+  return /^\d{4}-\d{2}-\d{2}$/.test(input) ? `${input}T23:59:59.999Z` : new Date(timestamp).toISOString();
+}
+
 function normalizeSubscription(input, existing = {}) {
-  if (input.sourceType !== undefined && !["url", "manual"].includes(String(input.sourceType).trim().toLowerCase())) {
-    throw new Error("配置来源必须是远程 URL 或手动 Base64。");
+  if (input.sourceType !== undefined && !["url", "manual", "yaml"].includes(String(input.sourceType).trim().toLowerCase())) {
+    throw new Error("配置来源必须是远程 URL、手动 Base64 或手动 YAML。");
   }
   const sourceType = input.sourceType !== undefined
     ? subscriptionSourceType({ sourceType: input.sourceType })
     : subscriptionSourceType(existing);
   const rawUrl = sourceType === "url" ? String(input.url ?? existing.url ?? "").trim() : "";
   const email = String(input.email || existing.email || "").trim();
-  const generatedName = email || safeHostName(rawUrl) || existing.name || (sourceType === "manual" ? "手动订阅" : "");
+  const generatedName = email || safeHostName(rawUrl) || existing.name || (sourceType === "yaml" ? "手动 YAML 配置" : sourceType === "manual" ? "手动订阅" : "");
   const name = String(input.name || generatedName).trim();
   const url = sourceType === "url" ? rawUrl : "";
-  const manualContent = sourceType === "manual"
-    ? normalizeManualSubscriptionContent(input.manualContent ?? existing.manualContent ?? "")
+  const manualContent = isManualSubscription({ sourceType })
+    ? normalizeManualContent({ sourceType }, input.manualContent ?? existing.manualContent ?? "")
     : "";
   const serviceProvider = normalizeServiceProvider(input, existing);
   const serviceProviderWebsite = normalizeServiceProviderWebsite(input, existing, serviceProvider);
@@ -1906,11 +2011,17 @@ function normalizeSubscription(input, existing = {}) {
     ? Boolean(input.useCachedConfigForFallback)
     : Boolean(existing.useCachedConfigForFallback);
   const maxUsers = Number(input.maxUsers ?? existing.maxUsers ?? 15);
+  const manualExpiryRequired = isManualSubscription({ sourceType }) && (!existing.id || input.sourceType !== undefined || input.manualContent !== undefined);
+  const manualExpireAt = isManualSubscription({ sourceType })
+    ? normalizeManualExpiry(input.expiresAt ?? existing.metrics?.expireAt)
+    : "";
+  const metrics = manualExpireAt ? { ...(existing.metrics || {}), expireAt: manualExpireAt } : existing.metrics || null;
   const allowedGroups = [...new Set((Array.isArray(input.allowedGroups) ? input.allowedGroups : (Array.isArray(existing.allowedGroups) ? existing.allowedGroups : USER_GROUPS))
     .map(value => String(value).trim().toLowerCase())
     .filter(value => USER_GROUPS.includes(value)))];
 
   if (sourceType === "url" && (!url || !/^https?:\/\//i.test(url))) throw new Error("请填写 http 或 https 开头的订阅 URL。");
+  if (manualExpiryRequired && !manualExpireAt) throw new Error("请填写手动订阅的到期日。");
   if (!allowedGroups.length) throw new Error("至少选择一个允许的套餐等级。");
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("请填写该订阅绑定的有效邮箱。");
   if (!Number.isSafeInteger(maxUsers) || maxUsers <= 0) throw new Error("人数上限必须是大于 0 的整数。");
@@ -1921,6 +2032,7 @@ function normalizeSubscription(input, existing = {}) {
     sourceType,
     url,
     manualContent,
+    metrics,
     email,
     serviceProvider,
     serviceProviderWebsite,
@@ -2058,9 +2170,15 @@ function subscriptionsByLatestExpiry() {
 function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "", group = "", allowDisabled = false } = {}) {
   const userExpiryTime = startOfUtcDate(expiresAt);
   const dayMs = 86400000;
+  const ratings = vendorRatingIndex();
   let noExpiry = 0;
   let outOfWindow = 0;
-  const eligibleSubscriptions = subscriptions.filter(item => (allowDisabled || item.enabled !== false) && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, group) && !subscriptionAtCapacity(item, ignoredUserId) && Date.parse(item.metrics?.expireAt || "") > Date.now());
+  let ungraded = 0;
+  const eligibleSubscriptions = subscriptions.filter(item => {
+    const provider = normalizeServiceProvider({}, item);
+    if (!ratings.get(provider)) { ungraded++; return false; }
+    return (allowDisabled || item.enabled !== false) && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, group) && !subscriptionAtCapacity(item, ignoredUserId) && Date.parse(item.metrics?.expireAt || "") > Date.now();
+  });
   const candidates = eligibleSubscriptions
     .map(item => {
       const expireTime = item.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
@@ -2073,20 +2191,36 @@ function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "", group =
         outOfWindow++;
         return null;
       }
-      return { item, diffDays };
+      return { item, diffDays, absDiffDays: Math.abs(diffDays), rating: ratings.get(normalizeServiceProvider({}, item)) };
     })
     .filter(Boolean)
     .map(c => ({ ...c, customerCount: subscriptionCustomerCount(c.item.id, ignoredUserId) }));
 
   const sorted = candidates.sort((a, b) => {
-    const aAfter = a.diffDays >= 0 ? 0 : 1;
-    const bAfter = b.diffDays >= 0 ? 0 : 1;
-    if (aAfter !== bAfter) return aAfter - bAfter;
-    return Math.abs(a.diffDays) - Math.abs(b.diffDays) || a.customerCount - b.customerCount;
+    const aWithin = a.absDiffDays <= RATING_OVERRIDE_WINDOW_DAYS;
+    const bWithin = b.absDiffDays <= RATING_OVERRIDE_WINDOW_DAYS;
+    if (aWithin !== bWithin) return aWithin ? -1 : 1;
+    return vendorRatingRank(a.rating) - vendorRatingRank(b.rating)
+      || a.absDiffDays - b.absDiffDays
+      || a.customerCount - b.customerCount;
   });
 
   if (sorted.length) {
-    return { subscription: sorted[0].item, reason: null };
+    const candidate = sorted[0];
+    return {
+      subscription: candidate.item,
+      reason: candidate.absDiffDays <= RATING_OVERRIDE_WINDOW_DAYS
+        ? `供应商评级 ${candidate.rating} 优先（到期差 ${Math.round(candidate.absDiffDays)} 天）`
+        : `所有候选池到期差均超过 ${RATING_OVERRIDE_WINDOW_DAYS} 天，按供应商评级 ${candidate.rating} 兜底`,
+      details: {
+        provider: normalizeServiceProvider({}, candidate.item),
+        rating: candidate.rating,
+        expiryDiffDays: candidate.absDiffDays,
+        withinRatingOverrideWindow: candidate.absDiffDays <= RATING_OVERRIDE_WINDOW_DAYS,
+        ungradedExcluded: ungraded,
+        candidateCount: candidates.length
+      }
+    };
   }
 
   if (outOfWindow > 0) {
@@ -2094,12 +2228,157 @@ function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "", group =
     if (latest) return { subscription: latest, reason: "用户到期日远超所有池，已推荐最晚到期的池。" };
   }
 
-  const reason = eligibleSubscriptions.length === 0
+  const reason = eligibleSubscriptions.length === 0 && ungraded > 0
+    ? "没有可用的已评级池 URL，未评级供应商不会自动推荐。"
+    : eligibleSubscriptions.length === 0
     ? "没有可用的池 URL。"
     : noExpiry > 0
     ? "池 URL 缺少到期时间，请手动选择。"
     : "没有匹配的池 URL，请手动选择。";
   return { subscription: null, reason };
+}
+
+function clearSubscriptionSourceState(item) {
+  const manualExpireAt = isManualSubscription(item) ? item.metrics?.expireAt : "";
+  item.metrics = manualExpireAt ? { expireAt: manualExpireAt } : null;
+  item.lastCheckedAt = null;
+  item.lastError = null;
+  item.httpStatus = null;
+  item.lastRefreshResults = null;
+  item.cachedConfig = null;
+}
+
+function classifyCurrentPoolFit({
+  poolExists = true,
+  enabled = true,
+  health = "ok",
+  healthReason = "",
+  groupAllowed = true,
+  group = "",
+  userExpiryValid = true,
+  poolExpiryValid = true,
+  poolExpired = false,
+  expiryDiffDays = 0,
+  customerCount = 0,
+  maxUsers = 15,
+  excludedFromAutoSwitch = false,
+  rated = true
+} = {}) {
+  const priority = { high: 0, usable: 1, adjust: 2, unknown: 3, incompatible: 4 };
+  let status = "high";
+  const reasons = [];
+  const add = (nextStatus, reason) => {
+    if (priority[nextStatus] > priority[status]) status = nextStatus;
+    reasons.push(reason);
+  };
+
+  if (!poolExists) return { status: "incompatible", reasons: ["当前用户未绑定有效的池 URL。"] };
+  if (!enabled) add("incompatible", "当前池已停用，不能参与自动推荐。");
+  if (poolExpired) add("incompatible", "当前池已经到期，无法继续正常使用。");
+  if (health === "invalid") add("incompatible", healthReason ? `当前池状态异常：${healthReason}` : "当前池状态异常，无法提供有效订阅内容。");
+  if (health === "depleted") add("incompatible", "当前池剩余流量为 0，无法继续正常使用。");
+  if (health === "low_traffic") add("adjust", "当前池剩余流量不足，建议关注并准备换池。");
+  if (!groupAllowed) add("incompatible", `当前池不支持用户的 ${String(group || "当前").toUpperCase()} 套餐。`);
+
+  if (!userExpiryValid) add("unknown", "用户缺少有效到期时间，暂时无法判断到期适配度。");
+  if (!poolExpiryValid) add("unknown", "当前池缺少有效到期时间，暂时无法判断到期适配度。");
+  if (userExpiryValid && poolExpiryValid && expiryDiffDays < -RATING_OVERRIDE_WINDOW_DAYS) {
+    add("incompatible", `当前池比用户早到期 ${Math.abs(Math.round(expiryDiffDays))} 天，超过 ${RATING_OVERRIDE_WINDOW_DAYS} 天边界，存在服务中断风险。`);
+  } else if (userExpiryValid && poolExpiryValid && expiryDiffDays > RATING_OVERRIDE_WINDOW_DAYS) {
+    add("adjust", `当前池比用户晚到期 ${Math.round(expiryDiffDays)} 天，超过 ${RATING_OVERRIDE_WINDOW_DAYS} 天边界，供应商评级不再覆盖该差异。`);
+  }
+
+  if (customerCount > maxUsers) add("adjust", `当前池已有 ${customerCount} 人，超过 ${maxUsers} 人上限。`);
+  if (excludedFromAutoSwitch) add("adjust", "当前池已设置为禁止自动切入，不会进入自动推荐候选。");
+  if (!rated) add("adjust", "当前池供应商未评级，不会进入自动推荐候选。");
+  return { status, reasons };
+}
+
+function poolExpiryDifference(pool, userExpiryTime) {
+  const poolExpiryTime = pool?.metrics?.expireAt ? startOfUtcDate(pool.metrics.expireAt) : NaN;
+  return Number.isFinite(poolExpiryTime) && Number.isFinite(userExpiryTime)
+    ? Math.round((poolExpiryTime - userExpiryTime) / 86400000)
+    : null;
+}
+
+function poolCompatibilityLabel(pool) {
+  return pool?.email || pool?.name || normalizeServiceProvider({}, pool) || pool?.url || "未命名池";
+}
+
+function currentPoolCompatibility(user) {
+  if (!user || user.registeredOnly) return null;
+  const currentPool = subscriptions.find(item => item.id === user.subscriptionId);
+  if (!currentPool) return {
+    status: "incompatible",
+    statusText: "不适配",
+    reasons: ["当前用户未绑定有效的池 URL。"],
+    recommendedPool: null
+  };
+
+  const userExpiryTime = startOfUtcDate(user.expiresAt);
+  const expiryDiffDays = poolExpiryDifference(currentPool, userExpiryTime);
+  const customerCount = subscriptionCustomerCount(currentPool.id);
+  const maxUsers = Number(currentPool.maxUsers ?? 15);
+  const provider = normalizeServiceProvider({}, currentPool);
+  const rating = vendorRatingByName(provider);
+  const health = statusFor(currentPool, customerCount);
+  const assessment = classifyCurrentPoolFit({
+    enabled: currentPool.enabled !== false,
+    health,
+    healthReason: currentPool.lastError || "",
+    groupAllowed: subscriptionAllowsGroup(currentPool, activeUserGroup(user)),
+    group: activeUserGroup(user),
+    userExpiryValid: Number.isFinite(userExpiryTime),
+    poolExpiryValid: expiryDiffDays !== null,
+    poolExpired: Date.parse(currentPool.metrics?.expireAt || "") <= Date.now(),
+    expiryDiffDays: expiryDiffDays ?? 0,
+    customerCount,
+    maxUsers,
+    excludedFromAutoSwitch: currentPool.excludeFromAutoSwitch === true,
+    rated: Boolean(rating)
+  });
+  const recommendation = Number.isFinite(userExpiryTime)
+    ? recommendSubscriptionForExpiry(user.expiresAt, { ignoredUserId: user.id, group: activeUserGroup(user) })
+    : { subscription: null };
+  const recommended = recommendation.subscription;
+
+  if (assessment.status === "high" && recommended?.id !== currentPool.id) {
+    assessment.status = "usable";
+    if (recommended) {
+      const recommendedProvider = normalizeServiceProvider({}, recommended);
+      assessment.reasons.push(
+        `当前池满足基本条件，但按当前规则更推荐“${poolCompatibilityLabel(recommended)}”（供应商 ${vendorRatingByName(recommendedProvider) || "未评级"} 级，到期差 ${Math.abs(poolExpiryDifference(recommended, userExpiryTime) ?? 0)} 天）；当前池为 ${rating || "未评级"} 级，到期差 ${Math.abs(expiryDiffDays ?? 0)} 天。`
+      );
+    } else {
+      assessment.reasons.push("当前池满足基本绑定条件，但当前自动推荐规则没有可用候选。");
+    }
+  }
+
+  const latestBindingLog = (Array.isArray(user.userLogs) ? user.userLogs : [])
+    .find(log => log.toSubscriptionId === currentPool.id && ["manual-pool-changed", "purchase-pool-changed", "user-created"].includes(log.reason));
+  const statusText = { high: "高适配", usable: "可以使用", adjust: "建议调整", unknown: "暂无法评估", incompatible: "不适配" }[assessment.status];
+  return {
+    ...assessment,
+    statusText,
+    provider,
+    rating: rating || null,
+    poolExpiresAt: currentPool.metrics?.expireAt || null,
+    expiryDiffDays,
+    customerCount,
+    maxUsers,
+    groupAllowed: subscriptionAllowsGroup(currentPool, activeUserGroup(user)),
+    binding: latestBindingLog ? {
+      type: latestBindingLog.reason === "manual-pool-changed" ? "manual" : "system",
+      at: latestBindingLog.at || null
+    } : null,
+    recommendedPool: recommended && recommended.id !== currentPool.id ? {
+      id: recommended.id,
+      label: poolCompatibilityLabel(recommended),
+      provider: normalizeServiceProvider({}, recommended),
+      rating: vendorRatingByName(normalizeServiceProvider({}, recommended)) || null,
+      expiryDiffDays: poolExpiryDifference(recommended, userExpiryTime)
+    } : null
+  };
 }
 
 function normalizeUser(input, existing = {}) {
@@ -2133,7 +2412,7 @@ function normalizeUser(input, existing = {}) {
   if (vipSpend === null) throw new Error("请填写正确的累计消费金额。");
 
   const cashValue = normalizePaymentAmount(input.cashValue ?? existing.cashValue ?? actualPaid);
-  const cashValueAt = String(input.cashValueAt || existing.cashValueAt || purchasedAt);
+  const cashValueAt = String(input.cashValueAt || (input.purchasedAt !== undefined ? purchasedAt : existing.cashValueAt) || purchasedAt);
   if (cashValue === null || Number.isNaN(new Date(cashValueAt).getTime())) throw new Error("Invalid cash value.");
 
   const group = normalizeUserGroup(input.group, existing.activeGroup || existing.group || "pro");
@@ -2255,6 +2534,9 @@ function reverseBill(bill) {
     if (bill.type === "renewal" && bill.beforeExpiresAt && user.expiresAt === bill.afterExpiresAt) {
       user.expiresAt = bill.beforeExpiresAt;
     }
+    const rebuilt = planCashValueFromBills(user);
+    user.cashValue = rebuilt?.cashValue || 0;
+    user.cashValueAt = rebuilt ? new Date(rebuilt.valuedAt).toISOString() : user.purchasedAt;
     user.updatedAt = new Date().toISOString();
   }
 
@@ -2449,8 +2731,9 @@ function toBytes(value, unit) {
 }
 
 function statusFor(item, customerCount = 0) {
-  if (subscriptionSourceType(item) === "manual") {
-    return item.lastError || !item.manualContent ? "invalid" : "ok";
+  if (isManualSubscription(item)) {
+    if (item.lastError || !item.manualContent) return "invalid";
+    return Date.parse(item.metrics?.expireAt || "") <= Date.now() ? "expired" : "ok";
   }
   const metrics = item.metrics;
   if (item.lastError || !metrics || metrics.unavailable) return "invalid";
@@ -2510,6 +2793,7 @@ function publicItem(item, customerCount = null) {
   return {
     ...publicFields,
     serviceProvider: normalizeServiceProvider({}, item),
+    serviceProviderRating: vendorRatingByName(normalizeServiceProvider({}, item)) || null,
     customerCount: resolvedCustomerCount,
     status: item.enabled === false ? "disabled" : statusFor(item, resolvedCustomerCount)
   };
@@ -2883,8 +3167,10 @@ function updatePoolMetrics(item, result, fetchedAt) {
     hasRemaining: result.metrics?.remainingBytes !== undefined && result.metrics?.remainingBytes !== null
   }] : [];
 
-  if (subscriptionSourceType(item) === "manual" && result?.body) {
+  if (isManualSubscription(item) && result?.body) {
+    const manualExpireAt = item.metrics?.expireAt;
     item.metrics = result.metrics || item.metrics || null;
+    if (manualExpireAt) item.metrics = { ...(item.metrics || {}), expireAt: manualExpireAt };
     item.lastError = null;
   } else if (result?.metrics && (nextScore >= existingScore || result.metrics.expireAt)) {
     item.metrics = result.metrics;
@@ -2928,12 +3214,13 @@ function applyPoolRefreshFailure(item, results, error, fetchedAt) {
 }
 
 async function fetchLivePoolConfig(item) {
-  if (subscriptionSourceType(item) === "manual") {
-    const body = normalizeManualSubscriptionContent(item.manualContent);
+  if (isManualSubscription(item)) {
+    const sourceType = subscriptionSourceType(item);
+    const body = normalizeManualContent(item);
     const fetchedAt = new Date().toISOString();
     const result = {
       body,
-      client: "manual-base64",
+      client: sourceType === "yaml" ? "manual-yaml" : "manual-base64",
       status: 200,
       score: clashConfigScore(body),
       rawBodyLength: body.length,
@@ -3594,6 +3881,17 @@ function buildUserInfoNodes(user) {
   return nodes;
 }
 
+function normalizeClashKeys(doc) {
+  let normalized = false;
+  for (const [legacyKey, key] of [["Proxy", "proxies"], ["Proxy Group", "proxy-groups"], ["Rule", "rules"]]) {
+    if (!(legacyKey in doc)) continue;
+    if (!(key in doc)) doc[key] = doc[legacyKey];
+    delete doc[legacyKey];
+    normalized = true;
+  }
+  return normalized;
+}
+
 function injectPlaceholderNodes(bodyBuffer, user, groups = placeholderNodes) {
   const useDefault = user.useDefaultPlaceholder !== false;
   const showUserInfo = user.showUserInfo !== false;
@@ -3607,14 +3905,7 @@ function injectPlaceholderNodes(bodyBuffer, user, groups = placeholderNodes) {
     const text = bodyBuffer.toString("utf8");
     const doc = yaml.load(text);
     if (!doc || typeof doc !== "object") return bodyBuffer;
-    let normalized = false;
-    for (const [legacyKey, key] of [["Proxy", "proxies"], ["Proxy Group", "proxy-groups"], ["Rule", "rules"]]) {
-      if (!(legacyKey in doc)) continue;
-      if (!(key in doc)) doc[key] = doc[legacyKey];
-      delete doc[legacyKey];
-      normalized = true;
-    }
-    if (!defaultNodes.length && !customNodes.length && !userInfoNodes.length && !normalized) return bodyBuffer;
+    normalizeClashKeys(doc);
     const proxies = Array.isArray(doc.proxies)
       ? doc.proxies
       : (doc.proxies = []);
@@ -3628,15 +3919,95 @@ function injectPlaceholderNodes(bodyBuffer, user, groups = placeholderNodes) {
     const proxyGroups = doc["proxy-groups"];
     if (Array.isArray(proxyGroups)) {
       for (const pg of proxyGroups) {
-        if (Array.isArray(pg.proxies)) {
-          pg.proxies.unshift(...allNames);
-        }
+        if (String(pg.name || "").includes("全球直连")) pg.proxies = ["DIRECT"];
+        else if (String(pg.name || "").includes("全球拦截")) pg.proxies = ["REJECT"];
+        else if (Array.isArray(pg.proxies)) pg.proxies.unshift(...allNames);
       }
     }
     return Buffer.from(yaml.dump(doc, { lineWidth: -1, noRefs: true }), "utf8");
   } catch {
     return bodyBuffer;
   }
+}
+
+function restoreUpstreamClashConfig(convertedBody, upstreamBody, { include = "", exclude = "" } = {}) {
+  try {
+    const converted = yaml.load(convertedBody.toString("utf8"));
+    const upstream = yaml.load(upstreamBody.toString("utf8"));
+    if (!converted || typeof converted !== "object" || !upstream || typeof upstream !== "object") return convertedBody;
+    normalizeClashKeys(converted);
+    normalizeClashKeys(upstream);
+    const sourceProxies = Array.isArray(upstream.proxies) ? upstream.proxies : [];
+    const convertedProxies = Array.isArray(converted.proxies) ? converted.proxies : [];
+    const identity = item => JSON.stringify([item?.type, item?.server, item?.port, item?.uuid, item?.password, item?.username]);
+    const buckets = key => sourceProxies.reduce((map, item, index) => {
+      const value = key(item);
+      map.set(value, [...(map.get(value) || []), index]);
+      return map;
+    }, new Map());
+    const nameBuckets = buckets(item => item?.name);
+    const identityBuckets = buckets(identity);
+    const used = new Set();
+    const convertedToSourceName = new Map();
+    const take = bucket => {
+      while (bucket?.length) {
+        const index = bucket.shift();
+        if (!used.has(index)) return index;
+      }
+      return -1;
+    };
+    for (const item of convertedProxies) {
+      let index = take(nameBuckets.get(item?.name));
+      if (index === -1) index = take(identityBuckets.get(identity(item)));
+      if (index === -1) continue;
+      used.add(index);
+      convertedToSourceName.set(item.name, sourceProxies[index].name);
+    }
+    const filtersActive = Boolean(include || exclude);
+    const restored = { ...upstream };
+    restored.proxies = sourceProxies.length
+      ? sourceProxies.filter((_, index) => !filtersActive || used.has(index))
+      : convertedProxies;
+    const selectedNames = new Set(restored.proxies.map(item => item?.name));
+    const convertedNames = new Set(convertedProxies.map(item => item?.name));
+    if (Array.isArray(converted["proxy-groups"])) {
+      restored["proxy-groups"] = converted["proxy-groups"].map(group => ({
+        ...group,
+        ...(Array.isArray(group.proxies) ? {
+          proxies: [...new Set(group.proxies.flatMap(name => {
+            if (!convertedNames.has(name)) return [name];
+            const sourceName = convertedToSourceName.get(name);
+            return sourceName && selectedNames.has(sourceName) ? [sourceName] : [];
+          }))]
+        } : {})
+      }));
+    }
+    for (const key of ["rules", "proxy-providers", "rule-providers"]) {
+      if (key in converted) restored[key] = converted[key];
+    }
+    return Buffer.from(yaml.dump(restored, { lineWidth: -1, noRefs: true }), "utf8");
+  } catch {
+    return convertedBody;
+  }
+}
+
+function postSubconverter(convertedBody, upstreamBody, user, config = {}) {
+  if (config.postSubconverter === false) return convertedBody;
+  const restoredBody = restoreUpstreamClashConfig(convertedBody, upstreamBody, config);
+  try {
+    const upstream = yaml.load(upstreamBody.toString("utf8"));
+    const restored = yaml.load(restoredBody.toString("utf8"));
+    if (upstream && typeof upstream === "object" && restored && typeof restored === "object") {
+      normalizeClashKeys(upstream);
+      normalizeClashKeys(restored);
+      if (Array.isArray(upstream.proxies) && upstream.proxies.length && !restored.proxies?.length) {
+        throw new Error("Subconverter filters removed every upstream node.");
+      }
+    }
+  } catch (error) {
+    if (/removed every upstream node/.test(error.message)) throw error;
+  }
+  return injectPlaceholderNodes(restoredBody, user);
 }
 
 function placeholderSubscription(user, nodeName) {
@@ -3745,6 +4116,7 @@ function defaultSubconverterPreset() {
   return {
     target: String(preset.target || DEFAULT_SUBCONVERTER_TARGET).trim() || DEFAULT_SUBCONVERTER_TARGET,
     config: normalizeSubconverterConfigParam(preset.config),
+    postSubconverter: preset.postSubconverter !== false,
     ...Object.fromEntries(Object.entries(SUBCONVERTER_BOOLEAN_DEFAULTS).map(([key, defaultValue]) => [
       key,
       preset[key] === undefined ? defaultValue : Boolean(preset[key])
@@ -3754,7 +4126,8 @@ function defaultSubconverterPreset() {
 
 function relaySubconverterConfig(subscription, vendorList = vendors) {
   const config = { ...defaultSubconverterPreset(), target: DEFAULT_SUBCONVERTER_TARGET, include: "", exclude: "", rename: "" };
-  const vendor = vendorList.find(item => item.name === subscription?.serviceProvider);
+  const provider = String(subscription?.serviceProvider || "").trim().toLowerCase();
+  const vendor = vendorList.find(item => String(item.name || "").trim().toLowerCase() === provider);
   if (vendor?.overrideExclude) config.exclude = vendor.overrideExclude;
   if (vendor?.overrideInclude) config.include = vendor.overrideInclude;
   if (vendor?.overrideRename) config.rename = vendor.overrideRename;
@@ -3788,19 +4161,20 @@ function copyUpstreamHeaders(response, req) {
 }
 
 function subscriptionCanBeManuallyAssigned(subscription, now = Date.now()) {
-  if (subscriptionSourceType(subscription) === "manual") return Boolean(subscription?.manualContent);
+  if (isManualSubscription(subscription)) return Boolean(subscription?.manualContent);
   const expiresAt = Date.parse(subscription?.metrics?.expireAt || "");
   return Number.isFinite(expiresAt) && expiresAt > now;
 }
 
-function manualSubscriptionHeaders(req) {
+function manualSubscriptionHeaders(req, subscription) {
   const browserInline = isBrowserNavigationRequest(req);
+  const extension = subscriptionSourceType(subscription) === "yaml" ? "yaml" : "txt";
   return {
     "content-type": "text/plain; charset=utf-8",
     "cache-control": "no-store, max-age=0",
     "pragma": "no-cache",
     "expires": "0",
-    "content-disposition": browserInline ? "inline; filename*=UTF-8''NEXORA.txt" : "attachment; filename*=UTF-8''NEXORA"
+    "content-disposition": browserInline ? `inline; filename*=UTF-8''NEXORA.${extension}` : "attachment; filename*=UTF-8''NEXORA"
   };
 }
 
@@ -3821,10 +4195,10 @@ async function findDirectFallbackSubscription(user, currentSubscription, req) {
     forwardedHeaders: headersForLog(headers)
   });
   for (const candidate of fallbackCandidates(user, currentSubscription)) {
-    if (subscriptionSourceType(candidate) === "manual") {
+    if (isManualSubscription(candidate)) {
       try {
-        const body = Buffer.from(normalizeManualSubscriptionContent(candidate.manualContent), "utf8");
-        return { subscription: candidate, body, headers: manualSubscriptionHeaders(req), errors };
+        const body = Buffer.from(normalizeManualContent(candidate), "utf8");
+        return { subscription: candidate, body, headers: manualSubscriptionHeaders(req, candidate), errors };
       } catch (error) {
         errors.push({ subscriptionId: candidate.id, subscriptionLabel: subscriptionLogLabel(candidate), error: error.message });
         continue;
@@ -4229,7 +4603,7 @@ async function handleRelaySubscription(req, res, token) {
         return;
       }
       const body = Buffer.from(await response.arrayBuffer());
-      const finalBody = injectPlaceholderNodes(body, user);
+      const finalBody = postSubconverter(body, liveConfig.body, user, sc);
       const browserInline = isBrowserNavigationRequest(req);
       relayLog("response-subconverter-ok", {
         relayRequestId,
@@ -4280,10 +4654,10 @@ async function handleRelaySubscription(req, res, token) {
     return;
   }
 
-  if (subscriptionSourceType(subscription) === "manual") {
+  if (isManualSubscription(subscription)) {
     try {
-      const body = Buffer.from(normalizeManualSubscriptionContent(subscription.manualContent), "utf8");
-      res.writeHead(200, manualSubscriptionHeaders(req));
+      const body = Buffer.from(normalizeManualContent(subscription), "utf8");
+      res.writeHead(200, manualSubscriptionHeaders(req, subscription));
       res.end(body);
     } catch (error) {
       sendSubscriptionMessage(res, 502, `手动订阅内容无效：${error.message}`);
@@ -5417,6 +5791,7 @@ async function handleApi(req, res, pathname) {
     sendJson(res, 200, {
       subscription: recommendation.subscription ? publicItem(recommendation.subscription) : null,
       reason: recommendation.reason,
+      recommendation: recommendation.details || null,
       expiresAt
     });
     return;
@@ -5655,6 +6030,7 @@ async function handleApi(req, res, pathname) {
     try {
       const payload = await readJson(req);
       const name = (payload.name || "").trim();
+      if (payload.rating && !normalizeVendorRating(payload.rating)) { sendJson(res, 400, { error: "供应商评级必须是 S、A、B 或 C。" }); return; }
       if (!name) { sendJson(res, 400, { error: "供应商名称不能为空。" }); return; }
       if (vendors.find(v => v.name === name)) { sendJson(res, 400, { error: "供应商已存在。" }); return; }
       const vendor = {
@@ -5662,7 +6038,8 @@ async function handleApi(req, res, pathname) {
         name,
         overrideExclude: String(payload.overrideExclude || "").trim(),
         overrideInclude: String(payload.overrideInclude || "").trim(),
-        overrideRename: String(payload.overrideRename || "").trim()
+        overrideRename: String(payload.overrideRename || "").trim(),
+        rating: payload.rating === undefined ? "C" : normalizeVendorRating(payload.rating)
       };
       vendors.push(vendor);
       await saveVendors();
@@ -5687,6 +6064,11 @@ async function handleApi(req, res, pathname) {
       if (payload.overrideExclude !== undefined) vendor.overrideExclude = String(payload.overrideExclude || "").trim();
       if (payload.overrideInclude !== undefined) vendor.overrideInclude = String(payload.overrideInclude || "").trim();
       if (payload.overrideRename !== undefined) vendor.overrideRename = String(payload.overrideRename || "").trim();
+      if (payload.rating !== undefined) {
+        const rating = normalizeVendorRating(payload.rating);
+        if (payload.rating && !rating) { sendJson(res, 400, { error: "供应商评级必须是 S、A、B 或 C。" }); return; }
+        vendor.rating = rating;
+      }
       await saveVendors();
       sendJson(res, 200, vendor);
       return;
@@ -5716,6 +6098,7 @@ async function handleApi(req, res, pathname) {
       }
       preset.target = String(payload.target || DEFAULT_SUBCONVERTER_TARGET).trim();
       preset.config = String(payload.config || "").trim();
+      preset.postSubconverter = payload.postSubconverter === undefined ? true : Boolean(payload.postSubconverter);
       for (const [key, defaultValue] of Object.entries(SUBCONVERTER_BOOLEAN_DEFAULTS)) {
         preset[key] = payload[key] === undefined ? defaultValue : Boolean(payload[key]);
       }
@@ -6019,7 +6402,9 @@ async function handleApi(req, res, pathname) {
     }
 
     if (!action && req.method === "GET") {
-      sendJson(res, 200, registeredAccount ? publicRegisteredAccount(registeredAccount) : publicUser(item));
+      sendJson(res, 200, registeredAccount
+        ? publicRegisteredAccount(registeredAccount)
+        : { ...publicUser(item), poolCompatibility: currentPoolCompatibility(item) });
       return;
     }
 
@@ -6085,7 +6470,8 @@ async function handleApi(req, res, pathname) {
           sendJson(res, 200, {
             expiresAt,
             subscription: recommendation.subscription ? publicItem(recommendation.subscription) : null,
-            reason: recommendation.reason
+            reason: recommendation.reason,
+            recommendation: recommendation.details || null
           });
           return;
         }
@@ -6280,10 +6666,10 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname.endsWith("/debug") && req.method === "GET") {
-    if (subscriptionSourceType(item) === "manual") {
+    if (isManualSubscription(item)) {
       try {
-        const body = normalizeManualSubscriptionContent(item.manualContent);
-        sendJson(res, 200, [{ client: "manual-base64", status: 200, bodyLength: body.length }]);
+        const body = normalizeManualContent(item);
+        sendJson(res, 200, [{ client: subscriptionSourceType(item) === "yaml" ? "manual-yaml" : "manual-base64", status: 200, bodyLength: body.length }]);
       } catch (error) {
         sendJson(res, 400, { error: error.message });
       }
@@ -6337,12 +6723,7 @@ async function handleApi(req, res, pathname) {
       if (subscriptionSourceType(item) !== previousSourceType || item.url !== previousUrl || item.manualContent !== previousManualContent) {
         // 订阅链接已变更：旧 metrics/状态属于上一个链接，清空避免展示陈旧信息。
         // 实时重新拉取由前端保存后显式调用 /refresh 完成，避免保存请求长时间阻塞。
-        item.metrics = null;
-        item.lastCheckedAt = null;
-        item.lastError = null;
-        item.httpStatus = null;
-        item.lastRefreshResults = null;
-        item.cachedConfig = null;
+        clearSubscriptionSourceState(item);
       }
       await saveData();
       sendJson(res, 200, publicItem(item));
@@ -6573,6 +6954,7 @@ module.exports = Object.assign(requestHandler, {
   injectPlaceholderNodes,
   liveConfigFromCachedPoolConfig,
   startOfUtcDate,
+  remainingPlanCashValue,
   paymentQuote,
   vipLevelForSpend,
   vipDiscountPercent,
@@ -6590,6 +6972,11 @@ module.exports = Object.assign(requestHandler, {
   subscriptionSourceType,
   normalizeManualSubscriptionContent,
   normalizeSubscription,
+  clearSubscriptionSourceState,
   subscriptionCanBeManuallyAssigned,
-  subscriptionHasUsableSource
+  subscriptionHasUsableSource,
+  classifyCurrentPoolFit,
+  restoreUpstreamClashConfig,
+  injectPlaceholderNodes,
+  postSubconverter
 });

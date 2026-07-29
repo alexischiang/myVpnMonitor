@@ -1,4 +1,5 @@
 import * as React from "react"
+import { addMonths, format } from "date-fns"
 import { Link } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Eye, Loader2, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
@@ -18,11 +19,13 @@ import { useData } from "@/components/features/data-provider"
 import { ProviderBadge } from "@/components/features/provider-badge"
 import { SimpleFormDialog, type Field as SimpleField, type FormValues } from "@/components/features/simple-form"
 import { StatusBadge, TrafficProgress, UrlCell } from "@/components/features/shared"
-import type { Subscription } from "@/types"
+import type { Subscription, VendorRating } from "@/types"
 import { formatDate, statusLabels } from "@/utils"
 
 type ProviderSummary = {
   name: string
+  vendorId?: string
+  rating?: VendorRating | null
   subscriptions: Subscription[]
   poolCount: number
   enabledCount: number
@@ -33,17 +36,33 @@ type ProviderSummary = {
 }
 
 const subscriptionProvider = (item: Subscription) => item.serviceProvider || item.provider || "未填写供应商"
+const manualSourceLabel = (item: Subscription) => item.sourceType === "yaml" ? "手动 YAML" : item.sourceType === "manual" ? "手动 Base64" : ""
+const providerRatingFields: SimpleField[] = [{
+  name: "rating",
+  label: "供应商评级",
+  type: "select",
+  required: true,
+  options: [
+    { value: "S", label: "S 级" },
+    { value: "A", label: "A 级" },
+    { value: "B", label: "B 级" },
+    { value: "C", label: "C 级" },
+    { value: "unrated", label: "未评级" },
+  ],
+}]
 
 export function SubscriptionsPage() {
-  const { subscriptions, reload, runAsync, busy } = useData()
+  const { subscriptions, vendors, reload, runAsync, busy } = useData()
   const [editing, setEditing] = React.useState<Subscription | null>(null)
   const [disabling, setDisabling] = React.useState<Subscription | null>(null)
   const [disablingProvider, setDisablingProvider] = React.useState<ProviderSummary | null>(null)
+  const [ratingProvider, setRatingProvider] = React.useState<ProviderSummary | null>(null)
   const [open, setOpen] = React.useState(false)
   const [pendingAction, setPendingAction] = React.useState("")
   const [enabledFilter, setEnabledFilter] = React.useState("all")
   const [statusFilter, setStatusFilter] = React.useState("ok")
   const [providerFilter, setProviderFilter] = React.useState("all")
+  const defaultManualExpiry = React.useMemo(() => format(addMonths(new Date(), 1), "yyyy-MM-dd"), [])
   const [activeTab, setActiveTab] = React.useState("urls")
 
   async function save(values: FormValues) {
@@ -54,9 +73,12 @@ export function SubscriptionsPage() {
     await runAsync(async () => {
       if (editing?.id) {
         await putJson(`/api/subscriptions/${editing.id}`, payload)
-        const nextSourceType = values.sourceType === "manual" ? "manual" : "url"
+        const nextSourceType = values.sourceType === "manual" || values.sourceType === "yaml" ? values.sourceType : "url"
+        const nextManualContent = nextSourceType === "manual"
+          ? String(values.manualContent || "").replace(/\s+/g, "")
+          : String(values.manualContent || "").trim()
         const sourceChanged = nextSourceType !== (editing.sourceType || "url")
-          || (nextSourceType === "manual" && String(values.manualContent || "").replace(/\s+/g, "") !== editing.manualContent)
+          || (nextSourceType !== "url" && nextManualContent !== editing.manualContent)
           || (nextSourceType === "url" && String(values.url || "").trim() !== editing.url)
         if (sourceChanged) await postJson(`/api/subscriptions/${editing.id}/refresh`, {})
         toast.success("订阅已更新")
@@ -125,14 +147,29 @@ export function SubscriptionsPage() {
     }
   }
 
+  async function saveProviderRating(values: FormValues) {
+    if (!ratingProvider) return
+    const rating = values.rating === "unrated" ? "" : values.rating
+    if (!ratingProvider.vendorId && !rating) return
+    await runAsync(async () => {
+      if (ratingProvider.vendorId) await putJson(`/api/vendors/${ratingProvider.vendorId}`, { rating })
+      else await postJson("/api/vendors", { name: ratingProvider.name, rating })
+      await reload(["vendors", "subscriptions"])
+      toast.success("供应商评级已保存")
+    }, "保存供应商评级...")
+  }
+
   const sortedSubscriptions = React.useMemo(() => [...subscriptions].sort((left, right) => (Date.parse(right.metrics?.expireAt || "") || 0) - (Date.parse(left.metrics?.expireAt || "") || 0)), [subscriptions])
   const statusOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.status).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
   const providerOptions = React.useMemo(() => [...new Set(subscriptions.map(item => item.serviceProvider || item.provider).filter((value): value is string => Boolean(value)))].sort(), [subscriptions])
   const providerSummaries = React.useMemo<ProviderSummary[]>(() => {
     const groups = new Map<string, Subscription[]>()
+    const vendorByName = new Map(vendors.map(vendor => [vendor.name, vendor]))
     subscriptions.forEach(item => groups.set(subscriptionProvider(item), [...(groups.get(subscriptionProvider(item)) || []), item]))
     return [...groups].map(([name, items]) => ({
       name,
+      vendorId: vendorByName.get(name)?.id,
+      rating: vendorByName.get(name)?.rating === "" ? null : vendorByName.get(name)?.rating || "C",
       subscriptions: items,
       poolCount: items.length,
       enabledCount: items.filter(item => item.enabled !== false).length,
@@ -141,7 +178,7 @@ export function SubscriptionsPage() {
       autoSwitchCount: items.filter(item => !item.excludeFromAutoSwitch).length,
       latestExpiry: items.reduce((latest, item) => (Date.parse(item.metrics?.expireAt || "") || 0) > (Date.parse(latest) || 0) ? item.metrics?.expireAt || "" : latest, ""),
     })).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
-  }, [subscriptions])
+  }, [subscriptions, vendors])
   const fields = React.useMemo<SimpleField[]>(() => [
     {
       name: "sourceType",
@@ -152,6 +189,7 @@ export function SubscriptionsPage() {
       options: [
         { value: "url", label: "远程订阅 URL" },
         { value: "manual", label: "手动 Base64 内容" },
+        { value: "yaml", label: "手动 YAML 配置" },
       ],
     },
     { name: "url", label: "订阅 URL", type: "url", required: true, placeholder: "https://...", className: "sm:col-span-2", visibleWhen: { field: "sourceType", equals: "url" } },
@@ -166,6 +204,19 @@ export function SubscriptionsPage() {
       controlClassName: "field-sizing-fixed h-32 min-h-24 max-h-48 resize-y overflow-auto break-all font-mono text-xs",
       visibleWhen: { field: "sourceType", equals: "manual" },
     },
+    { name: "expiresAt", label: "到期日", type: "date", required: true, visibleWhen: { field: "sourceType", equals: "manual" } },
+    {
+      name: "manualContent",
+      label: "YAML 配置内容",
+      type: "textarea",
+      required: true,
+      rows: 10,
+      placeholder: "粘贴包含 proxies、proxy-groups 和 rules 的完整 Clash YAML 配置",
+      className: "sm:col-span-2",
+      controlClassName: "field-sizing-fixed h-64 min-h-40 max-h-96 resize-y overflow-auto font-mono text-xs",
+      visibleWhen: { field: "sourceType", equals: "yaml" },
+    },
+    { name: "expiresAt", label: "到期日", type: "date", required: true, visibleWhen: { field: "sourceType", equals: "yaml" } },
     { name: "email", label: "邮箱", type: "email", placeholder: "customer@example.com" },
     {
       name: "serviceProvider",
@@ -207,7 +258,7 @@ export function SubscriptionsPage() {
   const columns = React.useMemo<ColumnDef<Subscription>[]>(() => [
     {
       id: "subscription",
-      accessorFn: item => `${item.email || item.name || ""} ${item.serviceProvider || item.provider || ""} ${item.note || ""} ${item.url || ""} ${item.sourceType === "manual" ? "手动 Base64" : ""}`,
+      accessorFn: item => `${item.email || item.name || ""} ${item.serviceProvider || item.provider || ""} ${item.note || ""} ${item.url || ""} ${manualSourceLabel(item)}`,
       header: DataTableColumnHeader({ title: "订阅" }),
       meta: { label: "订阅" },
       cell: ({ row }) => {
@@ -224,7 +275,7 @@ export function SubscriptionsPage() {
       accessorKey: "url",
       header: "URL",
       meta: { label: "URL" },
-      cell: ({ row }) => row.original.sourceType === "manual" ? <Badge variant="secondary">手动 Base64</Badge> : <UrlCell value={row.original.url} />,
+      cell: ({ row }) => manualSourceLabel(row.original) ? <Badge variant="secondary">{manualSourceLabel(row.original)}</Badge> : <UrlCell value={row.original.url} />,
       enableSorting: false,
     },
     {
@@ -303,6 +354,12 @@ export function SubscriptionsPage() {
       meta: { label: "池 URL" },
     },
     {
+      accessorKey: "rating",
+      header: DataTableColumnHeader({ title: "评级" }),
+      meta: { label: "评级" },
+      cell: ({ row }) => row.original.rating ? `${row.original.rating} 级` : "未评级",
+    },
+    {
       accessorKey: "enabledCount",
       header: DataTableColumnHeader({ title: "启用" }),
       meta: { label: "启用" },
@@ -334,6 +391,7 @@ export function SubscriptionsPage() {
         const pending = pendingAction === `provider:${provider.name}`
         return (
           <DataTableRowActions detail={<Button variant="ghost" size="icon" onClick={() => { setProviderFilter(provider.name); setActiveTab("urls") }} aria-label="查看供应商 URL"><Eye /></Button>}>
+            <DropdownMenuItem onSelect={() => setRatingProvider(provider)}>设置评级</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => provider.autoSwitchCount ? setDisablingProvider(provider) : toggleProviderAutoSwitch(provider)} disabled={Boolean(pendingAction)}>
               {pending ? <Loader2 className="animate-spin" /> : null}{provider.autoSwitchCount ? "禁止自动切入" : "恢复自动切入"}
             </DropdownMenuItem>
@@ -404,18 +462,30 @@ export function SubscriptionsPage() {
       </AlertDialog>
 
       <SimpleFormDialog
+        open={Boolean(ratingProvider)}
+        title={`设置 ${ratingProvider?.name || ""} 评级`}
+        description="未评级供应商不会参与自动推荐。"
+        fields={providerRatingFields}
+        initialValues={{ rating: ratingProvider?.rating || "unrated" }}
+        submitLabel="保存评级"
+        onOpenChange={open => { if (!open) setRatingProvider(null) }}
+        onSubmit={saveProviderRating}
+      />
+
+      <SimpleFormDialog
         open={open}
         title={editing ? "编辑订阅" : "新增订阅"}
-        description="选择远程 URL 或直接保存 Base64 节点内容；手动内容不会访问任何上游地址。"
+        description="选择远程 URL、手动 Base64 节点或完整 YAML 配置；手动内容不会访问任何上游地址。"
         fields={fields}
         initialValues={editing ? {
           ...editing,
           sourceType: editing.sourceType || "url",
+          expiresAt: editing.metrics?.expireAt?.slice(0, 10) || defaultManualExpiry,
           maxUsers: editing.maxUsers ?? 15,
           allow_basic: !editing.allowedGroups || editing.allowedGroups.includes("basic"),
           allow_pro: !editing.allowedGroups || editing.allowedGroups.includes("pro"),
           allow_ultra: !editing.allowedGroups || editing.allowedGroups.includes("ultra"),
-        } : { sourceType: "url", maxUsers: 15, allow_basic: true, allow_pro: true, allow_ultra: true }}
+        } : { sourceType: "url", expiresAt: defaultManualExpiry, maxUsers: 15, allow_basic: true, allow_pro: true, allow_ultra: true }}
         submitLabel={editing ? "保存修改" : "保存并刷新"}
         contentClassName="sm:max-w-2xl"
         onOpenChange={setOpen}

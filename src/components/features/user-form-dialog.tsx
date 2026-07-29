@@ -1,9 +1,8 @@
 import * as React from "react"
-import { CalendarIcon, Loader2 } from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 import { postJson } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
 import {
   Dialog,
   DialogClose,
@@ -23,10 +22,10 @@ import {
   FieldTitle,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Progress } from "@/components/ui/progress"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
+import { DatePicker } from "@/components/features/date-picker"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { PricingRow, Subscription, User } from "@/types"
 import { durationLabels, formatDate, toDateInputValue } from "@/utils"
@@ -85,17 +84,6 @@ function toInputDate(value?: string) {
   return value ? value.slice(0, 10) : ""
 }
 
-function parseDateValue(value?: string) {
-  if (!value) return undefined
-  const [year, month, day] = value.split("-").map(Number)
-  return year && month && day ? new Date(year, month - 1, day) : undefined
-}
-
-function formatDateValue(date?: Date) {
-  if (!date) return ""
-  return toDateInputValue(date)
-}
-
 function toFormValues(user: User | null): UserFormValues {
   const defaults = defaultFormValues()
   if (!user) return defaults
@@ -136,33 +124,6 @@ function durationExpiryLabel(values: UserFormValues, duration: string) {
   const expiry = durationExpiryValue(values, duration)
   if (expiry === "永久") return "永久有效"
   return expiry ? `到期 ${formatDate(expiry)}` : duration === "custom" ? "请选择到期日" : "待选择购买日期"
-}
-
-function DatePicker({ id, value, onChange }: { id: string; value?: string; onChange: (value: string) => void }) {
-  const [open, setOpen] = React.useState(false)
-  const selected = parseDateValue(value)
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button id={id} type="button" variant="outline" className="w-full justify-between text-base font-normal md:text-sm">
-          {selected ? selected.toLocaleDateString("zh-CN") : "选择日期"}
-          <CalendarIcon />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
-        <Calendar
-          mode="single"
-          selected={selected}
-          defaultMonth={selected}
-          onSelect={date => {
-            onChange(formatDateValue(date))
-            setOpen(false)
-          }}
-        />
-      </PopoverContent>
-    </Popover>
-  )
 }
 
 export function UserFormDialog({
@@ -325,7 +286,7 @@ export function UserFormDialog({
                     ))}
                   </RadioGroup>
                 </Field>
-                <Field><FieldLabel htmlFor="actualPaid">本次消费金额</FieldLabel><Input id="actualPaid" type="number" min="0" step="0.01" value={values.actualPaid ?? price ?? ""} aria-invalid={Boolean(errors.actualPaid)} onChange={event => update("actualPaid", event.target.value === "" ? undefined : Number(event.target.value))} />{price === undefined ? <FieldDescription>自定义和永久周期请手动填写金额。</FieldDescription> : null}<FieldError>{errors.actualPaid}</FieldError></Field>
+        <Field><FieldLabel htmlFor="actualPaid">{user ? "累计消费金额" : "本次消费金额"}</FieldLabel><Input id="actualPaid" type="number" min="0" step="0.01" value={values.actualPaid ?? price ?? ""} aria-invalid={Boolean(errors.actualPaid)} onChange={event => update("actualPaid", event.target.value === "" ? undefined : Number(event.target.value))} />{price === undefined ? <FieldDescription>自定义和永久周期请手动填写金额。</FieldDescription> : null}<FieldError>{errors.actualPaid}</FieldError></Field>
               </>
             ) : (
               <>

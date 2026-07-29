@@ -101,7 +101,7 @@ export function UsersPage() {
     setPoolSaving(true)
     try {
       await postJson(`/api/users/${poolUser.id}/pool`, { subscriptionId: poolId, allowDisabled: allowDisabledPool, allowFull: allowFullPool })
-      await reload(["users"])
+      await reload(["users", "subscriptions"])
       toast.success("用户订阅池已更新")
       setPoolUser(null)
     } catch (error) {

@@ -5,11 +5,12 @@ import { AlertCircle, ArrowLeft, ArrowRight, Eye, Gift, Loader2, MailCheck, Powe
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -31,6 +32,12 @@ type GiftPreview = {
   expiresAt: string
   subscription: User["subscription"] | null
   reason?: string
+}
+
+function formatPoolExpiryDifference(days?: number | null) {
+  if (days === null || days === undefined) return "暂无法判断"
+  if (days === 0) return "与用户同日到期"
+  return days > 0 ? `池比用户晚到期 ${days} 天` : `池比用户早到期 ${Math.abs(days)} 天`
 }
 
 export function SubscriptionDetailPage() {
@@ -126,7 +133,7 @@ export function SubscriptionDetailPage() {
         actions={
           <>
             <Button asChild variant="outline" size="sm"><Link to="/urls"><ArrowLeft />返回</Link></Button>
-            {item.sourceType !== "manual" ? <Button variant="outline" size="sm" onClick={toggleAutoSwitch} disabled={togglingAutoSwitch}>{togglingAutoSwitch ? <Loader2 className="animate-spin" /> : null}{item.excludeFromAutoSwitch ? "恢复自动切入" : "禁止自动切入"}</Button> : null}
+            {item.sourceType === "url" ? <Button variant="outline" size="sm" onClick={toggleAutoSwitch} disabled={togglingAutoSwitch}>{togglingAutoSwitch ? <Loader2 className="animate-spin" /> : null}{item.excludeFromAutoSwitch ? "恢复自动切入" : "禁止自动切入"}</Button> : null}
             <Button size="sm" onClick={refresh} disabled={refreshing}>{refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新</Button>
           </>
         }
@@ -135,7 +142,7 @@ export function SubscriptionDetailPage() {
         <Card>
           <CardHeader><CardTitle>基础信息</CardTitle></CardHeader>
           <CardContent className="grid gap-4">
-            {item.sourceType === "manual" ? <Info label="配置来源" value="手动 Base64" /> : <UrlCell value={item.url} />}
+            {item.sourceType === "manual" ? <Info label="配置来源" value="手动 Base64" /> : item.sourceType === "yaml" ? <Info label="配置来源" value="手动 YAML" /> : <UrlCell value={item.url} />}
             <div className="grid gap-3">
               <Info label="HTTP" value={item.httpStatus || "-"} />
               <Info label="最后检查" value={formatDateTime(item.lastCheckedAt)} />
@@ -233,6 +240,15 @@ export function UserDetailPage() {
     return () => { active = false }
   }, [id])
 
+  async function refreshUserDetails() {
+    if (!id || id.startsWith("account:")) return
+    const [detail] = await Promise.all([
+      fetchJson<User>(`/api/users/${id}`),
+      reload(["users", "subscriptions"])
+    ])
+    setLoadedUser(detail)
+  }
+
   React.useEffect(() => {
     setReferralRate(user?.referralRate ?? 10)
     setRecurringReferral(user?.recurringReferral === true)
@@ -313,7 +329,7 @@ export function UserDetailPage() {
     setPoolSaving(true)
     try {
       await postJson(`/api/users/${user.id}/pool`, { subscriptionId: poolId, allowDisabled: allowDisabledPool, allowFull: allowFullPool })
-      await reload(["users"])
+      await refreshUserDetails()
       setPoolOpen(false)
       toast.success("用户订阅池已更新")
     } catch (error) {
@@ -360,7 +376,7 @@ export function UserDetailPage() {
     setGiftSaving(true)
     try {
       await postJson(`/api/users/${user.id}/gift`, { days: Number(giftDays), subscriptionId: giftPoolId, allowDisabled: allowDisabledGiftPool, allowFull: allowFullGiftPool })
-      await reload(["users"])
+      await refreshUserDetails()
       setGiftOpen(false)
       toast.success("赠送时长已生效")
     } catch (error) {
@@ -516,6 +532,52 @@ export function UserDetailPage() {
                 <Info label="订阅状态" value={<UserStatusBadge user={user} />} />
               </CardContent>
             </Card>
+            {user.poolCompatibility ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>推荐适配度</CardTitle>
+                  <CardDescription className="break-all">
+                    {currentPool?.email || currentPool?.name || currentPool?.serviceProvider || "当前绑定池"}
+                  </CardDescription>
+                  <CardAction>
+                    <Badge variant={user.poolCompatibility.status === "high" ? "success" : user.poolCompatibility.status === "usable" ? "secondary" : user.poolCompatibility.status === "incompatible" ? "destructive" : "warning"}>
+                      {user.poolCompatibility.statusText}
+                    </Badge>
+                  </CardAction>
+                </CardHeader>
+                <CardContent className="grid gap-4">
+                  {user.poolCompatibility.status !== "high" ? (
+                    <Alert variant={user.poolCompatibility.status === "incompatible" ? "error" : user.poolCompatibility.status === "adjust" ? "warning" : "default"}>
+                      <AlertCircle />
+                      <AlertTitle>具体原因</AlertTitle>
+                      <AlertDescription>
+                        <ul className="list-disc space-y-1 pl-4">
+                          {user.poolCompatibility.reasons.map(reason => <li key={reason}>{reason}</li>)}
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Info label="当前池 URL" value={currentPool?.url ? <UrlCell value={currentPool.url} /> : "-"} />
+                    <Info label="供应商评级" value={user.poolCompatibility.rating ? <Badge variant="outline">{user.poolCompatibility.rating} 级</Badge> : "未评级"} />
+                    <Info label="套餐匹配" value={user.poolCompatibility.groupAllowed ? `${user.activeGroup?.toUpperCase() || "当前"} 套餐可用` : "不支持当前套餐"} />
+                    <Info label="到期匹配" value={formatPoolExpiryDifference(user.poolCompatibility.expiryDiffDays)} />
+                    <Info label="容量" value={`${user.poolCompatibility.customerCount ?? 0} / ${user.poolCompatibility.maxUsers ?? 15} 人`} />
+                    <Info label="绑定方式" value={user.poolCompatibility.binding?.type === "manual" ? `手动换池${user.poolCompatibility.binding.at ? ` · ${formatDateTime(user.poolCompatibility.binding.at)}` : ""}` : "系统绑定"} />
+                  </div>
+                  {user.poolCompatibility.recommendedPool ? (
+                    <Item variant="muted">
+                      <ItemContent>
+                        <ItemTitle>当前更优选择</ItemTitle>
+                        <ItemDescription className="line-clamp-none break-all">
+                          {user.poolCompatibility.recommendedPool.label} · {user.poolCompatibility.recommendedPool.rating || "未评级"} 级 · {formatPoolExpiryDifference(user.poolCompatibility.recommendedPool.expiryDiffDays)}
+                        </ItemDescription>
+                      </ItemContent>
+                    </Item>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ) : null}
             <Card>
               <CardHeader><CardTitle>账户信息</CardTitle></CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2">

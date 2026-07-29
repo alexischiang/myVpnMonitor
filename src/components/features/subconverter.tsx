@@ -5,12 +5,13 @@ import { toast } from "sonner"
 
 import { deleteJson, postJson, putJson } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { SimpleFormDialog, type Field, type FormValues } from "@/components/features/simple-form"
@@ -35,12 +36,13 @@ const booleanOptions = [
   { key: "strict", label: "Surge 强制更新", defaultValue: false },
 ] as const
 type BooleanOptionKey = typeof booleanOptions[number]["key"]
-type PresetValues = { target: string; config: string } & Record<BooleanOptionKey, boolean>
+type PresetValues = { target: string; config: string; postSubconverter: boolean } & Record<BooleanOptionKey, boolean>
 
 function presetValues(preset: Preset): PresetValues {
   return {
     target: preset.target || "clash",
     config: preset.config || "",
+    postSubconverter: preset.postSubconverter !== false,
     ...Object.fromEntries(booleanOptions.map(option => [option.key, preset[option.key] ?? option.defaultValue])) as Record<BooleanOptionKey, boolean>,
   }
 }
@@ -78,31 +80,46 @@ function PresetCard() {
     }
   }
   return (
-    <Card>
-      <CardHeader><CardTitle>默认转换预设</CardTitle></CardHeader>
-      <CardContent className="grid gap-4">
-        <div className="grid gap-2">
-          <Label>目标客户端</Label>
-          <Select value={values.target} onValueChange={target => setValues(current => ({ ...current, target }))}>
-            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>{targets.map(target => <SelectItem key={target} value={target}>{target}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-2">
-          <Label>远程配置</Label>
-          <Input value={values.config} onChange={event => setValues(current => ({ ...current, config: event.target.value }))} placeholder="https://..." />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {booleanOptions.map(option => (
-            <Label key={option.key} htmlFor={`preset-${option.key}`} className="flex items-center gap-2">
-              <Checkbox id={`preset-${option.key}`} checked={values[option.key]} onCheckedChange={checked => setValues(current => ({ ...current, [option.key]: checked === true }))} />
-              {option.label} ({option.key})
-            </Label>
-          ))}
-        </div>
-        <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : null}{saving ? "保存中..." : "保存预设"}</Button>
-      </CardContent>
-    </Card>
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle><Label htmlFor="post-subconverter">执行 postSubconverter</Label></CardTitle>
+          <CardDescription>关闭后直接返回 Subconverter 的原始转换结果。</CardDescription>
+          <CardAction>
+            <Switch
+              id="post-subconverter"
+              checked={values.postSubconverter}
+              onCheckedChange={postSubconverter => setValues(current => ({ ...current, postSubconverter }))}
+            />
+          </CardAction>
+        </CardHeader>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle>默认转换预设</CardTitle></CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="grid gap-2">
+            <Label>目标客户端</Label>
+            <Select value={values.target} onValueChange={target => setValues(current => ({ ...current, target }))}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>{targets.map(target => <SelectItem key={target} value={target}>{target}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label>远程配置</Label>
+            <Input value={values.config} onChange={event => setValues(current => ({ ...current, config: event.target.value }))} placeholder="https://..." />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {booleanOptions.map(option => (
+              <Label key={option.key} htmlFor={`preset-${option.key}`} className="flex items-center gap-2">
+                <Checkbox id={`preset-${option.key}`} checked={values[option.key]} onCheckedChange={checked => setValues(current => ({ ...current, [option.key]: checked === true }))} />
+                {option.label} ({option.key})
+              </Label>
+            ))}
+          </div>
+          <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : null}{saving ? "保存中..." : "保存预设"}</Button>
+        </CardContent>
+      </Card>
+    </>
   )
 }
 
