@@ -2091,6 +2091,10 @@ function activeUserGroup(user = {}) {
   return normalizeUserGroup(user.activeGroup || user.group, "pro");
 }
 
+function poolSelectionGroup(user = {}) {
+  return user.isSuperAccount ? "" : activeUserGroup(user);
+}
+
 function calculateExpiry(purchasedAt, duration) {
   if (duration === "lifetime") return LIFETIME_EXPIRES_AT;
   const days = durationDays(duration);
@@ -2131,7 +2135,7 @@ function batchGiftTargets({ days, group = "", allowDisabled = false } = {}) {
     .map(user => {
       const expiresAt = calculateGiftExpiry(user, giftDays);
       const currentPool = subscriptions.find(item => item.id === user.subscriptionId);
-      const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: user.id, group: activeUserGroup(user), allowDisabled });
+      const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: user.id, group: poolSelectionGroup(user), allowDisabled });
       return { user, giftDays, expiresAt, toSubscription: currentPool || recommendation.subscription };
     });
 }
@@ -2326,7 +2330,7 @@ function currentPoolCompatibility(user) {
     enabled: currentPool.enabled !== false,
     health,
     healthReason: currentPool.lastError || "",
-    groupAllowed: subscriptionAllowsGroup(currentPool, activeUserGroup(user)),
+    groupAllowed: subscriptionAllowsGroup(currentPool, poolSelectionGroup(user)),
     group: activeUserGroup(user),
     userExpiryValid: Number.isFinite(userExpiryTime),
     poolExpiryValid: expiryDiffDays !== null,
@@ -2338,7 +2342,7 @@ function currentPoolCompatibility(user) {
     rated: Boolean(rating)
   });
   const recommendation = Number.isFinite(userExpiryTime)
-    ? recommendSubscriptionForExpiry(user.expiresAt, { ignoredUserId: user.id, group: activeUserGroup(user) })
+    ? recommendSubscriptionForExpiry(user.expiresAt, { ignoredUserId: user.id, group: poolSelectionGroup(user) })
     : { subscription: null };
   const recommended = recommendation.subscription;
 
@@ -2366,7 +2370,7 @@ function currentPoolCompatibility(user) {
     expiryDiffDays,
     customerCount,
     maxUsers,
-    groupAllowed: subscriptionAllowsGroup(currentPool, activeUserGroup(user)),
+    groupAllowed: subscriptionAllowsGroup(currentPool, poolSelectionGroup(user)),
     binding: latestBindingLog ? {
       type: latestBindingLog.reason === "manual-pool-changed" ? "manual" : "system",
       at: latestBindingLog.at || null
@@ -2422,6 +2426,7 @@ function normalizeUser(input, existing = {}) {
   );
   const isBusiness = input.isBusiness !== undefined ? Boolean(input.isBusiness) : Boolean(existing.isBusiness);
   const isFamilyFriend = input.isFamilyFriend !== undefined ? Boolean(input.isFamilyFriend) : Boolean(existing.isFamilyFriend);
+  const isSuperAccount = input.isSuperAccount !== undefined ? Boolean(input.isSuperAccount) : Boolean(existing.isSuperAccount);
   const unlimited = input.unlimited !== undefined ? Boolean(input.unlimited) : Boolean(existing.unlimited);
   const level = vipLevelForSpend(vipSpend);
 
@@ -2446,6 +2451,7 @@ function normalizeUser(input, existing = {}) {
     level,
     isBusiness,
     isFamilyFriend,
+    isSuperAccount,
     subscriptionId: subscription.id,
     subscriptionToken: existing.subscriptionToken || relayToken(),
     planExpiresAt: existing.planExpiresAt || expiresAt,
@@ -3608,6 +3614,7 @@ function userSnapshotForLog(user = {}) {
     activeGroup: activeUserGroup(user),
     isBusiness: Boolean(user.isBusiness),
     isFamilyFriend: Boolean(user.isFamilyFriend),
+    isSuperAccount: Boolean(user.isSuperAccount),
     purchasedAt: user.purchasedAt || "",
     duration: user.duration || "",
     actualPaid: Number(user.actualPaid) || 0,
@@ -3630,6 +3637,7 @@ function summarizeUserChanges(before = {}, after = {}) {
     activeGroup: "当前生效套餐等级",
     isBusiness: "\u4f01\u4e1a\u7528\u6237",
     isFamilyFriend: "\u4eb2\u53cb\u8d26\u6237",
+    isSuperAccount: "\u8d85\u7ea7\u8d26\u6237",
     purchasedAt: "\u8d2d\u4e70\u65e5\u671f",
     duration: "\u5957\u9910\u65f6\u957f",
     actualPaid: "\u5b9e\u4ed8\u91d1\u989d",
@@ -3723,7 +3731,7 @@ function fallbackCandidateRank(item, user) {
 
 function fallbackCandidates(user, currentSubscription) {
   const candidates = subscriptions
-    .filter(item => item.id !== currentSubscription?.id && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, activeUserGroup(user)) && !subscriptionAtCapacity(item, user?.id || ""))
+    .filter(item => item.id !== currentSubscription?.id && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, poolSelectionGroup(user)) && !subscriptionAtCapacity(item, user?.id || ""))
     .map(item => {
       const rank = fallbackCandidateRank(item, user);
       if (rank === null) return null;
@@ -4320,7 +4328,7 @@ async function handleRelaySubscription(req, res, token) {
     return outputMode === "direct" ? null : relaySubconverterConfig(subscription);
   })();
   let precheckedLiveConfig = null;
-  const initialFallbackReason = initialPoolFallbackReason(subscription, Boolean(sc?.target), activeUserGroup(user));
+  const initialFallbackReason = initialPoolFallbackReason(subscription, Boolean(sc?.target), poolSelectionGroup(user));
   relayLog("current-pool-selected", {
     relayRequestId,
     userId: user.id,
@@ -5199,6 +5207,9 @@ async function handleApi(req, res, pathname) {
       customerID: account.customerID,
       email: account.email,
       createdAt: account.createdAt,
+      isBusiness: Boolean(user?.isBusiness),
+      isFamilyFriend: Boolean(user?.isFamilyFriend),
+      isSuperAccount: Boolean(user?.isSuperAccount),
       vipLevel: walletVipLevel,
       vipSpend: wallet.vipSpendCents / 100,
       vipDiscountPercent: vipDiscountPercent(walletVipLevel),
@@ -6388,7 +6399,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift|account-status))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift|account-status|type))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -6465,7 +6476,7 @@ async function handleApi(req, res, pathname) {
         const payload = await readJson(req);
         const expiresAt = calculateGiftExpiry(item, payload.days);
         if (!expiresAt) throw new Error("请输入正确的赠送天数。");
-        const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id, group: activeUserGroup(item) });
+        const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id, group: poolSelectionGroup(item) });
         if (payload.preview === true) {
           sendJson(res, 200, {
             expiresAt,
@@ -6477,7 +6488,7 @@ async function handleApi(req, res, pathname) {
         }
         const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || recommendation.subscription?.id || ""));
         if (!toSubscription) throw new Error("请选择有效的订阅池。");
-        if (!subscriptionAllowsGroup(toSubscription, activeUserGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
+        if (!subscriptionAllowsGroup(toSubscription, poolSelectionGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
         if ((toSubscription.enabled === false && payload.allowDisabled !== true) || !subscriptionCanBeManuallyAssigned(toSubscription)) throw new Error("请选择已启用且未过期的订阅池，或有效的手动 Base64 池。");
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
         if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
@@ -6545,12 +6556,33 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
+    if (action === "type" && req.method === "POST") {
+      try {
+        if (!item) throw new Error("未开通订阅的账户不能设置用户类型。");
+        const payload = await readJson(req);
+        const type = String(payload.type || "");
+        if (!["regular", "family", "business", "super"].includes(type)) throw new Error("请选择有效的用户类型。");
+        const before = userSnapshotForLog(item);
+        item.isFamilyFriend = type === "family";
+        item.isBusiness = type === "business";
+        item.isSuperAccount = type === "super";
+        item.updatedAt = new Date().toISOString();
+        const changes = summarizeUserChanges(before, userSnapshotForLog(item));
+        if (changes.length) appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "user-updated", req, message: userActionMessage("user-updated", { changes }), details: { changes } }));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
     if (action === "pool" && req.method === "POST") {
       try {
         const payload = await readJson(req);
         const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || ""));
         if (!toSubscription) throw new Error("请选择有效的订阅池。");
-        if (!subscriptionAllowsGroup(toSubscription, activeUserGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
+        if (!subscriptionAllowsGroup(toSubscription, poolSelectionGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
         if (!subscriptionCanBeManuallyAssigned(toSubscription)) throw new Error("无有效到期日、已过期或内容无效的订阅池不能绑定用户。");
         if (toSubscription.enabled === false && payload.allowDisabled !== true) throw new Error("该订阅池尚未启用。");
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
@@ -6939,6 +6971,7 @@ module.exports = Object.assign(requestHandler, {
   parseAccountUnavailable,
   calculateExpiry,
   calculateGiftExpiry,
+  poolSelectionGroup,
   extractClashConfigBody,
   statusFor,
   toBytes,

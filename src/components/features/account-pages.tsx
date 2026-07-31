@@ -22,6 +22,7 @@ import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
 import { DataTableRowActions } from "@/components/features/data-table"
 import { MarkdownContent } from "@/components/features/markdown-content"
 import { VipBadge } from "@/components/features/vip-badge"
@@ -30,7 +31,7 @@ import { formatDate, formatDateTime, formatMoney } from "@/utils"
 type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge"; planName: string; optionLabel: string; amount: number; totalAmount?: number; walletAmount?: number; status: string; statusText: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
 type Subscription = { status: string; activeGroup: string; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; cashValue: number; traffic: string; unlimited?: boolean; devices: number | string; subscriptionUrl: string; vipLevel?: string }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
-type Overview = { customerID: number; email: string; createdAt: string; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
+type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; vipDelta: number; balance: number; description: string; createdAt: string }
 type WalletData = { balance: number; cashBalance: number; giftBalance: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
 
@@ -136,6 +137,7 @@ export function AccountOverviewPage() {
       : `mihomo://install-config?url=${encodeURIComponent(subscription.subscriptionUrl)}`
     : ""
   const vipSpend = data.vipSpend
+  const accountType = data.isSuperAccount ? "super" : data.isBusiness ? "business" : data.isFamilyFriend ? "family" : "regular"
   const vipTarget = vipSpend < 360 ? { level: "VIP 2", start: 0, amount: 360 } : vipSpend < 900 ? { level: "VIP 3", start: 360, amount: 900 } : null
   const vipProgress = vipTarget ? Math.min(100, Math.max(0, (vipSpend - vipTarget.start) / (vipTarget.amount - vipTarget.start) * 100)) : 100
   return (
@@ -146,7 +148,7 @@ export function AccountOverviewPage() {
           <CardContent>
             <Carousel opts={{ loop: data.announcements.length > 1 }} setApi={setCarouselApi} aria-label="网站公告">
               <CarouselContent>
-                {data.announcements.map(announcement => <CarouselItem key={announcement.id}><Item asChild variant="muted"><article className="grid gap-3"><header className="grid gap-1"><h3 className="font-medium">{announcement.title}</h3><time className="text-sm text-muted-foreground" dateTime={announcement.publishedAt}>{formatDateTime(announcement.publishedAt)}</time></header><MarkdownContent content={announcement.content} className="line-clamp-2 max-h-14 overflow-hidden" /></article></Item></CarouselItem>)}
+                {data.announcements.map(announcement => <CarouselItem key={announcement.id}><Item asChild variant="muted"><article role="button" tabIndex={0} className="grid cursor-pointer gap-3 hover:bg-muted focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" onClick={() => viewAnnouncement(announcement)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); viewAnnouncement(announcement) } }}><header className="grid gap-1"><h3 className="font-medium">{announcement.title}</h3><time className="text-sm text-muted-foreground" dateTime={announcement.publishedAt}>{formatDateTime(announcement.publishedAt)}</time></header><MarkdownContent content={announcement.content} className="line-clamp-2 max-h-14 overflow-hidden" /></article></Item></CarouselItem>)}
               </CarouselContent>
               <div className="mt-4 flex items-center justify-between gap-2">
                 <Button variant="outline" size="sm" onClick={() => { if (currentAnnouncement) viewAnnouncement(currentAnnouncement) }}><Eye />查看公告</Button>
@@ -161,15 +163,15 @@ export function AccountOverviewPage() {
             <div className="flex min-w-0 items-center gap-4">
               <Avatar size="lg" className="data-[size=lg]:size-15"><AvatarFallback className="bg-slate-600 text-lg font-semibold text-white dark:bg-slate-500">{data.email.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
               <div className="grid min-w-0 flex-1 gap-2">
-                <p className="truncate text-sm font-medium">{data.email}</p>
-                <div className="flex flex-wrap items-center gap-2"><VipBadge level={data.vipLevel} /><span className="text-xs text-muted-foreground">专属折扣 {data.vipDiscountPercent}%</span></div>
+                <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium"><span className="truncate">{data.email}</span><AccountVerificationIcon type={accountType} /></p>
+                <div className="flex flex-wrap items-center gap-2"><VipBadge level={data.vipLevel} /><span className="flex items-center gap-1 text-xs text-muted-foreground">专属折扣 {data.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>VIP 1：0% · VIP 2：5% · VIP 3：10%</TooltipContent></Tooltip></span></div>
               </div>
             </div>
             <div className="grid gap-1.5"><div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground"><span>{vipTarget ? `距离 ${vipTarget.level}` : "已达到最高等级"}</span><span>{vipTarget ? `还差 ${formatMoney(vipTarget.amount - vipSpend)}` : "100%"}</span></div><Progress value={vipProgress} aria-label={`VIP 消费进度 ${Math.round(vipProgress)}%`} /></div>
           </CardContent>
         </Card>
         <Card id="subscription" className="scroll-mt-16">
-          <CardHeader className="flex-row items-start justify-between gap-4"><div><CardDescription>当前订阅</CardDescription><CardTitle className="mt-1 text-2xl">{subscription ? subscription.activeGroup.toUpperCase() : "暂无订阅"}</CardTitle></div><Badge variant={subscription?.status === "active" ? "success" : subscription?.status === "expired" ? "destructive" : "warning"}>{subscription?.status === "active" ? <><BadgeCheck />生效中</> : subscription?.status === "expired" ? "已过期" : "未开通"}</Badge></CardHeader>
+          <CardHeader className="flex-row items-start justify-between gap-4"><div><CardDescription>当前订阅</CardDescription><CardTitle className="mt-1 text-2xl">{subscription ? subscription.activeGroup.toUpperCase() : "暂无订阅"}</CardTitle></div><Badge variant={subscription?.status === "active" ? "success" : subscription?.status === "expired" ? "destructive" : "warning"} className="leading-none [&>svg]:size-3.5">{subscription?.status === "active" ? <><CheckCircle2 />生效中</> : subscription?.status === "expired" ? "已过期" : "未开通"}</Badge></CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 xl:grid-cols-4">
           <Metric label="原套餐到期" value={subscription ? formatDate(subscription.planExpiresAt) : "-"} />
           <Metric label="赠送时长" value={subscription ? `${subscription.giftedDays || 0} 天` : "-"} />

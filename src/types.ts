@@ -74,6 +74,9 @@ export type User = {
   subscriptionId?: string
   subscription?: Subscription
   activeGroup?: string
+  isBusiness?: boolean
+  isFamilyFriend?: boolean
+  isSuperAccount?: boolean
   unlimited?: boolean
   vipLevel?: string
   duration?: string
