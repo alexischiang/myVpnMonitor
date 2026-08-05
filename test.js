@@ -281,4 +281,25 @@ assert.strictEqual(postSubconverter(
   { postSubconverter: false }
 ), nativeSubconverterOutput);
 
+const nextinCompatibleConfig = require("js-yaml").load(postSubconverter(
+  Buffer.from(`global-client-fingerprint: chrome
+proxies:
+  - { name: node, type: vless, server: example.com, port: 443, client-fingerprint: chrome }
+proxy-groups:
+  - { name: PROXY, type: select, proxies: [node] }
+rules: ["MATCH,PROXY"]
+`),
+  Buffer.from(`global-client-fingerprint: chrome
+proxies:
+  - { name: node, type: vless, server: example.com, port: 443, client-fingerprint: chrome }
+proxy-groups:
+  - { name: PROXY, type: select, proxies: [node] }
+rules: ["MATCH,PROXY"]
+`),
+  { useDefaultPlaceholder: false, showUserInfo: false },
+  { nextinCompatible: true }
+).toString("utf8"));
+assert.ok(!("global-client-fingerprint" in nextinCompatibleConfig));
+assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chrome");
+
 console.log("All checks passed.");

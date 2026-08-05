@@ -161,6 +161,7 @@ export type Preset = {
   target?: string
   config?: string
   postSubconverter?: boolean
+  nextinCompatible?: boolean
   emoji?: boolean
   udp?: boolean
   tfo?: boolean

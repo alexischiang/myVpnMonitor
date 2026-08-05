@@ -4002,6 +4002,7 @@ function restoreUpstreamClashConfig(convertedBody, upstreamBody, { include = "",
 function postSubconverter(convertedBody, upstreamBody, user, config = {}) {
   if (config.postSubconverter === false) return convertedBody;
   const restoredBody = restoreUpstreamClashConfig(convertedBody, upstreamBody, config);
+  let adaptedBody = restoredBody;
   try {
     const upstream = yaml.load(upstreamBody.toString("utf8"));
     const restored = yaml.load(restoredBody.toString("utf8"));
@@ -4011,11 +4012,14 @@ function postSubconverter(convertedBody, upstreamBody, user, config = {}) {
       if (Array.isArray(upstream.proxies) && upstream.proxies.length && !restored.proxies?.length) {
         throw new Error("Subconverter filters removed every upstream node.");
       }
+      if (config.nextinCompatible && delete restored["global-client-fingerprint"]) {
+        adaptedBody = Buffer.from(yaml.dump(restored, { lineWidth: -1, noRefs: true }), "utf8");
+      }
     }
   } catch (error) {
     if (/removed every upstream node/.test(error.message)) throw error;
   }
-  return injectPlaceholderNodes(restoredBody, user);
+  return injectPlaceholderNodes(adaptedBody, user);
 }
 
 function placeholderSubscription(user, nodeName) {
@@ -4125,6 +4129,7 @@ function defaultSubconverterPreset() {
     target: String(preset.target || DEFAULT_SUBCONVERTER_TARGET).trim() || DEFAULT_SUBCONVERTER_TARGET,
     config: normalizeSubconverterConfigParam(preset.config),
     postSubconverter: preset.postSubconverter !== false,
+    nextinCompatible: preset.nextinCompatible === true,
     ...Object.fromEntries(Object.entries(SUBCONVERTER_BOOLEAN_DEFAULTS).map(([key, defaultValue]) => [
       key,
       preset[key] === undefined ? defaultValue : Boolean(preset[key])
@@ -6110,6 +6115,7 @@ async function handleApi(req, res, pathname) {
       preset.target = String(payload.target || DEFAULT_SUBCONVERTER_TARGET).trim();
       preset.config = String(payload.config || "").trim();
       preset.postSubconverter = payload.postSubconverter === undefined ? true : Boolean(payload.postSubconverter);
+      preset.nextinCompatible = payload.nextinCompatible === true;
       for (const [key, defaultValue] of Object.entries(SUBCONVERTER_BOOLEAN_DEFAULTS)) {
         preset[key] = payload[key] === undefined ? defaultValue : Boolean(payload[key]);
       }
