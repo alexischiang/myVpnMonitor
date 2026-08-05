@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { DatePicker } from "@/components/features/date-picker"
 import { cn } from "@/lib/utils"
@@ -18,7 +19,7 @@ export type Field = (
   | { name: string; label: string; type?: "text" | "email" | "number" | "date" | "password" | "url"; placeholder?: string; required?: boolean; className?: string }
   | { name: string; label: string; type: "textarea"; placeholder?: string; required?: boolean; rows?: number; className?: string; controlClassName?: string }
   | { name: string; label: string; type: "select"; placeholder?: string; required?: boolean; options: Array<{ value: string; label: string }>; allowCustom?: boolean; customLabel?: string; customPlaceholder?: string; className?: string }
-  | { name: string; label: string; type: "checkbox"; description?: string; className?: string }
+  | { name: string; label: string; type: "checkbox" | "switch"; description?: string; className?: string }
   ) & FieldVisibility
 
 export type FormValues = Record<string, string | number | boolean | undefined>
@@ -105,24 +106,28 @@ export function SimpleFormDialog({
               return (
                 <Field
                   key={field.name}
-                  orientation={field.type === "checkbox" ? "horizontal" : "vertical"}
-                  className={cn(field.type === "textarea" && "sm:col-span-2", field.type === "checkbox" && "cursor-pointer", field.className)}
-                  onClick={field.type === "checkbox" ? event => {
+                  orientation={field.type === "checkbox" || field.type === "switch" ? "horizontal" : "vertical"}
+                  className={cn(field.type === "textarea" && "sm:col-span-2", (field.type === "checkbox" || field.type === "switch") && "cursor-pointer", field.className)}
+                  onClick={field.type === "checkbox" || field.type === "switch" ? event => {
                     const target = event.target
                     if (!(target instanceof HTMLButtonElement) && !(target instanceof HTMLInputElement) && !(target instanceof HTMLLabelElement)) {
                       update(field.name, !Boolean(value))
                     }
                   } : undefined}
                 >
-                  {field.type === "checkbox" ? (
+                  {field.type === "checkbox" || field.type === "switch" ? (
                     <>
-                      <Checkbox
-                        id={field.name}
-                        name={field.name}
-                        className="mt-0.5"
-                        checked={Boolean(value)}
-                        onCheckedChange={checked => update(field.name, checked === true)}
-                      />
+                      {field.type === "switch" ? (
+                        <Switch id={field.name} name={field.name} checked={Boolean(value)} onCheckedChange={checked => update(field.name, checked)} />
+                      ) : (
+                        <Checkbox
+                          id={field.name}
+                          name={field.name}
+                          className="mt-0.5"
+                          checked={Boolean(value)}
+                          onCheckedChange={checked => update(field.name, checked === true)}
+                        />
+                      )}
                       <FieldContent className="gap-1">
                         <FieldLabel htmlFor={field.name}>{field.label}</FieldLabel>
                         {field.description ? <FieldDescription>{field.description}</FieldDescription> : null}

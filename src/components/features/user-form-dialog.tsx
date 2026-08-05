@@ -193,6 +193,7 @@ export function UserFormDialog({
         duration: values.duration,
         expiresAt: values.duration === "custom" ? values.expiresAt : undefined,
         ignoredUserId: user?.id,
+        group: user?.isSuperAccount ? "" : values.activeGroup,
       })
       setValues(current => ({
         ...current,
@@ -300,7 +301,7 @@ export function UserFormDialog({
                   onAllowDisabledChange={setAllowDisabledPool}
                   allowFull={allowFullPool}
                   onAllowFullChange={setAllowFullPool}
-                  group={values.activeGroup}
+                  group={user?.isSuperAccount ? undefined : values.activeGroup}
                   description={recommendationMessage}
                   error={errors.subscriptionId}
                 />

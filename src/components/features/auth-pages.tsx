@@ -58,7 +58,7 @@ export function LoginPage() {
     try {
       const result = await postJson<AuthResponse>("/api/auth/login", { account, password, remember })
       const returnTo = searchParams.get("returnTo")
-      navigate(returnTo?.startsWith("/") ? returnTo : result.role === "admin" ? "/dashboard" : "/account", { replace: true })
+      navigate(returnTo?.startsWith("/") ? returnTo : result.role === "admin" ? "/dashboard" : "/onboarding", { replace: true })
     } catch (error) {
       setError(error instanceof Error ? error.message : "登录失败")
     } finally {
@@ -112,7 +112,7 @@ export function RegisterPage() {
     setError("")
     try {
       await postJson("/api/auth/register", { email, password, referralCode })
-      navigate("/account", { replace: true })
+      navigate("/onboarding", { replace: true })
     } catch (error) {
       setError(error instanceof Error ? error.message : "注册失败")
     } finally {

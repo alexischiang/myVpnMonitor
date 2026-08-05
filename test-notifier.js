@@ -57,6 +57,17 @@ async function run() {
   assert.deepStrictEqual(cleared, ["low:expired-low"]);
   assert.strictEqual(result.sent, 0);
 
+  const repeated = await notifier.checkAndNotifyLowTraffic([{
+    id: "already-alerted",
+    metrics: { expireAt: "2099-01-01T00:00:00.000Z", remainingBytes: 1 }
+  }], {
+    async get() { return { sentAt: "2020-01-01T00:00:00.000Z" }; },
+    async set() { throw new Error("an existing low-traffic alert must not be sent again"); },
+    async clear() { throw new Error("an active low-traffic alert must not be cleared"); }
+  }, { logger: { log() {}, error() {} } });
+
+  assert.strictEqual(repeated.sent, 0);
+
   if (oldToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN; else process.env.TELEGRAM_BOT_TOKEN = oldToken;
   if (oldChat === undefined) delete process.env.TELEGRAM_CHAT_ID; else process.env.TELEGRAM_CHAT_ID = oldChat;
   if (oldMail === undefined) delete process.env.ALERT_EMAIL_FROM; else process.env.ALERT_EMAIL_FROM = oldMail;

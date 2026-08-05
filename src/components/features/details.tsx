@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { AlertCircle, ArrowLeft, ArrowRight, Eye, Gift, Loader2, MailCheck, Power, RefreshCw } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Eye, Gift, Loader2, MailCheck, Power, RefreshCw, UserCog } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -17,8 +17,10 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/c
 import { Input } from "@/components/ui/input"
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
@@ -38,6 +40,21 @@ function formatPoolExpiryDifference(days?: number | null) {
   if (days === null || days === undefined) return "暂无法判断"
   if (days === 0) return "与用户同日到期"
   return days > 0 ? `池比用户晚到期 ${days} 天` : `池比用户早到期 ${Math.abs(days)} 天`
+}
+
+function poolDisplayName(pool?: User["subscription"] | null) {
+  const provider = pool?.serviceProvider || pool?.provider
+  const identifier = pool?.email || pool?.name
+  return provider && identifier ? `${provider} · ${identifier}` : provider || identifier || pool?.url || "未绑定"
+}
+
+const userTypeLabels = { regular: "普通账户", family: "亲友账户", business: "企业账户", super: "超级账户" } as const
+
+function userType(user: User): keyof typeof userTypeLabels {
+  if (user.isSuperAccount) return "super"
+  if (user.isBusiness) return "business"
+  if (user.isFamilyFriend) return "family"
+  return "regular"
 }
 
 export function SubscriptionDetailPage() {
@@ -228,6 +245,9 @@ export function UserDetailPage() {
   const [allowFullGiftPool, setAllowFullGiftPool] = React.useState(false)
   const [accountStatusOpen, setAccountStatusOpen] = React.useState(false)
   const [accountStatusSaving, setAccountStatusSaving] = React.useState(false)
+  const [userTypeOpen, setUserTypeOpen] = React.useState(false)
+  const [selectedUserType, setSelectedUserType] = React.useState<keyof typeof userTypeLabels>("regular")
+  const [userTypeSaving, setUserTypeSaving] = React.useState(false)
   const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const purchaseCount = userBills.filter(item => !item.reversedAt).length
@@ -401,6 +421,25 @@ export function UserDetailPage() {
     }
   }
 
+  function openUserTypeDialog() {
+    setSelectedUserType(userType(user))
+    setUserTypeOpen(true)
+  }
+
+  async function saveUserType() {
+    setUserTypeSaving(true)
+    try {
+      await postJson(`/api/users/${user.id}/type`, { type: selectedUserType })
+      await refreshUserDetails()
+      setUserTypeOpen(false)
+      toast.success("用户类型已更新")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "用户类型更新失败")
+    } finally {
+      setUserTypeSaving(false)
+    }
+  }
+
   return (
     <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
       <Dialog open={giftBalanceOpen} onOpenChange={setGiftBalanceOpen}>
@@ -425,8 +464,8 @@ export function UserDetailPage() {
       <Dialog open={poolOpen} onOpenChange={setPoolOpen}>
         <DialogContent className="sm:max-w-xl">
           <form className="grid gap-4" onSubmit={changePool} noValidate>
-            <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription className="break-all">当前订阅池：{currentPool?.email || currentPool?.serviceProvider || "未绑定"}</DialogDescription></DialogHeader>
-            <SubscriptionPoolSelect id="detail-manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={user.activeGroup} />
+            <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription className="break-all">当前订阅池：{poolDisplayName(currentPool)}</DialogDescription></DialogHeader>
+            <SubscriptionPoolSelect id="detail-manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={user.isSuperAccount ? undefined : user.activeGroup} />
             <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={poolSaving}>取消</Button></DialogClose><Button type="submit" disabled={poolSaving || !poolId || poolId === user.subscriptionId}>{poolSaving ? <RefreshCw className="animate-spin" /> : <RefreshCw />}{poolSaving ? "换池中..." : "确认换池"}</Button></DialogFooter>
           </form>
         </DialogContent>
@@ -439,10 +478,25 @@ export function UserDetailPage() {
               <Field><FieldLabel htmlFor="detail-gift-days">赠送天数</FieldLabel><Input id="detail-gift-days" type="number" min="1" step="1" value={giftDays} onChange={event => { setGiftDays(event.target.value); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }} /><FieldError>{giftError}</FieldError></Field>
               <Field><FieldLabel>快捷选择</FieldLabel><div className="flex flex-wrap gap-2">{[7, 15, 30].map(days => <Button key={days} type="button" variant={giftDays === String(days) ? "default" : "outline"} size="sm" onClick={() => { setGiftDays(String(days)); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }}>{days} 天</Button>)}</div></Field>
               {giftExpiresAt ? <Field><FieldLabel htmlFor="detail-gift-expires-at">赠送后到期日</FieldLabel><Input id="detail-gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /></Field> : null}
-              {giftExpiresAt ? <SubscriptionPoolSelect id="detail-gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={user.activeGroup} description={giftMessage} /> : <FieldDescription>输入天数后先计算到期日和推荐订阅池。</FieldDescription>}
+              {giftExpiresAt ? <SubscriptionPoolSelect id="detail-gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={user.isSuperAccount ? undefined : user.activeGroup} description={giftMessage} /> : <FieldDescription>输入天数后先计算到期日和推荐订阅池。</FieldDescription>}
             </FieldGroup>
             <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={giftSaving}>取消</Button></DialogClose>{giftExpiresAt ? <Button type="submit" disabled={giftSaving || !giftPoolId}>{giftSaving ? <Loader2 className="animate-spin" /> : <Gift />}{giftSaving ? "赠送中..." : "确认赠送"}</Button> : <Button type="button" onClick={() => void previewGift()} disabled={giftPreviewing}>{giftPreviewing ? <Loader2 className="animate-spin" /> : <Gift />}{giftPreviewing ? "计算中..." : "推荐订阅池"}</Button>}</DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={userTypeOpen} onOpenChange={setUserTypeOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>设置用户类型</DialogTitle><DialogDescription>超级账户可跨越 BASIC、PRO、ULTRA 套餐等级选择订阅池。</DialogDescription></DialogHeader>
+          <Field>
+            <FieldLabel htmlFor="user-type">用户类型</FieldLabel>
+            <Select value={selectedUserType} onValueChange={value => setSelectedUserType(value as keyof typeof userTypeLabels)} disabled={userTypeSaving}>
+              <SelectTrigger id="user-type" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(userTypeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Field>
+          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={userTypeSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void saveUserType()} disabled={userTypeSaving}>{userTypeSaving ? <Loader2 className="animate-spin" /> : <UserCog />}{userTypeSaving ? "保存中..." : "保存类型"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <AlertDialog open={accountStatusOpen} onOpenChange={setAccountStatusOpen}>
@@ -461,7 +515,10 @@ export function UserDetailPage() {
             <Avatar className="size-20">
               <AvatarFallback className="text-xl">{(user.wechatName || user.userId || user.email || "用户").slice(0, 2).toUpperCase()}</AvatarFallback>
             </Avatar>
-            <CardTitle className="break-all text-lg">{user.wechatName || user.userId || user.email || "用户"}</CardTitle>
+            <CardTitle className="flex items-center justify-center gap-1.5 break-all text-lg">
+              {user.wechatName || user.userId || user.email || "用户"}
+              <AccountVerificationIcon type={userType(user)} />
+            </CardTitle>
             <CardDescription className="flex flex-wrap justify-center gap-2">
               <UserStatusBadge user={user} />
             </CardDescription>
@@ -487,6 +544,7 @@ export function UserDetailPage() {
               <Info label="ID" value={user.customerID || "-"} />
               <Info label="邮箱" value={user.email || "-"} />
               <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "disabled" ? "已停用" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
+              <Info label="用户类型" value={userTypeLabels[userType(user)]} />
               <Info label="套餐" value={user.registeredOnly ? "未开通" : (user.activeGroup?.toUpperCase() || "-")} />
               <Info label="VIP" value={user.vipLevel?.toUpperCase() || "-"} />
               <Info label="当前到期" value={formatUserExpiry(user)} />
@@ -495,6 +553,7 @@ export function UserDetailPage() {
           {user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : (
             <CardFooter className="grid gap-2">
               {user.registeredOnly ? null : <>
+                <Button variant="outline" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
                 <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>
                 <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
               </>}
@@ -527,7 +586,7 @@ export function UserDetailPage() {
                 <Info label="当前到期" value={formatUserExpiry(user)} />
                 <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
                 <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
-                <Info label="订阅池" value={user.subscription?.email || user.subscription?.serviceProvider || "-"} />
+                <Info label="订阅池" value={poolDisplayName(user.subscription)} />
                 <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
                 <Info label="订阅状态" value={<UserStatusBadge user={user} />} />
               </CardContent>
@@ -537,7 +596,7 @@ export function UserDetailPage() {
                 <CardHeader>
                   <CardTitle>推荐适配度</CardTitle>
                   <CardDescription className="break-all">
-                    {currentPool?.email || currentPool?.name || currentPool?.serviceProvider || "当前绑定池"}
+                    {poolDisplayName(currentPool)}
                   </CardDescription>
                   <CardAction>
                     <Badge variant={user.poolCompatibility.status === "high" ? "success" : user.poolCompatibility.status === "usable" ? "secondary" : user.poolCompatibility.status === "incompatible" ? "destructive" : "warning"}>
@@ -560,7 +619,7 @@ export function UserDetailPage() {
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Info label="当前池 URL" value={currentPool?.url ? <UrlCell value={currentPool.url} /> : "-"} />
                     <Info label="供应商评级" value={user.poolCompatibility.rating ? <Badge variant="outline">{user.poolCompatibility.rating} 级</Badge> : "未评级"} />
-                    <Info label="套餐匹配" value={user.poolCompatibility.groupAllowed ? `${user.activeGroup?.toUpperCase() || "当前"} 套餐可用` : "不支持当前套餐"} />
+                    <Info label="套餐匹配" value={user.isSuperAccount ? "超级账户可跨等级使用" : user.poolCompatibility.groupAllowed ? `${user.activeGroup?.toUpperCase() || "当前"} 套餐可用` : "不支持当前套餐"} />
                     <Info label="到期匹配" value={formatPoolExpiryDifference(user.poolCompatibility.expiryDiffDays)} />
                     <Info label="容量" value={`${user.poolCompatibility.customerCount ?? 0} / ${user.poolCompatibility.maxUsers ?? 15} 人`} />
                     <Info label="绑定方式" value={user.poolCompatibility.binding?.type === "manual" ? `手动换池${user.poolCompatibility.binding.at ? ` · ${formatDateTime(user.poolCompatibility.binding.at)}` : ""}` : "系统绑定"} />

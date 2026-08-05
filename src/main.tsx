@@ -31,6 +31,7 @@ const LoginPage = lazy(() => import("@/components/features/auth-pages").then(mod
 const RegisterPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.RegisterPage })))
 const ResetPasswordPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.ResetPasswordPage })))
 const AccountShell = lazy(() => import("@/components/features/account-shell").then(module => ({ default: module.AccountShell })))
+const AccountOnboardingPage = lazy(() => import("@/components/features/account-onboarding").then(module => ({ default: module.AccountOnboardingPage })))
 const AccountDocsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountDocsPage })))
 const AccountOrderDetailPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrderDetailPage })))
 const AccountOrdersPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrdersPage })))
@@ -96,6 +97,7 @@ function App() {
             <Route path="/delivery/:token" element={<DeliveryPage />} />
             <Route path="/pricing" element={<PricingPage />} />
             <Route path="/buy" element={<PricingPage />} />
+            <Route path="/onboarding" element={<AccountOnboardingPage />} />
             <Route path="/account" element={<AccountShell />}>
               <Route index element={<AccountOverviewPage />} />
               <Route path="subscription" element={<Navigate to="/account" replace />} />

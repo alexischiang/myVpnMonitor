@@ -14,6 +14,7 @@ export type Subscription = {
   enabled?: boolean
   excludeFromAutoSwitch?: boolean
   useCachedConfigForFallback?: boolean
+  manualTrafficDepleted?: boolean
   accountStatus?: "unclaimed" | "invited" | "active" | "disabled"
   accountId?: string
   referralCode?: string
@@ -74,6 +75,9 @@ export type User = {
   subscriptionId?: string
   subscription?: Subscription
   activeGroup?: string
+  isBusiness?: boolean
+  isFamilyFriend?: boolean
+  isSuperAccount?: boolean
   unlimited?: boolean
   vipLevel?: string
   duration?: string
@@ -158,6 +162,7 @@ export type Preset = {
   target?: string
   config?: string
   postSubconverter?: boolean
+  nextinCompatible?: boolean
   emoji?: boolean
   udp?: boolean
   tfo?: boolean
@@ -273,6 +278,12 @@ export type SalesSettings = {
 }
 
 export type PaymentSettings = {
+  id: string
+  name: string
+  displayName: string
+  provider: "legacy" | "xinhui"
+  enabled: boolean
+  priority: number
   apiBaseUrl: string
   merchantId: string
   merchantSecret?: string

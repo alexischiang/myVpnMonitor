@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Field, FieldContent, FieldDescription, FieldError, FieldLabel, FieldTitle } from "@/components/ui/field"
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
@@ -129,6 +129,10 @@ export function PricingPage() {
   )
 }
 
+type PaymentMethod = "100" | "200"
+type PaymentPlatform = { id: string; name: string; provider: string; enabled: boolean; ready: boolean; methods: { alipay: boolean; wechat: boolean } }
+type PaymentSelection = { platformId: string; method: PaymentMethod }
+
 type CheckoutQuote = {
   optionId: string
   planName: string
@@ -158,7 +162,7 @@ type CheckoutQuote = {
   amount: number
   couponCode: string
   discountPercent: number
-  paymentMethods: { alipay: boolean; wechat: boolean }
+  paymentPlatforms: PaymentPlatform[]
   cycles: Array<{ optionId: string; label: string; amount: number; devices: number }>
 }
 
@@ -174,13 +178,16 @@ export function CheckoutPage() {
   const [validatingCoupon, setValidatingCoupon] = React.useState(false)
   const [paying, setPaying] = React.useState("")
   const [useBalance, setUseBalance] = React.useState(true)
-  const [pendingPaymentChannel, setPendingPaymentChannel] = React.useState<"100" | "200" | null>(null)
+  const [paymentPlatformId, setPaymentPlatformId] = React.useState("")
+  const [pendingPaymentSelection, setPendingPaymentSelection] = React.useState<PaymentSelection | null>(null)
 
   async function loadQuote(code = "", nextOptionId = optionId, nextUseBalance = useBalance) {
     setLoading(true)
     setCouponError("")
     try {
-      setQuote(await postJson<CheckoutQuote>("/api/payments/quote", { optionId: nextOptionId, couponCode: code, useBalance: nextUseBalance }))
+      const nextQuote = await postJson<CheckoutQuote>("/api/payments/quote", { optionId: nextOptionId, couponCode: code, useBalance: nextUseBalance })
+      setQuote(nextQuote)
+      setPaymentPlatformId(current => nextQuote.paymentPlatforms.some(platform => platform.id === current && platform.ready) ? current : nextQuote.paymentPlatforms.find(platform => platform.ready)?.id || "")
       if (code) toast.success("优惠码已应用")
     } catch (error) {
       const message = error instanceof Error ? error.message : "获取结算信息失败"
@@ -210,36 +217,59 @@ export function CheckoutPage() {
     }
   }
 
-  async function createPayment(channelCode: "100" | "200") {
+  async function createPayment(selection: PaymentSelection) {
     if (!quote) return
-    setPaying(channelCode)
+    let paymentWindow: Window | null = null
+    setPaying(`${selection.platformId}:${selection.method}`)
     try {
+      const pendingOrder = (await fetchJson<Array<{ id: string; payUrl?: string; status: string }>>("/api/account/orders")).find(order => order.status === "pending")
+      if (pendingOrder) {
+        if (pendingOrder.payUrl) {
+          paymentWindow = window.open("", "_blank")
+          if (paymentWindow) {
+            paymentWindow.opener = null
+            paymentWindow.location.replace(pendingOrder.payUrl)
+          } else window.location.assign(pendingOrder.payUrl)
+        }
+        if (!pendingOrder.payUrl || paymentWindow) navigate(`/account/orders/${encodeURIComponent(pendingOrder.id)}`)
+        return
+      }
+      paymentWindow = quote.amount > 0 ? window.open("", "_blank") : null
+      if (paymentWindow) paymentWindow.opener = null
       const order = await postJson<{ id: string; payUrl?: string; status?: string }>("/api/payments/orders", {
         optionId,
         couponCode: quote.couponCode,
         useBalance,
-        channelCode,
+        paymentPlatformId: selection.platformId,
+        channelCode: selection.method,
         returnUrl: `${window.location.origin}/account/payment/result`,
       })
       clearJsonCache()
       if (order.status === "pending") window.dispatchEvent(new CustomEvent("payment-order-updated", { detail: { id: order.id, status: order.status } }))
-      navigate(order.payUrl ? `/account/orders/${encodeURIComponent(order.id)}` : `/account/payment/result?paymentOrder=${encodeURIComponent(order.id)}`)
+      if (order.payUrl) {
+        if (paymentWindow) paymentWindow.location.replace(order.payUrl)
+        else window.location.assign(order.payUrl)
+        if (paymentWindow) navigate(`/account/orders/${encodeURIComponent(order.id)}`)
+      } else {
+        paymentWindow?.close()
+        navigate(`/account/payment/result?paymentOrder=${encodeURIComponent(order.id)}`)
+      }
     } catch (error) {
+      paymentWindow?.close()
       toast.error(error instanceof Error ? error.message : "创建订单失败")
       setPaying("")
     }
   }
 
-  function pay(channelCode: "100" | "200") {
-    if (quote?.purchaseAction === "replace") setPendingPaymentChannel(channelCode)
-    else void createPayment(channelCode)
+  function pay(selection: PaymentSelection) {
+    if (quote?.purchaseAction === "replace") setPendingPaymentSelection(selection)
+    else void createPayment(selection)
   }
 
   async function confirmReplacement() {
-    if (!pendingPaymentChannel) return
-    const channelCode = pendingPaymentChannel
-    await createPayment(channelCode)
-    setPendingPaymentChannel(null)
+    if (!pendingPaymentSelection) return
+    await createPayment(pendingPaymentSelection)
+    setPendingPaymentSelection(null)
   }
 
   if (loading && !quote) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
@@ -278,15 +308,23 @@ export function CheckoutPage() {
               <div className="grid gap-3 text-sm"><p className="flex justify-between"><span className="text-muted-foreground">商品原价</span><span>{formatMoney(quote.originalAmount)}</span></p>{quote.discountAmount ? <p className="flex justify-between"><span className="text-muted-foreground">优惠码 {quote.couponCode}（{quote.discountPercent}%）</span><span>-{formatMoney(quote.discountAmount)}</span></p> : null}<p className="flex justify-between gap-3"><span className="text-muted-foreground">{quote.vipLevel.replace(/^vip/i, "VIP ")} 专属折扣（{quote.vipDiscountPercent}%）</span><span>-{formatMoney(quote.vipDiscountAmount)}</span></p><p className="flex justify-between"><span className="text-muted-foreground">优惠后小计</span><span>{formatMoney(quote.subtotal)}</span></p><p className="flex justify-between"><span className="text-muted-foreground">税费（{quote.taxRate}%）</span><span>{formatMoney(quote.taxAmount)}</span></p>{quote.cashCredit ? <p className="flex justify-between"><span className="text-muted-foreground">现有套餐剩余现金价值抵扣</span><span>-{formatMoney(quote.cashCredit)}</span></p> : null}{quote.walletGiftAmount ? <p className="flex justify-between"><span className="text-muted-foreground">赠送余额</span><span>-{formatMoney(quote.walletGiftAmount)}</span></p> : null}{quote.walletCashAmount ? <p className="flex justify-between"><span className="text-muted-foreground">充值余额</span><span>-{formatMoney(quote.walletCashAmount)}</span></p> : null}</div>
               {quote.wallet.availableBalance > 0 ? <Field orientation="horizontal"><Checkbox id="use-wallet" checked={useBalance} onCheckedChange={checked => { const enabled = checked === true; setUseBalance(enabled); void loadQuote(quote.couponCode, optionId, enabled) }} disabled={loading || Boolean(paying)} /><FieldContent><FieldLabel htmlFor="use-wallet">使用账户余额</FieldLabel><FieldDescription>可用 {formatMoney(quote.wallet.availableBalance)}，优先使用赠送余额</FieldDescription></FieldContent></Field> : null}
               <Separator />
-              <p className="flex justify-between text-base font-semibold"><span>第三方支付</span><span>{formatMoney(quote.amount)}</span></p>
-              {quote.amount === 0 ? <Button onClick={() => pay("100")} disabled={Boolean(paying) || loading}>{paying ? <Loader2 className="animate-spin" /> : <Check />}{quote.walletAmount ? "余额支付" : "确认覆盖"}</Button> : <div className="grid gap-2"><Button className="w-full bg-[#1677ff] text-white hover:bg-[#1677ff]/90" onClick={() => pay("100")} disabled={Boolean(paying) || loading || !quote.paymentMethods.alipay}>{paying === "100" ? <Loader2 className="animate-spin" /> : <IconBrandAlipay />}{quote.paymentMethods.alipay ? `支付宝支付 ${formatMoney(quote.amount)}` : "支付宝维护中"}</Button><Button className="w-full bg-[#07c160] text-white hover:bg-[#07c160]/90" onClick={() => pay("200")} disabled={Boolean(paying) || loading || !quote.paymentMethods.wechat}>{paying === "200" ? <Loader2 className="animate-spin" /> : <IconBrandWechat />}{quote.paymentMethods.wechat ? `微信支付 ${formatMoney(quote.amount)}` : "微信支付维护中"}</Button></div>}
+              <p className="flex justify-between text-base font-semibold"><span>支付订单</span><span>{formatMoney(quote.amount)}</span></p>
+              {quote.amount === 0 ? <Button onClick={() => pay({ platformId: "wallet", method: "100" })} disabled={Boolean(paying) || loading}>{paying ? <Loader2 className="animate-spin" /> : <Check />}{quote.walletAmount ? "余额支付" : "确认覆盖"}</Button> : <Field><FieldDescription>请选择一个支付结算平台</FieldDescription><Accordion type="single" value={paymentPlatformId} onValueChange={setPaymentPlatformId} className="grid gap-2">
+                {quote.paymentPlatforms.map(platform => <AccordionItem key={platform.id} value={platform.id} disabled={!platform.ready || Boolean(paying) || loading} className="rounded-md border px-3 last:border-b data-[state=open]:border-primary">
+                  <AccordionTrigger className="py-3 hover:no-underline"><span className="flex min-w-0 items-center gap-3"><ShieldCheck className="size-5 shrink-0" /><span className="truncate">{platform.name}</span></span></AccordionTrigger>
+                  <AccordionContent className="grid gap-2 border-t pt-3 text-foreground">
+                    {platform.methods.alipay ? <Button type="button" className="w-full bg-[#1677ff] text-white hover:bg-[#1677ff]/90" onClick={() => pay({ platformId: platform.id, method: "100" })} disabled={Boolean(paying) || loading}>{paying === `${platform.id}:100` ? <Loader2 className="animate-spin" /> : <IconBrandAlipay />}{`支付宝支付 ${formatMoney(quote.amount)}`}</Button> : null}
+                    {platform.methods.wechat ? <Button type="button" className="w-full bg-[#07c160] text-white hover:bg-[#07c160]/90" onClick={() => pay({ platformId: platform.id, method: "200" })} disabled={Boolean(paying) || loading}>{paying === `${platform.id}:200` ? <Loader2 className="animate-spin" /> : <IconBrandWechat />}{`微信支付 ${formatMoney(quote.amount)}`}</Button> : null}
+                  </AccordionContent>
+                </AccordionItem>)}
+              </Accordion></Field>}
               <Button variant="outline" onClick={() => navigate(-1)}><ArrowLeft />返回套餐选择</Button>
               <p className="text-xs text-muted-foreground">付款成功后套餐立即生效，数字商品不支持退款。</p>
             </CardContent>
           </Card>
         </aside>
       </section>
-      <AlertDialog open={pendingPaymentChannel !== null} onOpenChange={open => { if (!open) setPendingPaymentChannel(null) }}>
+      <AlertDialog open={pendingPaymentSelection !== null} onOpenChange={open => { if (!open) setPendingPaymentSelection(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>确认覆盖当前套餐？</AlertDialogTitle><AlertDialogDescription>支付成功后，{quote.planName} 将立即覆盖当前套餐，原套餐剩余有效期不再保留；剩余现金价值 {formatMoney(quote.cashCredit)} 已用于抵扣。</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter><AlertDialogCancel disabled={Boolean(paying)}>返回检查</AlertDialogCancel><AlertDialogAction onClick={() => void confirmReplacement()} disabled={Boolean(paying)}>{paying ? <Loader2 className="animate-spin" /> : null}{quote.amount === 0 ? "确认覆盖" : "确认并继续支付"}</AlertDialogAction></AlertDialogFooter>

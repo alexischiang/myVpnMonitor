@@ -13,6 +13,11 @@ const {
   paymentQuote,
   paymentChannelCode,
   configuredPaymentChannel,
+  paymentMethodForPlatform,
+  paymentSignContent,
+  paymentSign,
+  verifyPaymentSign,
+  paymentConfigReady,
   paymentStatusError,
   paymentAmountError,
   paymentOrderExpiresAt,
@@ -124,7 +129,10 @@ assert.strictEqual(unavailableMetrics.unavailable, true);
 assert.strictEqual(unavailableMetrics.source, "account-unavailable");
 assert.strictEqual(statusFor({ metrics: statusMetrics, lastError: null }), "ok");
 assert.strictEqual(statusFor({ metrics: null, lastError: "请求失败" }), "invalid");
+assert.strictEqual(statusFor({ metrics: null, lastError: null }), "unknown");
 assert.strictEqual(statusFor({ metrics: unavailableMetrics, lastError: null }), "invalid");
+assert.strictEqual(statusFor({ metrics: { remainingBytes: 100, expireAt: "2020-01-01T00:00:00.000Z" }, lastError: null }), "expired");
+assert.strictEqual(statusFor({ sourceType: "yaml", manualContent: "proxies: []", manualTrafficDepleted: true, metrics: { expireAt: "2099-01-01T00:00:00.000Z" } }), "depleted");
 assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(49, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }), "ok");
 assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(50, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }), "ok");
 assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(100, "gb"), expireAt: new Date(Date.now() + 2 * 86400000).toISOString() }, lastError: null }), "expiring");
@@ -151,6 +159,7 @@ assert.strictEqual(paymentChannelCode("custom-channel"), "custom-channel");
 assert.throws(() => paymentChannelCode("bad channel"), /不能包含空格/);
 assert.strictEqual(configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code" }, "100"), "ali-code");
 assert.strictEqual(configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code" }, "200"), "wx-code");
+assert.strictEqual(paymentMethodForPlatform({ enabled: true, merchantId: "merchant", merchantSecret: "secret", alipayChannelCode: "ali-code", wechatChannelCode: "wx-code", alipayEnabled: false, wechatEnabled: true }), "200");
 assert.throws(() => configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code", alipayEnabled: false }, "100"), /支付宝支付维护中/);
 assert.throws(() => configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code", wechatEnabled: false }, "200"), /微信支付维护中/);
 assert.strictEqual(paymentStatusError("failed"), "支付平台返回支付失败。");
@@ -166,6 +175,8 @@ const announcementSettings = normalizeSalesSettings({ announcements: [{ title: "
 assert.deepStrictEqual(announcementSettings.announcements[0], { id: announcementSettings.announcements[0].id, title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true });
 assert.throws(() => normalizeSalesSettings({ announcements: [{ title: "", content: "内容" }] }), /不能为空/);
 const normalizedPaymentSettings = normalizePaymentSettings({
+  name: "旧支付平台",
+  provider: "legacy",
   apiBaseUrl: "https://pay.example.com/",
   merchantId: "merchant-1",
   merchantSecret: "",
@@ -177,10 +188,31 @@ const normalizedPaymentSettings = normalizePaymentSettings({
   returnUrl: "https://example.com/account/payment/result"
 }, { merchantSecret: "existing-secret" });
 assert.strictEqual(normalizedPaymentSettings.apiBaseUrl, "https://pay.example.com");
+assert.strictEqual(normalizedPaymentSettings.displayName, normalizedPaymentSettings.name);
 assert.strictEqual(normalizedPaymentSettings.merchantSecret, "existing-secret");
 assert.strictEqual(normalizedPaymentSettings.wechatChannelCode, "custom-wechat");
 assert.strictEqual(normalizedPaymentSettings.alipayEnabled, false);
-assert.throws(() => normalizePaymentSettings({ merchantId: "merchant-1", alipayChannelCode: "100", wechatChannelCode: "200", apiBaseUrl: "not-a-url" }), /HTTP 或 HTTPS/);
+assert.throws(() => normalizePaymentSettings({ name: "测试", merchantId: "merchant-1", merchantSecret: "secret", alipayChannelCode: "100", wechatChannelCode: "200", apiBaseUrl: "not-a-url" }), /HTTP 或 HTTPS/);
+const xinhui = normalizePaymentSettings({
+  name: "新汇",
+  provider: "xinhui",
+  apiBaseUrl: "https://api.shrtxs.cn/",
+  merchantId: "1001",
+  merchantSecret: "secret",
+  alipayChannelCode: "alipay",
+  wechatChannelCode: "wxpay",
+  alipayEnabled: true,
+  wechatEnabled: true
+});
+const signedPayload = { pid: "1001", money: "1.00", sign_type: "MD5" };
+signedPayload.sign = paymentSign(signedPayload, xinhui);
+assert.strictEqual(paymentSignContent(signedPayload), "money=1.00&pid=1001");
+assert.strictEqual(signedPayload.sign, "db2367d18af244cca18fd9ca6ad7b6e1");
+assert.strictEqual(verifyPaymentSign(signedPayload, xinhui), true);
+assert.strictEqual(verifyPaymentSign({ ...signedPayload, money: "2.00" }, xinhui), false);
+assert.strictEqual(paymentConfigReady(xinhui, "100"), true);
+assert.strictEqual(configuredPaymentChannel({ ...xinhui, alipayChannelCode: "custom-alipay" }, "100"), "custom-alipay");
+assert.throws(() => normalizePaymentSettings({ ...xinhui, wechatChannelCode: "" }), /通道码/);
 
 const extracted = extractClashConfigBody("prefix\nmixed-port: 7890\nproxies:\n  - name: node\nrules:\n  - MATCH,PROXY\nextra:\n  value: ignored\n");
 assert.ok(extracted.startsWith("mixed-port: 7890"));
@@ -280,5 +312,26 @@ assert.strictEqual(postSubconverter(
   {},
   { postSubconverter: false }
 ), nativeSubconverterOutput);
+
+const nextinCompatibleConfig = require("js-yaml").load(postSubconverter(
+  Buffer.from(`global-client-fingerprint: chrome
+proxies:
+  - { name: node, type: vless, server: example.com, port: 443, client-fingerprint: chrome }
+proxy-groups:
+  - { name: PROXY, type: select, proxies: [node] }
+rules: ["MATCH,PROXY"]
+`),
+  Buffer.from(`global-client-fingerprint: chrome
+proxies:
+  - { name: node, type: vless, server: example.com, port: 443, client-fingerprint: chrome }
+proxy-groups:
+  - { name: PROXY, type: select, proxies: [node] }
+rules: ["MATCH,PROXY"]
+`),
+  { useDefaultPlaceholder: false, showUserInfo: false },
+  { nextinCompatible: true }
+).toString("utf8"));
+assert.ok(!("global-client-fingerprint" in nextinCompatibleConfig));
+assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chrome");
 
 console.log("All checks passed.");
