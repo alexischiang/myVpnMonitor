@@ -206,6 +206,14 @@ export function SubscriptionsPage() {
     },
     { name: "expiresAt", label: "到期日", type: "date", required: true, visibleWhen: { field: "sourceType", equals: "manual" } },
     {
+      name: "manualTrafficDepleted",
+      label: "流量已用完",
+      type: "switch",
+      description: "开启后，已绑定用户下次请求时将按流量耗尽自动换池。",
+      className: "items-start sm:col-span-2",
+      visibleWhen: { field: "sourceType", equals: "manual" },
+    },
+    {
       name: "manualContent",
       label: "YAML 配置内容",
       type: "textarea",
@@ -217,6 +225,14 @@ export function SubscriptionsPage() {
       visibleWhen: { field: "sourceType", equals: "yaml" },
     },
     { name: "expiresAt", label: "到期日", type: "date", required: true, visibleWhen: { field: "sourceType", equals: "yaml" } },
+    {
+      name: "manualTrafficDepleted",
+      label: "流量已用完",
+      type: "switch",
+      description: "开启后，已绑定用户下次请求时将按流量耗尽自动换池。",
+      className: "items-start sm:col-span-2",
+      visibleWhen: { field: "sourceType", equals: "yaml" },
+    },
     { name: "email", label: "邮箱", type: "email", placeholder: "customer@example.com" },
     {
       name: "serviceProvider",
@@ -485,7 +501,7 @@ export function SubscriptionsPage() {
           allow_basic: !editing.allowedGroups || editing.allowedGroups.includes("basic"),
           allow_pro: !editing.allowedGroups || editing.allowedGroups.includes("pro"),
           allow_ultra: !editing.allowedGroups || editing.allowedGroups.includes("ultra"),
-        } : { sourceType: "url", expiresAt: defaultManualExpiry, maxUsers: 15, allow_basic: true, allow_pro: true, allow_ultra: true }}
+        } : { sourceType: "url", expiresAt: defaultManualExpiry, manualTrafficDepleted: false, maxUsers: 15, allow_basic: true, allow_pro: true, allow_ultra: true }}
         submitLabel={editing ? "保存修改" : "保存并刷新"}
         contentClassName="sm:max-w-2xl"
         onOpenChange={setOpen}

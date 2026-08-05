@@ -1,6 +1,7 @@
 const assert = require("assert");
 const {
   poolMetricUnavailableReason,
+  evaluatePool,
   initialPoolFallbackReason,
   fallbackCandidateRank,
   isBrowserNavigationRequest,
@@ -35,11 +36,16 @@ const normalizedManual = normalizeSubscription({
   manualContent: manualBase64,
   email: "manual@example.com",
   maxUsers: 15,
-  allowedGroups: ["basic"]
+  allowedGroups: ["basic"],
+  expiresAt: "2099-01-01",
+  manualTrafficDepleted: true
 });
 assert.strictEqual(normalizedManual.url, "");
 assert.strictEqual(normalizedManual.manualContent, manualBase64);
-assert.strictEqual(initialPoolFallbackReason(normalizedManual, true), "");
+assert.strictEqual(normalizedManual.manualTrafficDepleted, true);
+assert.strictEqual(initialPoolFallbackReason(normalizedManual, true), "pool-depleted");
+assert.strictEqual(evaluatePool(normalizedManual).canServeCurrent, false);
+assert.strictEqual(evaluatePool(normalizedManual).canAutoEnter, false);
 assert.strictEqual(subscriptionCanBeManuallyAssigned(normalizedManual), true);
 assert.strictEqual(subscriptionHasUsableSource(normalizedManual), true);
 assert.strictEqual(subscriptionHasUsableSource({ sourceType: "manual", manualContent: "" }), false);
@@ -55,6 +61,11 @@ assert.strictEqual(initialPoolFallbackReason({ enabled: false }, false), "pool-d
 assert.strictEqual(initialPoolFallbackReason({ enabled: false, url: "" }, true), "pool-disabled");
 assert.strictEqual(initialPoolFallbackReason({ url: "" }, false), "pool-missing");
 assert.strictEqual(initialPoolFallbackReason({ url: "https://example.com/sub", allowedGroups: ["basic"] }, false, "pro"), "pool-group-mismatch");
+assert.strictEqual(initialPoolFallbackReason({ url: "https://example.com/sub", metrics: { remainingBytes: 0 } }, false), "pool-depleted");
+assert.deepStrictEqual(
+  evaluatePool({ url: "https://example.com/sub", excludeFromAutoSwitch: true }),
+  { canServeCurrent: true, canAutoEnter: false, exitReason: "", entryBlockReason: "pool-auto-entry-disabled", warning: "unknown" }
+);
 
 // ─── poolMetricUnavailableReason ────────────────────────────────────────
 

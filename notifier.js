@@ -3,8 +3,7 @@ const proxyAgents = new Map();
 
 function getAlertConfig() {
   return {
-    threshold: Number(process.env.ALERT_REMAINING_BYTES || 10 * 1024 * 1024 * 1024),
-    cooldownMs: Number(process.env.ALERT_COOLDOWN_MS || 12 * 60 * 60 * 1000)
+    threshold: Number(process.env.ALERT_REMAINING_BYTES || 10 * 1024 * 1024 * 1024)
   };
 }
 
@@ -272,7 +271,7 @@ async function checkAndNotifyLowTraffic(items, store, { logger = console } = {})
     }
 
     const previous = await store.get(key);
-    if (previous && now - new Date(previous.sentAt).getTime() < cfg.cooldownMs) continue;
+    if (previous) continue;
 
     try {
       const alert = buildLowTrafficAlert(item, remaining, cfg.threshold);

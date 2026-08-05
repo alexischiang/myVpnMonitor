@@ -42,6 +42,12 @@ function formatPoolExpiryDifference(days?: number | null) {
   return days > 0 ? `池比用户晚到期 ${days} 天` : `池比用户早到期 ${Math.abs(days)} 天`
 }
 
+function poolDisplayName(pool?: User["subscription"] | null) {
+  const provider = pool?.serviceProvider || pool?.provider
+  const identifier = pool?.email || pool?.name
+  return provider && identifier ? `${provider} · ${identifier}` : provider || identifier || pool?.url || "未绑定"
+}
+
 const userTypeLabels = { regular: "普通账户", family: "亲友账户", business: "企业账户", super: "超级账户" } as const
 
 function userType(user: User): keyof typeof userTypeLabels {
@@ -458,7 +464,7 @@ export function UserDetailPage() {
       <Dialog open={poolOpen} onOpenChange={setPoolOpen}>
         <DialogContent className="sm:max-w-xl">
           <form className="grid gap-4" onSubmit={changePool} noValidate>
-            <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription className="break-all">当前订阅池：{currentPool?.email || currentPool?.serviceProvider || "未绑定"}</DialogDescription></DialogHeader>
+            <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription className="break-all">当前订阅池：{poolDisplayName(currentPool)}</DialogDescription></DialogHeader>
             <SubscriptionPoolSelect id="detail-manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={user.isSuperAccount ? undefined : user.activeGroup} />
             <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={poolSaving}>取消</Button></DialogClose><Button type="submit" disabled={poolSaving || !poolId || poolId === user.subscriptionId}>{poolSaving ? <RefreshCw className="animate-spin" /> : <RefreshCw />}{poolSaving ? "换池中..." : "确认换池"}</Button></DialogFooter>
           </form>
@@ -580,7 +586,7 @@ export function UserDetailPage() {
                 <Info label="当前到期" value={formatUserExpiry(user)} />
                 <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
                 <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
-                <Info label="订阅池" value={user.subscription?.email || user.subscription?.serviceProvider || "-"} />
+                <Info label="订阅池" value={poolDisplayName(user.subscription)} />
                 <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
                 <Info label="订阅状态" value={<UserStatusBadge user={user} />} />
               </CardContent>
@@ -590,7 +596,7 @@ export function UserDetailPage() {
                 <CardHeader>
                   <CardTitle>推荐适配度</CardTitle>
                   <CardDescription className="break-all">
-                    {currentPool?.email || currentPool?.name || currentPool?.serviceProvider || "当前绑定池"}
+                    {poolDisplayName(currentPool)}
                   </CardDescription>
                   <CardAction>
                     <Badge variant={user.poolCompatibility.status === "high" ? "success" : user.poolCompatibility.status === "usable" ? "secondary" : user.poolCompatibility.status === "incompatible" ? "destructive" : "warning"}>

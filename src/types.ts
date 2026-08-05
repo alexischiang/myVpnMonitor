@@ -14,6 +14,7 @@ export type Subscription = {
   enabled?: boolean
   excludeFromAutoSwitch?: boolean
   useCachedConfigForFallback?: boolean
+  manualTrafficDepleted?: boolean
   accountStatus?: "unclaimed" | "invited" | "active" | "disabled"
   accountId?: string
   referralCode?: string
@@ -277,6 +278,12 @@ export type SalesSettings = {
 }
 
 export type PaymentSettings = {
+  id: string
+  name: string
+  displayName: string
+  provider: "legacy" | "xinhui"
+  enabled: boolean
+  priority: number
   apiBaseUrl: string
   merchantId: string
   merchantSecret?: string

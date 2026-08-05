@@ -9,12 +9,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { type CarouselApi, Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel"
 import { Input } from "@/components/ui/input"
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
+import { Progress } from "@/components/ui/progress"
+import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
+import { VipBadge } from "@/components/features/vip-badge"
 
 const steps = [
   {
     title: "先选择适合你的套餐",
-    description: "进入“购买套餐”，选择使用周期并完成付款。付款成功后，订阅会自动出现在用户中心。",
+    description: "从左侧边栏点击“购买套餐”，选择套餐和使用周期并完成付款。付款成功后，订阅会自动出现在用户中心。",
   },
   {
     title: "在总览中找到你的订阅",
@@ -24,6 +27,10 @@ const steps = [
     title: "按照设备教程完成连接",
     description: "进入“使用文档”，选择你的设备和客户端，跟随教程完成安装、导入与首次连接。",
   },
+  {
+    title: "消费累积，解锁 VIP 权益",
+    description: "购买套餐和充值余额都会累计 VIP 消费。累计 ¥360 升至 VIP 2，享 5% 专属折扣；累计 ¥900 升至 VIP 3，享 10% 专属折扣。",
+  },
 ]
 
 function StepPreview({ step }: { step: number }) {
@@ -31,14 +38,42 @@ function StepPreview({ step }: { step: number }) {
     <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
       <CardHeader className="px-4 sm:px-6">
         <CardDescription>购买套餐</CardDescription>
-        <CardTitle>选择使用周期</CardTitle>
+        <CardTitle>选择适合你的套餐</CardTitle>
       </CardHeader>
-      <CardContent className="px-4 sm:px-6">
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <Item variant="muted">
+          <ItemContent><ItemTitle>PRO · 高级套餐</ItemTitle><ItemDescription>每月 200G 流量 · 可绑定 5 台设备</ItemDescription></ItemContent>
+          <Badge>推荐</Badge>
+        </Item>
+        <Separator />
+        <CardDescription>选择计费周期</CardDescription>
         <ItemGroup>
-          <Item variant="outline"><ItemContent><ItemTitle>月付套餐</ItemTitle><ItemDescription>适合短期体验与灵活使用</ItemDescription></ItemContent><Badge variant="outline">1 个月</Badge></Item>
-          <Item variant="muted"><ItemContent><ItemTitle>年付套餐</ItemTitle><ItemDescription>长期使用，价格更优惠</ItemDescription></ItemContent><Badge>推荐</Badge></Item>
-          <Button className="w-full" tabIndex={-1}>立即购买</Button>
+          <Item variant="outline"><ItemContent><ItemTitle>月付 30 天</ItemTitle><ItemDescription>¥49.00 · 可绑定 3 台设备</ItemDescription></ItemContent><Badge variant="outline">已选择</Badge></Item>
+          <Item variant="outline"><ItemContent><ItemTitle>年付 360 天</ItemTitle><ItemDescription>¥429.00 · 可绑定 5 台设备</ItemDescription></ItemContent><Badge variant="destructive">-27%</Badge></Item>
         </ItemGroup>
+      </CardContent>
+    </Card>
+  )
+
+  if (step === 3) return (
+    <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
+      <CardHeader className="flex-row items-start justify-between gap-4 px-4 sm:px-6">
+        <div className="grid gap-1.5"><CardDescription>VIP 成长</CardDescription><CardTitle>专属折扣随等级提升</CardTitle></div>
+        <VipBadge level="vip2" />
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <ItemGroup className="grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2">
+          <Item variant="outline" size="sm" className="justify-center"><ItemContent className="items-center text-center"><VipBadge level="vip1" /><ItemDescription>起始等级</ItemDescription><ItemTitle>0% 折扣</ItemTitle></ItemContent></Item>
+          <ArrowRight className="size-4 text-muted-foreground" />
+          <Item variant="muted" size="sm" className="justify-center"><ItemContent className="items-center text-center"><VipBadge level="vip2" /><ItemDescription>累计 ¥360</ItemDescription><ItemTitle>5% 折扣</ItemTitle></ItemContent></Item>
+          <ArrowRight className="size-4 text-muted-foreground" />
+          <Item variant="outline" size="sm" className="justify-center"><ItemContent className="items-center text-center"><VipBadge level="vip3" /><ItemDescription>累计 ¥900</ItemDescription><ItemTitle>10% 折扣</ItemTitle></ItemContent></Item>
+        </ItemGroup>
+        <section className="grid gap-2" aria-label="VIP 成长进度示例">
+          <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>成长进度</span><span>¥540 / ¥900</span></div>
+          <Progress value={60} />
+          <p className="text-xs text-muted-foreground">当前等级和成长进度可在“总览”中查看。</p>
+        </section>
       </CardContent>
     </Card>
   )

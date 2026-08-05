@@ -769,6 +769,7 @@ function readText(req, limit = 1_000_000) {
 }
 
 async function readPaymentCallback(req) {
+  if (req.method === "GET") return Object.fromEntries(new URL(req.url, "http://localhost").searchParams);
   const text = await readText(req);
   if (!text) return {};
   const contentType = String(req.headers["content-type"] || "").toLowerCase();
@@ -776,39 +777,76 @@ async function readPaymentCallback(req) {
   return Object.fromEntries(new URLSearchParams(text));
 }
 
-function paymentConfig() {
+function paymentConfigs() {
   loadLocalEnv({ override: false });
-  const settings = paymentSettings[0] || {};
-  const legacyChannelCode = settings.channelCode || process.env.PAYMENT_CHANNEL_CODE || "";
   const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
-  return {
-    apiBaseUrl: (settings.apiBaseUrl || process.env.PAYMENT_API_BASE_URL || DEFAULT_PAYMENT_API_BASE_URL).replace(/\/+$/, ""),
-    merchantId: settings.merchantId || process.env.PAYMENT_MERCHANT_ID || "",
-    merchantSecret: settings.merchantSecret || process.env.PAYMENT_MERCHANT_SECRET || "",
-    alipayChannelCode: settings.alipayChannelCode || legacyChannelCode,
-    wechatChannelCode: settings.wechatChannelCode || process.env.PAYMENT_WECHAT_CHANNEL_CODE || "200",
+  const source = paymentSettings.length ? paymentSettings : [{
+    id: "default",
+    name: "默认支付平台",
+    provider: "legacy",
+    apiBaseUrl: process.env.PAYMENT_API_BASE_URL || DEFAULT_PAYMENT_API_BASE_URL,
+    merchantId: process.env.PAYMENT_MERCHANT_ID || "",
+    merchantSecret: process.env.PAYMENT_MERCHANT_SECRET || "",
+    alipayChannelCode: process.env.PAYMENT_CHANNEL_CODE || "",
+    wechatChannelCode: process.env.PAYMENT_WECHAT_CHANNEL_CODE || "200",
+    notifyUrl: process.env.PAYMENT_NOTIFY_URL || "",
+    returnUrl: process.env.PAYMENT_RETURN_URL || ""
+  }];
+  return source.map((settings, index) => ({
+    ...settings,
+    id: settings.id || (index ? `payment-${index + 1}` : "default"),
+    name: settings.name || (index ? `支付平台 ${index + 1}` : "默认支付平台"),
+    displayName: settings.displayName || settings.name || (index ? `支付平台 ${index + 1}` : "默认支付平台"),
+    provider: settings.provider === "xinhui" ? "xinhui" : "legacy",
+    enabled: settings.enabled !== false,
+    priority: Number.isInteger(Number(settings.priority)) ? Number(settings.priority) : index,
+    apiBaseUrl: String(settings.apiBaseUrl || DEFAULT_PAYMENT_API_BASE_URL).replace(/\/+$/, ""),
+    merchantId: settings.merchantId || "",
+    merchantSecret: settings.merchantSecret || "",
+    alipayChannelCode: settings.alipayChannelCode || settings.channelCode || "",
+    wechatChannelCode: settings.wechatChannelCode || "200",
     alipayEnabled: settings.alipayEnabled !== false,
     wechatEnabled: settings.wechatEnabled !== false,
-    notifyUrl: settings.notifyUrl || process.env.PAYMENT_NOTIFY_URL || (publicBaseUrl ? `${publicBaseUrl}/api/payments/callback` : ""),
-    returnUrl: settings.returnUrl || process.env.PAYMENT_RETURN_URL || (publicBaseUrl ? `${publicBaseUrl}/account/payment/result` : "")
-  };
+    notifyUrl: settings.notifyUrl || (publicBaseUrl ? `${publicBaseUrl}/api/payments/callback` : ""),
+    returnUrl: settings.returnUrl || (publicBaseUrl ? `${publicBaseUrl}/account/payment/result` : "")
+  })).sort((a, b) => a.priority - b.priority);
 }
 
-function normalizePaymentSettings(payload, current = paymentSettings[0] || {}) {
+function paymentConfig(id = "") {
+  const configs = paymentConfigs();
+  return configs.find(item => item.id === id) || configs.find(item => item.enabled) || configs[0] || {};
+}
+
+function normalizePaymentSettings(payload, current = {}) {
   const url = (value, label) => {
     const normalized = String(value || "").trim().replace(/\/+$/, "");
     if (normalized && !/^https?:\/\//i.test(normalized)) throw new Error(`${label}必须是 HTTP 或 HTTPS 地址。`);
     return normalized;
   };
-  const alipayChannelCode = paymentChannelCode(payload?.alipayChannelCode || payload?.channelCode);
-  const wechatChannelCode = paymentChannelCode(payload?.wechatChannelCode);
+  const provider = String(payload?.provider || current.provider || "legacy");
+  if (!['legacy', 'xinhui'].includes(provider)) throw new Error("不支持的支付平台类型。");
+  const name = String(payload?.name || current.name || "").trim();
+  if (!name || name.length > 80) throw new Error("平台名称不能为空且不能超过 80 个字符。");
+  const displayName = String(payload?.displayName || current.displayName || name).trim();
+  if (!displayName || displayName.length > 80) throw new Error("前台显示名称不能为空且不能超过 80 个字符。");
   const merchantId = String(payload?.merchantId || "").trim();
   if (!merchantId) throw new Error("商户 ID 不能为空。");
+  const merchantSecret = String(payload?.merchantSecret || "").trim() || current.merchantSecret || "";
+  if (!merchantSecret) throw new Error("商户密钥不能为空。");
+  const alipayChannelCode = paymentChannelCode(payload?.alipayChannelCode || payload?.channelCode);
+  const wechatChannelCode = paymentChannelCode(payload?.wechatChannelCode);
+  const apiBaseUrl = url(payload?.apiBaseUrl, "支付平台地址") || (provider === "xinhui" ? "https://api.shrtxs.cn" : "");
+  if (!apiBaseUrl) throw new Error("支付平台地址不能为空。");
   return {
-    id: "default",
-    apiBaseUrl: url(payload?.apiBaseUrl, "支付平台地址"),
+    id: current.id || String(payload?.id || crypto.randomUUID()),
+    name,
+    displayName,
+    provider,
+    enabled: payload?.enabled !== false,
+    priority: Math.max(0, Math.min(999, Math.floor(Number(payload?.priority) || 0))),
+    apiBaseUrl,
     merchantId,
-    merchantSecret: String(payload?.merchantSecret || "").trim() || current.merchantSecret || "",
+    merchantSecret,
     alipayChannelCode,
     wechatChannelCode,
     alipayEnabled: payload?.alipayEnabled !== false,
@@ -819,11 +857,16 @@ function normalizePaymentSettings(payload, current = paymentSettings[0] || {}) {
 }
 
 function publicPaymentSettings() {
-  const config = paymentConfig();
-  return {
+  return paymentConfigs().map(config => ({
+    id: config.id,
+    name: config.name,
+    displayName: config.displayName,
+    provider: config.provider,
+    enabled: config.enabled,
+    priority: config.priority,
     apiBaseUrl: config.apiBaseUrl,
     merchantId: config.merchantId,
-    merchantSecret: config.merchantSecret,
+    merchantSecret: "",
     merchantSecretConfigured: Boolean(config.merchantSecret),
     alipayChannelCode: config.alipayChannelCode,
     wechatChannelCode: config.wechatChannelCode,
@@ -831,32 +874,44 @@ function publicPaymentSettings() {
     wechatEnabled: config.wechatEnabled,
     notifyUrl: config.notifyUrl,
     returnUrl: config.returnUrl
-  };
+  }));
 }
 
-function paymentSign(params, secret = paymentConfig().merchantSecret) {
-  const pairs = Object.entries(params || {})
-    .filter(([key, value]) => key !== "sign" && value !== undefined && value !== null && String(value) !== "")
+function paymentSignContent(params) {
+  return Object.entries(params || {})
+    .filter(([key, value]) => !["sign", "sign_type"].includes(key) && value !== undefined && value !== null && String(value) !== "")
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([key, value]) => `${key}=${String(value)}`);
-  return crypto.createHash("md5").update(`${pairs.join("&")}&${secret}`).digest("hex").toUpperCase();
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join("&");
 }
 
-function verifyPaymentSign(params) {
-  const config = paymentConfig();
-  const actual = String(params?.sign || "").trim().toUpperCase();
-  if (!actual || !config.merchantSecret) return false;
-  return safeEqual(actual, paymentSign(params, config.merchantSecret));
+function paymentSign(params, config = paymentConfig()) {
+  const content = paymentSignContent(params);
+  if (typeof config === "string") return crypto.createHash("md5").update(`${content}&${config}`).digest("hex").toUpperCase();
+  const secret = config.merchantSecret;
+  if (config.provider === "xinhui") return crypto.createHash("md5").update(`${content}${secret}`).digest("hex");
+  return crypto.createHash("md5").update(`${content}&${secret}`).digest("hex").toUpperCase();
 }
 
-function requirePaymentConfig() {
-  const config = paymentConfig();
-  const missing = [];
-  if (!config.merchantId) missing.push("PAYMENT_MERCHANT_ID");
-  if (!config.merchantSecret) missing.push("PAYMENT_MERCHANT_SECRET");
-  if (!config.alipayChannelCode) missing.push("PAYMENT_CHANNEL_CODE");
-  if (!config.wechatChannelCode) missing.push("PAYMENT_WECHAT_CHANNEL_CODE");
-  if (missing.length) throw new Error(`Payment config missing: ${missing.join(", ")}`);
+function verifyPaymentSign(params, config = paymentConfig()) {
+  const actual = String(params?.sign || "").trim();
+  if (!actual) return false;
+  if (config.provider === "xinhui") return Boolean(config.merchantSecret) && safeEqual(actual.toLowerCase(), paymentSign(params, config));
+  return Boolean(config.merchantSecret) && safeEqual(actual.toUpperCase(), paymentSign(params, config));
+}
+
+function paymentConfigCredentialsReady(config) {
+  return Boolean(config?.merchantId && config.merchantSecret && config.alipayChannelCode && config.wechatChannelCode);
+}
+
+function paymentConfigReady(config, method = "") {
+  const methodEnabled = method === "200" ? config.wechatEnabled : method === "100" ? config.alipayEnabled : true;
+  return Boolean(config.enabled && methodEnabled && paymentConfigCredentialsReady(config));
+}
+
+function requirePaymentConfig(method = "", id = "") {
+  const config = id ? paymentConfigs().find(item => item.id === id) : paymentConfigs().find(item => paymentConfigReady(item, method));
+  if (!config || (id ? !config.enabled || !paymentConfigCredentialsReady(config) : !paymentConfigReady(config, method))) throw new Error("没有可用的支付平台，请检查后台支付平台配置。");
   return config;
 }
 
@@ -994,6 +1049,74 @@ async function postPaymentForm(endpoint, params, config = paymentConfig()) {
   return payload.result || {};
 }
 
+async function postXinhuiForm(endpoint, params, config) {
+  const signed = { ...compactPaymentParams(params), sign_type: "MD5" };
+  signed.sign = paymentSign(signed, config);
+  const response = await fetch(`${config.apiBaseUrl}${endpoint}`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(signed)
+  });
+  const text = await response.text();
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`新汇返回了非 JSON 响应（${response.status}）。`);
+  }
+  if (!response.ok) throw new Error(payload?.msg || `新汇请求失败：${response.status}`);
+  if (Number(payload.code) !== 1) throw new Error(payload.msg || "新汇拒绝了请求。");
+  return payload;
+}
+
+function requestIp(req) {
+  return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "127.0.0.1")
+    .split(",")[0].trim().replace(/^::ffff:/, "");
+}
+
+async function createGatewayPayment(config, params) {
+  if (config.provider !== "xinhui") {
+    const signed = compactPaymentParams(params);
+    signed.sign = paymentSign(signed, config);
+    return { result: await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", signed, config), requestParams: signed };
+  }
+  const requestParams = {
+    pid: config.merchantId,
+    type: params.channelCode,
+    out_trade_no: params.merOrderTid,
+    notify_url: params.notifyUrl,
+    return_url: params.returnUrl,
+    name: params.clientUserPayRemark,
+    money: params.money,
+    clientip: params.clientip,
+    device: "jump"
+  };
+  const payload = await postXinhuiForm("/mapi.php", requestParams, config);
+  return {
+    requestParams: { ...requestParams, sign_type: "MD5" },
+    result: { tid: payload.trade_no, payUrl: payload.payurl || payload.qrcode || payload.urlscheme, payOrderStatus: 0 }
+  };
+}
+
+async function queryGatewayPayment(config, order) {
+  if (config.provider !== "xinhui") {
+    const params = { mid: config.merchantId, merOrderTid: order.merOrderTid };
+    params.sign = paymentSign(params, config);
+    return postPaymentForm("/api/services/app/Api_PayOrder/QueryPayOrder", params, config);
+  }
+  const url = new URL(`${config.apiBaseUrl}/api.php`);
+  url.search = new URLSearchParams({ act: "order", pid: config.merchantId, key: config.merchantSecret, out_trade_no: order.merOrderTid });
+  const response = await fetch(url);
+  const payload = await response.json();
+  if (!response.ok || Number(payload.code) !== 1) throw new Error(payload.msg || `新汇查单失败：${response.status}`);
+  const status = Number(payload.status);
+  return {
+    tid: payload.trade_no,
+    money: payload.money,
+    payOrderStatus: status === 1 ? 1 : status === 0 ? 0 : 3
+  };
+}
+
 function makePaymentOrderId() {
   return `${Date.now()}${crypto.randomInt(1000, 9999)}`;
 }
@@ -1042,8 +1165,31 @@ function configuredPaymentChannel(config, method) {
 }
 
 function publicPaymentMethods() {
-  const config = paymentConfig();
-  return { alipay: config.alipayEnabled, wechat: config.wechatEnabled };
+  const configs = paymentConfigs();
+  return {
+    alipay: configs.some(config => paymentConfigReady(config, "100")),
+    wechat: configs.some(config => paymentConfigReady(config, "200"))
+  };
+}
+
+function paymentMethodForPlatform(config) {
+  if (paymentConfigReady(config, "100")) return "100";
+  if (paymentConfigReady(config, "200")) return "200";
+  throw new Error("该支付平台没有可用支付通道，请检查后台配置。");
+}
+
+function publicPaymentPlatforms() {
+  return paymentConfigs().map(config => ({
+    id: config.id,
+    name: config.displayName,
+    provider: config.provider,
+    enabled: config.enabled,
+    ready: paymentConfigReady(config, "100") || paymentConfigReady(config, "200"),
+    methods: {
+      alipay: paymentConfigReady(config, "100"),
+      wechat: paymentConfigReady(config, "200")
+    }
+  }));
 }
 
 function legacyPaymentCoupons(value = process.env.PAYMENT_COUPONS || "") {
@@ -1341,6 +1487,7 @@ async function paymentQuoteForAccount(payload, account) {
     walletAmount: (walletGiftCents + walletCashCents) / 100,
     amount: (payableCents - walletGiftCents - walletCashCents) / 100,
     paymentMethods: publicPaymentMethods(),
+    paymentPlatforms: publicPaymentPlatforms(),
     wallet: publicWallet(wallet)
   };
 }
@@ -1695,8 +1842,11 @@ async function createPaymentOrder(payload, req, account) {
   let compactParams = {};
   let result = {};
   try {
-    config = gatewayCents > 0 ? requirePaymentConfig() : null;
-    channelCode = config ? configuredPaymentChannel(config, payload.channelCode) : hold.cashCents + hold.giftCents > 0 ? "wallet" : "cash-credit";
+    const requestedMethod = String(payload.channelCode || "").trim();
+    if (requestedMethod && requestedMethod !== "100" && requestedMethod !== "200") throw new Error("不支持的支付方式。");
+    config = gatewayCents > 0 ? requirePaymentConfig(requestedMethod, String(payload.paymentPlatformId || "").trim()) : null;
+    const method = config ? (requestedMethod || paymentMethodForPlatform(config)) : "";
+    channelCode = config ? configuredPaymentChannel(config, method) : hold.cashCents + hold.giftCents > 0 ? "wallet" : "cash-credit";
     if (config) {
       const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
       if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
@@ -1709,11 +1859,10 @@ async function createPaymentOrder(payload, req, account) {
         clientUserPayRemark: selectedOption.optionLabel,
         clientUserId: String(payload.clientUserId || "").trim(),
         clientUserName: String(payload.clientUserName || "").trim(),
-        returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl)
+        returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl),
+        ...(config.provider === "xinhui" ? { clientip: requestIp(req) } : {})
       };
-      compactParams = compactPaymentParams(requestParams);
-      compactParams.sign = paymentSign(compactParams, config.merchantSecret);
-      result = await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", compactParams, config);
+      ({ result, requestParams: compactParams } = await createGatewayPayment(config, requestParams));
     }
   } catch (error) {
     await dataStore.releaseWalletHold(id);
@@ -1746,6 +1895,9 @@ async function createPaymentOrder(payload, req, account) {
     vipSpendAmount: Number(amount),
     couponCode: selectedOption.couponCode,
     channelCode,
+    paymentPlatformId: config?.id || "",
+    paymentPlatformName: config?.name || "",
+    paymentProvider: config?.provider || "wallet",
     totalAmount: payableCents / 100,
     walletAmount: (hold.cashCents + hold.giftCents) / 100,
     walletCashAmount: hold.cashCents / 100,
@@ -1781,7 +1933,7 @@ async function createRechargeOrder(payload, req, account) {
   assertPendingPaymentOrderLimit(account.id);
   const amountCents = moneyCents(payload.amount, "充值金额");
   if (amountCents > 1000000) throw new Error("单次充值不能超过 ¥10,000.00。");
-  const config = requirePaymentConfig();
+  const config = requirePaymentConfig(payload.channelCode);
   const channelCode = configuredPaymentChannel(config, payload.channelCode);
   const id = crypto.randomUUID();
   const merOrderTid = makePaymentOrderId();
@@ -1795,11 +1947,10 @@ async function createRechargeOrder(payload, req, account) {
     channelCode,
     notifyUrl,
     clientUserPayRemark: "余额充值",
-    returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl)
+    returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl),
+    ...(config.provider === "xinhui" ? { clientip: requestIp(req) } : {})
   };
-  const compactParams = compactPaymentParams(requestParams);
-  compactParams.sign = paymentSign(compactParams, config.merchantSecret);
-  const result = await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", compactParams, config);
+  const { result, requestParams: compactParams } = await createGatewayPayment(config, requestParams);
   const now = new Date().toISOString();
   const order = {
     id,
@@ -1814,6 +1965,9 @@ async function createRechargeOrder(payload, req, account) {
     totalAmount: Number(amount),
     vipSpendAmount: Number(amount),
     channelCode,
+    paymentPlatformId: config.id,
+    paymentPlatformName: config.name,
+    paymentProvider: config.provider,
     email: normalizePaymentEmail(account.email),
     accountId: account.id,
     payUrl: result.payUrl || "",
@@ -1840,13 +1994,8 @@ async function createRechargeOrder(payload, req, account) {
 }
 
 async function refreshPaymentOrder(order) {
-  const config = requirePaymentConfig();
-  const params = {
-    mid: config.merchantId,
-    merOrderTid: order.merOrderTid
-  };
-  params.sign = paymentSign(params, config.merchantSecret);
-  const result = await postPaymentForm("/api/services/app/Api_PayOrder/QueryPayOrder", params, config);
+  const config = requirePaymentConfig("", order.paymentPlatformId);
+  const result = await queryGatewayPayment(config, order);
   order.tid = result.tid || order.tid || "";
   order.payUrl = result.payUrl || order.payUrl || "";
   order.platformStatus = result.payOrderStatus ?? order.platformStatus;
@@ -1882,9 +2031,13 @@ async function cancelPaymentOrder(order, req) {
 
 async function handlePaymentCallback(req) {
   const payload = await readPaymentCallback(req);
-  const merOrderTid = String(payload.merOrderTid || "").trim();
+  const merOrderTid = String(payload.out_trade_no || payload.merOrderTid || "").trim();
   const order = paymentOrders.find(item => item.merOrderTid === merOrderTid);
-  if (!verifyPaymentSign(payload)) {
+  let config = order?.paymentPlatformId
+    ? paymentConfigs().find(item => item.id === order.paymentPlatformId)
+    : paymentConfigs().find(item => item.merchantId === String(payload.pid || payload.mid || ""));
+  if (!config) config = paymentConfigs().find(item => verifyPaymentSign(payload, item));
+  if (!config || !verifyPaymentSign(payload, config)) {
     if (order) {
       order.paymentError = "支付通知签名验证失败，请点击检测支付状态或联系客服。";
       order.updatedAt = new Date().toISOString();
@@ -1894,9 +2047,10 @@ async function handlePaymentCallback(req) {
   }
   if (order) {
     const now = new Date().toISOString();
-    order.tid = String(payload.tid || order.tid || "");
-    order.platformStatus = Number(payload.status);
-    const callbackStatus = platformStatusToOrderStatus(payload.status);
+    order.tid = String(payload.trade_no || payload.tid || order.tid || "");
+    const xinhuiSuccess = config.provider === "xinhui" && payload.trade_status === "TRADE_SUCCESS";
+    order.platformStatus = config.provider === "xinhui" ? (xinhuiSuccess ? 1 : 0) : Number(payload.status);
+    const callbackStatus = config.provider === "xinhui" ? (xinhuiSuccess ? "paid" : "pending") : platformStatusToOrderStatus(payload.status);
     const paidAfterCancellation = Boolean(order.cancelledAt) && callbackStatus === "paid";
     order.status = order.cancelledAt ? (paidAfterCancellation ? "abnormal" : "closed") : callbackStatus;
     const amountError = callbackStatus === "paid" && !paidAfterCancellation ? paymentAmountError(order.amount, payload.money) : "";
@@ -2010,6 +2164,9 @@ function normalizeSubscription(input, existing = {}) {
   const useCachedConfigForFallback = input.useCachedConfigForFallback !== undefined
     ? Boolean(input.useCachedConfigForFallback)
     : Boolean(existing.useCachedConfigForFallback);
+  const manualTrafficDepleted = isManualSubscription({ sourceType })
+    ? Boolean(input.manualTrafficDepleted ?? existing.manualTrafficDepleted)
+    : false;
   const maxUsers = Number(input.maxUsers ?? existing.maxUsers ?? 15);
   const manualExpiryRequired = isManualSubscription({ sourceType }) && (!existing.id || input.sourceType !== undefined || input.manualContent !== undefined);
   const manualExpireAt = isManualSubscription({ sourceType })
@@ -2041,6 +2198,7 @@ function normalizeSubscription(input, existing = {}) {
     enabled,
     excludeFromAutoSwitch,
     useCachedConfigForFallback,
+    manualTrafficDepleted,
     maxUsers,
     allowedGroups,
     updatedAt: new Date().toISOString()
@@ -2181,7 +2339,8 @@ function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "", group =
   const eligibleSubscriptions = subscriptions.filter(item => {
     const provider = normalizeServiceProvider({}, item);
     if (!ratings.get(provider)) { ungraded++; return false; }
-    return (allowDisabled || item.enabled !== false) && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, group) && !subscriptionAtCapacity(item, ignoredUserId) && Date.parse(item.metrics?.expireAt || "") > Date.now();
+    const unavailableReason = poolMetricUnavailableReason(item.enabled === false && allowDisabled ? { ...item, enabled: true } : item);
+    return !unavailableReason && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, group) && !subscriptionAtCapacity(item, ignoredUserId) && Date.parse(item.metrics?.expireAt || "") > Date.now();
   });
   const candidates = eligibleSubscriptions
     .map(item => {
@@ -2306,7 +2465,9 @@ function poolExpiryDifference(pool, userExpiryTime) {
 }
 
 function poolCompatibilityLabel(pool) {
-  return pool?.email || pool?.name || normalizeServiceProvider({}, pool) || pool?.url || "未命名池";
+  const provider = normalizeServiceProvider({}, pool);
+  const identifier = pool?.email || pool?.name;
+  return provider && identifier ? `${provider} · ${identifier}` : provider || identifier || pool?.url || "未命名池";
 }
 
 function currentPoolCompatibility(user) {
@@ -2739,16 +2900,19 @@ function toBytes(value, unit) {
 function statusFor(item, customerCount = 0) {
   if (isManualSubscription(item)) {
     if (item.lastError || !item.manualContent) return "invalid";
+    if (item.manualTrafficDepleted) return "depleted";
     return Date.parse(item.metrics?.expireAt || "") <= Date.now() ? "expired" : "ok";
   }
   const metrics = item.metrics;
-  if (item.lastError || !metrics || metrics.unavailable) return "invalid";
+  if (item.lastError || metrics?.unavailable) return "invalid";
+  if (!metrics) return "unknown";
 
   const expiresAt = metrics.expireAt ? new Date(metrics.expireAt).getTime() : NaN;
   const remaining = Number(metrics.remainingBytes);
-  if (!Number.isFinite(expiresAt) || !Number.isFinite(remaining)) return "invalid";
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(remaining)) return "unknown";
 
   if (remaining <= 0) return "depleted";
+  if (expiresAt <= Date.now()) return "expired";
 
   const daysLeft = (expiresAt - Date.now()) / 86400000;
   if (daysLeft <= EXPIRING_SOON_DAYS) return "expiring";
@@ -2809,7 +2973,7 @@ function publicRegisteredAccount(account) {
   const id = `account:${account.id}`;
   return {
     id,
-    customerID: account.customerID,
+    ...(account.customerID !== undefined ? { customerID: account.customerID } : {}),
     accountId: account.id,
     registeredOnly: true,
     accountStatus: account.status,
@@ -3184,8 +3348,8 @@ function updatePoolMetrics(item, result, fetchedAt) {
   } else if (result?.metrics && item.metrics) {
     item.lastError = null;
   } else if (result?.body) {
-    item.metrics = item.metrics || null;
-    item.lastError = "已更新配置，但未识别到流量或到期信息。请确认服务是否返回 subscription-userinfo，或正文是否包含剩余流量/到期时间。";
+    item.metrics = null;
+    item.lastError = null;
   }
 }
 
@@ -3382,16 +3546,36 @@ function poolMetricUnavailableReason(item, now = Date.now()) {
   if (item?.enabled === false) return "pool-disabled";
   const expireTime = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
   if (Number.isFinite(expireTime) && expireTime <= now) return "pool-expired";
+  if (item && isManualSubscription(item) && item.manualTrafficDepleted) return "pool-depleted";
   const remaining = item?.metrics?.remainingBytes;
   if (remaining !== null && remaining !== undefined && Number(remaining) <= 0) return "pool-depleted";
   return "";
 }
 
-function initialPoolFallbackReason(item, useSubconverter, group = "") {
-  if (item?.enabled === false) return "pool-disabled";
-  if (!subscriptionHasUsableSource(item)) return "pool-missing";
-  if (!subscriptionAllowsGroup(item, group)) return "pool-group-mismatch";
-  return useSubconverter ? poolMetricUnavailableReason(item) : "";
+function evaluatePool(item, userOrGroup = {}, { fetchFailed = false } = {}) {
+  const group = typeof userOrGroup === "string" ? userOrGroup : poolSelectionGroup(userOrGroup || {});
+  const exitReason = item?.enabled === false
+    ? "pool-disabled"
+    : !subscriptionHasUsableSource(item)
+      ? "pool-missing"
+      : !subscriptionAllowsGroup(item, group)
+        ? "pool-group-mismatch"
+        : poolMetricUnavailableReason(item) || (fetchFailed ? "pool-fetch-failed" : "");
+  const entryBlockReason = exitReason
+    || (item?.excludeFromAutoSwitch ? "pool-auto-entry-disabled" : "")
+    || (item && subscriptionAtCapacity(item, userOrGroup && typeof userOrGroup === "object" ? userOrGroup.id || "" : "") ? "pool-full" : "");
+  const status = !item ? "invalid" : item.enabled === false ? "disabled" : statusFor(item);
+  return {
+    canServeCurrent: !exitReason,
+    canAutoEnter: !entryBlockReason,
+    exitReason,
+    entryBlockReason,
+    warning: ["low_traffic", "expiring", "unknown"].includes(status) ? status : ""
+  };
+}
+
+function initialPoolFallbackReason(item, _useSubconverter, group = "") {
+  return evaluatePool(item, group).exitReason;
 }
 
 const fallbackReasonText = {
@@ -3731,7 +3915,7 @@ function fallbackCandidateRank(item, user) {
 
 function fallbackCandidates(user, currentSubscription) {
   const candidates = subscriptions
-    .filter(item => item.id !== currentSubscription?.id && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, poolSelectionGroup(user)) && !subscriptionAtCapacity(item, user?.id || ""))
+    .filter(item => item.id !== currentSubscription?.id && evaluatePool(item, user).canAutoEnter)
     .map(item => {
       const rank = fallbackCandidateRank(item, user);
       if (rank === null) return null;
@@ -3777,6 +3961,8 @@ async function findFallbackSubscription(user, currentSubscription) {
       const liveConfig = candidate.useCachedConfigForFallback
         ? await liveConfigFromCachedPoolConfig(candidate, { allowStale: true }) || await fetchLivePoolConfig(candidate)
         : await fetchLivePoolConfig(candidate);
+      const entryBlockReason = evaluatePool(candidate, user).entryBlockReason;
+      if (entryBlockReason) throw new Error(fallbackReasonText[entryBlockReason] || entryBlockReason);
       relayLog("fallback-candidate-validate-ok", {
         userId: user?.id || "",
         candidatePool: poolLogInfo(candidate),
@@ -4235,6 +4421,17 @@ async function findDirectFallbackSubscription(user, currentSubscription, req) {
       });
       if (!response.ok) throw new Error(`Fallback pool URL returned HTTP ${response.status}`);
       const body = Buffer.from(await response.arrayBuffer());
+      const rawBody = body.toString("utf8");
+      const subscriptionUserinfo = response.headers.get("subscription-userinfo") || "";
+      updatePoolMetrics(candidate, {
+        body: rawBody,
+        status: response.status,
+        client: "direct",
+        metrics: parseSubscriptionUserInfo(subscriptionUserinfo) || parseAccountUnavailable(rawBody) || parseBodyHints(rawBody)
+      }, new Date().toISOString());
+      const entryBlockReason = evaluatePool(candidate, user).entryBlockReason;
+      if (entryBlockReason) throw new Error(fallbackReasonText[entryBlockReason] || entryBlockReason);
+      await saveData();
       relayLog("direct-fallback-response-ok", {
         userId: user?.id || "",
         candidatePool: poolLogInfo(candidate),
@@ -4362,75 +4559,37 @@ async function handleRelaySubscription(req, res, token) {
     return;
   }
   if (initialFallbackReason) {
-    if (initialFallbackReason !== "pool-group-mismatch" && subscription?.url && subscription.enabled !== false) {
-      try {
-        precheckedLiveConfig = await cachedPoolConfig(subscription);
-        relayLog("current-pool-live-precheck-ok", {
-          relayRequestId,
-          userId: user.id,
-          reason: initialFallbackReason,
-          pool: poolLogInfo(subscription),
-          liveConfig: {
-            status: precheckedLiveConfig.status,
-            client: precheckedLiveConfig.client,
-            score: precheckedLiveConfig.score,
-            bodyLength: precheckedLiveConfig.bodyLength,
-            subscriptionUserinfo: precheckedLiveConfig.subscriptionUserinfo
-          }
-        });
-        await recordUserLog(user, {
-          status: "kept_current",
-          reason: initialFallbackReason,
-          fromSubscription: subscription,
-          req,
-          target: sc?.target || "",
-          stage: "current-pool-live-precheck",
-          message: "\u539f\u6c60\u6307\u6807\u663e\u793a\u4e0d\u53ef\u7528\uff0c\u4f46\u5b9e\u65f6\u83b7\u53d6\u6210\u529f\uff0c\u7ee7\u7eed\u4f7f\u7528\u539f\u6c60\u3002"
-        });
-      } catch (error) {
-        relayLog("current-pool-live-precheck-failed", {
-          relayRequestId,
-          userId: user.id,
-          reason: initialFallbackReason,
-          pool: poolLogInfo(subscription),
-          error: error.message,
-          attempts: error.attempts || []
-        });
-      }
-    }
-    if (!precheckedLiveConfig) {
-      const fallback = await fallbackToUsableSubscription(user, subscription, initialFallbackReason, req, sc?.target || "");
-      if (!fallback.subscription) {
-        relayLog("response-placeholder-unavailable", {
-          relayRequestId,
-          userId: user.id,
-          stage: "initial-fallback",
-          reason: initialFallbackReason,
-          fallbackErrors: fallback.errors || []
-        });
-        await recordUserLog(user, {
-          status: "no_usable_pool",
-          reason: initialFallbackReason,
-          fromSubscription: subscription,
-          req,
-          target: sc?.target || "",
-          stage: "initial-fallback",
-          message: "\u539f\u6c60\u4e0d\u53ef\u7528\uff0c\u4f46\u672a\u627e\u5230\u53ef\u81ea\u52a8\u5207\u6362\u7684\u5907\u7528\u6c60\u3002",
-          details: { fallbackErrors: fallback.errors || [] }
-        });
-        sendUnavailablePoolPlaceholderSubscription(res, user);
-        return;
-      }
-      subscription = fallback.subscription;
-      if (sc) sc = relaySubconverterConfig(subscription);
-      precheckedLiveConfig = fallback.liveConfig;
-      relayLog("current-pool-replaced-by-fallback", {
+    const fallback = await fallbackToUsableSubscription(user, subscription, initialFallbackReason, req, sc?.target || "");
+    if (!fallback.subscription) {
+      relayLog("response-placeholder-unavailable", {
         relayRequestId,
         userId: user.id,
+        stage: "initial-fallback",
         reason: initialFallbackReason,
-        nextPool: poolLogInfo(subscription)
+        fallbackErrors: fallback.errors || []
       });
+      await recordUserLog(user, {
+        status: "no_usable_pool",
+        reason: initialFallbackReason,
+        fromSubscription: subscription,
+        req,
+        target: sc?.target || "",
+        stage: "initial-fallback",
+        message: "\u539f\u6c60\u4e0d\u53ef\u7528\uff0c\u4f46\u672a\u627e\u5230\u53ef\u81ea\u52a8\u5207\u6362\u7684\u5907\u7528\u6c60\u3002",
+        details: { fallbackErrors: fallback.errors || [] }
+      });
+      sendUnavailablePoolPlaceholderSubscription(res, user);
+      return;
     }
+    subscription = fallback.subscription;
+    if (sc) sc = relaySubconverterConfig(subscription);
+    precheckedLiveConfig = fallback.liveConfig;
+    relayLog("current-pool-replaced-by-fallback", {
+      relayRequestId,
+      userId: user.id,
+      reason: initialFallbackReason,
+      nextPool: poolLogInfo(subscription)
+    });
   }
   if (!subscriptionHasUsableSource(subscription)) {
     relayLog("response-error-no-pool-url", {
@@ -4480,6 +4639,8 @@ async function handleRelaySubscription(req, res, token) {
     let liveConfig = precheckedLiveConfig;
     try {
       if (!liveConfig) liveConfig = await cachedPoolConfig(subscription);
+      const refreshedReason = evaluatePool(subscription, user).exitReason;
+      if (refreshedReason) throw Object.assign(new Error(fallbackReasonText[refreshedReason]), { fallbackReason: refreshedReason });
     } catch (error) {
       relayLog("subconverter-current-live-fetch-failed", {
         relayRequestId,
@@ -4488,7 +4649,7 @@ async function handleRelaySubscription(req, res, token) {
         error: error.message,
         attempts: error.attempts || []
       });
-      liveConfig = await liveConfigFromCachedPoolConfig(subscription);
+      liveConfig = error.fallbackReason ? null : await liveConfigFromCachedPoolConfig(subscription);
       if (liveConfig) {
         relayLog("subconverter-current-cache-fallback-ok", {
           relayRequestId,
@@ -4513,18 +4674,19 @@ async function handleRelaySubscription(req, res, token) {
         });
       }
       if (!liveConfig) {
-      const fallback = await fallbackToUsableSubscription(user, subscription, "pool-fetch-failed", req, sc.target);
+      const fallbackReason = error.fallbackReason || "pool-fetch-failed";
+      const fallback = await fallbackToUsableSubscription(user, subscription, fallbackReason, req, sc.target);
       if (!fallback.subscription) {
         relayLog("response-placeholder-unavailable", {
           relayRequestId,
           userId: user.id,
           stage: "subconverter-live-fetch",
-          reason: "pool-fetch-failed",
+          reason: fallbackReason,
           fallbackErrors: fallback.errors || []
         });
         await recordUserLog(user, {
           status: "no_usable_pool",
-          reason: "pool-fetch-failed",
+          reason: fallbackReason,
           fromSubscription: subscription,
           req,
           target: sc.target,
@@ -4678,37 +4840,30 @@ async function handleRelaySubscription(req, res, token) {
     return;
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
-  const directHeaders = forwardedSubscriptionHeaders(req);
-  relayLog("direct-current-request", {
+  relayLog("direct-current-cache", {
     relayRequestId,
     userId: user.id,
-    pool: poolLogInfo(subscription),
-    method: "GET",
-    url: subscription.url,
-    headers: headersForLog(directHeaders)
+    pool: poolLogInfo(subscription)
   });
   try {
-    const response = await fetch(subscription.url, {
-      method: "GET",
-      redirect: "follow",
-      signal: controller.signal,
-      headers: directHeaders
-    });
-    if (!response.ok) throw new Error(`Pool URL returned HTTP ${response.status}`);
-    const body = Buffer.from(await response.arrayBuffer());
-    relayLog("direct-current-response-ok", {
+    const liveConfig = await cachedPoolConfig(subscription);
+    const refreshedReason = evaluatePool(subscription, user).exitReason;
+    if (refreshedReason) throw Object.assign(new Error(fallbackReasonText[refreshedReason]), { fallbackReason: refreshedReason });
+    relayLog("direct-current-cache-ok", {
       relayRequestId,
       userId: user.id,
       pool: poolLogInfo(subscription),
-      status: response.status,
-      headers: responseHeadersForLog(response),
-      bodyLength: body.length,
-      bodyPreview: bodyPreview(body.toString("utf8"))
+      fetchedAt: liveConfig.fetchedAt,
+      bodyLength: liveConfig.bodyLength,
+      bodyPreview: bodyPreview(liveConfig.body)
     });
-    res.writeHead(response.status, copyUpstreamHeaders(response, req));
-    res.end(body);
+    res.writeHead(200, {
+      ...manualSubscriptionHeaders(req, { sourceType: "yaml" }),
+      "content-type": liveConfig.contentType || "text/plain; charset=utf-8",
+      "profile-update-interval": String(Math.max(1, Math.round(POOL_CONFIG_CACHE_TTL_MS / 3600000))),
+      ...(liveConfig.subscriptionUserinfo ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
+    });
+    res.end(liveConfig.body);
   } catch (error) {
     relayLog("direct-current-response-failed", {
       relayRequestId,
@@ -4717,18 +4872,19 @@ async function handleRelaySubscription(req, res, token) {
       errorName: error.name,
       errorMessage: error.message
     });
+    const fallbackReason = error.fallbackReason || "pool-fetch-failed";
     const fallback = await findDirectFallbackSubscription(user, subscription, req);
     if (!fallback.subscription) {
       relayLog("response-placeholder-unavailable", {
         relayRequestId,
         userId: user.id,
         stage: "direct-fallback",
-        reason: "pool-fetch-failed",
+        reason: fallbackReason,
         fallbackErrors: fallback.errors || []
       });
       await recordUserLog(user, {
         status: "no_usable_pool",
-        reason: "pool-fetch-failed",
+        reason: fallbackReason,
         fromSubscription: subscription,
         req,
         stage: "direct-fallback",
@@ -4738,7 +4894,7 @@ async function handleRelaySubscription(req, res, token) {
       sendUnavailablePoolPlaceholderSubscription(res, user);
       return;
     }
-    await switchUserSubscription(user, subscription, fallback.subscription, "pool-fetch-failed", req);
+    await switchUserSubscription(user, subscription, fallback.subscription, fallbackReason, req);
     relayLog("response-direct-fallback-ok", {
       relayRequestId,
       userId: user.id,
@@ -4749,8 +4905,6 @@ async function handleRelaySubscription(req, res, token) {
     });
     res.writeHead(200, fallback.headers);
     res.end(fallback.body);
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -5446,16 +5600,11 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/payments/config-status" && req.method === "GET" && isLocalRequest(req)) {
-    const config = paymentConfig();
+    const configs = paymentConfigs();
     sendJson(res, 200, {
-      apiBaseUrl: config.apiBaseUrl,
-      merchantId: Boolean(config.merchantId),
-      merchantSecret: Boolean(config.merchantSecret),
-      alipayChannelCode: Boolean(config.alipayChannelCode),
-      wechatChannelCode: Boolean(config.wechatChannelCode),
-      alipayEnabled: config.alipayEnabled,
-      wechatEnabled: config.wechatEnabled,
-      notifyUrl: config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`
+      platforms: configs.map(config => ({ id: config.id, name: config.name, provider: config.provider, ready: paymentConfigCredentialsReady(config), enabled: config.enabled })),
+      paymentMethods: publicPaymentMethods(),
+      notifyUrl: `${requestOrigin(req)}/api/payments/callback`
     });
     return;
   }
@@ -5491,7 +5640,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (pathname === "/api/payments/callback" && req.method === "POST") {
+  if (pathname === "/api/payments/callback" && ["GET", "POST"].includes(req.method)) {
     try {
       const result = await handlePaymentCallback(req);
       res.writeHead(result.statusCode, { "content-type": "text/plain; charset=utf-8" });
@@ -5576,8 +5725,8 @@ async function handleApi(req, res, pathname) {
           return;
         }
       }
-      const config = paymentConfig();
-      const shouldQueryGateway = order.status === "pending" && config.merchantId && config.merchantSecret;
+      const config = paymentConfig(order.paymentPlatformId);
+      const shouldQueryGateway = order.status === "pending" && paymentConfigCredentialsReady(config);
       const refreshedOrder = shouldQueryGateway ? await refreshPaymentOrder(order) : order;
       if (refreshedOrder.status === "paid") {
         try {
@@ -5659,13 +5808,42 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (pathname === "/api/payment-settings" && req.method === "PUT") {
+  if (pathname === "/api/payment-settings" && req.method === "POST") {
     try {
-      paymentSettings = [normalizePaymentSettings(await readJson(req))];
+      const next = normalizePaymentSettings(await readJson(req));
+      paymentSettings.push(next);
       await savePaymentSettings();
-      sendJson(res, 200, publicPaymentSettings());
+      sendJson(res, 201, publicPaymentSettings().find(item => item.id === next.id));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const paymentSettingsMatch = pathname.match(/^\/api\/payment-settings\/([^/]+)$/);
+  if (paymentSettingsMatch && req.method === "PUT") {
+    try {
+      const index = paymentSettings.findIndex(item => item.id === paymentSettingsMatch[1]);
+      const current = index >= 0 ? paymentSettings[index] : paymentConfigs().find(item => item.id === paymentSettingsMatch[1]);
+      if (!current) throw Object.assign(new Error("支付平台不存在。"), { statusCode: 404 });
+      const next = normalizePaymentSettings(await readJson(req), current);
+      if (index >= 0) paymentSettings[index] = next;
+      else paymentSettings.push(next);
+      await savePaymentSettings();
+      sendJson(res, 200, publicPaymentSettings().find(item => item.id === next.id));
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (paymentSettingsMatch && req.method === "DELETE") {
+    const index = paymentSettings.findIndex(item => item.id === paymentSettingsMatch[1]);
+    if (index < 0) sendJson(res, 404, { error: "支付平台不存在。" });
+    else {
+      paymentSettings.splice(index, 1);
+      await savePaymentSettings();
+      sendJson(res, 200, { ok: true });
     }
     return;
   }
@@ -6988,6 +7166,7 @@ module.exports = Object.assign(requestHandler, {
   relaySubconverterConfig,
   userOutputMode,
   poolMetricUnavailableReason,
+  evaluatePool,
   initialPoolFallbackReason,
   fallbackCandidateRank,
   injectPlaceholderNodes,
@@ -6999,6 +7178,12 @@ module.exports = Object.assign(requestHandler, {
   vipDiscountPercent,
   paymentChannelCode,
   configuredPaymentChannel,
+  paymentMethodForPlatform,
+  publicPaymentPlatforms,
+  paymentSignContent,
+  paymentSign,
+  verifyPaymentSign,
+  paymentConfigReady,
   paymentStatusError,
   paymentAmountError,
   paymentOrderExpiresAt,
