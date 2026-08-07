@@ -28,12 +28,12 @@ import { MarkdownContent } from "@/components/features/markdown-content"
 import { VipBadge } from "@/components/features/vip-badge"
 import { formatDate, formatDateTime, formatMoney } from "@/utils"
 
-type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge"; planName: string; optionLabel: string; amount: number; totalAmount?: number; walletAmount?: number; status: string; statusText: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
+type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge"; planName: string; optionLabel: string; amount: number; totalAmount?: number; walletAmount?: number; walletCashAmount?: number; walletGiftAmount?: number; walletReferralAmount?: number; realCashAmount?: number; virtualCashAmount?: number; status: string; statusText: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
 type Subscription = { status: string; activeGroup: string; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; cashValue: number; traffic: string; unlimited?: boolean; devices: number | string; subscriptionUrl: string; vipLevel?: string }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
-type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; vipDelta: number; balance: number; description: string; createdAt: string }
-type WalletData = { balance: number; cashBalance: number; giftBalance: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
+type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
+type WalletData = { balance: number; cashBalance: number; giftBalance: number; referralBalance: number; realCashBalance?: number; virtualCashBalance?: number; availableRealCashBalance?: number; availableVirtualCashBalance?: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
 
 function todayKey() {
   const now = new Date()
@@ -173,14 +173,12 @@ export function AccountOverviewPage() {
         <Card id="subscription" className="scroll-mt-16">
           <CardHeader className="flex-row items-start justify-between gap-4"><div><CardDescription>当前订阅</CardDescription><CardTitle className="mt-1 text-2xl">{subscription ? subscription.activeGroup.toUpperCase() : "暂无订阅"}</CardTitle></div><Badge variant={subscription?.status === "active" ? "success" : subscription?.status === "expired" ? "destructive" : "warning"} className="leading-none [&>svg]:size-3.5">{subscription?.status === "active" ? <><CheckCircle2 />生效中</> : subscription?.status === "expired" ? "已过期" : "未开通"}</Badge></CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-          <Metric label="原套餐到期" value={subscription ? formatDate(subscription.planExpiresAt) : "-"} />
-          <Metric label="赠送时长" value={subscription ? `${subscription.giftedDays || 0} 天` : "-"} />
-          <Metric label="当前到期" value={subscription ? formatDate(subscription.expiresAt) : "-"} />
+          <Metric label="到期日" value={subscription ? <span className="grid gap-1"><span>{formatDate(subscription.expiresAt)}</span>{subscription.giftedDays ? <span className="text-xs font-normal text-muted-foreground">原到期日 {formatDate(subscription.planExpiresAt)} · 赠送 {subscription.giftedDays} 天</span> : null}</span> : "-"} />
             <Metric label="流量" value={subscription?.traffic || "-"} />
             <Metric label="可绑定设备" value={subscription ? `${subscription.devices} 台` : "-"} />
             <Metric label="剩余现金价值" value={subscription ? formatMoney(subscription.cashValue) : "-"} description="根据当前套餐剩余有效期折算，更换套餐时可用于抵扣。" />
             <div className="col-span-2 flex flex-wrap gap-2 xl:col-span-4"><Button asChild><Link to="/account/plans">{subscription ? "续费或更换套餐" : "购买套餐"}</Link></Button></div>
-            {subscription ? <><Separator className="col-span-2 xl:col-span-4" /><Field className="col-span-2 xl:col-span-4"><FieldLabel htmlFor="subscription-url">订阅链接</FieldLabel><FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription><Input id="subscription-url" readOnly value={subscription.subscriptionUrl} /><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></> : null}
+            {subscription ? <><Separator className="col-span-2 xl:col-span-4" /><Field className="col-span-2 xl:col-span-4"><FieldLabel htmlFor="subscription-url">订阅链接</FieldLabel><FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></> : null}
           </CardContent>
         </Card>
       </div>
@@ -246,18 +244,19 @@ export function AccountWalletPage() {
   if (!data) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <section className="grid gap-4 md:grid-cols-3" aria-label="余额概览">
-        <Card><CardHeader><CardDescription>可用余额</CardDescription><CardTitle className="text-3xl">{formatMoney(data.availableBalance)}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">冻结中 {formatMoney(data.heldBalance)}</CardContent></Card>
-        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Coins className="size-4" />充值余额</CardDescription><CardTitle>{formatMoney(data.cashBalance)}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">充值成功时计入 VIP</CardContent></Card>
-        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Gift className="size-4" />赠送余额</CardDescription><CardTitle>{formatMoney(data.giftBalance)}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">永久有效，消费时优先使用</CardContent></Card>
+      <section className="grid gap-4 md:grid-cols-3" aria-label="钱包余额">
+        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Coins className="size-4" />充值余额<Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="充值余额说明"><CircleHelp /></Button></TooltipTrigger><TooltipContent className="max-w-64">用户主动充值所得；充值时累计 VIP，购买套餐时最后抵扣。</TooltipContent></Tooltip></CardDescription><CardTitle>{formatMoney(data.cashBalance)}</CardTitle></CardHeader></Card>
+        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Gift className="size-4" />赠送余额<Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="赠送余额说明"><CircleHelp /></Button></TooltipTrigger><TooltipContent className="max-w-64">后台赠送所得，不累计 VIP 和返利；购买套餐时优先抵扣。</TooltipContent></Tooltip></CardDescription><CardTitle>{formatMoney(data.giftBalance)}</CardTitle></CardHeader></Card>
+        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Percent className="size-4" />返利余额<Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="返利余额说明"><CircleHelp /></Button></TooltipTrigger><TooltipContent className="max-w-64">已结算的邀请返利，无需划转；购买套餐时在赠送余额之后抵扣。</TooltipContent></Tooltip></CardDescription><CardTitle>{formatMoney(data.referralBalance)}</CardTitle></CardHeader></Card>
       </section>
+      {data.heldBalance ? <p className="text-sm text-muted-foreground">可用总额 {formatMoney(data.availableBalance)}，订单冻结中 {formatMoney(data.heldBalance)}</p> : null}
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><WalletCards />充值余额</CardTitle><CardDescription>支持任意金额充值，充值成功后立即累计 VIP 成长值。</CardDescription></CardHeader>
         <CardContent><Field><FieldLabel htmlFor="recharge-amount">充值金额</FieldLabel><Input id="recharge-amount" inputMode="decimal" placeholder="0.00" value={amount} onChange={event => setAmount(event.target.value)} disabled={Boolean(paying)} /><FieldDescription>单次充值范围 ¥0.01–¥10,000.00</FieldDescription><div className="flex flex-col gap-2 sm:flex-row"><Button type="button" onClick={() => recharge("100")} disabled={Boolean(paying) || !data.paymentMethods.alipay}>{paying === "100" ? <Loader2 className="animate-spin" /> : null}{data.paymentMethods.alipay ? "支付宝充值" : "支付宝维护中"}</Button><Button type="button" variant="outline" onClick={() => recharge("200")} disabled={Boolean(paying) || !data.paymentMethods.wechat}>{paying === "200" ? <Loader2 className="animate-spin" /> : null}{data.paymentMethods.wechat ? "微信充值" : "微信支付维护中"}</Button></div></Field></CardContent>
       </Card>
       <Card>
         <CardHeader><CardTitle>余额流水</CardTitle><CardDescription>充值、赠送、消费和返利都会保留不可删除的记录。</CardDescription></CardHeader>
-        <CardContent>{data.entries.length ? <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>类型</TableHead><TableHead>说明</TableHead><TableHead>余额变动</TableHead><TableHead className="text-right">余额</TableHead></TableRow></TableHeader><TableBody>{data.entries.map(entry => { const delta = entry.cashDelta + entry.giftDelta; return <TableRow key={entry.id}><TableCell>{formatDateTime(entry.createdAt)}</TableCell><TableCell><Badge variant="outline">{entry.type === "recharge" ? "充值" : entry.type === "purchase" ? "消费" : entry.type === "reward" ? "赠送" : "返利"}</Badge></TableCell><TableCell>{entry.description || "-"}</TableCell><TableCell className={delta >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-foreground"}>{delta >= 0 ? "+" : ""}{formatMoney(delta)}</TableCell><TableCell className="text-right">{formatMoney(entry.balance)}</TableCell></TableRow> })}</TableBody></Table> : <p className="text-sm text-muted-foreground">暂无余额流水</p>}</CardContent>
+        <CardContent>{data.entries.length ? <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>类型</TableHead><TableHead>说明</TableHead><TableHead>余额变动</TableHead><TableHead className="text-right">余额</TableHead></TableRow></TableHeader><TableBody>{data.entries.map(entry => { const delta = entry.cashDelta + entry.giftDelta + entry.referralDelta; return <TableRow key={entry.id}><TableCell>{formatDateTime(entry.createdAt)}</TableCell><TableCell><Badge variant="outline">{entry.type === "recharge" ? "充值" : entry.type === "purchase" ? "消费" : entry.type === "reward" ? "赠送" : entry.type === "referral" ? "返利" : entry.type === "reversal" ? "撤销" : "其他"}</Badge></TableCell><TableCell>{entry.description || "-"}</TableCell><TableCell className={delta >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-foreground"}>{delta >= 0 ? "+" : ""}{formatMoney(delta)}</TableCell><TableCell className="text-right">{formatMoney(entry.balance)}</TableCell></TableRow> })}</TableBody></Table> : <p className="text-sm text-muted-foreground">暂无余额流水</p>}</CardContent>
       </Card>
     </div>
   )
@@ -282,18 +281,10 @@ function CopyValue({ label, value }: { label: string; value: string }) {
 
 export function AccountReferralPage() {
   const [data, setData] = React.useState<{ code: string; invitedCount: number; referralBalance: number; pendingAmount: number; earnedAmount: number; referralRate: number; recurringReferral: boolean; rewards: ReferralReward[] } | null>(null)
-  const [amount, setAmount] = React.useState("")
-  const [loading, setLoading] = React.useState(false)
   const load = React.useCallback(() => fetchJson<typeof data>("/api/account/referrals").then(setData), [])
   React.useEffect(() => { void load() }, [load])
   if (!data) return <PageLoading />
   const inviteUrl = `${window.location.origin}/register?ref=${data.code}`
-  async function transfer() {
-    setLoading(true)
-    try { await postJson("/api/account/referrals/transfer", { amount }); setAmount(""); await load(); toast.success("返利已转入余额钱包") }
-    catch (error) { toast.error(error instanceof Error ? error.message : "转入失败") }
-    finally { setLoading(false) }
-  }
   return <div className="grid gap-4 px-4 lg:px-6">
     <section className="grid gap-4 sm:grid-cols-2" aria-label="邀请返利统计">
       <ReferralMetric icon={Users} label="已注册用户数" value={`${data.invitedCount} 人`} />
@@ -302,7 +293,7 @@ export function AccountReferralPage() {
       <ReferralMetric icon={Coins} label="累计获得佣金" value={formatMoney(data.earnedAmount)} />
     </section>
     <Card><CardContent className="grid gap-4 pt-6 sm:grid-cols-2"><CopyValue label="邀请码" value={data.code} /><CopyValue label="邀请链接" value={inviteUrl} /></CardContent></Card>
-    <Card><CardHeader><CardTitle>邀请返利</CardTitle><CardDescription>分享邀请码，邀请好友购买套餐后获得返利。</CardDescription></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2"><Metric label="我的邀请码" value={data.code} /><Metric label="返利比例" value={`${data.referralRate}%${data.recurringReferral ? "（循环返利）" : "（首次购买）"}`} /><Metric label="返利钱包" value={formatMoney(data.referralBalance)} /><div className="grid gap-2"><Label htmlFor="referral-transfer">转入余额钱包</Label><div className="flex gap-2"><Input id="referral-transfer" inputMode="decimal" placeholder="金额" value={amount} onChange={event => setAmount(event.target.value)} /><Button onClick={() => void transfer()} disabled={loading || !amount}>{loading ? <Loader2 className="animate-spin" /> : null}转入</Button></div></div><p className="text-sm text-muted-foreground sm:col-span-2">邀请链接：{`${window.location.origin}/register?ref=${data.code}`}</p></CardContent></Card>
+    <Card><CardHeader><CardTitle>邀请返利</CardTitle><CardDescription>分享邀请码，邀请好友购买套餐后获得返利。</CardDescription></CardHeader><CardContent className="grid gap-4 sm:grid-cols-3"><Metric label="我的邀请码" value={data.code} /><Metric label="返利比例" value={`${data.referralRate}%${data.recurringReferral ? "（循环返利）" : "（首次购买）"}`} /><Metric label="返利余额" value={formatMoney(data.referralBalance)} description="已到账返利可在购买套餐时直接抵扣，无需划转。" /></CardContent></Card>
     <Card><CardHeader><CardTitle>返利明细</CardTitle></CardHeader><CardContent>{data.rewards.length ? <Table><TableHeader><TableRow><TableHead>来源订单</TableHead><TableHead>实际投入</TableHead><TableHead>返利金额</TableHead><TableHead>状态</TableHead><TableHead>到账时间</TableHead></TableRow></TableHeader><TableBody>{data.rewards.map(item => <TableRow key={item.id}><TableCell className="font-mono text-xs">{item.sourceOrderId}</TableCell><TableCell>{formatMoney(item.baseAmount)}</TableCell><TableCell>{formatMoney(item.rewardAmount)}</TableCell><TableCell><Badge variant={item.status === "available" ? "success" : "secondary"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "审核中" : item.status}</Badge></TableCell><TableCell>{formatDateTime(item.availableAt)}</TableCell></TableRow>)}</TableBody></Table> : <p className="text-sm text-muted-foreground">暂无返利记录</p>}</CardContent></Card>
   </div>
 }
@@ -376,6 +367,9 @@ export function AccountOrderDetailPage() {
             <OrderInfo label="套餐" value={`${order.planName} / ${order.optionLabel}`} />
             <OrderInfo label="订单金额" value={formatMoney(order.totalAmount ?? order.amount)} emphasis />
             {order.walletAmount ? <OrderInfo label="余额支付" value={formatMoney(order.walletAmount)} /> : null}
+            {order.walletGiftAmount ? <OrderInfo label="赠送余额" value={formatMoney(order.walletGiftAmount)} /> : null}
+            {order.walletReferralAmount ? <OrderInfo label="返利余额" value={formatMoney(order.walletReferralAmount)} /> : null}
+            {order.walletCashAmount ? <OrderInfo label="充值余额" value={formatMoney(order.walletCashAmount)} /> : null}
             {order.walletAmount ? <OrderInfo label="第三方支付" value={formatMoney(order.amount)} /> : null}
             <OrderInfo label="创建时间" value={formatDateTime(order.createdAt)} />
             <OrderInfo label="支付时间" value={order.paidAt ? formatDateTime(order.paidAt) : "尚未支付"} />

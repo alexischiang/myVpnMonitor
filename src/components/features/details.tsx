@@ -1,7 +1,7 @@
 import * as React from "react"
-import { Link, useLocation, useParams } from "react-router-dom"
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { AlertCircle, ArrowLeft, ArrowRight, Eye, Gift, Loader2, MailCheck, Power, RefreshCw, UserCog } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Banknote, Eye, Gift, Loader2, MailCheck, Power, RefreshCw, UserCog } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -34,6 +34,24 @@ type GiftPreview = {
   expiresAt: string
   subscription: User["subscription"] | null
   reason?: string
+}
+
+type ManualPaymentQuote = {
+  optionId: string
+  optionLabel: string
+  originalAmount: number
+  vipLevel: string
+  vipDiscountAmount: number
+  cashCredit: number
+  amount: number
+  purchaseAction: "initial" | "extend" | "replace"
+}
+
+const manualPaymentPlans = [{ value: "basic", label: "BASIC" }, { value: "pro", label: "PRO" }, { value: "ultra", label: "ULTRA" }]
+const manualPaymentDurations = [{ value: "30", label: "月付 30 天" }, { value: "90", label: "季付 90 天" }, { value: "180", label: "半年付 180 天" }, { value: "360", label: "年付 360 天" }]
+
+function manualPaymentOptionId(plan: string, traffic: string, duration: string) {
+  return `${plan}${traffic === "unlimited" ? "-unlimited" : ""}-${duration}`
 }
 
 function formatPoolExpiryDifference(days?: number | null) {
@@ -210,6 +228,7 @@ export function SubscriptionDetailPage() {
 export function UserDetailPage() {
   const { id } = useParams()
   const location = useLocation()
+  const navigate = useNavigate()
   const { users, subscriptions, bills, reload, runAsync } = useData()
   const summaryUser = users.find(entry => entry.id === id)
   const [loadedUser, setLoadedUser] = React.useState<User | null>(null)
@@ -228,6 +247,15 @@ export function UserDetailPage() {
   const [giftBalanceNote, setGiftBalanceNote] = React.useState("")
   const [giftBalanceError, setGiftBalanceError] = React.useState("")
   const [giftBalanceSaving, setGiftBalanceSaving] = React.useState(false)
+  const [manualPaymentOpen, setManualPaymentOpen] = React.useState(false)
+  const [manualPaymentPlan, setManualPaymentPlan] = React.useState("basic")
+  const [manualPaymentTraffic, setManualPaymentTraffic] = React.useState("limited")
+  const [manualPaymentDuration, setManualPaymentDuration] = React.useState("30")
+  const [manualPaymentQuote, setManualPaymentQuote] = React.useState<ManualPaymentQuote | null>(null)
+  const [manualPaymentAmount, setManualPaymentAmount] = React.useState("")
+  const [manualPaymentError, setManualPaymentError] = React.useState("")
+  const [manualPaymentLoading, setManualPaymentLoading] = React.useState(false)
+  const [manualPaymentSaving, setManualPaymentSaving] = React.useState(false)
   const [poolOpen, setPoolOpen] = React.useState(false)
   const [poolId, setPoolId] = React.useState("")
   const [poolSaving, setPoolSaving] = React.useState(false)
@@ -440,12 +468,86 @@ export function UserDetailPage() {
     }
   }
 
+  async function loadManualPaymentQuote(plan: string, traffic: string, duration: string) {
+    setManualPaymentLoading(true)
+    setManualPaymentError("")
+    setManualPaymentQuote(null)
+    setManualPaymentAmount("")
+    try {
+      const quote = await postJson<ManualPaymentQuote>("/api/admin/manual-payments/quote", {
+        accountId: user.accountId,
+        optionId: manualPaymentOptionId(plan, traffic, duration),
+      })
+      setManualPaymentQuote(quote)
+      setManualPaymentAmount(quote.originalAmount.toFixed(2))
+    } catch (error) {
+      setManualPaymentError(error instanceof Error ? error.message : "获取人工收款报价失败")
+    } finally {
+      setManualPaymentLoading(false)
+    }
+  }
+
+  function openManualPaymentDialog() {
+    const plan = manualPaymentPlans.some(item => item.value === user.activeGroup) ? user.activeGroup || "basic" : "basic"
+    const traffic = user.unlimited ? "unlimited" : "limited"
+    setManualPaymentPlan(plan)
+    setManualPaymentTraffic(traffic)
+    setManualPaymentDuration("30")
+    setManualPaymentOpen(true)
+    void loadManualPaymentQuote(plan, traffic, "30")
+  }
+
+  async function submitManualPayment(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!manualPaymentQuote) return
+    const amount = Number(manualPaymentAmount)
+    if (!/^\d+(\.\d{1,2})?$/.test(manualPaymentAmount.trim()) || amount <= 0 || amount > 10000) {
+      setManualPaymentError("请输入 0.01 至 10,000.00 元，最多两位小数。")
+      return
+    }
+    setManualPaymentSaving(true)
+    setManualPaymentError("")
+    try {
+      const order = await postJson<{ userId?: string }>("/api/admin/manual-payments", {
+        accountId: user.accountId,
+        optionId: manualPaymentQuote.optionId,
+        amount,
+      })
+      setManualPaymentOpen(false)
+      await reload(["users", "subscriptions", "bills"])
+      toast.success("人工收款已完成，套餐已生效")
+      if (user.registeredOnly && order.userId) navigate(`/users/detail/${order.userId}`)
+      else await refreshUserDetails()
+    } catch (error) {
+      setManualPaymentError(error instanceof Error ? error.message : "人工收款失败")
+    } finally {
+      setManualPaymentSaving(false)
+    }
+  }
+
   return (
     <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
+      <Dialog open={manualPaymentOpen} onOpenChange={setManualPaymentOpen}>
+        <DialogContent>
+          <form className="grid gap-4" onSubmit={submitManualPayment}>
+            <DialogHeader><DialogTitle>人工收款</DialogTitle></DialogHeader>
+            <FieldGroup>
+              <Field><FieldLabel htmlFor="manual-payment-plan">套餐</FieldLabel><Select value={manualPaymentPlan} onValueChange={value => { setManualPaymentPlan(value); void loadManualPaymentQuote(value, manualPaymentTraffic, manualPaymentDuration) }} disabled={manualPaymentLoading || manualPaymentSaving}><SelectTrigger id="manual-payment-plan" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{manualPaymentPlans.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+              <Field><FieldLabel htmlFor="manual-payment-traffic">流量版本</FieldLabel><Select value={manualPaymentTraffic} onValueChange={value => { setManualPaymentTraffic(value); void loadManualPaymentQuote(manualPaymentPlan, value, manualPaymentDuration) }} disabled={manualPaymentLoading || manualPaymentSaving}><SelectTrigger id="manual-payment-traffic" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="limited">固定流量</SelectItem><SelectItem value="unlimited">无限流量</SelectItem></SelectContent></Select></Field>
+              <Field><FieldLabel htmlFor="manual-payment-duration">计费周期</FieldLabel><Select value={manualPaymentDuration} onValueChange={value => { setManualPaymentDuration(value); void loadManualPaymentQuote(manualPaymentPlan, manualPaymentTraffic, value) }} disabled={manualPaymentLoading || manualPaymentSaving}><SelectTrigger id="manual-payment-duration" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{manualPaymentDurations.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+            </FieldGroup>
+            {manualPaymentLoading ? <Item variant="outline"><ItemContent><ItemTitle>正在计算报价</ItemTitle><ItemDescription>请稍候</ItemDescription></ItemContent><ItemActions><Loader2 className="animate-spin" /></ItemActions></Item> : null}
+            {manualPaymentQuote ? <><Item variant="outline"><ItemContent><ItemTitle>{manualPaymentQuote.optionLabel}</ItemTitle><ItemDescription>仅显示套餐原价，不统计税费等</ItemDescription></ItemContent><ItemActions><span className="font-semibold">{formatMoney(manualPaymentQuote.originalAmount)}</span></ItemActions></Item><Field><FieldLabel htmlFor="manual-payment-amount">收款金额</FieldLabel><Input id="manual-payment-amount" inputMode="decimal" value={manualPaymentAmount} onChange={event => { setManualPaymentAmount(event.target.value); setManualPaymentError("") }} aria-invalid={Boolean(manualPaymentError)} required /></Field></> : null}
+            {manualPaymentQuote?.purchaseAction !== "initial" ? <Alert variant="warning"><AlertCircle /><AlertDescription>{manualPaymentQuote?.purchaseAction === "replace" ? "确认后将立即替换当前套餐。" : "确认后将在当前到期日基础上续期。"}</AlertDescription></Alert> : null}
+            {manualPaymentError ? <Alert variant="error"><AlertCircle /><AlertTitle>人工收款失败</AlertTitle><AlertDescription>{manualPaymentError}</AlertDescription></Alert> : null}
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={manualPaymentSaving}>取消</Button></DialogClose><Button type="submit" disabled={!manualPaymentQuote || manualPaymentLoading || manualPaymentSaving}>{manualPaymentSaving ? <Loader2 className="animate-spin" /> : <Banknote />}{manualPaymentSaving ? "处理中..." : `确认收款 ${manualPaymentAmount && Number.isFinite(Number(manualPaymentAmount)) ? formatMoney(Number(manualPaymentAmount)) : ""}`}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog open={giftBalanceOpen} onOpenChange={setGiftBalanceOpen}>
         <DialogContent>
           <form className="grid gap-4" onSubmit={giftBalance}>
-            <DialogHeader><DialogTitle>赠送余额</DialogTitle><DialogDescription>赠送金额永久有效，消费时优先于充值余额使用，不计入 VIP。</DialogDescription></DialogHeader>
+            <DialogHeader><DialogTitle>赠送余额</DialogTitle><DialogDescription>赠送金额永久有效，购买套餐时优先于返利和充值余额使用，不计入 VIP。</DialogDescription></DialogHeader>
             <Field><FieldLabel htmlFor="gift-balance-amount">赠送金额</FieldLabel><Input id="gift-balance-amount" inputMode="decimal" placeholder="0.00" value={giftBalanceAmount} onChange={event => { setGiftBalanceAmount(event.target.value); setGiftBalanceError("") }} aria-invalid={Boolean(giftBalanceError)} autoFocus required /><FieldError>{giftBalanceError}</FieldError></Field>
             <Field><FieldLabel htmlFor="gift-balance-note">备注</FieldLabel><Input id="gift-balance-note" maxLength={100} placeholder="可选" value={giftBalanceNote} onChange={event => setGiftBalanceNote(event.target.value)} /></Field>
             <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={giftBalanceSaving}>取消</Button></DialogClose><Button type="submit" disabled={giftBalanceSaving}>{giftBalanceSaving ? <Loader2 className="animate-spin" /> : <Gift />}{giftBalanceSaving ? "赠送中..." : "确认赠送"}</Button></DialogFooter>
@@ -552,6 +654,7 @@ export function UserDetailPage() {
           </CardContent>
           {user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : (
             <CardFooter className="grid gap-2">
+              {user.accountStatus === "active" && user.accountId ? <Button variant="outline" className="w-full" onClick={openManualPaymentDialog}><Banknote />人工收款</Button> : null}
               {user.registeredOnly ? null : <>
                 <Button variant="outline" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
                 <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>

@@ -91,6 +91,7 @@ class PostgresDataStore {
         cash_held_cents BIGINT NOT NULL DEFAULT 0 CHECK (cash_held_cents >= 0),
         gift_held_cents BIGINT NOT NULL DEFAULT 0 CHECK (gift_held_cents >= 0),
         referral_cents BIGINT NOT NULL DEFAULT 0 CHECK (referral_cents >= 0),
+        referral_held_cents BIGINT NOT NULL DEFAULT 0 CHECK (referral_held_cents >= 0),
         vip_spend_cents BIGINT NOT NULL DEFAULT 0 CHECK (vip_spend_cents >= 0),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -100,6 +101,7 @@ class PostgresDataStore {
         account_id TEXT NOT NULL REFERENCES wallet_accounts(account_id),
         cash_cents BIGINT NOT NULL DEFAULT 0,
         gift_cents BIGINT NOT NULL DEFAULT 0,
+        referral_cents BIGINT NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'pending',
         expires_at TIMESTAMPTZ NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -125,6 +127,8 @@ class PostgresDataStore {
       CREATE INDEX IF NOT EXISTS wallet_entries_account_created_idx ON wallet_entries (account_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS wallet_holds_account_status_idx ON wallet_holds (account_id, status, expires_at);
       ALTER TABLE wallet_accounts ADD COLUMN IF NOT EXISTS referral_cents BIGINT NOT NULL DEFAULT 0 CHECK (referral_cents >= 0);
+      ALTER TABLE wallet_accounts ADD COLUMN IF NOT EXISTS referral_held_cents BIGINT NOT NULL DEFAULT 0 CHECK (referral_held_cents >= 0);
+      ALTER TABLE wallet_holds ADD COLUMN IF NOT EXISTS referral_cents BIGINT NOT NULL DEFAULT 0;
       ALTER TABLE wallet_entries ADD COLUMN IF NOT EXISTS referral_delta_cents BIGINT NOT NULL DEFAULT 0;
       ALTER TABLE wallet_entries ADD COLUMN IF NOT EXISTS referral_balance_cents BIGINT NOT NULL DEFAULT 0;
       `), "wallet init");
@@ -141,6 +145,7 @@ class PostgresDataStore {
     const cashHeldCents = Number(row.cash_held_cents || 0);
     const giftHeldCents = Number(row.gift_held_cents || 0);
     const referralCents = Number(row.referral_cents || 0);
+    const referralHeldCents = Number(row.referral_held_cents || 0);
     return {
       accountId: row.account_id || "",
       cashCents,
@@ -148,8 +153,10 @@ class PostgresDataStore {
       cashHeldCents,
       giftHeldCents,
       referralCents,
+      referralHeldCents,
       availableCashCents: Math.max(cashCents - cashHeldCents, 0),
       availableGiftCents: Math.max(giftCents - giftHeldCents, 0),
+      availableReferralCents: Math.max(referralCents - referralHeldCents, 0),
       vipSpendCents: Number(row.vip_spend_cents || 0)
     };
   }
@@ -164,16 +171,17 @@ class PostgresDataStore {
 
   async releaseExpiredWalletHolds(client, accountId) {
     const expired = await client.query(
-      `SELECT cash_cents, gift_cents FROM wallet_holds
+      `SELECT cash_cents, gift_cents, referral_cents FROM wallet_holds
        WHERE account_id = $1 AND status = 'pending' AND expires_at <= NOW() FOR UPDATE`,
       [accountId]
     );
     const cashCents = expired.rows.reduce((sum, row) => sum + Number(row.cash_cents), 0);
     const giftCents = expired.rows.reduce((sum, row) => sum + Number(row.gift_cents), 0);
-    if (!cashCents && !giftCents) return;
+    const referralCents = expired.rows.reduce((sum, row) => sum + Number(row.referral_cents), 0);
+    if (!cashCents && !giftCents && !referralCents) return;
     await client.query(
-      `UPDATE wallet_accounts SET cash_held_cents = GREATEST(cash_held_cents - $2, 0), gift_held_cents = GREATEST(gift_held_cents - $3, 0), updated_at = NOW() WHERE account_id = $1`,
-      [accountId, cashCents, giftCents]
+      `UPDATE wallet_accounts SET cash_held_cents = GREATEST(cash_held_cents - $2, 0), gift_held_cents = GREATEST(gift_held_cents - $3, 0), referral_held_cents = GREATEST(referral_held_cents - $4, 0), updated_at = NOW() WHERE account_id = $1`,
+      [accountId, cashCents, giftCents, referralCents]
     );
     await client.query(
       `UPDATE wallet_holds SET status = 'released', updated_at = NOW() WHERE account_id = $1 AND status = 'pending' AND expires_at <= NOW()`,
@@ -205,7 +213,7 @@ class PostgresDataStore {
     const result = await withPgRetry(
       () => this.pool.query(
          `SELECT id, type, cash_delta_cents, gift_delta_cents, referral_delta_cents, vip_delta_cents, cash_balance_cents, gift_balance_cents, referral_balance_cents, vip_spend_cents, source_id, description, created_at
-         FROM wallet_entries WHERE account_id = $1 AND (cash_delta_cents <> 0 OR gift_delta_cents <> 0) ORDER BY created_at DESC LIMIT $2`,
+         FROM wallet_entries WHERE account_id = $1 AND (cash_delta_cents <> 0 OR gift_delta_cents <> 0 OR referral_delta_cents <> 0) ORDER BY created_at DESC LIMIT $2`,
         [accountId, Math.min(Math.max(Number(limit) || 100, 1), 200)]
       ),
       `list wallet entries ${accountId}`
@@ -238,22 +246,23 @@ class PostgresDataStore {
         const existing = await client.query("SELECT * FROM wallet_holds WHERE order_id = $1", [orderId]);
         if (existing.rows[0]) {
           await client.query("COMMIT");
-          return { cashCents: Number(existing.rows[0].cash_cents), giftCents: Number(existing.rows[0].gift_cents) };
+          return { cashCents: Number(existing.rows[0].cash_cents), giftCents: Number(existing.rows[0].gift_cents), referralCents: Number(existing.rows[0].referral_cents) };
         }
         const walletResult = await client.query("SELECT * FROM wallet_accounts WHERE account_id = $1", [accountId]);
         const wallet = this.walletRow(walletResult.rows[0]);
         const giftCents = Math.min(amountCents, wallet.availableGiftCents);
-        const cashCents = Math.min(amountCents - giftCents, wallet.availableCashCents);
+        const referralCents = Math.min(amountCents - giftCents, wallet.availableReferralCents);
+        const cashCents = Math.min(amountCents - giftCents - referralCents, wallet.availableCashCents);
         await client.query(
-          "INSERT INTO wallet_holds (order_id, account_id, cash_cents, gift_cents, expires_at) VALUES ($1, $2, $3, $4, $5)",
-          [orderId, accountId, cashCents, giftCents, expiresAt]
+          "INSERT INTO wallet_holds (order_id, account_id, cash_cents, gift_cents, referral_cents, expires_at) VALUES ($1, $2, $3, $4, $5, $6)",
+          [orderId, accountId, cashCents, giftCents, referralCents, expiresAt]
         );
         await client.query(
-          "UPDATE wallet_accounts SET cash_held_cents = cash_held_cents + $2, gift_held_cents = gift_held_cents + $3, updated_at = NOW() WHERE account_id = $1",
-          [accountId, cashCents, giftCents]
+          "UPDATE wallet_accounts SET cash_held_cents = cash_held_cents + $2, gift_held_cents = gift_held_cents + $3, referral_held_cents = referral_held_cents + $4, updated_at = NOW() WHERE account_id = $1",
+          [accountId, cashCents, giftCents, referralCents]
         );
         await client.query("COMMIT");
-        return { cashCents, giftCents };
+        return { cashCents, giftCents, referralCents };
       } catch (error) {
         try { await client.query("ROLLBACK"); } catch {}
         throw error;
@@ -272,8 +281,8 @@ class PostgresDataStore {
         const hold = result.rows[0];
         if (hold?.status === "pending") {
           await client.query(
-            "UPDATE wallet_accounts SET cash_held_cents = GREATEST(cash_held_cents - $2, 0), gift_held_cents = GREATEST(gift_held_cents - $3, 0), updated_at = NOW() WHERE account_id = $1",
-            [hold.account_id, hold.cash_cents, hold.gift_cents]
+            "UPDATE wallet_accounts SET cash_held_cents = GREATEST(cash_held_cents - $2, 0), gift_held_cents = GREATEST(gift_held_cents - $3, 0), referral_held_cents = GREATEST(referral_held_cents - $4, 0), updated_at = NOW() WHERE account_id = $1",
+            [hold.account_id, hold.cash_cents, hold.gift_cents, hold.referral_cents]
           );
           await client.query("UPDATE wallet_holds SET status = 'released', updated_at = NOW() WHERE order_id = $1", [orderId]);
         }
@@ -303,8 +312,85 @@ class PostgresDataStore {
     return this.applyWalletEntry({ id, accountId, sourceId, idempotencyKey, type: "referral", referralDeltaCents: amountCents, description, initialVipCents });
   }
 
-  async transferReferralToCash({ id, accountId, amountCents, description, initialVipCents = 0 }) {
-    return this.applyWalletEntry({ id, accountId, sourceId: id, idempotencyKey: `referral-transfer:${id}`, type: "referral-transfer", cashDeltaCents: amountCents, referralDeltaCents: -amountCents, description, initialVipCents });
+  async checkWalletEntryReversal(originalIdempotencyKey, reversalIdempotencyKey) {
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT original.*, reversal.id AS reversal_id,
+                wallet.cash_cents, wallet.gift_cents, wallet.referral_cents, wallet.vip_spend_cents,
+                wallet.cash_held_cents, wallet.gift_held_cents, wallet.referral_held_cents
+         FROM wallet_entries original
+         JOIN wallet_accounts wallet ON wallet.account_id = original.account_id
+         LEFT JOIN wallet_entries reversal ON reversal.idempotency_key = $2
+         WHERE original.idempotency_key = $1`,
+        [originalIdempotencyKey, reversalIdempotencyKey]
+      ),
+      `check wallet reversal ${originalIdempotencyKey}`
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("找不到需要撤销的钱包流水。");
+    if (row.reversal_id) return;
+    const balances = ["cash", "gift", "referral"].map(bucket => ({
+      balance: Number(row[`${bucket}_cents`]) - Number(row[`${bucket}_delta_cents`]),
+      held: Number(row[`${bucket}_held_cents`])
+    }));
+    if (balances.some(item => item.balance < item.held) || Number(row.vip_spend_cents) - Number(row.vip_delta_cents) < 0) {
+      throw new Error("相关余额已被后续订单使用，请先撤销后续订单。");
+    }
+  }
+
+  async reverseWalletEntry({ id, originalIdempotencyKey, idempotencyKey, sourceId, description }) {
+    return withPgRetry(async () => {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        const originalResult = await client.query("SELECT * FROM wallet_entries WHERE idempotency_key = $1 FOR UPDATE", [originalIdempotencyKey]);
+        const original = originalResult.rows[0];
+        if (!original) throw new Error("找不到需要撤销的钱包流水。");
+        await client.query("SELECT account_id FROM wallet_accounts WHERE account_id = $1 FOR UPDATE", [original.account_id]);
+        const duplicate = await client.query("SELECT id FROM wallet_entries WHERE idempotency_key = $1", [idempotencyKey]);
+        if (duplicate.rows[0]) {
+          const wallet = await client.query("SELECT * FROM wallet_accounts WHERE account_id = $1", [original.account_id]);
+          await client.query("COMMIT");
+          return this.walletRow(wallet.rows[0]);
+        }
+        const walletResult = await client.query("SELECT * FROM wallet_accounts WHERE account_id = $1", [original.account_id]);
+        const before = this.walletRow(walletResult.rows[0]);
+        const cashDeltaCents = -Number(original.cash_delta_cents);
+        const giftDeltaCents = -Number(original.gift_delta_cents);
+        const referralDeltaCents = -Number(original.referral_delta_cents);
+        const vipDeltaCents = -Number(original.vip_delta_cents);
+        if (
+          before.cashCents + cashDeltaCents < before.cashHeldCents ||
+          before.giftCents + giftDeltaCents < before.giftHeldCents ||
+          before.referralCents + referralDeltaCents < before.referralHeldCents ||
+          before.vipSpendCents + vipDeltaCents < 0
+        ) throw new Error("相关余额已被后续订单使用，请先撤销后续订单。");
+        const updated = await client.query(
+          `UPDATE wallet_accounts SET
+             cash_cents = cash_cents + $2,
+             gift_cents = gift_cents + $3,
+             referral_cents = referral_cents + $4,
+             vip_spend_cents = vip_spend_cents + $5,
+             updated_at = NOW()
+           WHERE account_id = $1 RETURNING *`,
+          [original.account_id, cashDeltaCents, giftDeltaCents, referralDeltaCents, vipDeltaCents]
+        );
+        const wallet = this.walletRow(updated.rows[0]);
+        await client.query(
+          `INSERT INTO wallet_entries (id, account_id, type, cash_delta_cents, gift_delta_cents, referral_delta_cents, vip_delta_cents, cash_balance_cents, gift_balance_cents, referral_balance_cents, vip_spend_cents, source_id, description, idempotency_key)
+           VALUES ($1, $2, 'reversal', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+          [id, original.account_id, cashDeltaCents, giftDeltaCents, referralDeltaCents, vipDeltaCents, wallet.cashCents, wallet.giftCents, wallet.referralCents, wallet.vipSpendCents, sourceId, description, idempotencyKey]
+        );
+        await client.query("UPDATE wallet_holds SET status = 'reversed', updated_at = NOW() WHERE order_id = $1 AND status = 'settled'", [original.source_id]);
+        await client.query("COMMIT");
+        return wallet;
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch {}
+        throw error;
+      } finally {
+        client.release();
+      }
+    }, `reverse wallet entry ${originalIdempotencyKey}`);
   }
 
   async applyWalletEntry({ id, accountId, sourceId, idempotencyKey, type, cashDeltaCents = 0, giftDeltaCents = 0, referralDeltaCents = 0, vipDeltaCents = 0, description = "", initialVipCents = 0, settleOrderId = "" }) {
@@ -322,12 +408,14 @@ class PostgresDataStore {
         }
         let heldCashCents = 0;
         let heldGiftCents = 0;
+        let heldReferralCents = 0;
         if (settleOrderId) {
           const holdResult = await client.query("SELECT * FROM wallet_holds WHERE order_id = $1 FOR UPDATE", [settleOrderId]);
           const hold = holdResult.rows[0];
           if (hold?.status === "pending") {
             heldCashCents = Number(hold.cash_cents);
             heldGiftCents = Number(hold.gift_cents);
+            heldReferralCents = Number(hold.referral_cents);
             await client.query("UPDATE wallet_holds SET status = 'settled', updated_at = NOW() WHERE order_id = $1", [settleOrderId]);
           } else if (hold?.status === "settled") {
             const wallet = await client.query("SELECT * FROM wallet_accounts WHERE account_id = $1", [accountId]);
@@ -339,19 +427,20 @@ class PostgresDataStore {
           `UPDATE wallet_accounts SET
              cash_cents = cash_cents + $2 - $4,
              gift_cents = gift_cents + $3 - $5,
-             referral_cents = referral_cents + $7,
+             referral_cents = referral_cents + $7 - $8,
              cash_held_cents = GREATEST(cash_held_cents - $4, 0),
              gift_held_cents = GREATEST(gift_held_cents - $5, 0),
+             referral_held_cents = GREATEST(referral_held_cents - $8, 0),
              vip_spend_cents = GREATEST(vip_spend_cents + $6, 0),
              updated_at = NOW()
            WHERE account_id = $1 RETURNING *`,
-           [accountId, cashDeltaCents, giftDeltaCents, heldCashCents, heldGiftCents, vipDeltaCents, referralDeltaCents]
+           [accountId, cashDeltaCents, giftDeltaCents, heldCashCents, heldGiftCents, vipDeltaCents, referralDeltaCents, heldReferralCents]
         );
         const wallet = this.walletRow(walletResult.rows[0]);
         await client.query(
           `INSERT INTO wallet_entries (id, account_id, type, cash_delta_cents, gift_delta_cents, referral_delta_cents, vip_delta_cents, cash_balance_cents, gift_balance_cents, referral_balance_cents, vip_spend_cents, source_id, description, idempotency_key)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-           [id, accountId, type, cashDeltaCents - heldCashCents, giftDeltaCents - heldGiftCents, referralDeltaCents, vipDeltaCents, wallet.cashCents, wallet.giftCents, wallet.referralCents, wallet.vipSpendCents, sourceId, description, idempotencyKey]
+           [id, accountId, type, cashDeltaCents - heldCashCents, giftDeltaCents - heldGiftCents, referralDeltaCents - heldReferralCents, vipDeltaCents, wallet.cashCents, wallet.giftCents, wallet.referralCents, wallet.vipSpendCents, sourceId, description, idempotencyKey]
         );
         await client.query("COMMIT");
         return wallet;

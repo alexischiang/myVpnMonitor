@@ -233,7 +233,7 @@ export function DataTable<TData, TValue>({
                   <TableHead
                     key={header.id}
                     colSpan={header.colSpan}
-                    className={cn("w-40 min-w-40 overflow-hidden px-4 text-left font-semibold first:w-48 first:min-w-48 first:pl-6", header.column.id === "actions" && "w-24 min-w-24 pr-4 pl-2 text-right")}
+                    className={cn("w-40 min-w-40 overflow-hidden px-4 text-left font-semibold first:w-48 first:min-w-48 first:pl-6", header.column.id === "actions" && "sticky right-0 z-20 w-24 min-w-24 border-l pr-4 pl-2 text-right", header.column.id === "actions" && (frame === "default" ? "bg-muted" : "bg-card"))}
                   >
                     {header.isPlaceholder ? null : typeof header.column.columnDef.header === "string"
                       ? <div className="text-xs font-semibold">{header.column.columnDef.header}</div>
@@ -248,7 +248,7 @@ export function DataTable<TData, TValue>({
               table.getRowModel().rows.map(row => (
                 <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
                   {row.getVisibleCells().map(cell => (
-                    <TableCell key={cell.id} className={cn("w-40 min-w-40 overflow-hidden px-4 text-left text-sm first:w-48 first:min-w-48 first:pl-6", cell.column.id === "actions" && "w-24 min-w-24 px-2 text-right")}>
+                    <TableCell key={cell.id} className={cn("w-40 min-w-40 overflow-hidden px-4 text-left text-sm first:w-48 first:min-w-48 first:pl-6", cell.column.id === "actions" && "sticky right-0 z-[1] w-24 min-w-24 border-l px-2 text-right", cell.column.id === "actions" && (frame === "default" ? "bg-background" : "bg-card"))}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}

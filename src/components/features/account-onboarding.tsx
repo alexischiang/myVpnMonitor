@@ -1,6 +1,6 @@
 import * as React from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { ArrowLeft, ArrowRight, CheckCircle2, Laptop, Link2, MonitorSmartphone, ShieldCheck, Smartphone } from "lucide-react"
+import { ArrowLeft, ArrowRight, CheckCircle2, Copy, Laptop, Link2, MonitorSmartphone, Percent, ShieldCheck, Smartphone, Users } from "lucide-react"
 
 import { fetchJson } from "@/api"
 import { Badge } from "@/components/ui/badge"
@@ -30,6 +30,10 @@ const steps = [
   {
     title: "消费累积，解锁 VIP 权益",
     description: "购买套餐和充值余额都会累计 VIP 消费。累计 ¥360 升至 VIP 2，享 5% 专属折扣；累计 ¥900 升至 VIP 3，享 10% 专属折扣。",
+  },
+  {
+    title: "分享邀请，获得返利",
+    description: "在 [邀请返利] 页面复制邀请链接。好友通过邀请链接首次购买套餐后，你会获得返利。",
   },
 ]
 
@@ -74,6 +78,20 @@ function StepPreview({ step }: { step: number }) {
           <Progress value={60} />
           <p className="text-xs text-muted-foreground">当前等级和成长进度可在“总览”中查看。</p>
         </section>
+      </CardContent>
+    </Card>
+  )
+
+  if (step === 4) return (
+    <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardDescription>邀请返利</CardDescription>
+        <CardTitle>分享邀请，好友和你都受益</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3 px-4 sm:px-6">
+        <Item variant="muted"><Users /><ItemContent><ItemTitle>邀请好友注册</ItemTitle><ItemDescription>在邀请返利页面找到你的邀请链接。</ItemDescription></ItemContent></Item>
+        <Item variant="muted"><Copy /><ItemContent><ItemTitle>分享专属链接</ItemTitle><ItemDescription>好友通过你的链接购买套餐，你将获得佣金返利。</ItemDescription></ItemContent></Item>
+        <Item variant="muted"><Percent /><ItemContent><ItemTitle>返利直接到账</ItemTitle><ItemDescription>返利余额可在购买套餐时直接抵扣。</ItemDescription></ItemContent></Item>
       </CardContent>
     </Card>
   )
