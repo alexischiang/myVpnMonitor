@@ -1,7 +1,7 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useParams } from "react-router-dom"
-import { AlertCircle, ArrowLeft, Eye, Loader2 } from "lucide-react"
+import { AlertCircle, ArrowLeft, Eye, Loader2, Undo2 } from "lucide-react"
 
 import { fetchJson, postJson } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -30,6 +30,9 @@ type AdminOrder = {
   walletAmount?: number
   walletCashAmount?: number
   walletGiftAmount?: number
+  walletReferralAmount?: number
+  realCashAmount?: number
+  virtualCashAmount?: number
   originalAmount?: number
   discountAmount?: number
   vipDiscountAmount?: number
@@ -46,6 +49,9 @@ type AdminOrder = {
   internalFulfillmentError?: string
   paymentError?: string
   deliveryUrl?: string
+  reversible?: boolean
+  reversedAt?: string
+  reversalError?: string
   createdAt: string
   paidAt?: string
 }
@@ -57,9 +63,10 @@ const orderStatusLabels: Record<string, string> = {
   abnormal: "支付异常",
   unfulfilled: "已付款未发放套餐",
   fulfilled: "已完成",
+  reversed: "已撤销",
 }
 
-const paymentChannelLabels: Record<string, string> = { "100": "支付宝", "200": "微信支付", wallet: "账户余额", "cash-credit": "现金价值全额抵扣" }
+const paymentChannelLabels: Record<string, string> = { "100": "支付宝", "200": "微信支付", manual: "人工收款", wallet: "账户余额", "cash-credit": "现金价值全额抵扣" }
 
 const orderTypeLabels: Record<string, string> = {
   initial: "新购",
@@ -80,6 +87,7 @@ function orderType(order: AdminOrder) {
 }
 
 function orderStatus(order: AdminOrder) {
+  if (order.reversedAt || order.fulfillmentStatus === "reversed") return "reversed"
   if (order.status === "paid" && order.fulfillmentStatus === "fulfilled") return "fulfilled"
   if (order.status === "paid") return "unfulfilled"
   return order.status
@@ -189,6 +197,8 @@ export function OrderDetailPage() {
   const [retryError, setRetryError] = React.useState("")
   const [retryOpen, setRetryOpen] = React.useState(false)
   const [retrying, setRetrying] = React.useState(false)
+  const [reverseOpen, setReverseOpen] = React.useState(false)
+  const [reversing, setReversing] = React.useState(false)
 
   React.useEffect(() => {
     if (!id) return
@@ -213,9 +223,32 @@ export function OrderDetailPage() {
     }
   }
 
+  async function reverseOrder() {
+    if (!id || reversing) return
+    setReversing(true)
+    setRetryError("")
+    try {
+      setOrder(await postJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}/reverse`))
+      setReverseOpen(false)
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "撤销订单失败")
+    } finally {
+      setReversing(false)
+    }
+  }
+
   return (
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="订单详情" description={order.merOrderTid} actions={<>
+        {order.reversible ? <>
+          <Button variant="destructive" size="sm" disabled={reversing || retrying} onClick={() => setReverseOpen(true)}><Undo2 />{reversing ? "正在撤销" : "撤销订单"}</Button>
+          <AlertDialog open={reverseOpen} onOpenChange={setReverseOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader><AlertDialogTitle>确认撤销此订单？</AlertDialogTitle><AlertDialogDescription>系统会撤销该订单产生的套餐变更、钱包与 VIP 流水、账单、邀请返利和优惠券占用。第三方实付款不会自动退回，仍需按实际情况人工退款。此操作不能在后台恢复。</AlertDialogDescription></AlertDialogHeader>
+              <AlertDialogFooter><AlertDialogCancel disabled={reversing}>取消</AlertDialogCancel><Button variant="destructive" asChild><AlertDialogAction disabled={reversing} onClick={() => void reverseOrder()}>确认撤销</AlertDialogAction></Button></AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </> : null}
         {status === "unfulfilled" ? <>
           <Button variant="destructive" size="sm" disabled={retrying} onClick={() => setRetryOpen(true)}>{retrying ? <Loader2 className="animate-spin" /> : null}{retrying ? "正在发放" : "重新发放"}</Button>
           <AlertDialog open={retryOpen} onOpenChange={setRetryOpen}>
@@ -229,6 +262,7 @@ export function OrderDetailPage() {
       </>} />
       {retryError ? <Alert variant="error"><AlertCircle /><AlertTitle>重新发放失败</AlertTitle><AlertDescription>{retryError}</AlertDescription></Alert> : null}
       {failure ? <Alert variant="error"><AlertCircle /><AlertTitle>{status === "unfulfilled" ? "已付款但套餐未发放" : "订单处理异常"}</AlertTitle><AlertDescription>{failure}</AlertDescription></Alert> : null}
+      <Alert><AlertCircle /><AlertTitle>金额分类</AlertTitle><AlertDescription>realCash 是用户实际支付、充值或获得的返利；virtualCash 是后台赠送余额，不代表用户现金支出。下方钱包明细仍按赠送、返利、充值分别记录。</AlertDescription></Alert>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>订单信息</CardTitle></CardHeader>
@@ -236,9 +270,10 @@ export function OrderDetailPage() {
             <DetailRow label="客户" value={order.email || "-"} />
             <DetailRow label="账单种类" value={<Badge variant={orderTypeVariants[orderType(order)]}>{orderTypeLabels[orderType(order)]}</Badge>} />
             <DetailRow label="订单状态" value={<Badge variant={statusBadgeVariant(status)}>{orderStatusLabels[status] || order.statusText}</Badge>} />
-            <DetailRow label="发放状态" value={order.fulfillmentStatus === "fulfilled" ? "已发放" : order.fulfillmentStatus === "failed" ? "发放失败" : "尚未发放"} />
+            <DetailRow label="发放状态" value={order.fulfillmentStatus === "fulfilled" ? "已发放" : order.fulfillmentStatus === "failed" ? "发放失败" : order.fulfillmentStatus === "reversed" ? "已撤销" : "尚未发放"} />
             <DetailRow label="创建时间" value={formatDateTime(order.createdAt)} />
             <DetailRow label="支付时间" value={order.paidAt ? formatDateTime(order.paidAt) : "尚未支付"} />
+            {order.reversedAt ? <DetailRow label="撤销时间" value={formatDateTime(order.reversedAt)} /> : null}
             <DetailRow label="套餐周期" value={durationLabels[order.duration || ""] || order.optionLabel} />
           </TableBody></Table></CardContent>
         </Card>
@@ -253,8 +288,11 @@ export function OrderDetailPage() {
             <DetailRow label="税费" value={formatMoney(order.taxAmount || 0)} />
             <DetailRow label="现金价值抵扣" value={`-${formatMoney(order.cashCredit || 0)}`} />
             {order.walletGiftAmount ? <DetailRow label="赠送余额支付" value={formatMoney(order.walletGiftAmount)} /> : null}
+            {order.walletReferralAmount ? <DetailRow label="返利余额支付" value={formatMoney(order.walletReferralAmount)} /> : null}
             {order.walletCashAmount ? <DetailRow label="充值余额支付" value={formatMoney(order.walletCashAmount)} /> : null}
             <DetailRow label="第三方实付" value={formatMoney(order.amount)} />
+            <DetailRow label="realCash（实际现金）" value={formatMoney(order.realCashAmount ?? ((order.amount || 0) + (order.walletCashAmount || 0) + (order.walletReferralAmount || 0)))} />
+            <DetailRow label="virtualCash（后台赠送）" value={formatMoney(order.virtualCashAmount ?? order.walletGiftAmount ?? 0)} />
             <DetailRow label="订单支付合计" value={<strong>{formatMoney(order.totalAmount ?? order.amount)}</strong>} />
           </TableBody></Table></CardContent>
         </Card>

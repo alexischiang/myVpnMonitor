@@ -190,6 +190,7 @@ async function main() {
     assert.strictEqual(disabledLogin.data.error, "该账户已停用，请联系右下角客服。");
     const restoredAccount = await request(`/api/users/${registeredOnly.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: false } });
     assert.strictEqual(restoredAccount.data.accountStatus, "active");
+
     const savedSettings = await request("/api/sales-settings", {
       method: "PUT",
       cookie: adminCookie,
@@ -444,6 +445,196 @@ async function main() {
     const exhaustedCoupon = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001", couponCode: "SAVE20" } });
     assert.strictEqual(exhaustedCoupon.response.status, 400);
 
+    const manualRegistration = await request("/api/auth/register", {
+      method: "POST",
+      body: { email: "manual@example.test", password: "payment-test-password", confirmPassword: "payment-test-password" }
+    });
+    assert.strictEqual(manualRegistration.response.status, 201);
+    const manualUsers = await request("/api/users", { cookie: adminCookie });
+    const manualAccount = manualUsers.data.find(item => item.email === "manual@example.test");
+    const manualQuote = await request("/api/admin/manual-payments/quote", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: "pro-test-001" } });
+    assert.strictEqual(manualQuote.response.status, 200);
+    const manualOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: "pro-test-001", amount: 2.34 } });
+    assert.strictEqual(manualOrder.response.status, 201);
+    assert.strictEqual(manualOrder.data.channelCode, "manual");
+    assert.strictEqual(manualOrder.data.amount, 2.34);
+    assert.strictEqual(manualOrder.data.realCashAmount, 2.34);
+    assert.strictEqual(manualOrder.data.virtualCashAmount, 0);
+    assert.strictEqual(manualOrder.data.taxAmount, 0);
+    assert.strictEqual(manualOrder.data.fulfillmentStatus, "fulfilled");
+    const manualPurchasedUsers = await request("/api/users", { cookie: adminCookie });
+    const manualPurchasedUser = manualPurchasedUsers.data.find(item => item.email === "manual@example.test");
+    assert.ok(!manualPurchasedUser.registeredOnly);
+    assert.strictEqual(manualPurchasedUser.vipSpend, 2.34);
+    const manualRenewal = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: "pro-test-001", amount: 3.21 } });
+    assert.strictEqual(manualRenewal.response.status, 201);
+    assert.strictEqual(manualRenewal.data.purchaseAction, "extend");
+    const manualRenewedUsers = await request("/api/users", { cookie: adminCookie });
+    assert.strictEqual(manualRenewedUsers.data.find(item => item.email === "manual@example.test").vipSpend, 5.55);
+
+    const inviterRegistration = await request("/api/auth/register", {
+      method: "POST",
+      body: { email: "inviter@example.test", password: "payment-test-password" }
+    });
+    const inviterCookie = inviterRegistration.response.headers.get("set-cookie").split(";", 1)[0];
+    const inviterOverview = await request("/api/account/overview", { cookie: inviterCookie });
+    const inviteeRegistration = await request("/api/auth/register", {
+      method: "POST",
+      body: { email: "invitee@example.test", password: "payment-test-password", referralCode: inviterOverview.data.referral.code }
+    });
+    const inviteeCookie = inviteeRegistration.response.headers.get("set-cookie").split(";", 1)[0];
+    const inviteeOrder = await request("/api/payments/orders", {
+      method: "POST",
+      cookie: inviteeCookie,
+      body: { optionId: "pro-test-001", channelCode: "100" }
+    });
+    await callback(inviteeOrder.data, 1, String(inviteeOrder.data.amount), true);
+
+    let referrals = await request("/api/account/referrals", { cookie: inviterCookie });
+    assert.strictEqual(referrals.data.invitedCount, 1);
+    assert.strictEqual(referrals.data.pendingAmount, 0.1);
+    assert.strictEqual(referrals.data.referralBalance, 0);
+    await database.query(
+      "UPDATE app_records SET data = jsonb_set(data, '{availableAt}', to_jsonb($1::text)) WHERE collection = 'referralRewards' AND data->>'sourceOrderId' = $2",
+      [new Date(0).toISOString(), inviteeOrder.data.id]
+    );
+    await request(`/api/admin/orders/${inviteeOrder.data.id}`, { method: "POST", cookie: adminCookie });
+    referrals = await request("/api/account/referrals", { cookie: inviterCookie });
+    assert.strictEqual(referrals.data.pendingAmount, 0);
+    assert.strictEqual(referrals.data.earnedAmount, 0.1);
+    assert.strictEqual(referrals.data.referralBalance, 0.1);
+
+    const inviterOrder = await request("/api/payments/orders", {
+      method: "POST",
+      cookie: inviterCookie,
+      body: { optionId: "pro-test-001", channelCode: "100" }
+    });
+    assert.strictEqual(inviterOrder.data.walletCashAmount, 0);
+    assert.strictEqual(inviterOrder.data.walletReferralAmount, 0.1);
+    assert.strictEqual(inviterOrder.data.amount, 0.93);
+    await callback(inviterOrder.data, 1, "0.93", true);
+    const inviterWallet = await request("/api/account/wallet", { cookie: inviterCookie });
+    assert.strictEqual(inviterWallet.data.balance, 0);
+    assert.strictEqual(inviterWallet.data.referralBalance, 0);
+    assert.strictEqual(inviterWallet.data.vipSpend, 0.93);
+
+    const chainUsers = await request("/api/users", { cookie: adminCookie });
+    const inviteeUser = chainUsers.data.find(item => item.email === "invitee@example.test");
+    const giftedWallet = await request(`/api/users/${inviteeUser.id}/wallet-gift`, {
+      method: "POST",
+      cookie: adminCookie,
+      body: { amount: 0.4, note: "wallet chain test" }
+    });
+    assert.strictEqual(giftedWallet.data.giftBalance, 0.4);
+
+    const rechargeOrder = await request("/api/wallet/recharge", {
+      method: "POST",
+      cookie: inviteeCookie,
+      body: { amount: 2, channelCode: "100" }
+    });
+    await Promise.all([
+      callback(rechargeOrder.data, 1, "2.00", true),
+      callback(rechargeOrder.data, 1, "2.00", true)
+    ]);
+    let inviteeWallet = await request("/api/account/wallet", { cookie: inviteeCookie });
+    assert.deepStrictEqual(
+      [inviteeWallet.data.cashBalance, inviteeWallet.data.giftBalance, inviteeWallet.data.vipSpend],
+      [2, 0.4, 3.03]
+    );
+
+    const walletOrder = await request("/api/payments/orders", {
+      method: "POST",
+      cookie: inviteeCookie,
+      body: { optionId: "pro-test-001", channelCode: "100" }
+    });
+    assert.strictEqual(walletOrder.data.status, "paid");
+    assert.deepStrictEqual(
+      [walletOrder.data.walletGiftAmount, walletOrder.data.walletReferralAmount, walletOrder.data.walletCashAmount, walletOrder.data.amount],
+      [0.4, 0, 0.63, 0]
+    );
+    assert.strictEqual(walletOrder.data.realCashAmount, 0.63);
+    assert.strictEqual(walletOrder.data.virtualCashAmount, 0.4);
+    const walletOrderOverview = await request("/api/account/overview", { cookie: inviteeCookie });
+    assert.strictEqual(walletOrderOverview.data.subscription.cashValue, 1.66, "现金价值只能包含实际现金支付和充值余额");
+    inviteeWallet = await request("/api/account/wallet", { cookie: inviteeCookie });
+    assert.deepStrictEqual(
+      [inviteeWallet.data.cashBalance, inviteeWallet.data.giftBalance, inviteeWallet.data.vipSpend],
+      [1.37, 0, 3.03]
+    );
+    assert.deepStrictEqual(inviteeWallet.data.entries.slice(0, 3).map(entry => entry.type), ["purchase", "recharge", "reward"]);
+
+    const invalidGift = await request(`/api/users/${inviteeUser.id}/wallet-gift`, { method: "POST", cookie: adminCookie, body: { amount: 0 } });
+    const invalidRecharge = await request("/api/wallet/recharge", { method: "POST", cookie: inviteeCookie, body: { amount: -1, channelCode: "100" } });
+    assert.strictEqual(invalidGift.response.status, 400);
+    assert.strictEqual(invalidRecharge.response.status, 400);
+
+    const inviteeEntries = await database.query(
+      "SELECT type, cash_delta_cents, gift_delta_cents, referral_delta_cents, vip_delta_cents FROM wallet_entries WHERE account_id = $1 ORDER BY created_at",
+      [inviteeUser.accountId]
+    );
+    assert.deepStrictEqual(inviteeEntries.rows.map(entry => entry.type), ["purchase", "reward", "recharge", "purchase"]);
+    assert.deepStrictEqual(inviteeEntries.rows.map(entry => [Number(entry.cash_delta_cents), Number(entry.gift_delta_cents), Number(entry.vip_delta_cents)]), [
+      [0, 0, 103],
+      [0, 40, 0],
+      [200, 0, 200],
+      [-63, -40, 0]
+    ]);
+    const inviterAccount = (await database.query("SELECT data FROM app_records WHERE collection = 'accounts' AND data->>'email' = 'inviter@example.test'")).rows[0].data;
+    const inviterEntries = await database.query(
+      "SELECT type, cash_delta_cents, referral_delta_cents, vip_delta_cents FROM wallet_entries WHERE account_id = $1 ORDER BY created_at",
+      [inviterAccount.id]
+    );
+    assert.deepStrictEqual(inviterEntries.rows.map(entry => entry.type), ["referral", "purchase"]);
+    assert.deepStrictEqual(inviterEntries.rows.map(entry => [Number(entry.cash_delta_cents), Number(entry.referral_delta_cents), Number(entry.vip_delta_cents)]), [
+      [0, 10, 0],
+      [0, -10, 93]
+    ]);
+
+    const inviteeRewards = await database.query("SELECT data FROM app_records WHERE collection = 'referralRewards' AND data->>'inviteeAccountId' = $1", [inviteeUser.accountId]);
+    assert.strictEqual(inviteeRewards.rowCount, 1, "non-recurring referrals must only reward the first paid plan order");
+
+    const blockedRechargeReversal = await request(`/api/admin/orders/${rechargeOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(blockedRechargeReversal.response.status, 400);
+    assert.match(blockedRechargeReversal.data.error, /后续订单/);
+
+    const reversedWalletOrder = await request(`/api/admin/orders/${walletOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(reversedWalletOrder.response.status, 200);
+    assert.strictEqual(reversedWalletOrder.data.fulfillmentStatus, "reversed");
+    assert.ok(reversedWalletOrder.data.reversedAt);
+    const repeatedReversal = await request(`/api/admin/orders/${walletOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(repeatedReversal.response.status, 200);
+    inviteeWallet = await request("/api/account/wallet", { cookie: inviteeCookie });
+    assert.deepStrictEqual(
+      [inviteeWallet.data.cashBalance, inviteeWallet.data.giftBalance, inviteeWallet.data.vipSpend],
+      [2, 0.4, 3.03]
+    );
+
+    const reversedRecharge = await request(`/api/admin/orders/${rechargeOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(reversedRecharge.response.status, 200);
+    inviteeWallet = await request("/api/account/wallet", { cookie: inviteeCookie });
+    assert.deepStrictEqual(
+      [inviteeWallet.data.cashBalance, inviteeWallet.data.giftBalance, inviteeWallet.data.vipSpend],
+      [0, 0.4, 1.03]
+    );
+
+    const reversedInviterOrder = await request(`/api/admin/orders/${inviterOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(reversedInviterOrder.response.status, 200);
+    let restoredInviterWallet = await request("/api/account/wallet", { cookie: inviterCookie });
+    assert.deepStrictEqual([restoredInviterWallet.data.referralBalance, restoredInviterWallet.data.vipSpend], [0.1, 0]);
+
+    const reversedInviteeOrder = await request(`/api/admin/orders/${inviteeOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(reversedInviteeOrder.response.status, 200);
+    referrals = await request("/api/account/referrals", { cookie: inviterCookie });
+    assert.deepStrictEqual([referrals.data.pendingAmount, referrals.data.earnedAmount, referrals.data.referralBalance], [0, 0, 0]);
+    restoredInviterWallet = await request("/api/account/wallet", { cookie: inviterCookie });
+    assert.strictEqual(restoredInviterWallet.data.referralBalance, 0);
+    const reversedUsers = await request("/api/users", { cookie: adminCookie });
+    assert.strictEqual(reversedUsers.data.find(item => item.email === "invitee@example.test")?.registeredOnly, true);
+    const reversedBills = await database.query("SELECT COUNT(*)::int AS count FROM app_records WHERE collection = 'bills' AND data->>'paymentOrderId' = ANY($1::text[]) AND data->>'reversedAt' <> ''", [[walletOrder.data.id, inviterOrder.data.id, inviteeOrder.data.id]]);
+    assert.strictEqual(reversedBills.rows[0].count, 3);
+    const reversalEntries = await database.query("SELECT COUNT(*)::int AS count FROM wallet_entries WHERE idempotency_key LIKE 'reversal:%' AND source_id = ANY($1::text[])", [[walletOrder.data.id, rechargeOrder.data.id, inviterOrder.data.id, inviteeOrder.data.id]]);
+    assert.strictEqual(reversalEntries.rows[0].count, 5, "four orders plus the settled referral must each be reversed once");
+
     await request(`/api/subscriptions/${subscription.id}`, { method: "PUT", cookie: adminCookie, body: { enabled: false } });
     const noPoolOrder = await createOrder({ optionId: "basic-360" });
     assert.strictEqual(noPoolOrder.response.status, 201);
@@ -464,6 +655,11 @@ async function main() {
     assert.strictEqual(noPoolAdminOrder.internalFulfillmentError, "没有可用的池 URL。");
     const adminOrderDetail = await request(`/api/admin/orders/${noPoolOrder.data.id}`, { cookie: adminCookie });
     assert.strictEqual(adminOrderDetail.data.id, noPoolOrder.data.id);
+    const reversedFailedFulfillment = await request(`/api/admin/orders/${noPoolOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(reversedFailedFulfillment.response.status, 200);
+    assert.strictEqual(reversedFailedFulfillment.data.fulfillmentStatus, "reversed");
+    const buyerUsersAfterFailedReversal = await database.query("SELECT COUNT(*)::int AS count FROM app_records WHERE collection = 'users' AND data->>'email' = 'buyer@example.test'");
+    assert.strictEqual(buyerUsersAfterFailedReversal.rows[0].count, 1, "reversing a failed renewal must not duplicate the existing user");
 
     const passwordChange = await request("/api/auth/password", {
       method: "PUT",
@@ -477,7 +673,7 @@ async function main() {
     const newPasswordLogin = await request("/api/auth/login", { method: "POST", body: { account: "buyer@example.test", password: "payment-test-password-new" } });
     assert.strictEqual(newPasswordLogin.response.status, 200);
 
-    console.log("Payment chain checks passed: auth, quote, create, gateway failures, signatures, callbacks, amount validation, fulfillment, idempotency, polling, access control, and return page.");
+    console.log("Payment chain checks passed: payments, wallet priority, referral spending, idempotent reversals, snapshots, ledger entries, and validation.");
   } finally {
     if (app) await close(app);
     if (handler) await handler.closeDataStore();

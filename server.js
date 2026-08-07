@@ -925,12 +925,20 @@ function deliveryUrlForUser(user, req) {
   return user?.subscriptionToken ? `${requestOrigin(req)}/delivery/${encodeURIComponent(user.subscriptionToken)}` : "";
 }
 
+function paymentMoneyBreakdown(order) {
+  return {
+    realCash: Math.max(0, Number(order?.amount || 0) + Number(order?.walletCashAmount || 0) + Number(order?.walletReferralAmount || 0)),
+    virtualCash: Math.max(0, Number(order?.walletGiftAmount || 0))
+  };
+}
+
 function publicPaymentOrder(order) {
   if (!order) return null;
-  const status = order.status === "pending" && isPaymentOrderExpired(order) ? "closed" : order.status;
+  const status = order.reversedAt ? "reversed" : order.status === "pending" && isPaymentOrderExpired(order) ? "closed" : order.status;
   const vipSpendAmount = Number(order.vipSpendAmount) || 0;
   const currentVipSpend = userVipSpend(userForAccount(accounts.find(item => item.id === order.accountId)));
   const vipSpendAfter = Number.isFinite(Number(order.vipSpendAfter)) ? Number(order.vipSpendAfter) : currentVipSpend;
+  const money = paymentMoneyBreakdown(order);
   const poolFulfillmentError = {
     "没有可用的池 URL。": `目前没有可用 ${order.planName} 池发放。`,
     "池 URL 缺少到期时间，请手动选择。": `${order.planName} 池缺少有效到期时间，暂时无法发放。`,
@@ -950,6 +958,9 @@ function publicPaymentOrder(order) {
     walletAmount: order.walletAmount || 0,
     walletCashAmount: order.walletCashAmount || 0,
     walletGiftAmount: order.walletGiftAmount || 0,
+    walletReferralAmount: order.walletReferralAmount || 0,
+    realCashAmount: money.realCash,
+    virtualCashAmount: money.virtualCash,
     originalAmount: order.originalAmount ?? order.amount,
     discountAmount: order.discountAmount || 0,
     vipLevel: order.vipLevel || "vip1",
@@ -988,7 +999,10 @@ function adminPaymentOrder(order) {
     email: order.email || account?.email || "",
     duration: order.duration || "",
     group: order.group || "",
-    internalFulfillmentError: order.fulfillmentError || ""
+    internalFulfillmentError: order.fulfillmentError || "",
+    reversible: order.status === "paid" && Boolean(order.rollbackSnapshot) && !order.reversedAt,
+    reversedAt: order.reversedAt || "",
+    reversalError: order.reversalError || ""
   };
 }
 
@@ -996,6 +1010,7 @@ function paymentStatusText(status) {
   return ({
     pending: "待付款",
     paid: "已支付",
+    reversed: "业务已撤销",
     failed: "支付失败",
     abnormal: "支付异常",
     closed: "已关闭"
@@ -1239,7 +1254,7 @@ function paymentCoupons(value) {
 
 function couponUsageOrders(code) {
   const normalizedCode = String(code || "").toUpperCase();
-  return paymentOrders.filter(order => String(order.couponCode || "").toUpperCase() === normalizedCode && order.status === "paid");
+  return paymentOrders.filter(order => String(order.couponCode || "").toUpperCase() === normalizedCode && order.status === "paid" && !order.reversedAt);
 }
 
 function validateCouponUsage(coupon, option, accountId = "") {
@@ -1383,14 +1398,23 @@ async function walletForAccount(account) {
 }
 
 function publicWallet(wallet) {
+  const realCashCents = wallet.cashCents + wallet.referralCents;
+  const virtualCashCents = wallet.giftCents;
+  const availableRealCashCents = wallet.availableCashCents + wallet.availableReferralCents;
+  const availableVirtualCashCents = wallet.availableGiftCents;
   return {
     cashBalance: wallet.cashCents / 100,
     giftBalance: wallet.giftCents / 100,
-    balance: (wallet.cashCents + wallet.giftCents) / 100,
+    balance: (wallet.cashCents + wallet.giftCents + wallet.referralCents) / 100,
     availableCashBalance: wallet.availableCashCents / 100,
     availableGiftBalance: wallet.availableGiftCents / 100,
-    availableBalance: (wallet.availableCashCents + wallet.availableGiftCents) / 100,
-    heldBalance: (wallet.cashHeldCents + wallet.giftHeldCents) / 100,
+    availableReferralBalance: wallet.availableReferralCents / 100,
+    availableBalance: (wallet.availableCashCents + wallet.availableGiftCents + wallet.availableReferralCents) / 100,
+    realCashBalance: realCashCents / 100,
+    virtualCashBalance: virtualCashCents / 100,
+    availableRealCashBalance: availableRealCashCents / 100,
+    availableVirtualCashBalance: availableVirtualCashCents / 100,
+    heldBalance: (wallet.cashHeldCents + wallet.giftHeldCents + wallet.referralHeldCents) / 100,
     referralBalance: wallet.referralCents / 100,
     vipSpend: wallet.vipSpendCents / 100
   };
@@ -1478,14 +1502,16 @@ async function paymentQuoteForAccount(payload, account) {
   const payableCents = Math.round(quote.amount * 100);
   const useBalance = payload.useBalance !== false;
   const walletGiftCents = useBalance ? Math.min(payableCents, wallet.availableGiftCents) : 0;
-  const walletCashCents = useBalance ? Math.min(payableCents - walletGiftCents, wallet.availableCashCents) : 0;
+  const walletReferralCents = useBalance ? Math.min(payableCents - walletGiftCents, wallet.availableReferralCents) : 0;
+  const walletCashCents = useBalance ? Math.min(payableCents - walletGiftCents - walletReferralCents, wallet.availableCashCents) : 0;
   return {
     ...quote,
     payableAmount: payableCents / 100,
     walletGiftAmount: walletGiftCents / 100,
+    walletReferralAmount: walletReferralCents / 100,
     walletCashAmount: walletCashCents / 100,
-    walletAmount: (walletGiftCents + walletCashCents) / 100,
-    amount: (payableCents - walletGiftCents - walletCashCents) / 100,
+    walletAmount: (walletGiftCents + walletReferralCents + walletCashCents) / 100,
+    amount: (payableCents - walletGiftCents - walletReferralCents - walletCashCents) / 100,
     paymentMethods: publicPaymentMethods(),
     paymentPlatforms: publicPaymentPlatforms(),
     wallet: publicWallet(wallet)
@@ -1503,7 +1529,7 @@ function planCashValueFromBills(user, userBills = bills) {
     .sort((a, b) => new Date(a.createdAt || a.occurredAt) - new Date(b.createdAt || b.occurredAt))) {
     const occurredAt = new Date(bill.occurredAt || 0).getTime();
     const afterExpiresAt = new Date(bill.afterExpiresAt || 0).getTime();
-    const amount = Number(bill.amount);
+    const amount = billCashValueAmount(bill);
     if (!Number.isFinite(occurredAt) || !Number.isFinite(afterExpiresAt) || !Number.isFinite(amount)) continue;
 
     const nextValuedAt = Math.max(occurredAt, valuedAt);
@@ -1523,13 +1549,16 @@ function planCashValueFromBills(user, userBills = bills) {
 function ensureUserCashValues() {
   let changed = false;
   for (const user of users) {
-    if (user.cashValue !== undefined && user.cashValue !== null) continue;
     const rebuilt = planCashValueFromBills(user);
     const valuedAt = rebuilt?.valuedAt ?? new Date(user.purchasedAt || 0).getTime();
     if (!Number.isFinite(valuedAt)) continue;
-    user.cashValue = rebuilt?.cashValue ?? Math.max(Number(user.actualPaid) || 0, 0);
-    user.cashValueAt = new Date(valuedAt).toISOString();
-    changed = true;
+    const cashValue = rebuilt?.cashValue ?? 0;
+    const cashValueAt = new Date(valuedAt).toISOString();
+    if (Number(user.cashValue) !== cashValue || user.cashValueAt !== cashValueAt) {
+      user.cashValue = cashValue;
+      user.cashValueAt = cashValueAt;
+      changed = true;
+    }
   }
   return changed;
 }
@@ -1551,6 +1580,12 @@ function paymentPurchaseTerms(user, option, beforeCreditAmount, now = new Date()
   const replaces = activeUserGroup(user) !== option.group || Boolean(user.unlimited) !== Boolean(option.unlimited);
   const cashCredit = replaces ? Math.min(remainingPlanCashValue(user, now), beforeCreditAmount) : 0;
   return { purchaseAction: replaces ? "replace" : "extend", cashCredit };
+}
+
+function billCashValueAmount(bill) {
+  const order = paymentOrders.find(item => item.id === bill.paymentOrderId);
+  if (!order) return Math.max(Number(bill.amount) || 0, 0);
+  return Math.max(Number(order.amount || 0) + Number(order.walletCashAmount || 0), 0);
 }
 
 function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1", accountId = "") {
@@ -1607,10 +1642,14 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
 const paymentFulfillmentTasks = new Map();
 
 async function fulfillPaymentOrderOnce(order, req) {
-  if (!order || order.status !== "paid" || (order.fulfilledAt && order.fulfillmentStatus !== "failed")) return order;
+  if (!order || order.status !== "paid" || order.reversedAt || (order.fulfilledAt && order.fulfillmentStatus !== "failed")) return order;
   if (order.purpose === "recharge") {
     const account = accounts.find(item => item.id === order.accountId);
     if (!account) throw new Error("充值账户不存在。");
+    if (!order.rollbackSnapshot) {
+      order.rollbackSnapshot = { version: 1, purpose: "recharge", capturedAt: new Date().toISOString() };
+      await savePaymentOrders();
+    }
     const wallet = await dataStore.creditWalletRecharge({
       id: crypto.randomUUID(),
       accountId: account.id,
@@ -1639,6 +1678,17 @@ async function fulfillPaymentOrderOnce(order, req) {
   let user = account?.linkedUserId
     ? users.find(item => item.id === account.linkedUserId)
     : users.find(item => String(item.userId || "").toLowerCase() === email);
+  if (!order.rollbackSnapshot) {
+    order.rollbackSnapshot = {
+      version: 1,
+      purpose: "plan",
+      capturedAt: new Date().toISOString(),
+      accountLinkedUserId: account?.linkedUserId || "",
+      userId: user?.id || "",
+      user: user ? structuredClone(user) : null
+    };
+    await savePaymentOrders();
+  }
   if (user && !user.email) user.email = email;
   const wallet = await dataStore.settleWalletPurchase({
     id: crypto.randomUUID(),
@@ -1659,9 +1709,9 @@ async function fulfillPaymentOrderOnce(order, req) {
     const poolChanged = previousSubscription?.id !== recommendation.subscription.id;
     const renewal = renewUser(user, {
       purchasedAt,
-      actualPaid: order.totalAmount ?? order.amount,
+      actualPaid: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
       vipSpendAmount: order.amount,
-      cashValueAmount: order.totalAmount ?? order.amount,
+      cashValueAmount: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
       duration: selectedOption.duration,
       group: selectedOption.group,
       unlimited: Boolean(selectedOption.unlimited),
@@ -1672,7 +1722,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       user,
       type: order.purchaseAction === "replace" ? "replacement" : "renewal",
       paymentOrderId: order.id,
-      amount: order.totalAmount ?? order.amount,
+      amount: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
       vipSpendAmount: renewal.vipSpendAmount,
       occurredAt: renewal.renewedAt,
       duration: user.duration,
@@ -1714,13 +1764,13 @@ async function fulfillPaymentOrderOnce(order, req) {
       email,
       wechatName: "",
       purchasedAt,
-      actualPaid: order.totalAmount ?? order.amount,
+      actualPaid: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
       vipSpend: wallet.vipSpendCents / 100,
       duration: selectedOption.duration,
       group: selectedOption.group,
       activeGroup: selectedOption.group,
       unlimited: Boolean(selectedOption.unlimited),
-      cashValue: order.totalAmount ?? order.amount,
+      cashValue: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
       cashValueAt: purchasedAt,
       subscriptionId: recommendation.subscription.id,
       outputMode: "subconverter",
@@ -1733,7 +1783,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       user,
       type: "initial",
       paymentOrderId: order.id,
-      amount: order.totalAmount ?? order.amount,
+      amount: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
       vipSpendAmount: userVipSpend(user),
       occurredAt: user.purchasedAt,
       duration: user.duration,
@@ -1783,7 +1833,7 @@ async function fulfillPaymentOrderOnce(order, req) {
 }
 
 async function fulfillPaymentOrder(order, req) {
-  if (!order || order.status !== "paid" || (order.fulfilledAt && order.fulfillmentStatus !== "failed")) return order;
+  if (!order || order.status !== "paid" || order.reversedAt || (order.fulfilledAt && order.fulfillmentStatus !== "failed")) return order;
   const key = String(order.id || order.merOrderTid || "");
   const activeTask = paymentFulfillmentTasks.get(key);
   if (activeTask) return activeTask;
@@ -1800,7 +1850,104 @@ async function fulfillPaymentOrder(order, req) {
   }
 }
 
+const paymentReversalTasks = new Map();
+
+async function reversePaymentOrderOnce(order) {
+  if (order.reversedAt) return order;
+  if (order.status !== "paid") throw new Error("只有已付款订单可以撤销。");
+  if (!order.rollbackSnapshot) throw new Error("该订单创建时尚未记录撤销快照，无法安全地一键撤销。");
+  if (!order.fulfilledAt && order.fulfillmentStatus !== "failed") throw new Error("该订单尚未产生可撤销的发放结果。");
+
+  if (order.purpose !== "recharge") {
+    const orderIndex = paymentOrders.findIndex(item => item.id === order.id);
+    const laterOrder = paymentOrders.find((item, index) =>
+      item.id !== order.id && item.accountId === order.accountId && item.purpose !== "recharge" &&
+      item.status === "paid" && item.fulfillmentStatus === "fulfilled" && !item.reversedAt &&
+      index < orderIndex
+    );
+    if (laterOrder) throw new Error(`请先撤销后续套餐订单 ${laterOrder.merOrderTid}。`);
+  }
+
+  const entryPrefix = order.purpose === "recharge" ? "recharge" : "purchase";
+  const originalEntryKey = `${entryPrefix}:${order.id}`;
+  const reversalEntryKey = `reversal:${entryPrefix}:${order.id}`;
+  const reward = referralRewards.find(item => item.sourceOrderId === order.id);
+  await dataStore.checkWalletEntryReversal(originalEntryKey, reversalEntryKey);
+  if (reward?.status === "available") {
+    await dataStore.checkWalletEntryReversal(`referral:${reward.id}`, `reversal:referral:${reward.id}`);
+  }
+
+  if (reward?.status === "available") {
+    await dataStore.reverseWalletEntry({
+      id: crypto.randomUUID(),
+      originalIdempotencyKey: `referral:${reward.id}`,
+      idempotencyKey: `reversal:referral:${reward.id}`,
+      sourceId: order.id,
+      description: `撤销订单返利：${order.merOrderTid}`
+    });
+  }
+  if (reward && reward.status !== "reversed") {
+    reward.reversalPreviousStatus = reward.status;
+    reward.status = "reversed";
+    reward.reversedAt = new Date().toISOString();
+    await saveReferralRewards();
+  }
+
+  const wallet = await dataStore.reverseWalletEntry({
+    id: crypto.randomUUID(),
+    originalIdempotencyKey: originalEntryKey,
+    idempotencyKey: reversalEntryKey,
+    sourceId: order.id,
+    description: `撤销订单：${order.merOrderTid}`
+  });
+  const account = accounts.find(item => item.id === order.accountId);
+  if (!account) throw new Error("订单账户不存在，无法完成撤销。");
+
+  if (order.purpose === "recharge") {
+    syncWalletVip(account, wallet);
+  } else {
+    const snapshot = order.rollbackSnapshot;
+    for (const bill of bills.filter(item => item.paymentOrderId === order.id)) reverseBill(bill);
+    const currentUserId = order.userId || snapshot.userId || snapshot.user?.id || "";
+    const currentIndex = users.findIndex(item => item.id === currentUserId);
+    if (snapshot.user) {
+      const restoredUser = structuredClone(snapshot.user);
+      if (currentIndex >= 0) users[currentIndex] = restoredUser;
+      else users.unshift(restoredUser);
+    } else if (currentIndex >= 0) {
+      users.splice(currentIndex, 1);
+    }
+    account.linkedUserId = snapshot.accountLinkedUserId || "";
+    account.updatedAt = new Date().toISOString();
+    syncWalletVip(account, wallet);
+    await saveBills();
+  }
+
+  order.reversedAt = new Date().toISOString();
+  order.fulfillmentStatus = "reversed";
+  order.reversalError = "";
+  order.updatedAt = order.reversedAt;
+  await saveUsers();
+  await saveAccounts();
+  await savePaymentOrders();
+  return order;
+}
+
+async function reversePaymentOrder(order) {
+  const key = String(order?.id || "");
+  const activeTask = paymentReversalTasks.get(key);
+  if (activeTask) return activeTask;
+  const task = reversePaymentOrderOnce(order);
+  paymentReversalTasks.set(key, task);
+  try {
+    return await task;
+  } finally {
+    if (paymentReversalTasks.get(key) === task) paymentReversalTasks.delete(key);
+  }
+}
+
 async function notifyPaymentOrder(order) {
+  if (process.env.NODE_ENV === "test") return;
   if (!notifier.isTelegramConfigured()) return;
   try {
     await notifier.sendTelegram({ text: notifier.buildPaymentAlert(order) });
@@ -1823,19 +1970,21 @@ function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
   return url.toString();
 }
 
-async function createPaymentOrder(payload, req, account) {
+async function createPaymentOrder(payload, req, account, paymentSource = "online") {
+  const manualPayment = paymentSource === "manual";
   const wallet = await walletForAccount(account);
   const selectedOption = paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id);
   assertPendingPaymentOrderLimit(account.id);
   const email = normalizePaymentEmail(account.email);
   const id = crypto.randomUUID();
   const merOrderTid = makePaymentOrderId();
-  const payableCents = Math.round(selectedOption.amount * 100);
+  const payableCents = manualPayment ? moneyCents(payload.amount, "人工收款金额") : Math.round(selectedOption.amount * 100);
+  if (manualPayment && payableCents > 1000000) throw new Error("单次人工收款不能超过 ¥10,000.00。");
   const expiresAt = new Date(Date.now() + PAYMENT_ORDER_TTL_MS).toISOString();
   const hold = payload.useBalance === false || payableCents === 0
-    ? { cashCents: 0, giftCents: 0 }
+    ? { cashCents: 0, giftCents: 0, referralCents: 0 }
     : await dataStore.reserveWallet({ accountId: account.id, orderId: id, amountCents: payableCents, expiresAt, initialVipCents: initialWalletVipCents(account) });
-  const gatewayCents = payableCents - hold.cashCents - hold.giftCents;
+  const gatewayCents = payableCents - hold.cashCents - hold.giftCents - hold.referralCents;
   const amount = (gatewayCents / 100).toFixed(2);
   let config;
   let channelCode;
@@ -1844,9 +1993,9 @@ async function createPaymentOrder(payload, req, account) {
   try {
     const requestedMethod = String(payload.channelCode || "").trim();
     if (requestedMethod && requestedMethod !== "100" && requestedMethod !== "200") throw new Error("不支持的支付方式。");
-    config = gatewayCents > 0 ? requirePaymentConfig(requestedMethod, String(payload.paymentPlatformId || "").trim()) : null;
+    config = !manualPayment && gatewayCents > 0 ? requirePaymentConfig(requestedMethod, String(payload.paymentPlatformId || "").trim()) : null;
     const method = config ? (requestedMethod || paymentMethodForPlatform(config)) : "";
-    channelCode = config ? configuredPaymentChannel(config, method) : hold.cashCents + hold.giftCents > 0 ? "wallet" : "cash-credit";
+    channelCode = manualPayment ? "manual" : config ? configuredPaymentChannel(config, method) : hold.cashCents + hold.giftCents + hold.referralCents > 0 ? "wallet" : "cash-credit";
     if (config) {
       const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
       if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
@@ -1883,25 +2032,26 @@ async function createPaymentOrder(payload, req, account) {
     group: selectedOption.group,
     unlimited: Boolean(selectedOption.unlimited),
     originalAmount: selectedOption.originalAmount,
-    discountAmount: selectedOption.discountAmount,
+    discountAmount: manualPayment ? 0 : selectedOption.discountAmount,
     vipLevel: selectedOption.vipLevel,
-    vipDiscountPercent: selectedOption.vipDiscountPercent,
-    vipDiscountAmount: selectedOption.vipDiscountAmount,
-    subtotal: selectedOption.subtotal,
-    taxAmount: selectedOption.taxAmount,
-    beforeCreditAmount: selectedOption.beforeCreditAmount,
-    cashCredit: selectedOption.cashCredit,
+    vipDiscountPercent: manualPayment ? 0 : selectedOption.vipDiscountPercent,
+    vipDiscountAmount: manualPayment ? 0 : selectedOption.vipDiscountAmount,
+    subtotal: manualPayment ? payableCents / 100 : selectedOption.subtotal,
+    taxAmount: manualPayment ? 0 : selectedOption.taxAmount,
+    beforeCreditAmount: manualPayment ? payableCents / 100 : selectedOption.beforeCreditAmount,
+    cashCredit: manualPayment ? 0 : selectedOption.cashCredit,
     purchaseAction: selectedOption.purchaseAction,
     vipSpendAmount: Number(amount),
     couponCode: selectedOption.couponCode,
     channelCode,
     paymentPlatformId: config?.id || "",
-    paymentPlatformName: config?.name || "",
-    paymentProvider: config?.provider || "wallet",
+    paymentPlatformName: manualPayment ? "人工收款" : config?.name || "",
+    paymentProvider: manualPayment ? "manual" : config?.provider || "wallet",
     totalAmount: payableCents / 100,
-    walletAmount: (hold.cashCents + hold.giftCents) / 100,
+    walletAmount: (hold.cashCents + hold.giftCents + hold.referralCents) / 100,
     walletCashAmount: hold.cashCents / 100,
     walletGiftAmount: hold.giftCents / 100,
+    walletReferralAmount: hold.referralCents / 100,
     amount: Number(amount),
     email,
     accountId: account.id,
@@ -5434,7 +5584,9 @@ async function handleApi(req, res, pathname) {
         giftDelta: entry.giftDeltaCents / 100,
         vipDelta: entry.vipDeltaCents / 100,
         referralDelta: entry.referralDeltaCents / 100,
-        balance: (entry.cashBalanceCents + entry.giftBalanceCents) / 100,
+        realCashDelta: (entry.cashDeltaCents + entry.referralDeltaCents) / 100,
+        virtualCashDelta: entry.giftDeltaCents / 100,
+        balance: (entry.cashBalanceCents + entry.giftBalanceCents + entry.referralBalanceCents) / 100,
         sourceId: entry.sourceId,
         description: entry.description,
         createdAt: entry.createdAt
@@ -5463,21 +5615,6 @@ async function handleApi(req, res, pathname) {
       recurringReferral: account.recurringReferral === true,
       rewards: accountRewards.map(item => ({ ...item, baseAmount: item.baseCents / 100, rewardAmount: item.rewardCents / 100 }))
     });
-    return;
-  }
-
-  if (pathname === "/api/account/referrals/transfer" && req.method === "POST") {
-    const session = requireUser(req, res);
-    if (!session) return;
-    try {
-      const account = accountBySession(session);
-      const payload = await readJson(req);
-      const amountCents = moneyCents(payload.amount, "转入金额");
-      const wallet = await walletForAccount(account);
-      if (amountCents > wallet.referralCents) throw new Error("返利钱包余额不足");
-      const nextWallet = await dataStore.transferReferralToCash({ id: crypto.randomUUID(), accountId: account.id, amountCents, description: "返利转入余额钱包", initialVipCents: initialWalletVipCents(account) });
-      sendJson(res, 200, publicWallet(nextWallet));
-    } catch (error) { sendJson(res, 400, { error: error.message }); }
     return;
   }
 
@@ -6002,8 +6139,46 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (["/api/admin/manual-payments/quote", "/api/admin/manual-payments"].includes(pathname) && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const account = accounts.find(item => item.id === String(payload.accountId || "") && item.status === "active");
+      if (!account) throw new Error("只有已启用的认领账户可以人工收款。");
+      const input = { ...payload, useBalance: false };
+      if (pathname.endsWith("/quote")) {
+        sendJson(res, 200, await paymentQuoteForAccount(input, account));
+      } else {
+        const order = await createPaymentOrder(input, req, account, "manual");
+        sendJson(res, 201, adminPaymentOrder(order));
+      }
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/admin/orders" && req.method === "GET") {
     sendJson(res, 200, paymentOrders.map(adminPaymentOrder).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+    return;
+  }
+
+  const adminOrderReverseMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)\/reverse$/);
+  if (adminOrderReverseMatch && req.method === "POST") {
+    await loadLatestData({ force: true });
+    const order = paymentOrders.find(item => item.id === adminOrderReverseMatch[1]);
+    if (!order) {
+      sendJson(res, 404, { error: "没有找到这个订单。" });
+      return;
+    }
+    try {
+      await reversePaymentOrder(order);
+      sendJson(res, 200, adminPaymentOrder(order));
+    } catch (error) {
+      order.reversalError = error.message;
+      order.updatedAt = new Date().toISOString();
+      await savePaymentOrders();
+      sendJson(res, 400, { error: error.message });
+    }
     return;
   }
 
