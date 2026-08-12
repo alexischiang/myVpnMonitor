@@ -73,6 +73,11 @@ export type User = {
   imessage?: string
   email?: string
   subscriptionId?: string
+  lineType?: "upstream" | "self_hosted"
+  xuiClientEmail?: string
+  xuiSubId?: string
+  xuiLastSyncedAt?: string
+  xuiLastError?: string
   subscription?: Subscription
   activeGroup?: string
   isBusiness?: boolean
@@ -214,6 +219,9 @@ export type PricingRow = {
   description?: string
   recommended?: boolean
   traffic?: string
+  trafficBytes?: number
+  lineType?: "upstream" | "self_hosted"
+  testPlan?: boolean
   features?: string[]
   unavailableFeatures?: string[]
   monthly?: number

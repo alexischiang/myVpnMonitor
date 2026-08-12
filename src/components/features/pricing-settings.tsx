@@ -59,11 +59,12 @@ export function PricingSettingsPage() {
                 <Field><FieldLabel htmlFor={`${row.group}-name`}>套餐名称</FieldLabel><Input id={`${row.group}-name`} value={row.name || ""} onChange={event => update(row.group, { name: event.target.value })} /></Field>
                 <Field><FieldLabel htmlFor={`${row.group}-title`}>套餐副标题</FieldLabel><Input id={`${row.group}-title`} value={row.title || ""} onChange={event => update(row.group, { title: event.target.value })} /></Field>
                 <Field><FieldLabel htmlFor={`${row.group}-traffic`}>流量说明</FieldLabel><Input id={`${row.group}-traffic`} value={row.traffic || ""} onChange={event => update(row.group, { traffic: event.target.value })} /></Field>
+                {row.lineType === "self_hosted" ? <Field><FieldLabel htmlFor={`${row.group}-traffic-bytes`}>3x-ui 周期额度（GB）</FieldLabel><Input id={`${row.group}-traffic-bytes`} type="number" min="0" step="1" value={row.trafficBytes === undefined ? "" : row.trafficBytes / 1024 ** 3} onChange={event => update(row.group, { trafficBytes: Number(event.target.value) * 1024 ** 3 })} /></Field> : null}
                 <Field className="justify-end"><label className="flex h-9 items-center gap-2 text-sm"><Checkbox checked={Boolean(row.recommended)} onCheckedChange={checked => update(row.group, { recommended: Boolean(checked) })} />标记为推荐套餐</label></Field>
               </div>
               <Field><FieldLabel htmlFor={`${row.group}-description`}>套餐描述</FieldLabel><Input id={`${row.group}-description`} value={row.description || ""} onChange={event => update(row.group, { description: event.target.value })} /></Field>
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                {periods.map(period => (
+                {periods.filter(period => row.testPlan !== true || period.key === "monthly").map(period => (
                   <FieldGroup key={period.key} className="gap-4">
                     <h3 className="text-sm font-medium">{period.label}</h3>
                       <Field><FieldLabel htmlFor={`${row.group}-${period.key}`}>固定流量价格</FieldLabel><Input id={`${row.group}-${period.key}`} type="number" min="0" step="0.01" value={row[period.key] ?? ""} onChange={event => update(row.group, { [period.key]: Number(event.target.value) })} /></Field>

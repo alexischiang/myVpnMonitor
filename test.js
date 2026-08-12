@@ -31,6 +31,9 @@ const {
   injectPlaceholderNodes,
   postSubconverter,
   normalizeSubscription,
+  normalizeXuiClientResult,
+  xuiClientWritePayload,
+  xuiTrafficPayload,
   clearSubscriptionSourceState
 } = require("./server");
 
@@ -152,6 +155,21 @@ assert.strictEqual(discountedQuote.subtotal, 35.1);
 assert.strictEqual(discountedQuote.taxAmount, 1.05);
 assert.strictEqual(discountedQuote.amount, 36.15);
 assert.deepStrictEqual(discountedQuote.cycles.map(cycle => cycle.devices), [1, 2, 3, 3]);
+const selfHostedQuote = paymentQuote("self-hosted-test-30");
+assert.strictEqual(selfHostedQuote.originalAmount, 0);
+assert.strictEqual(selfHostedQuote.amount, 0);
+assert.strictEqual(selfHostedQuote.group, "self_hosted");
+assert.deepStrictEqual(selfHostedQuote.cycles.map(cycle => cycle.optionId), ["self-hosted-test-30"]);
+const xuiClient = normalizeXuiClientResult({ client: { email: "self@test", totalGB: 1000 }, inboundIds: [3], traffic: { up: 100, down: 250 } });
+assert.deepStrictEqual(xuiClient.inboundIds, [3]);
+assert.deepStrictEqual(xuiClientWritePayload({ uuid: "keep", createdAt: "readonly" }, { email: "self@test", totalGB: 1000 }), { email: "self@test", totalGB: 1000, uuid: "keep" });
+const selfHostedTraffic = xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z" }, xuiClient);
+assert.deepStrictEqual(
+  [selfHostedTraffic.status, selfHostedTraffic.uploadBytes, selfHostedTraffic.downloadBytes, selfHostedTraffic.usedBytes, selfHostedTraffic.totalBytes, selfHostedTraffic.remainingBytes, selfHostedTraffic.usagePercent],
+  ["active", 100, 250, 350, 1000, 650, 35]
+);
+const xuiUsedTraffic = normalizeXuiClientResult({ client: { email: "self@test", totalGB: 1000 }, usedTraffic: 400 });
+assert.strictEqual(xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z" }, xuiUsedTraffic).usedBytes, 400);
 assert.throws(() => paymentQuote("basic-30", "invalid", "SAVE10:10"), /优惠码无效/);
 assert.strictEqual(paymentChannelCode("100"), "100");
 assert.strictEqual(paymentChannelCode("200"), "200");

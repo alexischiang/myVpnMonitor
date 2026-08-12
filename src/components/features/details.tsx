@@ -657,7 +657,7 @@ export function UserDetailPage() {
               {user.accountStatus === "active" && user.accountId ? <Button variant="outline" className="w-full" onClick={openManualPaymentDialog}><Banknote />人工收款</Button> : null}
               {user.registeredOnly ? null : <>
                 <Button variant="outline" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
-                <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>
+                {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
                 <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
               </>}
               {user.accountStatus === "active" ? <>

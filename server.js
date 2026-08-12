@@ -45,6 +45,11 @@ const RELAY_DEBUG_LOGS = process.env.RELAY_DEBUG_LOGS === "true";
 const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 const REFRESH_CONCURRENCY = Math.max(1, Number(process.env.REFRESH_CONCURRENCY || 5));
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
+const XUI_BASE_URL = (process.env.XUI_BASE_URL || "").replace(/\/+$/, "");
+const XUI_API_TOKEN = String(process.env.XUI_API_TOKEN || "").trim();
+const XUI_SUBSCRIPTION_BASE_URL = (process.env.XUI_SUBSCRIPTION_BASE_URL || "").replace(/\/+$/, "");
+const XUI_SUBSCRIPTION_PATH = `/${String(process.env.XUI_SUBSCRIPTION_PATH || "sub").replace(/^\/+|\/+$/g, "")}/`;
+const XUI_TIMEOUT_MS = Math.max(1000, Number(process.env.XUI_TIMEOUT_MS || 15000));
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const SUBCONVERTER_BOOLEAN_DEFAULTS = Object.freeze({
   emoji: true,
@@ -66,7 +71,8 @@ const DEFAULT_SERVICE_PROVIDER = "YKK Cloud";
 const DEFAULT_PRICING = [
   { id: "basic", group: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", recommended: false, traffic: "每月 100G", features: ["基础线路", "流媒体支持", "在线客服"], unavailableFeatures: ["稳定 GPT 解锁", "国际内网专线", "独享级带宽体验"], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 39, quarterly: 109, half_yearly: 199, yearly: 369, unlimitedMonthly: 79, unlimitedQuarterly: 219, unlimitedHalfYearly: 399, unlimitedYearly: 599 },
   { id: "pro", group: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], unavailableFeatures: ["国际内网专线", "独享级带宽体验"], monthlyDevices: 3, quarterlyDevices: 3, half_yearlyDevices: 5, yearlyDevices: 5, monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429, unlimitedMonthly: 95, unlimitedQuarterly: 249, unlimitedHalfYearly: 439, unlimitedYearly: 679 },
-  { id: "ultra", group: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", recommended: false, traffic: "每月 300G", features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], unavailableFeatures: [], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859, unlimitedMonthly: 129, unlimitedQuarterly: 349, unlimitedHalfYearly: 659, unlimitedYearly: 1109 }
+  { id: "ultra", group: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", recommended: false, traffic: "每月 300G", features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], unavailableFeatures: [], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859, unlimitedMonthly: 129, unlimitedQuarterly: 349, unlimitedHalfYearly: 659, unlimitedYearly: 1109 },
+  { id: "self_hosted", group: "self_hosted", name: "SELF-HOSTED", title: "自研线路测试套餐", description: "自研线路公开测试，名额和稳定性以测试阶段为准", recommended: false, traffic: "每 30 天 100G", trafficBytes: 100 * 1024 ** 3, features: ["自研线路", "个人流量统计", "独立到期与额度控制"], unavailableFeatures: ["不可切换到订阅池", "测试期不承诺长期可用"], monthlyDevices: 1, monthly: 0, testPlan: true, lineType: "self_hosted" }
 ];
 function publicPricing() {
   return DEFAULT_PRICING.map(defaultRow => {
@@ -98,7 +104,8 @@ const PAYMENT_PLAN_OPTIONS = {
   "ultra-unlimited-30": { planId: "ultra", planName: "ULTRA", optionLabel: "月付 30天 无限流量", priceKey: "unlimitedMonthly", duration: "monthly", group: "ultra", unlimited: true, fallbackPrice: 129 },
   "ultra-unlimited-90": { planId: "ultra", planName: "ULTRA", optionLabel: "季付 90天 无限流量", priceKey: "unlimitedQuarterly", duration: "quarterly", group: "ultra", unlimited: true, fallbackPrice: 349 },
   "ultra-unlimited-180": { planId: "ultra", planName: "ULTRA", optionLabel: "半年付 180天 无限流量", priceKey: "unlimitedHalfYearly", duration: "half_yearly", group: "ultra", unlimited: true, fallbackPrice: 659 },
-  "ultra-unlimited-360": { planId: "ultra", planName: "ULTRA", optionLabel: "年付 360天 无限流量", priceKey: "unlimitedYearly", duration: "yearly", group: "ultra", unlimited: true, fallbackPrice: 1109 }
+  "ultra-unlimited-360": { planId: "ultra", planName: "ULTRA", optionLabel: "年付 360天 无限流量", priceKey: "unlimitedYearly", duration: "yearly", group: "ultra", unlimited: true, fallbackPrice: 1109 },
+  "self-hosted-test-30": { planId: "self_hosted", planName: "SELF-HOSTED", optionLabel: "公开测试 30天", priceKey: "monthly", duration: "monthly", group: "self_hosted", fallbackPrice: 0, testPlan: true, lineType: "self_hosted" }
 };
 if (process.env.NODE_ENV === "test") {
   PAYMENT_PLAN_OPTIONS["pro-test-001"] = { planId: "pro", planName: "PRO", optionLabel: "支付测试 1 元", duration: "monthly", group: "pro", fallbackPrice: 1 };
@@ -111,7 +118,7 @@ const DEFAULT_PRICING_FAQS = [
   { id: "delivery", question: "支付后多久生效？可以退款吗？", answer: "支付成功并完成确认后套餐会自动生效。套餐属于即时交付的数字商品，购买后不支持退款。", enabled: true }
 ];
 const DEFAULT_PAYMENT_API_BASE_URL = "http://RfBseViEKZlMAmu7ArWO.itxt002.xyz";
-const USER_GROUPS = ["basic", "pro", "ultra"];
+const USER_GROUPS = ["basic", "pro", "ultra", "self_hosted"];
 const VENDOR_RATINGS = ["S", "A", "B", "C"];
 const RATING_OVERRIDE_WINDOW_DAYS = 20;
 const AUTH_COOKIE_NAME = "xela_session";
@@ -1157,7 +1164,7 @@ function resolvePaymentPlanOption(optionId) {
   if (!option) throw new Error("Unsupported pricing option.");
   const priceRow = pricing.find(item => item.group === option.planId);
   const managedPrice = option.priceKey ? Number(priceRow?.[option.priceKey]) : NaN;
-  const amount = Number.isFinite(managedPrice) && managedPrice > 0 ? managedPrice : option.fallbackPrice;
+  const amount = Number.isFinite(managedPrice) && managedPrice >= 0 ? managedPrice : option.fallbackPrice;
   return { ...option, amount };
 }
 
@@ -1701,23 +1708,36 @@ async function fulfillPaymentOrderOnce(order, req) {
   const vipSpendBefore = (wallet.vipSpendCents - Math.round(order.amount * 100)) / 100;
   syncWalletVip(account, wallet);
   const expiresAt = nextUserExpiry(user, purchasedAt, selectedOption.duration, order.purchaseAction === "replace");
-  const recommendation = recommendSubscriptionForExpiry(expiresAt, { group: selectedOption.group, ignoredUserId: user?.id || "" });
-  if (!recommendation.subscription) throw new Error(recommendation.reason || "No available subscription pool.");
+  const selfHostedPurchase = isSelfHostedGroup(selectedOption.group);
+  const recommendation = selfHostedPurchase
+    ? { subscription: null, reason: "自研线路不使用订阅池。", details: null }
+    : recommendSubscriptionForExpiry(expiresAt, { group: selectedOption.group, ignoredUserId: user?.id || "" });
+  if (!selfHostedPurchase && !recommendation.subscription) throw new Error(recommendation.reason || "No available subscription pool.");
 
   if (user) {
+    const previousUserState = structuredClone(user);
     const previousSubscription = subscriptions.find(item => item.id === user.subscriptionId) || null;
-    const poolChanged = previousSubscription?.id !== recommendation.subscription.id;
-    const renewal = renewUser(user, {
-      purchasedAt,
-      actualPaid: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
-      vipSpendAmount: order.amount,
-      cashValueAmount: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
-      duration: selectedOption.duration,
-      group: selectedOption.group,
-      unlimited: Boolean(selectedOption.unlimited),
-      replace: order.purchaseAction === "replace",
-      subscriptionId: recommendation.subscription.id
-    });
+    const poolChanged = !selfHostedPurchase && previousSubscription?.id !== recommendation.subscription.id;
+    let renewal;
+    try {
+      renewal = renewUser(user, {
+        purchasedAt,
+        actualPaid: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
+        vipSpendAmount: order.amount,
+        cashValueAmount: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
+        duration: selectedOption.duration,
+        group: selectedOption.group,
+        unlimited: Boolean(selectedOption.unlimited),
+        replace: order.purchaseAction === "replace",
+        subscriptionId: recommendation.subscription?.id || ""
+      });
+      if (selfHostedPurchase) await provisionXuiClient(user);
+      else if (user.xuiClientEmail) await disableXuiClient(user);
+    } catch (error) {
+      Object.keys(user).forEach(key => delete user[key]);
+      Object.assign(user, previousUserState);
+      throw error;
+    }
     bills.unshift(makeBill({
       user,
       type: order.purchaseAction === "replace" ? "replacement" : "renewal",
@@ -1735,7 +1755,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       status: poolChanged ? "switched" : "recorded",
       reason: poolChanged ? "purchase-pool-changed" : "user-renewed",
       fromSubscription: poolChanged ? previousSubscription : null,
-      toSubscription: recommendation.subscription,
+      toSubscription: recommendation.subscription || null,
       req,
       message: userActionMessage(poolChanged ? "purchase-pool-changed" : "user-renewed", {
         amount: renewal.amount,
@@ -1772,12 +1792,13 @@ async function fulfillPaymentOrderOnce(order, req) {
       unlimited: Boolean(selectedOption.unlimited),
       cashValue: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
       cashValueAt: purchasedAt,
-      subscriptionId: recommendation.subscription.id,
+      subscriptionId: recommendation.subscription?.id || "",
       outputMode: "subconverter",
       blockUserinfo: true
     }, item);
     user.outputMode = "subconverter";
     user.blockUserinfo = true;
+    if (selfHostedPurchase) await provisionXuiClient(user);
     users.unshift(user);
     bills.unshift(makeBill({
       user,
@@ -2074,7 +2095,15 @@ async function createPaymentOrder(payload, req, account, paymentSource = "online
   }
   if (order.status === "paid") {
     order.paidAt ||= now;
-    await fulfillPaymentOrder(order, req);
+    try {
+      await fulfillPaymentOrder(order, req);
+    } catch (error) {
+      order.fulfillmentStatus = "failed";
+      order.fulfillmentError = error.message;
+      order.updatedAt = new Date().toISOString();
+      await savePaymentOrders();
+      console.error(`Immediate payment fulfillment failed for ${order.merOrderTid}:`, error.message);
+    }
   } else if (["failed", "abnormal", "closed"].includes(order.status)) await dataStore.releaseWalletHold(order.id);
   return order;
 }
@@ -2399,6 +2428,249 @@ function activeUserGroup(user = {}) {
   return normalizeUserGroup(user.activeGroup || user.group, "pro");
 }
 
+function isSelfHostedGroup(group) {
+  return normalizeUserGroup(group, "") === "self_hosted";
+}
+
+function isSelfHostedUser(user = {}) {
+  return user.lineType === "self_hosted" || isSelfHostedGroup(activeUserGroup(user));
+}
+
+function pricingForUser(user = {}) {
+  return publicPricing().find(item => item.group === activeUserGroup(user)) || null;
+}
+
+function planTrafficBytes(user = {}) {
+  if (user.unlimited) return 0;
+  const plan = pricingForUser(user);
+  const configured = Number(plan?.trafficBytes);
+  if (Number.isFinite(configured) && configured >= 0) return Math.round(configured);
+  const match = String(plan?.traffic || "").match(/(\d+(?:\.\d+)?)\s*(TB|GB|G|MB|M)/i);
+  if (!match) return 0;
+  const factors = { TB: 1024 ** 4, GB: 1024 ** 3, G: 1024 ** 3, MB: 1024 ** 2, M: 1024 ** 2 };
+  return Math.round(Number(match[1]) * factors[match[2].toUpperCase()]);
+}
+
+function planDeviceLimit(user = {}) {
+  const value = Number(pricingForUser(user)?.[`${user.duration}Devices`]);
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function xuiConfigured() {
+  return Boolean(XUI_BASE_URL && XUI_API_TOKEN && XUI_SUBSCRIPTION_BASE_URL);
+}
+
+function xuiClientEmail(user = {}) {
+  const email = String(user.email || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("自研线路用户缺少有效的注册邮箱。");
+  return email;
+}
+
+function legacyXuiClientEmail(user = {}) {
+  return `nexora_${String(user.customerID || user.id || "user").replace(/[^a-zA-Z0-9_-]/g, "_")}@internal`.toLowerCase();
+}
+
+async function xuiRequest(apiPath, { method = "GET", body } = {}) {
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) throw new Error("3x-ui 尚未配置，请设置 XUI_BASE_URL 和 XUI_API_TOKEN。");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${XUI_BASE_URL}${apiPath}`, {
+      method,
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${XUI_API_TOKEN}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" })
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+    const text = await response.text();
+    let payload;
+    try { payload = text ? JSON.parse(text) : {}; } catch { throw new Error(`3x-ui 返回了无效响应（HTTP ${response.status}）。`); }
+    if (!response.ok || payload.success !== true) {
+      const error = new Error(payload.msg || payload.error || `3x-ui 请求失败（HTTP ${response.status}）。`);
+      error.statusCode = response.status;
+      throw error;
+    }
+    return payload.obj;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("3x-ui 请求超时。");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeXuiClientResult(value, fallbackEmail = "") {
+  const root = value && typeof value === "object" ? value : {};
+  const client = root.client && typeof root.client === "object" ? root.client : root;
+  const traffic = client.traffic || root.traffic || {};
+  const upload = Math.max(0, Number(traffic.up ?? client.up ?? root.up) || 0);
+  const download = Math.max(0, Number(traffic.down ?? client.down ?? root.down) || 0);
+  const usedTraffic = Math.max(0, Number(root.usedTraffic ?? client.usedTraffic ?? traffic.usedTraffic) || upload + download);
+  return {
+    ...client,
+    email: String(client.email || fallbackEmail),
+    inboundIds: Array.isArray(root.inboundIds) ? root.inboundIds.map(Number).filter(Number.isSafeInteger) : [],
+    usedTraffic,
+    traffic: {
+      up: upload,
+      down: download,
+      enable: traffic.enable !== false
+    }
+  };
+}
+
+function normalizeXuiInboundIds(value) {
+  const rows = Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : Array.isArray(value?.inbounds) ? value.inbounds : [];
+  return [...new Set(rows.map(item => Number(item?.id ?? item)).filter(Number.isSafeInteger))];
+}
+
+async function getAllXuiInboundIds() {
+  let lastError;
+  for (const apiPath of ["/panel/api/inbounds/list", "/panel/api/inbounds/list/slim", "/panel/api/inbounds/options"]) {
+    try {
+      const ids = normalizeXuiInboundIds(await xuiRequest(apiPath));
+      if (ids.length) return ids;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(lastError ? `无法读取3x-ui入站列表：${lastError.message}` : "3x-ui中没有可关联的入站。");
+}
+
+async function getXuiClientByEmail(email) {
+  let value;
+  try {
+    value = await xuiRequest(`/panel/api/clients/get/${encodeURIComponent(email)}`);
+  } catch (error) {
+    if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+  }
+  if (value) return normalizeXuiClientResult(value, email);
+  const listed = await xuiRequest("/panel/api/clients/list");
+  const match = (Array.isArray(listed) ? listed : []).find(item => String(item?.client?.email || item?.email || "").toLowerCase() === email);
+  if (match) return normalizeXuiClientResult(match, email);
+  const error = new Error("3x-ui Client 不存在。");
+  error.statusCode = 404;
+  throw error;
+}
+
+async function getXuiClient(user) {
+  return getXuiClientByEmail(xuiClientEmail(user));
+}
+
+async function getXuiClientAfterMutation(user) {
+  let lastError;
+  for (const delayMs of [0, 200, 500]) {
+    if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
+    try {
+      return await getXuiClient(user);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+function xuiClientWritePayload(existing, desired) {
+  const writableFields = ["email", "enable", "expiryTime", "totalGB", "limitIp", "reset", "subId", "uuid", "id", "password", "auth", "flow", "tgId", "comment", "security", "reverse", "groupName"];
+  return Object.fromEntries(writableFields
+    .filter(key => desired[key] !== undefined || existing?.[key] !== undefined)
+    .map(key => [key, desired[key] !== undefined ? desired[key] : existing[key]]));
+}
+
+function xuiClientNeedsUpdate(existing, desired) {
+  return ["email", "totalGB", "expiryTime", "limitIp", "reset", "enable"]
+    .some(key => String(existing?.[key] ?? "") !== String(desired[key] ?? ""));
+}
+
+async function provisionXuiClient(user) {
+  if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
+  const email = xuiClientEmail(user);
+  const inboundIds = await getAllXuiInboundIds();
+  let existing = null;
+  let existingEmail = email;
+  try { existing = await getXuiClientByEmail(email); } catch (error) {
+    if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+  }
+  if (!existing) {
+    const legacyEmail = legacyXuiClientEmail(user);
+    if (legacyEmail !== email) {
+      try {
+        existing = await getXuiClientByEmail(legacyEmail);
+        existingEmail = legacyEmail;
+      } catch (error) {
+        if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+      }
+    }
+  }
+  const desired = {
+    ...(existing || {}),
+    email,
+    totalGB: planTrafficBytes(user),
+    expiryTime: new Date(user.expiresAt).getTime(),
+    limitIp: planDeviceLimit(user),
+    reset: 30,
+    enable: !isUserExpired(user)
+  };
+  delete desired.traffic;
+  delete desired.inboundIds;
+  let mutationResult = null;
+  if (existing?.email) {
+    if (xuiClientNeedsUpdate(existing, desired)) {
+      mutationResult = await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(existingEmail)}`, { method: "POST", body: xuiClientWritePayload(existing, desired) });
+    }
+    const currentIds = new Set(existing.inboundIds || []);
+    const attach = inboundIds.filter(id => !currentIds.has(id));
+    const detach = [...currentIds].filter(id => !inboundIds.includes(id));
+    if (attach.length) await xuiRequest(`/panel/api/clients/${encodeURIComponent(email)}/attach`, { method: "POST", body: { inboundIds: attach } });
+    if (detach.length) await xuiRequest(`/panel/api/clients/${encodeURIComponent(email)}/detach`, { method: "POST", body: { inboundIds: detach } });
+  } else {
+    mutationResult = await xuiRequest("/panel/api/clients/add", { method: "POST", body: { client: xuiClientWritePayload(null, desired), inboundIds } });
+  }
+  let remote;
+  try {
+    remote = await getXuiClientAfterMutation({ ...user, xuiClientEmail: email });
+  } catch (error) {
+    const mutationClient = normalizeXuiClientResult(mutationResult, email);
+    if (!mutationClient.subId) throw error;
+    remote = { ...mutationClient, inboundIds: mutationClient.inboundIds.length ? mutationClient.inboundIds : inboundIds };
+  }
+  user.lineType = "self_hosted";
+  user.subscriptionId = "";
+  user.xuiClientEmail = email;
+  user.xuiSubId = String(remote.subId || user.xuiSubId || "");
+  user.xuiInboundIds = remote.inboundIds;
+  user.xuiLastSyncedAt = new Date().toISOString();
+  user.xuiLastError = "";
+  return remote;
+}
+
+async function disableXuiClient(user) {
+  if (!user?.xuiClientEmail || !XUI_BASE_URL || !XUI_API_TOKEN) return;
+  await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: [user.xuiClientEmail] } });
+  user.xuiLastSyncedAt = new Date().toISOString();
+}
+
+function xuiTrafficPayload(user, remote) {
+  const uploadBytes = remote.traffic.up;
+  const downloadBytes = remote.traffic.down;
+  const usedBytes = Math.max(uploadBytes + downloadBytes, Number(remote.usedTraffic) || 0);
+  const totalBytes = Math.max(0, Number(remote.totalGB) || planTrafficBytes(user));
+  return {
+    available: true,
+    status: remote.enable === false || remote.traffic.enable === false ? "disabled" : isUserExpired(user) ? "expired" : "active",
+    uploadBytes,
+    downloadBytes,
+    usedBytes,
+    totalBytes,
+    remainingBytes: totalBytes ? Math.max(totalBytes - usedBytes, 0) : null,
+    usagePercent: totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null,
+    expiresAt: user.expiresAt,
+    lastSyncedAt: new Date().toISOString()
+  };
+}
+
 function poolSelectionGroup(user = {}) {
   return user.isSuperAccount ? "" : activeUserGroup(user);
 }
@@ -2438,7 +2710,7 @@ function batchGiftTargets({ days, group = "", allowDisabled = false } = {}) {
   return users
     .filter(user => {
       const expiresAt = Date.parse(user.expiresAt || "");
-      return Number.isFinite(expiresAt) && expiresAt > Date.now() && (!selectedGroup || activeUserGroup(user) === selectedGroup);
+      return !isSelfHostedUser(user) && Number.isFinite(expiresAt) && expiresAt > Date.now() && (!selectedGroup || activeUserGroup(user) === selectedGroup);
     })
     .map(user => {
       const expiresAt = calculateGiftExpiry(user, giftDays);
@@ -2621,6 +2893,7 @@ function poolCompatibilityLabel(pool) {
 }
 
 function currentPoolCompatibility(user) {
+  if (isSelfHostedUser(user)) return null;
   if (!user || user.registeredOnly) return null;
   const currentPool = subscriptions.find(item => item.id === user.subscriptionId);
   if (!currentPool) return {
@@ -2716,10 +2989,12 @@ function normalizeUser(input, existing = {}) {
     : (requestedExpiresDate && !Number.isNaN(requestedExpiresDate.getTime())
       ? requestedExpiresDate.toISOString()
       : calculatedExpiresAt);
-  const subscription = subscriptions.find(item => item.id === requestedSubscriptionId);
+  const requestedGroup = normalizeUserGroup(input.activeGroup !== undefined ? input.activeGroup : input.group, existing.activeGroup || existing.group || "pro");
+  const selfHosted = isSelfHostedGroup(requestedGroup);
+  const subscription = selfHosted ? null : subscriptions.find(item => item.id === requestedSubscriptionId);
 
   if (!userId) throw new Error("请填写用户 ID。");
-  if (!subscription) throw new Error("请选择已添加的 URL。");
+  if (!selfHosted && !subscription) throw new Error("请选择已添加的 URL。");
   if (!isValidDuration(duration)) throw new Error("请选择套餐时长。");
   if (!expiresAt) throw new Error(duration === "custom" ? "请选择到期日期。" : "购买时间格式不正确。");
   if (requestedExpiresAt && (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime()))) throw new Error("到期时间格式不正确。");
@@ -2730,7 +3005,7 @@ function normalizeUser(input, existing = {}) {
   const cashValueAt = String(input.cashValueAt || (input.purchasedAt !== undefined ? purchasedAt : existing.cashValueAt) || purchasedAt);
   if (cashValue === null || Number.isNaN(new Date(cashValueAt).getTime())) throw new Error("Invalid cash value.");
 
-  const group = normalizeUserGroup(input.group, existing.activeGroup || existing.group || "pro");
+  const group = requestedGroup;
   const activeGroup = normalizeUserGroup(
     input.activeGroup !== undefined ? input.activeGroup : input.group,
     existing.activeGroup || group
@@ -2763,7 +3038,8 @@ function normalizeUser(input, existing = {}) {
     isBusiness,
     isFamilyFriend,
     isSuperAccount,
-    subscriptionId: subscription.id,
+    lineType: selfHosted ? "self_hosted" : "upstream",
+    subscriptionId: subscription?.id || "",
     subscriptionToken: existing.subscriptionToken || relayToken(),
     planExpiresAt: existing.planExpiresAt || expiresAt,
     giftedDays: Number.isSafeInteger(existing.giftedDays) ? existing.giftedDays : 0,
@@ -2895,9 +3171,10 @@ function renewUser(user, input) {
   } else {
     expiresAt = nextUserExpiry(user, renewedAt.toISOString(), duration, replace);
   }
-  const subscription = subscriptions.find(item => item.id === requestedSubscriptionId);
+  const selfHosted = isSelfHostedGroup(group);
+  const subscription = selfHosted ? null : subscriptions.find(item => item.id === requestedSubscriptionId);
   if (!expiresAt) throw new Error("续费时间格式不正确。");
-  if (!subscription) throw new Error("请选择已添加的 URL。");
+  if (!selfHosted && !subscription) throw new Error("请选择已添加的 URL。");
 
   const vipSpend = Math.round((previousVipSpend + vipSpendAmount) * 100) / 100;
   Object.assign(user, {
@@ -2911,7 +3188,8 @@ function renewUser(user, input) {
     unlimited: input.unlimited !== undefined ? Boolean(input.unlimited) : Boolean(user.unlimited),
     cashValue: Math.round((replace ? addedCashValue : currentCashValue + addedCashValue) * 100) / 100,
     cashValueAt: renewedAt.toISOString(),
-    subscriptionId: subscription.id,
+    lineType: selfHosted ? "self_hosted" : "upstream",
+    subscriptionId: subscription?.id || "",
     subscriptionToken: user.subscriptionToken || relayToken(),
     expiresAt,
     updatedAt: new Date().toISOString()
@@ -4535,6 +4813,179 @@ async function fallbackToUsableSubscription(user, currentSubscription, reason, r
   return fallback;
 }
 
+function selfHostedSubscriptionUrl(user) {
+  if (!XUI_SUBSCRIPTION_BASE_URL || !user?.xuiSubId) return "";
+  return `${XUI_SUBSCRIPTION_BASE_URL}${XUI_SUBSCRIPTION_PATH}${encodeURIComponent(user.xuiSubId)}`;
+}
+
+function selfHostedUserinfo(user, remote) {
+  const upload = Math.max(0, Number(remote?.traffic?.up) || 0);
+  const download = Math.max(0, Number(remote?.traffic?.down) || 0);
+  const total = Math.max(0, Number(remote?.totalGB) || planTrafficBytes(user));
+  const expire = Math.floor(new Date(user.expiresAt).getTime() / 1000);
+  return `upload=${upload}; download=${download}; total=${total}; expire=${expire}`;
+}
+
+async function fetchSelfHostedSubscription(user, remote) {
+  const sourceUrl = selfHostedSubscriptionUrl(user);
+  if (!sourceUrl) throw new Error("3x-ui Client 缺少 subId。");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
+  try {
+    const response = await fetch(sourceUrl, {
+      signal: controller.signal,
+      redirect: "follow",
+      headers: { "User-Agent": "subconverter", Accept: "text/plain, */*", "Cache-Control": "no-cache" }
+    });
+    const body = await response.text();
+    if (!response.ok || !body.trim()) throw new Error(`3x-ui订阅服务请求失败（HTTP ${response.status}）。`);
+    return {
+      body,
+      status: response.status,
+      client: "3x-ui-subscription",
+      fetchedAt: new Date().toISOString(),
+      contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+      subscriptionUserinfo: selfHostedUserinfo(user, remote),
+      score: body.length,
+      bodyLength: body.length,
+      attempts: [],
+      error: null
+    };
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("3x-ui订阅服务请求超时。");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc }) {
+  const liveConfigId = registerLivePoolConfig(liveConfig);
+  cleanupLivePoolConfigs();
+  relayLog("subconverter-live-config-registered", {
+    relayRequestId,
+    userId: user.id,
+    pool: poolLogInfo(subscription),
+    liveConfigId,
+    liveConfigTtlMs: LIVE_POOL_CONFIG_TTL_MS,
+    bodyLength: liveConfig.bodyLength,
+    bodyPreview: bodyPreview(liveConfig.body)
+  });
+  const liveConfigUrl = `http://127.0.0.1:${PORT}/api/internal/pool-live/${liveConfigId}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
+  const params = new URLSearchParams({ target: sc.target, url: liveConfigUrl });
+  if (sc.config) params.set("config", sc.config);
+  if (sc.include) params.set("include", sc.include);
+  if (sc.exclude) params.set("exclude", sc.exclude);
+  for (const key of Object.keys(SUBCONVERTER_BOOLEAN_DEFAULTS)) {
+    if (sc[key] !== undefined) params.set(key, String(sc[key]));
+  }
+  if (sc.rename) params.set("rename", sc.rename);
+  const subUrl = `${SUB_CONVERTER_URL}/sub?${params.toString()}`;
+  relayLog("subconverter-request", {
+    relayRequestId,
+    userId: user.id,
+    url: subUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]"),
+    params: { ...Object.fromEntries(params.entries()), url: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]") },
+    liveConfigUrl: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+  try {
+    const response = await fetch(subUrl, { signal: controller.signal });
+    relayLog("subconverter-response", {
+      relayRequestId,
+      userId: user.id,
+      ok: response.ok,
+      status: response.status,
+      headers: responseHeadersForLog(response)
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      relayLog("subconverter-response-error-body", { relayRequestId, userId: user.id, bodyLength: text.length, bodyPreview: bodyPreview(text) });
+      await recordUserLog(user, {
+        status: "failed",
+        reason: "subconverter-failed",
+        fromSubscription: subscription,
+        req,
+        target: sc.target,
+        stage: "subconverter-response",
+        message: `Subconverter failed (${response.status}).`,
+        details: { status: response.status, bodyPreview: bodyPreview(text) }
+      });
+      sendSubscriptionMessage(res, 502, `Subconverter failed (${response.status}): ${text.slice(0, 200)}`);
+      return;
+    }
+    const body = Buffer.from(await response.arrayBuffer());
+    const finalBody = postSubconverter(body, Buffer.from(liveConfig.body), user, sc);
+    const browserInline = isBrowserNavigationRequest(req);
+    relayLog("response-subconverter-ok", {
+      relayRequestId,
+      userId: user.id,
+      status: response.status,
+      contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+      browserInline,
+      bodyLength: finalBody.length,
+      bodyPreview: bodyPreview(finalBody.toString("utf8"))
+    });
+    const responseHeaders = {
+      "content-type": browserInline ? "text/plain; charset=utf-8" : (response.headers.get("content-type") || "text/plain; charset=utf-8"),
+      "cache-control": "no-store, max-age=0",
+      "pragma": "no-cache",
+      "expires": "0",
+      ...(liveConfig.subscriptionUserinfo && user.blockUserinfo === false ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
+    };
+    if (browserInline) {
+      responseHeaders["content-disposition"] = "inline; filename*=UTF-8''NEXORA.txt";
+      responseHeaders["x-content-type-options"] = "nosniff";
+    } else {
+      responseHeaders["content-disposition"] = "attachment; filename*=UTF-8''NEXORA";
+    }
+    res.writeHead(response.status, responseHeaders);
+    res.end(finalBody);
+  } catch (error) {
+    relayLog("subconverter-request-error", { relayRequestId, userId: user.id, errorName: error.name, errorMessage: error.message });
+    await recordUserLog(user, {
+      status: "failed",
+      reason: error.name === "AbortError" ? "subconverter-timeout" : "subconverter-request-failed",
+      fromSubscription: subscription,
+      req,
+      target: sc.target,
+      stage: "subconverter-request",
+      message: error.name === "AbortError" ? "Subconverter request timed out." : error.message
+    });
+    sendSubscriptionMessage(res, 502, error.name === "AbortError"
+      ? "Subconverter request timed out. Please retry."
+      : `Subconverter request failed: ${error.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function handleSelfHostedRelay(req, res, user, relayRequestId) {
+  if (!SUB_CONVERTER_URL) {
+    sendSubscriptionMessage(res, 503, "服务端未配置 SUB_CONVERTER_URL，无法转换自研线路订阅。");
+    return;
+  }
+  if (!xuiConfigured()) {
+    sendSubscriptionMessage(res, 503, "自研线路尚未完成3x-ui配置，请联系客服。");
+    return;
+  }
+  try {
+    let remote = await getXuiClient(user);
+    if (!user.xuiSubId || remote.enable === false) {
+      remote = await provisionXuiClient(user);
+      await saveUsers();
+    }
+    const source = { id: `xui:${user.id}`, url: selfHostedSubscriptionUrl(user), sourceType: "url", serviceProvider: "3x-ui", enabled: true };
+    const liveConfig = await fetchSelfHostedSubscription(user, remote);
+    const sc = relaySubconverterConfig(source);
+    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc });
+  } catch (error) {
+    relayLog("self-hosted-relay-failed", { relayRequestId, userId: user.id, error: error.message });
+    sendSubscriptionMessage(res, 502, `自研线路订阅生成失败：${error.message}`);
+  }
+}
+
 async function findDirectFallbackSubscription(user, currentSubscription, req) {
   const errors = [];
   const headers = forwardedSubscriptionHeaders(req);
@@ -4670,6 +5121,11 @@ async function handleRelaySubscription(req, res, token) {
       message: "\u7528\u6237\u8ba2\u9605\u5df2\u5230\u671f\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
     });
     sendExpiredPlaceholderSubscription(res, user);
+    return;
+  }
+
+  if (isSelfHostedUser(user)) {
+    await handleSelfHostedRelay(req, res, user, relayRequestId);
     return;
   }
 
@@ -4864,118 +5320,7 @@ async function handleRelaySubscription(req, res, token) {
       });
       }
     }
-    const liveConfigId = registerLivePoolConfig(liveConfig);
-    cleanupLivePoolConfigs();
-    relayLog("subconverter-live-config-registered", {
-      relayRequestId,
-      userId: user.id,
-      pool: poolLogInfo(subscription),
-      liveConfigId,
-      liveConfigTtlMs: LIVE_POOL_CONFIG_TTL_MS,
-      bodyLength: liveConfig.bodyLength,
-      bodyPreview: bodyPreview(liveConfig.body)
-    });
-    const liveConfigUrl = `http://127.0.0.1:${PORT}/api/internal/pool-live/${liveConfigId}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
-    const params = new URLSearchParams({ target: sc.target, url: liveConfigUrl });
-    if (sc.config) params.set("config", sc.config);
-    if (sc.include) params.set("include", sc.include);
-    if (sc.exclude) params.set("exclude", sc.exclude);
-    for (const key of Object.keys(SUBCONVERTER_BOOLEAN_DEFAULTS)) {
-      if (sc[key] !== undefined) params.set(key, String(sc[key]));
-    }
-    if (sc.rename) params.set("rename", sc.rename);
-    const subUrl = `${SUB_CONVERTER_URL}/sub?${params.toString()}`;
-    relayLog("subconverter-request", {
-      relayRequestId,
-      userId: user.id,
-      url: subUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]"),
-      params: {
-        ...Object.fromEntries(params.entries()),
-        url: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
-      },
-      liveConfigUrl: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
-    });
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 25000);
-    try {
-      const response = await fetch(subUrl, { signal: controller.signal });
-      relayLog("subconverter-response", {
-        relayRequestId,
-        userId: user.id,
-        ok: response.ok,
-        status: response.status,
-        headers: responseHeadersForLog(response)
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        relayLog("subconverter-response-error-body", {
-          relayRequestId,
-          userId: user.id,
-          bodyLength: text.length,
-          bodyPreview: bodyPreview(text)
-        });
-        await recordUserLog(user, {
-          status: "failed",
-          reason: "subconverter-failed",
-          fromSubscription: subscription,
-          req,
-          target: sc.target,
-          stage: "subconverter-response",
-          message: `Subconverter failed (${response.status}).`,
-          details: { status: response.status, bodyPreview: bodyPreview(text) }
-        });
-        sendSubscriptionMessage(res, 502, `Subconverter failed (${response.status}): ${text.slice(0, 200)}`);
-        return;
-      }
-      const body = Buffer.from(await response.arrayBuffer());
-      const finalBody = postSubconverter(body, liveConfig.body, user, sc);
-      const browserInline = isBrowserNavigationRequest(req);
-      relayLog("response-subconverter-ok", {
-        relayRequestId,
-        userId: user.id,
-        status: response.status,
-        contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
-        browserInline,
-        bodyLength: finalBody.length,
-        bodyPreview: bodyPreview(finalBody.toString("utf8"))
-      });
-      const responseHeaders = {
-        "content-type": browserInline ? "text/plain; charset=utf-8" : (response.headers.get("content-type") || "text/plain; charset=utf-8"),
-        "cache-control": "no-store, max-age=0",
-        "pragma": "no-cache",
-        "expires": "0",
-        ...(liveConfig.subscriptionUserinfo && user.blockUserinfo === false ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
-      };
-      if (browserInline) {
-        responseHeaders["content-disposition"] = "inline; filename*=UTF-8''NEXORA.txt";
-        responseHeaders["x-content-type-options"] = "nosniff";
-      } else {
-        responseHeaders["content-disposition"] = "attachment; filename*=UTF-8''NEXORA";
-      }
-      res.writeHead(response.status, responseHeaders);
-      res.end(finalBody);
-    } catch (error) {
-      relayLog("subconverter-request-error", {
-        relayRequestId,
-        userId: user.id,
-        errorName: error.name,
-        errorMessage: error.message
-      });
-      await recordUserLog(user, {
-        status: "failed",
-        reason: error.name === "AbortError" ? "subconverter-timeout" : "subconverter-request-failed",
-        fromSubscription: subscription,
-        req,
-        target: sc.target,
-        stage: "subconverter-request",
-        message: error.name === "AbortError" ? "Subconverter request timed out." : error.message
-      });
-      sendSubscriptionMessage(res, 502, error.name === "AbortError"
-        ? "Subconverter request timed out. Please retry."
-        : `Subconverter request failed: ${error.message}`);
-    } finally {
-      clearTimeout(timer);
-    }
+    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc });
     return;
   }
 
@@ -5532,6 +5877,7 @@ async function handleApi(req, res, pathname) {
       subscription: user ? {
         ...publicDeliveryPayload(user, req),
         id: user.id,
+        lineType: isSelfHostedUser(user) ? "self_hosted" : "upstream",
         status: isUserExpired(user) ? "expired" : "active",
         purchasedAt: user.purchasedAt || "",
         duration: user.duration || "",
@@ -5543,6 +5889,34 @@ async function handleApi(req, res, pathname) {
       orders: paymentOrders.filter(item => item.accountId === account.id).slice(0, 5).map(publicPaymentOrder),
       announcements: publicAnnouncements()
     });
+    return;
+  }
+
+  if (pathname === "/api/account/self-hosted-traffic" && req.method === "GET") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    await loadLatestData();
+    const account = accountBySession(session);
+    const user = account?.linkedUserId ? users.find(item => item.id === account.linkedUserId) : null;
+    if (!user || !isSelfHostedUser(user)) {
+      sendJson(res, 404, { error: "当前用户不是自研线路套餐。" });
+      return;
+    }
+    try {
+      const remote = await getXuiClient(user);
+      const payload = xuiTrafficPayload(user, remote);
+      user.xuiLastTraffic = payload;
+      user.xuiLastSyncedAt = payload.lastSyncedAt;
+      user.xuiLastError = "";
+      await saveUsers();
+      sendJson(res, 200, payload);
+    } catch (error) {
+      user.xuiLastError = error.message;
+      user.xuiLastSyncFailedAt = new Date().toISOString();
+      await saveUsers();
+      if (user.xuiLastTraffic) sendJson(res, 200, { ...user.xuiLastTraffic, stale: true, error: error.message });
+      else sendJson(res, 502, { error: error.message });
+    }
     return;
   }
 
@@ -6256,6 +6630,12 @@ async function handleApi(req, res, pathname) {
       normalized.outputMode = userOutputMode(payload);
       normalized.blockUserinfo = payload.blockUserinfo !== false;
       users.unshift(normalized);
+      try {
+        if (isSelfHostedUser(normalized)) await provisionXuiClient(normalized);
+      } catch (error) {
+        users = users.filter(entry => entry.id !== normalized.id);
+        throw error;
+      }
       bills.unshift(makeBill({
         user: normalized,
         type: "initial",
@@ -6490,7 +6870,7 @@ async function handleApi(req, res, pathname) {
     try {
       const payload = await readJson(req);
       if (!Array.isArray(payload)) { sendJson(res, 400, { error: "payload must be an array." }); return; }
-      const GROUPS = ["basic", "pro", "ultra"];
+      const GROUPS = USER_GROUPS;
       const DURATIONS = ["monthly", "quarterly", "half_yearly", "yearly"];
       const UNLIMITED_PRICE_KEYS = { monthly: "unlimitedMonthly", quarterly: "unlimitedQuarterly", half_yearly: "unlimitedHalfYearly", yearly: "unlimitedYearly" };
       const TEXT_FIELDS = ["name", "title", "description", "traffic"];
@@ -6513,6 +6893,11 @@ async function handleApi(req, res, pathname) {
           }
         }
         for (const field of TEXT_FIELDS) row[field] = String(item[field] ?? "").trim().slice(0, field === "description" ? 120 : 60);
+        if (item.group === "self_hosted" && item.trafficBytes !== undefined) {
+          const trafficBytes = Number(item.trafficBytes);
+          if (!Number.isSafeInteger(trafficBytes) || trafficBytes < 0) { sendJson(res, 400, { error: "self_hosted.trafficBytes 流量额度无效。" }); return; }
+          row.trafficBytes = trafficBytes;
+        }
         row.recommended = Boolean(item.recommended);
         row.features = Array.isArray(item.features) ? item.features.map(value => String(value).trim()).filter(Boolean).slice(0, 10) : [];
         row.unavailableFeatures = Array.isArray(item.unavailableFeatures) ? item.unavailableFeatures.map(value => String(value).trim()).filter(Boolean).slice(0, 10) : [];
@@ -6779,6 +7164,7 @@ async function handleApi(req, res, pathname) {
     }
 
     if (action === "renew" && req.method === "POST") {
+      const previousUserState = structuredClone(item);
       try {
         if (userHasClaimedAccount(item.id)) throw new Error("已认领用户只能通过自主购买变更付款信息。");
         const payload = await readJson(req);
@@ -6787,6 +7173,8 @@ async function handleApi(req, res, pathname) {
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const renewal = renewUser(item, payload);
+        if (isSelfHostedUser(item)) await provisionXuiClient(item);
+        else if (item.xuiClientEmail) await disableXuiClient(item);
         const toSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         bills.unshift(makeBill({
           user: item,
@@ -6825,17 +7213,23 @@ async function handleApi(req, res, pathname) {
         await saveBills();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
+        Object.keys(item).forEach(key => delete item[key]);
+        Object.assign(item, previousUserState);
         sendJson(res, 400, { error: error.message });
       }
       return;
     }
 
     if (action === "gift" && req.method === "POST") {
+      const previousUserState = structuredClone(item);
       try {
         const payload = await readJson(req);
         const expiresAt = calculateGiftExpiry(item, payload.days);
         if (!expiresAt) throw new Error("请输入正确的赠送天数。");
-        const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id, group: poolSelectionGroup(item) });
+        const selfHosted = isSelfHostedUser(item);
+        const recommendation = selfHosted
+          ? { subscription: null, reason: "自研线路不使用订阅池。", details: null }
+          : recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id, group: poolSelectionGroup(item) });
         if (payload.preview === true) {
           sendJson(res, 200, {
             expiresAt,
@@ -6845,18 +7239,19 @@ async function handleApi(req, res, pathname) {
           });
           return;
         }
-        const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || recommendation.subscription?.id || ""));
-        if (!toSubscription) throw new Error("请选择有效的订阅池。");
-        if (!subscriptionAllowsGroup(toSubscription, poolSelectionGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
-        if ((toSubscription.enabled === false && payload.allowDisabled !== true) || !subscriptionCanBeManuallyAssigned(toSubscription)) throw new Error("请选择已启用且未过期的订阅池，或有效的手动 Base64 池。");
+        const toSubscription = selfHosted ? null : subscriptions.find(entry => entry.id === String(payload.subscriptionId || recommendation.subscription?.id || ""));
+        if (!selfHosted && !toSubscription) throw new Error("请选择有效的订阅池。");
+        if (!selfHosted && !subscriptionAllowsGroup(toSubscription, poolSelectionGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
+        if (!selfHosted && ((toSubscription.enabled === false && payload.allowDisabled !== true) || !subscriptionCanBeManuallyAssigned(toSubscription))) throw new Error("请选择已启用且未过期的订阅池，或有效的手动 Base64 池。");
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
-        if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
+        if (!selfHosted && fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
         const beforeExpiresAt = item.expiresAt || null;
         item.planExpiresAt ||= beforeExpiresAt;
         item.giftedDays = (Number(item.giftedDays) || 0) + Number(payload.days);
         item.expiresAt = expiresAt;
-        item.subscriptionId = toSubscription.id;
+        if (!selfHosted) item.subscriptionId = toSubscription.id;
         item.updatedAt = new Date().toISOString();
+        if (selfHosted) await provisionXuiClient(item);
         appendUserLogToUser(item, createUserLog({
           event: "user-action",
           status: "recorded",
@@ -6870,6 +7265,8 @@ async function handleApi(req, res, pathname) {
         await saveUsers();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
+        Object.keys(item).forEach(key => delete item[key]);
+        Object.assign(item, previousUserState);
         sendJson(res, 400, { error: error.message });
       }
       return;
@@ -6938,6 +7335,7 @@ async function handleApi(req, res, pathname) {
 
     if (action === "pool" && req.method === "POST") {
       try {
+        if (isSelfHostedUser(item)) throw new Error("自研线路套餐不可使用换池功能。");
         const payload = await readJson(req);
         const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || ""));
         if (!toSubscription) throw new Error("请选择有效的订阅池。");
@@ -6976,6 +7374,7 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === "PUT") {
+      const previousUserState = structuredClone(item);
       try {
         const payload = await readJson(req);
         if (userHasClaimedAccount(item.id)) throw new Error("已认领账户仅允许换池或赠送时长。");
@@ -6986,6 +7385,8 @@ async function handleApi(req, res, pathname) {
         const toSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
         if (fromSubscription?.id !== toSubscription?.id && toSubscription && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
         Object.assign(item, normalized);
+        if (isSelfHostedUser(item)) await provisionXuiClient(item);
+        else if (item.xuiClientEmail) await disableXuiClient(item);
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const after = userSnapshotForLog(item);
@@ -7017,6 +7418,8 @@ async function handleApi(req, res, pathname) {
         if (accountEmailChanged) await saveAccounts();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
+        Object.keys(item).forEach(key => delete item[key]);
+        Object.assign(item, previousUserState);
         sendJson(res, 400, { error: error.message });
       }
       return;
@@ -7026,6 +7429,14 @@ async function handleApi(req, res, pathname) {
       if (userHasClaimedAccount(item.id)) {
         sendJson(res, 400, { error: "已认领账户不能删除。" });
         return;
+      }
+      if (isSelfHostedUser(item)) {
+        try {
+          await disableXuiClient(item);
+        } catch (error) {
+          sendJson(res, 502, { error: `3x-ui 用户停用失败，未删除本地用户：${error.message}` });
+          return;
+        }
       }
       users = users.filter(entry => entry.id !== id);
       await saveUsers();
@@ -7371,6 +7782,9 @@ module.exports = Object.assign(requestHandler, {
   subscriptionSourceType,
   normalizeManualSubscriptionContent,
   normalizeSubscription,
+  normalizeXuiClientResult,
+  xuiClientWritePayload,
+  xuiTrafficPayload,
   clearSubscriptionSourceState,
   subscriptionCanBeManuallyAssigned,
   subscriptionHasUsableSource,

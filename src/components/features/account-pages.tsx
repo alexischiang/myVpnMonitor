@@ -29,7 +29,8 @@ import { VipBadge } from "@/components/features/vip-badge"
 import { formatDate, formatDateTime, formatMoney } from "@/utils"
 
 type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge"; planName: string; optionLabel: string; amount: number; totalAmount?: number; walletAmount?: number; walletCashAmount?: number; walletGiftAmount?: number; walletReferralAmount?: number; realCashAmount?: number; virtualCashAmount?: number; status: string; statusText: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
-type Subscription = { status: string; activeGroup: string; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; cashValue: number; traffic: string; unlimited?: boolean; devices: number | string; subscriptionUrl: string; vipLevel?: string }
+type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; cashValue: number; traffic: string; unlimited?: boolean; devices: number | string; subscriptionUrl: string; vipLevel?: string }
+type SelfHostedTraffic = { uploadBytes: number; downloadBytes: number; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; lastSyncedAt: string; stale?: boolean; error?: string }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
@@ -91,6 +92,9 @@ export function AccountOverviewPage() {
   const [muteToday, setMuteToday] = React.useState(false)
   const [carouselApi, setCarouselApi] = React.useState<CarouselApi>()
   const [carouselIndex, setCarouselIndex] = React.useState(0)
+  const [selfHostedTraffic, setSelfHostedTraffic] = React.useState<SelfHostedTraffic | null>(null)
+  const [trafficLoading, setTrafficLoading] = React.useState(false)
+  const [trafficError, setTrafficError] = React.useState("")
   const latestAnnouncement = data?.announcements[0]
   const currentAnnouncement = data?.announcements[carouselIndex] || latestAnnouncement
 
@@ -114,6 +118,44 @@ export function AccountOverviewPage() {
   React.useEffect(() => {
     if (data && window.location.hash === "#subscription") document.getElementById("subscription")?.scrollIntoView()
   }, [data?.email])
+
+  React.useEffect(() => {
+    if (data?.subscription?.lineType !== "self_hosted") {
+      setSelfHostedTraffic(null)
+      setTrafficError("")
+      return
+    }
+    let active = true
+    const refresh = () => {
+      if (!selfHostedTraffic) setTrafficLoading(true)
+      return fetchJson<SelfHostedTraffic>("/api/account/self-hosted-traffic")
+        .then(value => {
+          if (!active) return
+          setSelfHostedTraffic(value)
+          setTrafficError(value.error || "")
+        })
+        .catch(error => { if (active) setTrafficError(error instanceof Error ? error.message : "流量同步失败") })
+        .finally(() => { if (active) setTrafficLoading(false) })
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, 15000)
+    const onVisibility = () => { if (document.visibilityState === "visible") void refresh() }
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility) }
+  }, [data?.subscription?.lineType])
+
+  async function refreshSelfHostedTraffic() {
+    setTrafficLoading(true)
+    try {
+      const value = await fetchJson<SelfHostedTraffic>("/api/account/self-hosted-traffic")
+      setSelfHostedTraffic(value)
+      setTrafficError(value.error || "")
+    } catch (error) {
+      setTrafficError(error instanceof Error ? error.message : "流量同步失败")
+    } finally {
+      setTrafficLoading(false)
+    }
+  }
 
   function changeAnnouncementOpen(open: boolean) {
     if (!open && reminderDialog && muteToday && data) localStorage.setItem(`account-announcement-muted:${data.email}`, todayKey())
@@ -174,9 +216,11 @@ export function AccountOverviewPage() {
           <CardHeader className="flex-row items-start justify-between gap-4"><div><CardDescription>当前订阅</CardDescription><CardTitle className="mt-1 text-2xl">{subscription ? subscription.activeGroup.toUpperCase() : "暂无订阅"}</CardTitle></div><Badge variant={subscription?.status === "active" ? "success" : subscription?.status === "expired" ? "destructive" : "warning"} className="leading-none [&>svg]:size-3.5">{subscription?.status === "active" ? <><CheckCircle2 />生效中</> : subscription?.status === "expired" ? "已过期" : "未开通"}</Badge></CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 xl:grid-cols-4">
           <Metric label="到期日" value={subscription ? <span className="grid gap-1"><span>{formatDate(subscription.expiresAt)}</span>{subscription.giftedDays ? <span className="text-xs font-normal text-muted-foreground">原到期日 {formatDate(subscription.planExpiresAt)} · 赠送 {subscription.giftedDays} 天</span> : null}</span> : "-"} />
-            <Metric label="流量" value={subscription?.traffic || "-"} />
+            <Metric label="流量" value={subscription?.lineType === "self_hosted" ? (selfHostedTraffic ? `${(selfHostedTraffic.usedBytes / 1024 ** 3).toFixed(2)} / ${(selfHostedTraffic.totalBytes / 1024 ** 3).toFixed(0)} GB` : trafficLoading ? "正在同步..." : "暂不可用") : (subscription?.traffic || "-")} description={subscription?.lineType === "self_hosted" ? (selfHostedTraffic ? `${selfHostedTraffic.stale ? "缓存数据" : "实时数据"} · ${formatDateTime(selfHostedTraffic.lastSyncedAt)}` : trafficError || "正在从3x-ui读取流量") : undefined} />
             <Metric label="可绑定设备" value={subscription ? `${subscription.devices} 台` : "-"} />
             <Metric label="剩余现金价值" value={subscription ? formatMoney(subscription.cashValue) : "-"} description="根据当前套餐剩余有效期折算，更换套餐时可用于抵扣。" />
+            {subscription?.lineType === "self_hosted" && selfHostedTraffic?.usagePercent !== null && selfHostedTraffic ? <div className="col-span-2 grid gap-2 xl:col-span-4"><Progress value={selfHostedTraffic.usagePercent || 0} aria-label={`流量使用 ${selfHostedTraffic.usagePercent || 0}%`} /><p className="text-xs text-muted-foreground">已使用 {selfHostedTraffic.usagePercent || 0}% · 剩余 {((selfHostedTraffic.remainingBytes || 0) / 1024 ** 3).toFixed(2)} GB</p></div> : null}
+            {subscription?.lineType === "self_hosted" ? <div className="col-span-2 xl:col-span-4"><Button variant="outline" size="sm" onClick={() => void refreshSelfHostedTraffic()} disabled={trafficLoading}><RefreshCw className={trafficLoading ? "animate-spin" : undefined} />刷新流量</Button>{trafficError ? <p className="mt-2 text-xs text-destructive">{trafficError}</p> : null}</div> : null}
             <div className="col-span-2 flex flex-wrap gap-2 xl:col-span-4"><Button asChild><Link to="/account/plans">{subscription ? "续费或更换套餐" : "购买套餐"}</Link></Button></div>
             {subscription ? <><Separator className="col-span-2 xl:col-span-4" /><Field className="col-span-2 xl:col-span-4"><FieldLabel htmlFor="subscription-url">订阅链接</FieldLabel><FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></> : null}
           </CardContent>
