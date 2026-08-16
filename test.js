@@ -32,6 +32,16 @@ const {
   postSubconverter,
   normalizeSubscription,
   normalizeXuiClientResult,
+  normalizeXuiMonitor,
+  normalizeXuiInbounds,
+  xuiActiveInboundKeys,
+  summarizeXuiUptime,
+  xuiTrafficByUser,
+  calculateXuiBillingLedger,
+  xuiClientCycleKey,
+  xuiNodeBaseUrl,
+  sealXuiNodeToken,
+  openXuiNodeToken,
   xuiClientWritePayload,
   xuiTrafficPayload,
   clearSubscriptionSourceState
@@ -163,13 +173,40 @@ assert.deepStrictEqual(selfHostedQuote.cycles.map(cycle => cycle.optionId), ["se
 const xuiClient = normalizeXuiClientResult({ client: { email: "self@test", totalGB: 1000 }, inboundIds: [3], traffic: { up: 100, down: 250 } });
 assert.deepStrictEqual(xuiClient.inboundIds, [3]);
 assert.deepStrictEqual(xuiClientWritePayload({ uuid: "keep", createdAt: "readonly" }, { email: "self@test", totalGB: 1000 }), { email: "self@test", totalGB: 1000, uuid: "keep" });
-const selfHostedTraffic = xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z" }, xuiClient);
+const selfHostedTraffic = xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z", xuiWeightedTraffic: { rawUsedBytes: 350, usedBytes: 350, totalBytes: 1000, depleted: false } }, xuiClient);
 assert.deepStrictEqual(
   [selfHostedTraffic.status, selfHostedTraffic.uploadBytes, selfHostedTraffic.downloadBytes, selfHostedTraffic.usedBytes, selfHostedTraffic.totalBytes, selfHostedTraffic.remainingBytes, selfHostedTraffic.usagePercent],
   ["active", 100, 250, 350, 1000, 650, 35]
 );
 const xuiUsedTraffic = normalizeXuiClientResult({ client: { email: "self@test", totalGB: 1000 }, usedTraffic: 400 });
 assert.strictEqual(xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z" }, xuiUsedTraffic).usedBytes, 400);
+const trafficByUser = xuiTrafficByUser([
+  { originNodeGuid: "hk", clientStats: [{ email: "USER@test.com", up: 100, down: 50 }] },
+  { originNodeGuid: "jp", clientStats: [{ email: "user@test.com", up: 20, down: 30 }] }
+]);
+assert.deepStrictEqual(trafficByUser, { "user@test.com": { hk: 150, jp: 50 } });
+const firstLedger = calculateXuiBillingLedger(null, trafficByUser["user@test.com"], { hk: 2, jp: 0.5 }, "cycle-1");
+assert.deepStrictEqual([firstLedger.rawBytes, firstLedger.weightedBytes], [200, 325]);
+const nextLedger = calculateXuiBillingLedger(firstLedger, { hk: 180, jp: 70 }, { hk: 2, jp: 0.5 }, "cycle-1");
+assert.deepStrictEqual([nextLedger.rawBytes, nextLedger.weightedBytes], [250, 395]);
+const resetLedger = calculateXuiBillingLedger(nextLedger, { hk: 180, jp: 70 }, { hk: 2, jp: 0.5 }, "cycle-2");
+assert.deepStrictEqual([resetLedger.rawBytes, resetLedger.weightedBytes], [0, 0]);
+const clientCreatedAt = Date.UTC(2026, 0, 1);
+assert.notStrictEqual(xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 29 * 864e5), xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 31 * 864e5));
+assert.strictEqual(xuiNodeBaseUrl({ scheme: "https", address: "node.example.com", port: 8443, basePath: "/secret/" }), "https://node.example.com:8443/secret");
+const sealedNodeToken = sealXuiNodeToken("node-secret");
+assert.notStrictEqual(sealedNodeToken.includes("node-secret"), true);
+assert.strictEqual(openXuiNodeToken(sealedNodeToken), "node-secret");
+const uptimeSummary = summarizeXuiUptime([{ at: Date.UTC(2026, 0, 1, 10), ok: true }, { at: Date.UTC(2026, 0, 1, 11), ok: false, error: "refused" }, { at: Date.UTC(2026, 0, 1, 12), ok: true }], Date.UTC(2026, 0, 1, 13));
+assert.deepStrictEqual([uptimeSummary.availability, uptimeSummary.incidents, uptimeSummary.downtimeMs], [66.667, 1, 300000]);
+assert.deepStrictEqual([...xuiActiveInboundKeys({ "node-a": ["in-443-tcp", "in-8443-tcp"] })], ["node-a:in-443-tcp", "node-a:in-8443-tcp"]);
+const xuiMonitor = normalizeXuiMonitor(
+  { cpu: 12.5, mem: { current: 40, total: 100 }, disk: { current: 20, total: 200 }, xray: { state: "running", version: "1.0" } },
+  [{ id: 1, remark: "Tokyo", address: "node.example.com", port: 443, status: "online", cpuPct: 10, memPct: 20, netUp: 10, netDown: 20, clientCount: 2, onlineCount: 1 }]
+);
+assert.deepStrictEqual([xuiMonitor.system.cpu, xuiMonitor.system.memoryUsed, xuiMonitor.nodes[0].clientCount, xuiMonitor.nodes[0].downloadBytes], [12.5, 40, 2, 20]);
+const xuiInbounds = normalizeXuiInbounds([{ id: 2, remark: "VLESS", protocol: "vless", port: 443, up: 10, down: 20, total: 100, clientStats: [{}, {}] }]);
+assert.deepStrictEqual([xuiInbounds[0].clients, xuiInbounds[0].uploadBytes, xuiInbounds[0].downloadBytes], [2, 10, 20]);
 assert.throws(() => paymentQuote("basic-30", "invalid", "SAVE10:10"), /优惠码无效/);
 assert.strictEqual(paymentChannelCode("100"), "100");
 assert.strictEqual(paymentChannelCode("200"), "200");

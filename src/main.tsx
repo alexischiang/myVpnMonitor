@@ -11,6 +11,7 @@ import { DataProvider } from "@/components/features/data-provider"
 import { AppShell } from "@/components/features/app-shell"
 
 const DashboardPage = lazy(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
+const XuiMonitorPage = lazy(() => import("@/components/features/xui-monitor").then(module => ({ default: module.XuiMonitorPage })))
 const SubscriptionsPage = lazy(() => import("@/components/features/subscriptions").then(module => ({ default: module.SubscriptionsPage })))
 const UsersPage = lazy(() => import("@/components/features/users").then(module => ({ default: module.UsersPage })))
 const OrdersPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrdersPage })))
@@ -116,6 +117,7 @@ function App() {
             <Route path="/" element={<ProtectedApp />}>
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="xui-monitor" element={<XuiMonitorPage />} />
               <Route path="urls" element={<SubscriptionsPage />} />
               <Route path="urls/detail/:id" element={<SubscriptionDetailPage />} />
               <Route path="users" element={<UsersPage />} />

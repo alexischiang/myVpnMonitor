@@ -1,4 +1,5 @@
 const http = require("http");
+const net = require("net");
 const { execFileSync } = require("child_process");
 const fsSync = require("fs");
 const fs = require("fs/promises");
@@ -47,9 +48,13 @@ const REFRESH_CONCURRENCY = Math.max(1, Number(process.env.REFRESH_CONCURRENCY |
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
 const XUI_BASE_URL = (process.env.XUI_BASE_URL || "").replace(/\/+$/, "");
 const XUI_API_TOKEN = String(process.env.XUI_API_TOKEN || "").trim();
+const XUI_PANEL_NAME = String(process.env.XUI_PANEL_NAME || "主面板").trim();
 const XUI_SUBSCRIPTION_BASE_URL = (process.env.XUI_SUBSCRIPTION_BASE_URL || "").replace(/\/+$/, "");
 const XUI_SUBSCRIPTION_PATH = `/${String(process.env.XUI_SUBSCRIPTION_PATH || "sub").replace(/^\/+|\/+$/g, "")}/`;
 const XUI_TIMEOUT_MS = Math.max(1000, Number(process.env.XUI_TIMEOUT_MS || 15000));
+const XUI_TRAFFIC_SYNC_INTERVAL_MS = Math.max(5000, Number(process.env.XUI_TRAFFIC_SYNC_INTERVAL_MS || 30000));
+const XUI_UPTIME_CHECK_INTERVAL_MS = Math.max(60000, Number(process.env.XUI_UPTIME_CHECK_INTERVAL_MS || 300000));
+const XUI_UPTIME_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const SUBCONVERTER_BOOLEAN_DEFAULTS = Object.freeze({
   emoji: true,
@@ -2470,16 +2475,15 @@ function legacyXuiClientEmail(user = {}) {
   return `nexora_${String(user.customerID || user.id || "user").replace(/[^a-zA-Z0-9_-]/g, "_")}@internal`.toLowerCase();
 }
 
-async function xuiRequest(apiPath, { method = "GET", body } = {}) {
-  if (!XUI_BASE_URL || !XUI_API_TOKEN) throw new Error("3x-ui 尚未配置，请设置 XUI_BASE_URL 和 XUI_API_TOKEN。");
+async function xuiRequestAt(baseUrl, apiToken, apiPath, { method = "GET", body } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
   try {
-    const response = await fetch(`${XUI_BASE_URL}${apiPath}`, {
+    const response = await fetch(`${baseUrl}${apiPath}`, {
       method,
       signal: controller.signal,
       headers: {
-        Authorization: `Bearer ${XUI_API_TOKEN}`,
+        Authorization: `Bearer ${apiToken}`,
         ...(body === undefined ? {} : { "content-type": "application/json" })
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
@@ -2499,6 +2503,33 @@ async function xuiRequest(apiPath, { method = "GET", body } = {}) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function xuiRequest(apiPath, options) {
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) throw new Error("3x-ui 尚未配置，请设置 XUI_BASE_URL 和 XUI_API_TOKEN。");
+  return xuiRequestAt(XUI_BASE_URL, XUI_API_TOKEN, apiPath, options);
+}
+
+function xuiNodeBaseUrl(node = {}) {
+  const scheme = String(node.scheme || "https").toLowerCase();
+  if (!['http', 'https'].includes(scheme) || !node.address) throw new Error("节点 API 地址无效。");
+  const basePath = String(node.basePath || "").replace(/^\/+|\/+$/g, "");
+  return `${scheme}://${node.address}${node.port ? `:${node.port}` : ""}${basePath ? `/${basePath}` : ""}`;
+}
+
+function sealXuiNodeToken(token) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", crypto.createHash("sha256").update(XUI_API_TOKEN).digest(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(token), "utf8"), cipher.final()]);
+  return `v1.${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+
+function openXuiNodeToken(value) {
+  const [version, iv, tag, encrypted] = String(value || "").split(".");
+  if (version !== "v1" || !iv || !tag || !encrypted) return "";
+  const decipher = crypto.createDecipheriv("aes-256-gcm", crypto.createHash("sha256").update(XUI_API_TOKEN).digest(), Buffer.from(iv, "base64url"));
+  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
 }
 
 function normalizeXuiClientResult(value, fallbackEmail = "") {
@@ -2524,6 +2555,328 @@ function normalizeXuiClientResult(value, fallbackEmail = "") {
 function normalizeXuiInboundIds(value) {
   const rows = Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : Array.isArray(value?.inbounds) ? value.inbounds : [];
   return [...new Set(rows.map(item => Number(item?.id ?? item)).filter(Number.isSafeInteger))];
+}
+
+function normalizeXuiMonitor(status = {}, value = []) {
+  const rows = Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : Array.isArray(value?.nodes) ? value.nodes : [];
+  const nodes = rows.map((item, index) => {
+    const heartbeat = Math.max(0, Number(item?.lastHeartbeat) || 0);
+    return {
+      id: String(item?.id ?? index),
+      guid: String(item?.guid || `node:${item?.id ?? index}`),
+      name: String(item?.remark || item?.name || `Node ${item?.id ?? index + 1}`),
+      address: String(item?.address || ""),
+      port: Number(item?.port) || null,
+      enabled: item?.enable !== false,
+      status: String(item?.status || "unknown"),
+      lastHeartbeat: heartbeat ? new Date(heartbeat < 1e12 ? heartbeat * 1000 : heartbeat).toISOString() : "",
+      latencyMs: Math.max(0, Number(item?.latencyMs) || 0),
+      cpu: Math.max(0, Number(item?.cpuPct) || 0),
+      memory: Math.max(0, Number(item?.memPct) || 0),
+      uptime: Math.max(0, Number(item?.uptimeSecs) || 0),
+      uploadBytes: Math.max(0, Number(item?.netUp) || 0),
+      downloadBytes: Math.max(0, Number(item?.netDown) || 0),
+      xrayState: String(item?.xrayState || "unknown"),
+      xrayVersion: String(item?.xrayVersion || ""),
+      panelVersion: String(item?.panelVersion || ""),
+      inboundCount: Math.max(0, Number(item?.inboundCount) || 0),
+      clientCount: Math.max(0, Number(item?.clientCount) || 0),
+      onlineCount: Math.max(0, Number(item?.onlineCount) || 0),
+      lastError: String(item?.lastError || item?.xrayError || "")
+    };
+  });
+  const memory = status?.mem || status?.memory || {};
+  const disk = status?.disk || {};
+  const net = status?.netTraffic || {};
+  const netIO = status?.netIO || {};
+  return {
+    system: {
+      cpu: Math.max(0, Number(status?.cpu) || 0),
+      cpuCores: Math.max(0, Number(status?.cpuCores) || 0),
+      memoryUsed: Math.max(0, Number(memory?.current ?? memory?.used) || 0),
+      memoryTotal: Math.max(0, Number(memory?.total) || 0),
+      diskUsed: Math.max(0, Number(disk?.current ?? disk?.used) || 0),
+      diskTotal: Math.max(0, Number(disk?.total) || 0),
+      uptime: Math.max(0, Number(status?.uptime) || 0),
+      xrayState: String(status?.xray?.state ?? status?.xrayState ?? "unknown"),
+      xrayVersion: String(status?.xray?.version ?? status?.xrayVersion ?? ""),
+      sentBytes: Math.max(0, Number(net?.sent ?? netIO?.up) || 0),
+      receivedBytes: Math.max(0, Number(net?.recv ?? netIO?.down) || 0)
+    },
+    nodes
+  };
+}
+
+function normalizeXuiInbounds(value = []) {
+  const rows = Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : Array.isArray(value?.inbounds) ? value.inbounds : [];
+  return rows.map((item, index) => ({
+    id: String(item?.id ?? index),
+    name: String(item?.remark || item?.tag || `Inbound ${item?.id ?? index + 1}`),
+    protocol: String(item?.protocol || "unknown"),
+    port: Number(item?.port) || null,
+    enabled: item?.enable !== false,
+    clients: Array.isArray(item?.clientStats) ? item.clientStats.length : Array.isArray(item?.settings?.clients) ? item.settings.clients.length : 0,
+    uploadBytes: Math.max(0, Number(item?.up) || 0),
+    downloadBytes: Math.max(0, Number(item?.down) || 0),
+    totalBytes: Math.max(0, Number(item?.total) || 0),
+    expiryTime: Math.max(0, Number(item?.expiryTime) || 0)
+  }));
+}
+
+function xuiInboundKey(inbound = {}) {
+  return `${String(inbound.originNodeGuid || `node:${inbound.nodeId || "local"}`)}:${String(inbound.id ?? "")}`;
+}
+
+function xuiActiveInboundKeys(value) {
+  const keys = new Set();
+  if (!value || typeof value !== "object") return keys;
+  for (const [guid, tags] of Object.entries(value)) {
+    for (const tag of Array.isArray(tags) ? tags : []) keys.add(`${guid}:${tag}`);
+  }
+  return keys;
+}
+
+function probeTcp(host, port, timeoutMs = 5000) {
+  return new Promise(resolve => {
+    const startedAt = Date.now();
+    const socket = net.createConnection({ host, port });
+    const finish = (ok, error = "") => {
+      socket.destroy();
+      resolve({ ok, latencyMs: ok ? Date.now() - startedAt : null, error });
+    };
+    socket.setTimeout(timeoutMs, () => finish(false, "连接超时"));
+    socket.once("connect", () => finish(true));
+    socket.once("error", error => finish(false, error.message));
+  });
+}
+
+function summarizeXuiUptime(samples = [], now = Date.now()) {
+  const start = now - XUI_UPTIME_RETENTION_MS;
+  const recent = samples.filter(sample => sample.at >= start).sort((a, b) => a.at - b.at);
+  const buckets = Array.from({ length: 24 }, (_, index) => {
+    const from = start + index * 3600000;
+    const values = recent.filter(sample => sample.at >= from && sample.at < from + 3600000);
+    const failures = values.filter(sample => !sample.ok);
+    return { from, status: !values.length ? "unknown" : failures.length ? "down" : "up", checks: values.length, failedAt: failures.at(-1)?.at || null, error: failures.at(-1)?.error || "" };
+  });
+  let incidents = 0;
+  let wasDown = false;
+  for (const sample of recent) {
+    if (!sample.ok && !wasDown) incidents += 1;
+    wasDown = !sample.ok;
+  }
+  const failed = recent.filter(sample => !sample.ok).length;
+  return {
+    availability: recent.length ? Math.round((recent.length - failed) / recent.length * 100000) / 1000 : null,
+    incidents,
+    downtimeMs: failed * XUI_UPTIME_CHECK_INTERVAL_MS,
+    lastCheckedAt: recent.at(-1)?.at || null,
+    lastOk: recent.at(-1)?.ok ?? null,
+    buckets
+  };
+}
+
+let xuiUptimeCheck = null;
+
+async function checkXuiInboundUptime(snapshot = {}) {
+  if (xuiUptimeCheck) return xuiUptimeCheck;
+  xuiUptimeCheck = (async () => {
+    const [status, nodes, inbounds] = await Promise.all([
+      snapshot.status || xuiRequest("/panel/api/server/status"),
+      snapshot.nodes || xuiRequest("/panel/api/nodes/list"),
+      snapshot.inbounds || xuiRequest("/panel/api/inbounds/list")
+    ]);
+    const now = Date.now();
+    const localGuid = String(status?.panelGuid || "node:local");
+    const hosts = { [localGuid]: new URL(XUI_BASE_URL).hostname };
+    for (const node of Array.isArray(nodes) ? nodes : []) hosts[String(node.guid || `node:${node.id}`)] = String(node.address || "");
+    const state = { samples: {}, ...((await dataStore.getRecord("xuiUptime", "state")) || {}) };
+    await Promise.all((Array.isArray(inbounds) ? inbounds : []).filter(inbound => inbound.enable !== false && Number(inbound.port) > 0).map(async inbound => {
+      const key = xuiInboundKey(inbound);
+      const guid = String(inbound.originNodeGuid || `node:${inbound.nodeId || "local"}`);
+      const host = String(inbound.shareAddr || hosts[guid] || "").trim();
+      const result = host ? await probeTcp(host, Number(inbound.port)) : { ok: false, latencyMs: null, error: "缺少节点地址" };
+      state.samples[key] = [...(state.samples[key] || []).filter(sample => sample.at >= now - XUI_UPTIME_RETENTION_MS), { at: now, ...result }];
+    }));
+    state.lastCheckedAt = now;
+    await dataStore.setRecord("xuiUptime", "state", state);
+    return state;
+  })().finally(() => { xuiUptimeCheck = null; });
+  return xuiUptimeCheck;
+}
+
+async function getXuiInboundUptime(snapshot = {}) {
+  const state = { samples: {}, ...((await dataStore.getRecord("xuiUptime", "state")) || {}) };
+  return !state.lastCheckedAt || Date.now() - state.lastCheckedAt >= XUI_UPTIME_CHECK_INTERVAL_MS ? checkXuiInboundUptime(snapshot) : state;
+}
+
+function xuiTrafficByUser(value = []) {
+  const rows = Array.isArray(value) ? value : [];
+  const result = {};
+  for (const inbound of rows) {
+    const nodeGuid = String(inbound?.originNodeGuid || `node:${inbound?.nodeId || "local"}`);
+    for (const client of Array.isArray(inbound?.clientStats) ? inbound.clientStats : []) {
+      const email = String(client?.email || "").trim().toLowerCase();
+      if (!email) continue;
+      result[email] ||= {};
+      result[email][nodeGuid] = (result[email][nodeGuid] || 0) + Math.max(0, Number(client?.up) || 0) + Math.max(0, Number(client?.down) || 0);
+    }
+  }
+  return result;
+}
+
+function xuiMultiplier(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : 1;
+}
+
+function calculateXuiBillingLedger(previous, currentByNode, multipliers, cycleKey) {
+  const reset = previous?.cycleKey && previous.cycleKey !== cycleKey;
+  const nodes = reset ? {} : structuredClone(previous?.nodes || {});
+  for (const [nodeGuid, currentBytes] of Object.entries(currentByNode || {})) {
+    const prior = nodes[nodeGuid];
+    const current = Math.max(0, Number(currentBytes) || 0);
+    const delta = reset ? 0 : prior ? (current >= prior.baselineBytes ? current - prior.baselineBytes : current) : current;
+    const multiplier = xuiMultiplier(multipliers?.[nodeGuid]);
+    nodes[nodeGuid] = {
+      baselineBytes: current,
+      rawBytes: Math.max(0, Number(prior?.rawBytes) || 0) + delta,
+      weightedBytes: Math.max(0, Number(prior?.weightedBytes) || 0) + Math.round(delta * multiplier)
+    };
+  }
+  return {
+    cycleKey,
+    cycleReset: Boolean(reset),
+    disabled: reset ? false : previous?.disabled === true,
+    nodes,
+    rawBytes: Object.values(nodes).reduce((sum, item) => sum + item.rawBytes, 0),
+    weightedBytes: Object.values(nodes).reduce((sum, item) => sum + item.weightedBytes, 0),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function xuiClientCycleKey(client = {}, now = Date.now()) {
+  const createdAt = Number(client.createdAt) || now;
+  const createdMs = createdAt < 1e12 ? createdAt * 1000 : createdAt;
+  const resetDays = Math.max(0, Number(client.reset) || 0);
+  const period = resetDays ? Math.max(0, Math.floor((now - createdMs) / (resetDays * 86400000))) : 0;
+  return `${createdAt}|${resetDays}|${period}|${Number(client.expiryTime) || 0}`;
+}
+
+let xuiBillingMutation = Promise.resolve();
+
+function withXuiBillingLock(operation) {
+  const next = xuiBillingMutation.catch(() => undefined).then(operation);
+  xuiBillingMutation = next;
+  return next;
+}
+
+async function getXuiBillingState() {
+  const value = await dataStore.getRecord("xuiBilling", "state");
+  return { multipliers: {}, nodeTokens: {}, users: {}, ...(value || {}) };
+}
+
+async function saveXuiBillingState(state) {
+  await dataStore.setRecord("xuiBilling", "state", { ...state, updatedAt: new Date().toISOString() });
+}
+
+async function xuiTrafficFromNodes(status, nodes, centralInbounds, state) {
+  const localGuid = String(status?.panelGuid || "node:local");
+  const inbounds = (Array.isArray(centralInbounds) ? centralInbounds : [])
+    .filter(item => String(item?.originNodeGuid || `node:${item?.nodeId || "local"}`) === localGuid)
+    .map(item => ({ ...item, originNodeGuid: localGuid }));
+  const nodeResults = { [localGuid]: { configured: true, error: "" } };
+  await Promise.all((Array.isArray(nodes) ? nodes : []).map(async node => {
+    const guid = String(node?.guid || `node:${node?.id}`);
+    const sealedToken = state.nodeTokens[guid];
+    if (!sealedToken) {
+      nodeResults[guid] = { configured: false, error: "" };
+      return;
+    }
+    try {
+      const token = openXuiNodeToken(sealedToken);
+      const rows = await xuiRequestAt(xuiNodeBaseUrl(node), token, "/panel/api/inbounds/list");
+      inbounds.push(...(Array.isArray(rows) ? rows : []).map(item => ({ ...item, originNodeGuid: guid })));
+      nodeResults[guid] = { configured: true, error: "" };
+    } catch (error) {
+      nodeResults[guid] = { configured: true, error: error.message };
+    }
+  }));
+  return { traffic: xuiTrafficByUser(inbounds), nodeResults };
+}
+
+async function syncXuiWeightedTraffic(snapshot = {}) {
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) return getXuiBillingState();
+  return withXuiBillingLock(async () => {
+    await loadLatestData();
+    const [status, nodes, inbounds, clients] = await Promise.all([
+      snapshot.status || xuiRequest("/panel/api/server/status"),
+      snapshot.nodes || xuiRequest("/panel/api/nodes/list"),
+      snapshot.inbounds || xuiRequest("/panel/api/inbounds/list"),
+      snapshot.clients || xuiRequest("/panel/api/clients/list")
+    ]);
+    const state = await getXuiBillingState();
+    const { traffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, state);
+    const names = Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)]));
+    const disableEmails = [];
+    const changedUsers = [];
+    const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
+
+    for (const remote of Array.isArray(clients) ? clients : []) {
+      const email = String(remote?.email || "").trim().toLowerCase();
+      if (!email) continue;
+      const user = appUsersByEmail.get(email);
+      const previous = state.users[email];
+      const planBytes = user ? planTrafficBytes(user) : Math.max(0, Number(previous?.totalBytes ?? remote.totalGB) || 0);
+      const cycleKey = `${user ? `${user.purchasedAt || ""}|${user.expiresAt || ""}|${planBytes}` : xuiClientCycleKey(remote)}|direct-nodes-v1`;
+      const ledger = calculateXuiBillingLedger(state.users[email], traffic[email] || {}, state.multipliers, cycleKey);
+      const totalBytes = planBytes;
+      const expired = user ? isUserExpired(user) : Number(remote.expiryTime) > 0 && Number(remote.expiryTime) < Date.now();
+      const depleted = user?.unlimited !== true && totalBytes > 0 && ledger.weightedBytes >= totalBytes;
+      if (depleted && remote.enable !== false && !expired) disableEmails.push(email);
+      ledger.disabled = ledger.disabled || depleted;
+      ledger.totalBytes = totalBytes;
+      state.users[email] = ledger;
+      const weightedTraffic = {
+        rawUsedBytes: ledger.rawBytes,
+        usedBytes: ledger.weightedBytes,
+        totalBytes,
+        remainingBytes: totalBytes ? Math.max(totalBytes - ledger.weightedBytes, 0) : null,
+        usagePercent: totalBytes ? Math.min(100, Math.round(ledger.weightedBytes / totalBytes * 1000) / 10) : null,
+        depleted,
+        nodes: Object.entries(ledger.nodes).map(([guid, item]) => ({ guid, name: names[guid] || guid, multiplier: xuiMultiplier(state.multipliers[guid]), rawBytes: item.rawBytes, weightedBytes: item.weightedBytes })),
+        lastSyncedAt: ledger.updatedAt
+      };
+      if (user) {
+        user.xuiWeightedTraffic = weightedTraffic;
+        changedUsers.push(user);
+      }
+
+      if (Number(remote?.totalGB) > 0) {
+        try {
+          await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0 }) });
+        } catch (error) {
+          console.warn(`[xui-billing] Failed to clear native quota for ${email}: ${error.message}`);
+        }
+      }
+      if (ledger.cycleReset && previous?.disabled && !expired) {
+        try {
+          await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, enable: true }) });
+          ledger.disabled = false;
+        } catch (error) {
+          console.warn(`[xui-billing] Failed to re-enable ${email}: ${error.message}`);
+        }
+      }
+    }
+
+    if (disableEmails.length) {
+      await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: disableEmails } });
+      for (const email of disableEmails) state.users[email].disabled = true;
+    }
+    await saveXuiBillingState(state);
+    await Promise.all(changedUsers.map(saveUser));
+    return { ...state, nodeResults };
+  });
 }
 
 async function getAllXuiInboundIds() {
@@ -2607,7 +2960,7 @@ async function provisionXuiClient(user) {
   const desired = {
     ...(existing || {}),
     email,
-    totalGB: planTrafficBytes(user),
+    totalGB: 0,
     expiryTime: new Date(user.expiresAt).getTime(),
     limitIp: planDeviceLimit(user),
     reset: 30,
@@ -2655,19 +3008,22 @@ async function disableXuiClient(user) {
 function xuiTrafficPayload(user, remote) {
   const uploadBytes = remote.traffic.up;
   const downloadBytes = remote.traffic.down;
-  const usedBytes = Math.max(uploadBytes + downloadBytes, Number(remote.usedTraffic) || 0);
-  const totalBytes = Math.max(0, Number(remote.totalGB) || planTrafficBytes(user));
+  const billing = user.xuiWeightedTraffic;
+  const usedBytes = billing ? billing.usedBytes : Math.max(uploadBytes + downloadBytes, Number(remote.usedTraffic) || 0);
+  const totalBytes = billing?.totalBytes ?? planTrafficBytes(user);
   return {
     available: true,
-    status: remote.enable === false || remote.traffic.enable === false ? "disabled" : isUserExpired(user) ? "expired" : "active",
+    status: billing?.depleted ? "depleted" : remote.enable === false || remote.traffic.enable === false ? "disabled" : isUserExpired(user) ? "expired" : "active",
     uploadBytes,
     downloadBytes,
+    rawUsedBytes: billing?.rawUsedBytes ?? usedBytes,
     usedBytes,
     totalBytes,
     remainingBytes: totalBytes ? Math.max(totalBytes - usedBytes, 0) : null,
     usagePercent: totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null,
     expiresAt: user.expiresAt,
-    lastSyncedAt: new Date().toISOString()
+    nodes: billing?.nodes || [],
+    lastSyncedAt: billing?.lastSyncedAt || new Date().toISOString()
   };
 }
 
@@ -6281,6 +6637,134 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/xui-monitor" && req.method === "GET") {
+    if (!XUI_BASE_URL || !XUI_API_TOKEN) {
+      sendJson(res, 200, { configured: false, system: null, nodes: [] });
+      return;
+    }
+    try {
+      const startedAt = Date.now();
+      const [status, nodes, inbounds, clients, activeInbounds] = await Promise.all([
+        xuiRequest("/panel/api/server/status"),
+        xuiRequest("/panel/api/nodes/list"),
+        xuiRequest("/panel/api/inbounds/list"),
+        xuiRequest("/panel/api/clients/list"),
+        xuiRequest("/panel/api/clients/activeInbounds", { method: "POST" }).catch(error => {
+          console.warn(`[xui-monitor] Failed to read active inbounds: ${error.message}`);
+          return null;
+        })
+      ]);
+      const uptime = await getXuiInboundUptime({ status, nodes, inbounds });
+      const billing = await syncXuiWeightedTraffic({ status, nodes, inbounds, clients });
+      const monitor = normalizeXuiMonitor(status, nodes);
+      const localGuid = String(status?.panelGuid || "node:local");
+      const panelUrl = new URL(XUI_BASE_URL);
+      const localInbounds = (Array.isArray(inbounds) ? inbounds : []).filter(item => String(item?.originNodeGuid || `node:${item?.nodeId || "local"}`) === localGuid);
+      monitor.nodes.unshift({
+        id: "local",
+        guid: localGuid,
+        name: XUI_PANEL_NAME,
+        address: panelUrl.hostname,
+        port: Number(panelUrl.port) || (panelUrl.protocol === "https:" ? 443 : 80),
+        enabled: true,
+        status: "online",
+        lastHeartbeat: new Date().toISOString(),
+        latencyMs: 0,
+        cpu: monitor.system.cpu,
+        memory: monitor.system.memoryTotal ? monitor.system.memoryUsed / monitor.system.memoryTotal * 100 : 0,
+        uptime: monitor.system.uptime,
+        uploadBytes: monitor.system.sentBytes,
+        downloadBytes: monitor.system.receivedBytes,
+        xrayState: monitor.system.xrayState,
+        xrayVersion: monitor.system.xrayVersion,
+        panelVersion: String(status?.panelVersion || ""),
+        inboundCount: localInbounds.length,
+        clientCount: new Set(localInbounds.flatMap(item => (item.clientStats || []).map(client => String(client.email || "").toLowerCase()).filter(Boolean))).size,
+        onlineCount: 0,
+        lastError: ""
+      });
+      monitor.nodes.forEach(node => {
+        const trafficStatus = billing.nodeResults[node.guid] || {};
+        node.multiplier = xuiMultiplier(billing.multipliers[node.guid]);
+        node.trafficTokenRequired = node.id !== "local";
+        node.trafficConfigured = trafficStatus.configured === true;
+        node.trafficError = String(trafficStatus.error || "");
+      });
+      const nodeNames = Object.fromEntries(monitor.nodes.map(node => [node.guid, node.name]));
+      const appUsersByEmail = new Map(users.filter(item => item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
+      const billingUsers = (Array.isArray(clients) ? clients : []).map(client => {
+        const email = String(client?.email || "").toLowerCase();
+        const user = appUsersByEmail.get(email);
+        const ledger = billing.users[email] || { rawBytes: 0, weightedBytes: 0, totalBytes: Number(client?.totalGB) || 0, nodes: {} };
+        const totalBytes = Math.max(0, Number(ledger.totalBytes) || 0);
+        return {
+          id: String(user?.id || client?.id || email),
+          name: user?.userId || user?.wechatName || email,
+          email,
+          rawUsedBytes: ledger.rawBytes,
+          usedBytes: ledger.weightedBytes,
+          totalBytes,
+          remainingBytes: totalBytes ? Math.max(totalBytes - ledger.weightedBytes, 0) : null,
+          usagePercent: totalBytes ? Math.min(100, Math.round(ledger.weightedBytes / totalBytes * 1000) / 10) : null,
+          depleted: totalBytes > 0 && ledger.weightedBytes >= totalBytes,
+          nodes: Object.entries(ledger.nodes || {}).map(([guid, item]) => ({ guid, name: nodeNames[guid] || guid, multiplier: xuiMultiplier(billing.multipliers[guid]), rawBytes: item.rawBytes, weightedBytes: item.weightedBytes }))
+        };
+      });
+      const activeInboundKeys = activeInbounds === null ? null : xuiActiveInboundKeys(activeInbounds);
+      const monitoredInbounds = normalizeXuiInbounds(inbounds).map((inbound, index) => {
+        const source = inbounds[index];
+        const guid = String(source?.originNodeGuid || `node:${source?.nodeId || "local"}`);
+        const activityReported = activeInbounds !== null && Object.prototype.hasOwnProperty.call(activeInbounds, guid);
+        return { ...inbound, recentlyActive: activityReported ? activeInboundKeys.has(`${guid}:${String(source?.tag || "")}`) : null, uptime: summarizeXuiUptime(uptime.samples[xuiInboundKey(source)] || []) };
+      });
+      sendJson(res, 200, { configured: true, latency: Date.now() - startedAt, checkedAt: new Date().toISOString(), ...monitor, inbounds: monitoredInbounds, billingUsers });
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
+    }
+    return;
+  }
+
+  const xuiMultiplierMatch = pathname.match(/^\/api\/xui-monitor\/nodes\/([^/]+)\/multiplier$/);
+  if (xuiMultiplierMatch && req.method === "PUT") {
+    try {
+      const payload = await readJson(req);
+      const multiplier = Number(payload.multiplier);
+      if (!Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw new Error("流量倍率必须在 0 到 100 之间。");
+      const guid = decodeURIComponent(xuiMultiplierMatch[1]);
+      const state = await withXuiBillingLock(async () => {
+        const current = await getXuiBillingState();
+        current.multipliers[guid] = multiplier;
+        await saveXuiBillingState(current);
+        return current;
+      });
+      sendJson(res, 200, { ok: true, guid, multiplier: state.multipliers[guid] });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const xuiCredentialsMatch = pathname.match(/^\/api\/xui-monitor\/nodes\/([^/]+)\/credentials$/);
+  if (xuiCredentialsMatch && req.method === "PUT") {
+    try {
+      const payload = await readJson(req);
+      const apiToken = String(payload.apiToken || "").trim();
+      if (!apiToken || apiToken.length > 4096) throw new Error("请输入有效的节点 API Token。");
+      const guid = decodeURIComponent(xuiCredentialsMatch[1]);
+      const nodes = await xuiRequest("/panel/api/nodes/list");
+      if (!(Array.isArray(nodes) ? nodes : []).some(node => String(node?.guid) === guid)) throw new Error("节点不存在。");
+      await withXuiBillingLock(async () => {
+        const state = await getXuiBillingState();
+        state.nodeTokens[guid] = sealXuiNodeToken(apiToken);
+        await saveXuiBillingState(state);
+      });
+      sendJson(res, 200, { ok: true, guid, configured: true });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/markdown/images" && req.method === "POST") {
     try {
       const contentLength = Number(req.headers["content-length"] || 0);
@@ -7721,6 +8205,16 @@ async function main() {
   setInterval(() => {
     settleReferralRewards().catch(error => console.error("Referral settlement failed:", error));
   }, 60 * 1000);
+  if (XUI_BASE_URL && XUI_API_TOKEN) {
+    syncXuiWeightedTraffic().catch(error => console.error("3x-ui traffic billing sync failed:", error));
+    checkXuiInboundUptime().catch(error => console.error("3x-ui inbound uptime check failed:", error));
+    setInterval(() => {
+      syncXuiWeightedTraffic().catch(error => console.error("3x-ui traffic billing sync failed:", error));
+    }, XUI_TRAFFIC_SYNC_INTERVAL_MS);
+    setInterval(() => {
+      checkXuiInboundUptime().catch(error => console.error("3x-ui inbound uptime check failed:", error));
+    }, XUI_UPTIME_CHECK_INTERVAL_MS);
+  }
 }
 
 if (require.main === module) {
@@ -7783,6 +8277,16 @@ module.exports = Object.assign(requestHandler, {
   normalizeManualSubscriptionContent,
   normalizeSubscription,
   normalizeXuiClientResult,
+  normalizeXuiMonitor,
+  normalizeXuiInbounds,
+  xuiActiveInboundKeys,
+  summarizeXuiUptime,
+  xuiTrafficByUser,
+  calculateXuiBillingLedger,
+  xuiClientCycleKey,
+  xuiNodeBaseUrl,
+  sealXuiNodeToken,
+  openXuiNodeToken,
   xuiClientWritePayload,
   xuiTrafficPayload,
   clearSubscriptionSourceState,
