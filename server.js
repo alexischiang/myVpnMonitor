@@ -37,6 +37,7 @@ const XUI_API_TOKEN = String(process.env.XUI_API_TOKEN || "").trim();
 const XUI_PANEL_NAME = String(process.env.XUI_PANEL_NAME || "主面板").trim();
 const XUI_SUBSCRIPTION_BASE_URL = (process.env.XUI_SUBSCRIPTION_BASE_URL || "https://panel.webprovider.top:2096").replace(/\/+$/, "");
 const XUI_TIMEOUT_MS = Math.max(1000, Number(process.env.XUI_TIMEOUT_MS || 15000));
+const XUI_METADATA_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const XUI_SERVICE_URL = (process.env.XUI_SERVICE_URL || "").replace(/\/+$/, "");
 const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
 const XUI_TRAFFIC_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -3273,6 +3274,12 @@ function legacyXuiClientEmail(user = {}) {
   return `nexora_${String(user.customerID || user.id || "user").replace(/[^a-zA-Z0-9_-]/g, "_")}@internal`.toLowerCase();
 }
 
+function xuiClientComment(user = {}) {
+  const name = String(user.wechatName || "").trim() || "unknown";
+  const customerId = String(user.customerID || "").replace(/\D/g, "").padStart(6, "0").slice(-6);
+  return `${name}#${customerId}`;
+}
+
 async function xuiRequestAt(baseUrl, apiToken, apiPath, { method = "GET", body } = {}) {
   if (XUI_SERVICE_URL) {
     return requestXui({
@@ -3519,6 +3526,25 @@ function xuiTrafficByUser(value = []) {
   return result;
 }
 
+function chinaDateKey(value = Date.now()) {
+  const parts = chinaDateParts(value);
+  return parts ? `${parts.year}-${String(parts.month + 1).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}` : "";
+}
+
+function xuiDailyNodeTraffic(traffic = {}, previous = {}) {
+  const currentByNode = {};
+  for (const byNode of Object.values(traffic)) for (const [guid, bytes] of Object.entries(byNode || {})) currentByNode[guid] = (currentByNode[guid] || 0) + Math.max(0, Number(bytes) || 0);
+  const date = chinaDateKey();
+  const baseline = previous.date === date ? previous.nodes || {} : {};
+  const nodes = {};
+  for (const [guid, current] of Object.entries(currentByNode)) {
+    const prior = baseline[guid] || { baselineBytes: current, usedBytes: 0 };
+    const delta = current >= Number(prior.baselineBytes) ? current - Number(prior.baselineBytes) : current;
+    nodes[guid] = { baselineBytes: current, usedBytes: Math.max(0, Number(prior.usedBytes) || 0) + delta };
+  }
+  return { date, nodes };
+}
+
 function xuiMultiplier(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : 1;
@@ -3725,6 +3751,7 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     ]);
     const state = await getXuiBillingState();
     const { traffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, state);
+    state.dailyTraffic = xuiDailyNodeTraffic(traffic, state.dailyTraffic);
     const localGuid = String(status?.panelGuid || "node:local");
     const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
     const nodeMultipliers = state.multipliers || {};
@@ -3939,7 +3966,7 @@ async function syncXuiInboundGroup(group, inboundIds, allInboundIds) {
 }
 
 function xuiClientNeedsUpdate(existing, desired) {
-  return ["email", "totalGB", "expiryTime", "limitIp", "reset", "flow", "groupName", "enable"]
+  return ["email", "totalGB", "expiryTime", "limitIp", "reset", "flow", "groupName", "comment", "enable"]
     .some(key => String(existing?.[key] ?? "") !== String(desired[key] ?? ""));
 }
 
@@ -3996,6 +4023,7 @@ async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
     reset: 0,
     flow: XUI_VISION_FLOW,
     groupName: activeUserGroup(user),
+    comment: xuiClientComment(user),
     enable: !isUserExpired(user) && !isUserAccountDisabled(user)
   };
   delete desired.traffic;
@@ -4005,10 +4033,10 @@ async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
     if (xuiClientNeedsUpdate(existing, desired)) {
       mutationResult = await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(existingEmail)}`, { method: "POST", body: xuiClientWritePayload(existing, desired) });
     }
-    await syncXuiClientAccess([email], activeUserGroup(user), inboundIds, existing.inboundIds || []);
   } else {
     mutationResult = await xuiRequest("/panel/api/clients/add", { method: "POST", body: { client: xuiClientWritePayload(null, desired), inboundIds } });
   }
+  await syncXuiClientAccess([email], activeUserGroup(user), inboundIds, existing?.inboundIds || []);
   let remote;
   try {
     remote = await getXuiClientAfterMutation({ ...user, xuiClientEmail: email });
@@ -4024,6 +4052,7 @@ async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
   user.xuiInboundIds = inboundIds;
   user.xuiLastSyncedAt = new Date().toISOString();
   user.xuiLastError = "";
+  user.xuiMetadataSyncedAt = new Date().toISOString();
   await saveXuiClientProjection(user, desired.enable);
   return remote;
 }
@@ -6520,7 +6549,8 @@ async function handleSelfHostedRelay(req, res, user, relayRequestId) {
   }
   try {
     let remote = await getXuiClient(user);
-    if (!user.xuiSubId || remote.enable === false) {
+    const metadataSyncedAt = Date.parse(user.xuiMetadataSyncedAt || "");
+    if (!user.xuiSubId || remote.enable === false || !Number.isFinite(metadataSyncedAt) || Date.now() - metadataSyncedAt >= XUI_METADATA_SYNC_INTERVAL_MS) {
       remote = await provisionXuiClient(user);
       await saveUsers();
     }
@@ -7987,7 +8017,7 @@ async function handleApi(req, res, pathname) {
       return;
     }
     const state = await getXuiBillingState();
-    sendJson(res, 200, { configured: true, ...(state.presence || { checkedAt: "", onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} }) });
+      sendJson(res, 200, { configured: true, ...(state.presence || { checkedAt: "", onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} }), dailyTraffic: state.dailyTraffic || { date: chinaDateKey(), nodes: {} } });
     return;
   }
 
@@ -9792,6 +9822,7 @@ module.exports = Object.assign(requestHandler, {
   xuiActiveInboundKeys,
   normalizeXuiPresence,
   xuiTrafficByUser,
+  xuiDailyNodeTraffic,
   calculateXuiBillingLedger,
   createXuiBillingBaseline,
   xuiClientCycleKey,
