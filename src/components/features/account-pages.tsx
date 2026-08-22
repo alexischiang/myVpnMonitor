@@ -84,7 +84,7 @@ function CopySubscription({ value }: { value: string }) {
     }
   }
 
-  return <Button variant={copied ? "success" : "outline"} aria-label={copied ? "订阅链接已复制" : "复制订阅链接"} onClick={copySubscription}><span className={copied ? "motion-safe:animate-[copy-success_180ms_ease-out]" : ""}>{copied ? <Check /> : <Copy />}</span>{copied ? "复制订阅成功" : "复制订阅链接"}</Button>
+  return <Button className="min-h-11" variant={copied ? "success" : "outline"} aria-label={copied ? "订阅链接已复制" : "复制订阅链接"} onClick={copySubscription}><span className={copied ? "motion-safe:animate-[copy-success_180ms_ease-out]" : ""}>{copied ? <Check /> : <Copy />}</span>{copied ? "复制订阅成功" : "复制订阅链接"}</Button>
 }
 
 function PlanStatusCard({ account, subscription, traffic, trafficLoading, trafficError }: { account: Overview; subscription: Subscription | null; traffic: SelfHostedTraffic | null; trafficLoading: boolean; trafficError: string }) {
@@ -93,8 +93,8 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
   const trafficTotal = traffic ? `${(traffic.totalBytes / 1024 ** 3).toFixed(0)} GB` : subscription?.traffic || "-"
   const trafficUsed = traffic ? `${(traffic.usedBytes / 1024 ** 3).toFixed(2)} GB` : "-"
   const status = !subscription ? "inactive" : subscription.status === "expired" ? "expired" : traffic?.status === "depleted" ? "depleted" : "active"
-  const canBuyTrafficPack = account.trafficPack?.enabled !== false && (status === "active" || status === "depleted") && subscription?.duration !== "lifetime" && subscription?.lineType === "self_hosted" && !subscription.unlimited && Boolean(traffic)
   const canBuyHomeIp = account.homeIp?.enabled && status === "active" && subscription?.duration !== "lifetime"
+  const homeIpStartingPrice = Math.min(...(account.homeIp?.regions || []).map(region => Number(region.price)).filter(Number.isFinite))
   const expiresAtTime = Date.parse(subscription?.expiresAt || "")
   const remainingDays = Number.isFinite(expiresAtTime) ? Math.max(0, Math.ceil((expiresAtTime - Date.now()) / 86400000)) : null
   const accountType = account.isSuperAccount ? "super" : account.isBusiness ? "business" : account.isFamilyFriend ? "family" : "regular"
@@ -131,7 +131,7 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
         </header>
         <Progress value={usagePercent ?? 0} aria-label={usagePercent == null ? "流量用量暂不可用" : `已使用流量 ${Math.round(usagePercent)}%`} />
         <p className="flex justify-between gap-3 text-xs text-muted-foreground"><span>已用 {trafficUsed} / {subscription?.unlimited ? "不限" : trafficTotal}</span>{traffic?.nextResetAt ? <span>{formatDate(traffic.nextResetAt)} 重置</span> : null}</p>
-        {canBuyTrafficPack ? <Alert variant="warning"><Info /><AlertTitle className="flex items-center justify-between gap-3"><span>流量不够用？随时购买流量包！</span><Button asChild variant="link" className="h-auto p-0 text-current underline"><Link to="/account/plans/checkout?product=traffic-pack">去购买→</Link></Button></AlertTitle></Alert> : trafficError ? <Alert variant="warning"><Info /><AlertTitle>流量同步暂不可用</AlertTitle><AlertDescription>{trafficError}</AlertDescription></Alert> : null}
+        {trafficError ? <Alert variant="warning"><Info /><AlertTitle>流量同步暂不可用</AlertTitle><AlertDescription>{trafficError}</AlertDescription></Alert> : null}
       </section>
 
       <section className="grid content-start gap-4" aria-labelledby="plan-details-title">
@@ -139,15 +139,14 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
           <h3 id="plan-details-title" className="flex items-center gap-2 text-sm font-medium"><Star className="size-4 text-primary" />套餐详情</h3>
           <strong className="text-sm">{remainingDays === null ? "-" : `剩余 ${remainingDays} 天`}</strong>
         </header>
-        <ItemGroup className="sm:grid-cols-2">
+        <ItemGroup className="sm:grid-cols-2 lg:grid-cols-3">
           <Item variant="muted"><ItemContent><ItemDescription>到期日期</ItemDescription><ItemTitle>{subscription ? formatDate(subscription.expiresAt) : "-"}</ItemTitle>{subscription?.giftedDays ? <ItemDescription>原到期日 {formatDate(subscription.planExpiresAt)}，已赠送 {subscription.giftedDays} 天</ItemDescription> : null}</ItemContent></Item>
           <Item variant="muted"><ItemContent><ItemDescription>流量配额</ItemDescription><ItemTitle>{subscription?.unlimited ? "不限" : trafficTotal}</ItemTitle></ItemContent></Item>
           <Item variant="muted"><ItemContent><ItemDescription>{traffic ? "在线IP限制" : "可绑定设备"}</ItemDescription><ItemTitle>{traffic ? `${traffic.connectedIpCount ?? "-"} / ${traffic.ipLimit || "不限"}` : subscription ? `${subscription.devices} 台` : "-"}</ItemTitle></ItemContent></Item>
         </ItemGroup>
         <div className="grid gap-2 sm:grid-cols-2">
-          {canBuyTrafficPack ? <Button asChild className="sm:col-span-2"><Link to="/account/plans/checkout?product=traffic-pack"><PackagePlus />购买 {account.trafficPack?.trafficGb || 0} GB 流量包 · {formatMoney(account.trafficPack?.price || 0)}</Link></Button> : null}
-          {canBuyHomeIp ? <Button asChild variant="outline" className="sm:col-span-2"><Link to="/account/plans/checkout?product=home-ip"><HousePlug />购买家宽 IP 服务</Link></Button> : null}
-          {subscription ? null : <Button asChild variant="outline"><Link to="/account/plans"><PackagePlus />购买服务</Link></Button>}
+          {canBuyHomeIp ? <Button asChild className="min-h-11 text-sm sm:col-span-2"><Link to="/account/plans/checkout?product=home-ip"><HousePlug />AI被降智？定制纯净家宽 IP{Number.isFinite(homeIpStartingPrice) ? ` · ${formatMoney(homeIpStartingPrice)} 起` : ""}</Link></Button> : null}
+          {subscription ? null : <Button asChild variant="outline" className="min-h-11"><Link to="/account/plans"><PackagePlus />购买服务</Link></Button>}
         </div>
       </section>
     </CardContent>
@@ -235,7 +234,7 @@ export function AccountOverviewPage() {
       <div className="grid gap-4 px-4 lg:px-6">
         <PlanStatusCard account={data} subscription={subscription} traffic={selfHostedTraffic} trafficLoading={trafficLoading} trafficError={trafficError} />
         {data.services?.length ? <Card><CardHeader><CardTitle>附加服务</CardTitle><CardDescription>已购买的地区规格、交付进度和有效期。</CardDescription></CardHeader><CardContent><ItemGroup>{data.services.map(service => <Item key={service.id} variant="muted"><ItemContent><ItemTitle>{service.name}{service.regionName ? ` · ${service.regionName}` : ""}</ItemTitle><ItemDescription>{service.status === "pending" ? "等待人工交付" : service.status === "active" ? `服务中${service.expiresAt ? ` · ${formatDate(service.expiresAt)} 到期` : ""}` : service.status === "expired" ? "已到期" : "处理中"}</ItemDescription>{service.deliveryNote ? <ItemDescription>{service.deliveryNote}</ItemDescription> : null}</ItemContent><Badge variant={service.status === "active" ? "success" : service.status === "pending" ? "warning" : "secondary"}>{service.status === "active" ? "生效中" : service.status === "pending" ? "待交付" : service.status === "expired" ? "已到期" : "处理中"}</Badge></Item>)}</ItemGroup></CardContent></Card> : null}
-        {subscription ? <Card><CardHeader><CardTitle>订阅链接</CardTitle><CardDescription>请勿将订阅链接分享给其他人。</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></CardContent></Card> : null}
+         {subscription ? <Card><CardHeader><CardTitle>订阅链接</CardTitle><CardDescription>请勿将订阅链接分享给其他人。</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:min-h-11 [&_[data-slot=button]]:text-base [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button className="min-h-11" variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button className="min-h-11" variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild className="min-h-11" variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></CardContent></Card> : null}
         {data.announcements.length ? <Card>
           <CardHeader><CardTitle>网站公告</CardTitle><CardDescription>最新服务动态与使用提醒</CardDescription></CardHeader>
           <CardContent>

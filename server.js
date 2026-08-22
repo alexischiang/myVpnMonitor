@@ -35,8 +35,7 @@ const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, 
 const XUI_BASE_URL = (process.env.XUI_BASE_URL || "").replace(/\/+$/, "");
 const XUI_API_TOKEN = String(process.env.XUI_API_TOKEN || "").trim();
 const XUI_PANEL_NAME = String(process.env.XUI_PANEL_NAME || "主面板").trim();
-const XUI_SUBSCRIPTION_BASE_URL = (process.env.XUI_SUBSCRIPTION_BASE_URL || "").replace(/\/+$/, "");
-const XUI_SUBSCRIPTION_PATH = `/${String(process.env.XUI_SUBSCRIPTION_PATH || "sub").replace(/^\/+|\/+$/g, "")}/`;
+const XUI_SUBSCRIPTION_BASE_URL = (process.env.XUI_SUBSCRIPTION_BASE_URL || "https://panel.webprovider.top:2096").replace(/\/+$/, "");
 const XUI_TIMEOUT_MS = Math.max(1000, Number(process.env.XUI_TIMEOUT_MS || 15000));
 const XUI_SERVICE_URL = (process.env.XUI_SERVICE_URL || "").replace(/\/+$/, "");
 const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
@@ -2374,10 +2373,10 @@ async function fulfillPaymentOrderOnce(order, req) {
       cashValueAt: purchasedAt,
       subscriptionId: recommendation.subscription?.id || "",
       outputMode: "subconverter",
-      blockUserinfo: true
+       blockUserinfo: false
     }, item);
     user.outputMode = "subconverter";
-    user.blockUserinfo = true;
+    user.blockUserinfo = false;
     user.trafficTier = order.trafficTier || 1;
     if (selectedTrafficBytes) user.xuiTrafficLimitBytes = selectedTrafficBytes;
     bindUserProductFromOrder(user, order);
@@ -3252,7 +3251,7 @@ function planDeviceLimit(user = {}) {
 }
 
 function xuiConfigured() {
-  return Boolean(XUI_BASE_URL && XUI_API_TOKEN && XUI_SUBSCRIPTION_BASE_URL);
+  return Boolean(XUI_BASE_URL && XUI_API_TOKEN && SUB_CONVERTER_URL && XUI_SUBSCRIPTION_BASE_URL);
 }
 
 function validAccountEmail(value) {
@@ -3868,6 +3867,7 @@ function xuiClientWritePayload(existing, desired) {
   const payload = Object.fromEntries(writableFields
     .filter(key => desired[key] !== undefined || existing?.[key] !== undefined)
     .map(key => [key, desired[key] !== undefined ? desired[key] : existing[key]]));
+  for (const key of ["uuid", "id"]) if (/^\d+$/.test(String(payload[key] ?? ""))) delete payload[key];
   if (payload.id != null) payload.id = String(payload.id);
   return payload;
 }
@@ -6064,7 +6064,7 @@ function injectPlaceholderNodes(bodyBuffer, user, groups = placeholderNodes) {
     const proxies = Array.isArray(doc.proxies)
       ? doc.proxies
       : (doc.proxies = []);
-    const allNames = [...userInfoNodes, ...defaultNodes, ...customNodes];
+    const allNames = [...userInfoNodes, ...defaultNodes, ...customNodes].map(nodeName => String(nodeName).startsWith("*") ? String(nodeName) : `*${nodeName}`);
     const firstProxy = proxies[0];
     const allProxies = allNames.map(nodeName => {
       if (firstProxy) return { ...firstProxy, name: nodeName };
@@ -6077,7 +6077,7 @@ function injectPlaceholderNodes(bodyBuffer, user, groups = placeholderNodes) {
         if (String(pg.name || "").includes("全球直连")) pg.proxies = ["DIRECT"];
         else if (String(pg.name || "").includes("全球拦截")) pg.proxies = ["REJECT"];
         else if (["🐟 漏网之鱼", "🤖 AI服务", "♻️ 自动选择"].includes(String(pg.name || ""))) continue;
-        else if (Array.isArray(pg.proxies)) pg.proxies.unshift(...allNames);
+        else if (Array.isArray(pg.proxies)) pg.proxies.push(...allNames);
       }
     }
     return Buffer.from(yaml.dump(doc, { lineWidth: -1, noRefs: true }), "utf8");
@@ -6376,11 +6376,6 @@ async function fallbackToUsableSubscription(user, currentSubscription, reason, r
   return fallback;
 }
 
-function selfHostedSubscriptionUrl(user) {
-  if (!XUI_SUBSCRIPTION_BASE_URL || !user?.xuiSubId) return "";
-  return `${XUI_SUBSCRIPTION_BASE_URL}${XUI_SUBSCRIPTION_PATH}${encodeURIComponent(user.xuiSubId)}`;
-}
-
 function selfHostedUserinfo(user, remote) {
   const upload = Math.max(0, Number(remote?.traffic?.up) || 0);
   const download = Math.max(0, Number(remote?.traffic?.down) || 0);
@@ -6390,32 +6385,18 @@ function selfHostedUserinfo(user, remote) {
 }
 
 async function fetchSelfHostedSubscription(user, remote) {
-  const sourceUrl = selfHostedSubscriptionUrl(user);
-  if (!sourceUrl) throw new Error("3x-ui Client 缺少 subId。");
+  const subId = String(remote?.subId || user?.xuiSubId || "").trim();
+  if (!subId) throw new Error("3x-ui Client 缺少 subId。");
+  const sourceUrl = `${XUI_SUBSCRIPTION_BASE_URL}/clash/${encodeURIComponent(subId)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
   try {
-    const response = await fetch(sourceUrl, {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: { "User-Agent": "subconverter", Accept: "text/plain, */*", "Cache-Control": "no-cache" }
-    });
+    const response = await fetch(sourceUrl, { signal: controller.signal, redirect: "follow", headers: { "User-Agent": "subconverter", Accept: "text/yaml, text/plain, */*", "Cache-Control": "no-cache" } });
     const body = await response.text();
-    if (!response.ok || !body.trim()) throw new Error(`3x-ui订阅服务请求失败（HTTP ${response.status}）。`);
-    return {
-      body,
-      status: response.status,
-      client: "3x-ui-subscription",
-      fetchedAt: new Date().toISOString(),
-      contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
-      subscriptionUserinfo: selfHostedUserinfo(user, remote),
-      score: body.length,
-      bodyLength: body.length,
-      attempts: [],
-      error: null
-    };
+    if (!response.ok || !body.trim()) throw new Error(`3x-ui Clash 订阅请求失败（HTTP ${response.status}）。`);
+    return { body, status: response.status, client: "3x-ui-clash", sourceUrl, fetchedAt: new Date().toISOString(), contentType: response.headers.get("content-type") || "text/yaml; charset=utf-8", subscriptionUserinfo: selfHostedUserinfo(user, remote), score: body.length, bodyLength: body.length, attempts: [], error: null };
   } catch (error) {
-    if (error.name === "AbortError") throw new Error("3x-ui订阅服务请求超时。");
+    if (error.name === "AbortError") throw new Error("3x-ui Clash 订阅请求超时。");
     throw error;
   } finally {
     clearTimeout(timer);
@@ -6495,7 +6476,7 @@ async function sendSubconverterSubscription({ req, res, user, relayRequestId, su
       "cache-control": "no-store, max-age=0",
       "pragma": "no-cache",
       "expires": "0",
-      ...(liveConfig.subscriptionUserinfo && user.blockUserinfo === false ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
+      ...(liveConfig.subscriptionUserinfo && (isSelfHostedUser(user) || user.blockUserinfo === false) ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
     };
     if (browserInline) {
       responseHeaders["content-disposition"] = "inline; filename*=UTF-8''NEXORA.txt";
@@ -6543,10 +6524,9 @@ async function handleSelfHostedRelay(req, res, user, relayRequestId) {
       remote = await provisionXuiClient(user);
       await saveUsers();
     }
-    const source = { id: `xui:${user.id}`, url: selfHostedSubscriptionUrl(user), sourceType: "url", serviceProvider: "3x-ui", enabled: true };
+    const source = { id: `xui:${user.id}`, url: `${XUI_SUBSCRIPTION_BASE_URL}/clash/${encodeURIComponent(remote.subId || user.xuiSubId)}`, sourceType: "url", serviceProvider: "3x-ui", enabled: true };
     const liveConfig = await fetchSelfHostedSubscription(user, remote);
-    const sc = relaySubconverterConfig(source);
-    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc });
+    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc: relaySubconverterConfig(source) });
   } catch (error) {
     relayLog("self-hosted-relay-failed", { relayRequestId, userId: user.id, error: error.message });
     sendSubscriptionMessage(res, 502, `自研线路订阅生成失败：${error.message}`);
@@ -8495,7 +8475,7 @@ async function handleApi(req, res, pathname) {
       const selectedSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
       if (selectedSubscription && subscriptionAtCapacity(selectedSubscription) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
       normalized.outputMode = userOutputMode(payload);
-      normalized.blockUserinfo = payload.blockUserinfo !== false;
+      normalized.blockUserinfo = isSelfHostedUser(normalized) ? false : payload.blockUserinfo !== false;
       users.unshift(normalized);
       try {
         if (isSelfHostedUser(normalized)) await provisionXuiClient(normalized);
@@ -9093,7 +9073,8 @@ async function handleApi(req, res, pathname) {
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
-        if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
+        if (isSelfHostedUser(item)) item.blockUserinfo = false;
+        else if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const renewal = renewUser(item, payload);
         if (isSelfHostedUser(item)) await provisionXuiClient(item);
         else if (item.xuiClientEmail) await disableXuiClient(item);
@@ -9396,7 +9377,8 @@ async function handleApi(req, res, pathname) {
         if (isSelfHostedUser(item)) await provisionXuiClient(item);
         else if (item.xuiClientEmail) await disableXuiClient(item);
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
-        if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
+        if (isSelfHostedUser(item)) item.blockUserinfo = false;
+        else if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const after = userSnapshotForLog(item);
         const changes = summarizeUserChanges(before, after);
         if (changes.length) {

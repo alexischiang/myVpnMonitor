@@ -95,16 +95,14 @@ subconverter 是独立后台进程，`ctrl+c` 停止 `dev:all` 时不会自动�
 ```env
 XUI_BASE_URL=https://panel.example.com/<web-base-path>
 XUI_API_TOKEN=<3x-ui Settings → Security → API Token>
-XUI_SUBSCRIPTION_BASE_URL=https://sub.example.com
-XUI_SUBSCRIPTION_PATH=sub
 XUI_TIMEOUT_MS=15000
 ```
 
 - `XUI_BASE_URL` 是管理 API 地址，不应暴露给浏览器。
-- `XUI_SUBSCRIPTION_BASE_URL` 是 3x-ui 独立订阅服务或其 HTTPS 反向代理地址。
+- 自研订阅先根据 Client 的 `subId` 请求 `XUI_SUBSCRIPTION_BASE_URL/clash/<subId>` 获取 3x-ui 原生 Clash 配置，再交给 Subconverter 转换。
 - 开通和续期时会动态读取主控面板的全部入站并关联，无需在环境变量中维护入站 ID。
 - 3x-ui Client 的邮箱直接使用本站账户的注册邮箱。
-- `SUB_CONVERTER_URL` 仍必须配置；最终公开链接继续使用本站 `/sub/<token>`。
+- 自研线路使用 3x-ui 原生 Clash 配置作为 Subconverter 输入，最终公开链接继续使用本站 `/sub/<token>`。
 
 ### 本地独立 3x-ui 服务
 
