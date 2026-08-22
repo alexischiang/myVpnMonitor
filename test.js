@@ -46,6 +46,7 @@ const {
   xuiActiveInboundKeys,
   normalizeXuiPresence,
   xuiTrafficByUser,
+  xuiDailyNodeTraffic,
   calculateXuiBillingLedger,
   createXuiBillingBaseline,
   xuiClientCycleKey,
@@ -258,6 +259,8 @@ const trafficByUser = xuiTrafficByUser([
   { id: 3, originNodeGuid: "jp", clientStats: [{ email: "user@test.com", up: 20, down: 30 }] }
 ]);
 assert.deepStrictEqual(trafficByUser, { "user@test.com": { hk: 150, jp: 50 } });
+const dailyTraffic = xuiDailyNodeTraffic({ user: { hk: 150 } }, xuiDailyNodeTraffic({ user: { hk: 100 } }));
+assert.strictEqual(xuiDailyNodeTraffic({ user: { hk: 20 } }, dailyTraffic).nodes.hk.usedBytes, 70);
 const firstLedger = calculateXuiBillingLedger(null, trafficByUser["user@test.com"], { hk: 2, jp: 0.5 }, "cycle-1");
 assert.deepStrictEqual([firstLedger.rawBytes, firstLedger.weightedBytes], [200, 325]);
 const linkedBaseline = createXuiBillingBaseline(trafficByUser["user@test.com"], "linked-cycle", { hk: 2, jp: 0.5 });

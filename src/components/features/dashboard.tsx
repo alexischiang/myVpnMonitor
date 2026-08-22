@@ -1,16 +1,17 @@
 import * as React from "react"
-import { Loader2, Mail, RefreshCw, Users } from "lucide-react"
+import { Activity, Loader2, Mail, RefreshCw, Users } from "lucide-react"
 import { toast } from "sonner"
 
-import { postJson } from "@/api"
+import { fetchJson, postJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useServiceHealth } from "@/components/features/app-shell"
 import { useData } from "@/components/features/data-provider"
 import { SectionCards } from "@/components/features/section-cards"
 import { EmptyState, StatusBadge } from "@/components/features/shared"
-import { formatDate, formatDateTime, userStatus } from "@/utils"
+import { formatBytes, formatDate, formatDateTime, userStatus } from "@/utils"
 
 const ChartAreaInteractive = React.lazy(() => import("@/components/features/chart-area-interactive").then(module => ({ default: module.ChartAreaInteractive })))
 const DailyIncomeChart = React.lazy(() => import("@/components/features/chart-area-interactive").then(module => ({ default: module.DailyIncomeChart })))
@@ -67,6 +68,42 @@ function ServiceMonitor() {
   return <Card><CardHeader><div className="flex items-center justify-between gap-4"><CardTitle>服务监控</CardTitle><Button variant="outline" size="sm" onClick={refresh} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button></div><CardDescription>{checkedAt ? `最后检测：${formatDateTime(checkedAt)}` : "尚未检测"}</CardDescription></CardHeader><CardContent className="grid auto-rows-fr">{services ? ([{ key: "database", name: "数据库" }, { key: "subconverter", name: "Subconverter" }, { key: "telegram", name: "Telegram API" }, { key: "resend", name: "Resend" }] as const).filter(({ key }) => key !== "database" || services.database.kind !== "json").map(({ key, name }) => { const service = services[key]; return <div key={key} className="flex items-center justify-between gap-3 border-b py-3 last:border-b-0"><div className="flex items-center gap-1"><span className="text-sm font-medium">{name}</span>{key === "resend" ? <Button variant="ghost" size="icon-sm" onClick={sendTestMail} disabled={sendingMail} aria-label="发送测试邮件" title="发送测试邮件">{sendingMail ? <Loader2 className="animate-spin" /> : <Mail />}</Button> : null}</div><span className="text-sm font-medium">{service.latency === undefined ? "-" : `${service.latency} ms`}</span></div> }) : <p className="text-sm text-muted-foreground">{error || "正在检测服务..."}</p>}</CardContent></Card>
 }
 
+type XuiDashboardData = {
+  configured: boolean
+  onlineEmails?: string[]
+  dailyTraffic?: { date: string; nodes: Record<string, { usedBytes: number }> }
+  nodeNames?: Record<string, string>
+}
+
+function XuiUsageMonitor() {
+  const [data, setData] = React.useState<XuiDashboardData | null>(null)
+
+  const refresh = React.useCallback(() => {
+    void fetchJson<XuiDashboardData>("/api/xui-presence").then(setData).catch(() => undefined)
+  }, [])
+
+  React.useEffect(() => {
+    refresh()
+    const timer = window.setInterval(refresh, 30_000)
+    return () => window.clearInterval(timer)
+  }, [refresh])
+
+  const ranking = Object.entries(data?.dailyTraffic?.nodes || {})
+    .sort(([, left], [, right]) => right.usedBytes - left.usedBytes)
+    .slice(0, 6)
+  const maxBytes = ranking[0]?.[1].usedBytes || 1
+
+  return <div className="grid gap-4 md:grid-cols-2">
+    <Card>
+      <CardHeader><CardDescription>当前在线人数</CardDescription><CardTitle className="flex items-center gap-2 text-3xl tabular-nums"><Activity className="size-6 text-emerald-500" />{data?.configured ? data.onlineEmails?.length ?? 0 : "-"}</CardTitle><CardDescription>按当前 3x-ui 在线客户端去重</CardDescription></CardHeader>
+    </Card>
+    <Card>
+      <CardHeader><CardTitle>今日节点使用流量</CardTitle><CardDescription>{data?.dailyTraffic?.date ? `${data.dailyTraffic.date}（北京时间）` : "等待流量采集"}</CardDescription></CardHeader>
+      <CardContent className="grid gap-3">{ranking.length ? ranking.map(([guid, item], index) => <div key={guid} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-sm"><span className="truncate"><span className="mr-2 text-muted-foreground">{index + 1}</span>{data?.nodeNames?.[guid] || guid}</span><span className="tabular-nums text-muted-foreground">{formatBytes(item.usedBytes)}</span></div><Progress value={Math.max(3, item.usedBytes / maxBytes * 100)} /></div>) : <p className="text-sm text-muted-foreground">暂无今日流量数据</p>}</CardContent>
+    </Card>
+  </div>
+}
+
 export function DashboardPage() {
   const { users, bills } = useData()
   const activeBills = bills.filter(item => !item.reversedAt)
@@ -103,6 +140,8 @@ export function DashboardPage() {
         </div>
         <ServiceMonitor />
       </div>
+
+      <div className="px-4 lg:px-6"><XuiUsageMonitor /></div>
 
       <div className="grid gap-4 px-4 lg:grid-cols-2 lg:px-6">
         <React.Suspense fallback={<><Skeleton className="h-80" /><Skeleton className="h-80" /></>}>
