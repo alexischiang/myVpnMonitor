@@ -38,6 +38,19 @@ function newPlatform(priority: number): PaymentSettings {
   }
 }
 
+function newTestPlatform(priority: number): PaymentSettings {
+  return {
+    ...newPlatform(priority),
+    name: "测试支付",
+    displayName: "测试支付",
+    provider: "test",
+    apiBaseUrl: "",
+    merchantId: "",
+    alipayChannelCode: "100",
+    wechatChannelCode: "200",
+  }
+}
+
 export function PaymentSettingsPage() {
   const [platforms, setPlatforms] = React.useState<PaymentSettings[] | null>(null)
   const [draft, setDraft] = React.useState<PaymentSettings | null>(null)
@@ -100,7 +113,7 @@ export function PaymentSettingsPage() {
           <h2 className="text-xl font-semibold tracking-tight">支付平台</h2>
           <p className="text-sm text-muted-foreground">按优先级为新订单选择首个支持对应支付方式的平台。</p>
         </section>
-        <Button onClick={() => setDraft(newPlatform(platforms.length))}><Plus />新增平台</Button>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setDraft(newTestPlatform(platforms.length))}><Plus />新增测试平台</Button><Button onClick={() => setDraft(newPlatform(platforms.length))}><Plus />新增线上平台</Button></div>
       </header>
 
       <Card>
@@ -115,7 +128,7 @@ export function PaymentSettingsPage() {
               <TableBody>
                 {platforms.map(platform => (
                   <TableRow key={platform.id}>
-                    <TableCell><strong className="font-medium">{platform.name}</strong></TableCell>
+                    <TableCell><strong className="font-medium">{platform.name}</strong>{platform.provider === "test" ? <Badge variant="outline" className="ml-2">本地测试</Badge> : null}</TableCell>
                     <TableCell className="space-x-1">{platform.alipayEnabled ? <Badge>支付宝</Badge> : null}{platform.wechatEnabled ? <Badge variant="secondary">微信</Badge> : null}</TableCell>
                     <TableCell>{platform.priority}</TableCell>
                     <TableCell className="max-w-64 truncate font-mono text-xs">{platform.apiBaseUrl}</TableCell>
@@ -134,7 +147,7 @@ export function PaymentSettingsPage() {
         </CardContent>
       </Card>
 
-      <Alert><ShieldCheck /><AlertTitle>凭证不会回显</AlertTitle><AlertDescription>编辑已有平台时留空凭证字段即可保留原值。异步通知地址需要可被支付平台通过公网 HTTPS 访问。</AlertDescription></Alert>
+      <Alert><ShieldCheck /><AlertTitle>测试平台仅在本地结算</AlertTitle><AlertDescription>测试订单不会请求线上网关；线上平台的凭证不会回显，异步通知地址需要可被公网 HTTPS 访问。</AlertDescription></Alert>
 
       <Dialog open={Boolean(draft)} onOpenChange={open => !open && setDraft(null)}>
         <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-3xl">
@@ -151,11 +164,11 @@ export function PaymentSettingsPage() {
                   <Field><FieldLabel htmlFor="payment-name">平台名称</FieldLabel><Input id="payment-name" required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></Field>
                   <Field><FieldLabel htmlFor="payment-display-name">前台显示名称</FieldLabel><Input id="payment-display-name" required maxLength={80} value={draft.displayName} onChange={event => setDraft({ ...draft, displayName: event.target.value })} /></Field>
                   <Field><FieldLabel htmlFor="payment-priority">优先级</FieldLabel><Input id="payment-priority" type="number" min={0} max={999} required value={draft.priority} onChange={event => setDraft({ ...draft, priority: Number(event.target.value) })} /></Field>
-                  <Field className="sm:col-span-3"><FieldLabel htmlFor="payment-api-url">接口地址</FieldLabel><Input id="payment-api-url" type="url" required value={draft.apiBaseUrl} onChange={event => setDraft({ ...draft, apiBaseUrl: event.target.value })} /></Field>
+                  {draft.provider !== "test" ? <Field className="sm:col-span-3"><FieldLabel htmlFor="payment-api-url">接口地址</FieldLabel><Input id="payment-api-url" type="url" required value={draft.apiBaseUrl} onChange={event => setDraft({ ...draft, apiBaseUrl: event.target.value })} /></Field> : null}
                 </CardContent>
               </Card>
 
-              <Card>
+              {draft.provider !== "test" ? <Card>
                 <CardHeader>
                   <CardTitle>商户凭证</CardTitle>
                   <CardDescription>用于创建订单和验证 MD5 支付通知。</CardDescription>
@@ -164,9 +177,9 @@ export function PaymentSettingsPage() {
                   <Field><FieldLabel htmlFor="payment-merchant-id">商户 ID</FieldLabel><Input id="payment-merchant-id" required autoComplete="off" value={draft.merchantId} onChange={event => setDraft({ ...draft, merchantId: event.target.value })} /></Field>
                   <Field><FieldLabel htmlFor="payment-secret">商户密钥 <Badge variant={draft.merchantSecretConfigured ? "success" : "destructive"}>{draft.merchantSecretConfigured ? "已配置" : "未配置"}</Badge></FieldLabel><Input id="payment-secret" type="password" required={!draft.merchantSecretConfigured} autoComplete="new-password" value={draft.merchantSecret || ""} onChange={event => setDraft({ ...draft, merchantSecret: event.target.value })} /></Field>
                 </CardContent>
-              </Card>
+              </Card> : null}
 
-              <Card>
+              {draft.provider !== "test" ? <Card>
                 <CardHeader>
                   <CardTitle>支付通道</CardTitle>
                   <CardDescription>分别设置支付宝和微信使用的通道码。</CardDescription>
@@ -181,9 +194,9 @@ export function PaymentSettingsPage() {
                     <Input id="payment-wechat-channel" required value={draft.wechatChannelCode} onChange={event => setDraft({ ...draft, wechatChannelCode: event.target.value })} />
                   </Field>
                 </CardContent>
-              </Card>
+              </Card> : null}
 
-              <Card>
+              {draft.provider !== "test" ? <Card>
                 <CardHeader>
                   <CardTitle>回调地址</CardTitle>
                   <CardDescription>支付平台需要通过公网地址发送通知并返回结果。</CardDescription>
@@ -192,7 +205,7 @@ export function PaymentSettingsPage() {
                   <Field><FieldLabel htmlFor="payment-notify-url">异步通知地址</FieldLabel><Input id="payment-notify-url" type="url" value={draft.notifyUrl} onChange={event => setDraft({ ...draft, notifyUrl: event.target.value })} placeholder="留空时根据 PUBLIC_BASE_URL 自动生成" /></Field>
                   <Field><FieldLabel htmlFor="payment-return-url">支付完成返回地址</FieldLabel><Input id="payment-return-url" type="url" value={draft.returnUrl} onChange={event => setDraft({ ...draft, returnUrl: event.target.value })} placeholder="留空时根据 PUBLIC_BASE_URL 自动生成" /></Field>
                 </CardContent>
-              </Card>
+              </Card> : null}
             </FieldGroup>
             <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={saving}>取消</Button></DialogClose><Button type="submit" disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : null}{saving ? "保存中..." : "保存平台"}</Button></DialogFooter>
           </form> : null}

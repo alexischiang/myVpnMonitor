@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Loader2, Percent, RefreshCw, Users, WalletCards, XCircle, type LucideIcon } from "lucide-react"
+import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, HardDrive, HousePlug, Info, Loader2, PackagePlus, Percent, RefreshCw, Star, Users, WalletCards, XCircle, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { clearJsonCache, deleteJson, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
@@ -15,9 +15,10 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Item, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item"
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -25,14 +26,17 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
 import { DataTableRowActions } from "@/components/features/data-table"
 import { MarkdownContent } from "@/components/features/markdown-content"
+import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { VipBadge } from "@/components/features/vip-badge"
 import { formatDate, formatDateTime, formatMoney } from "@/utils"
 
-type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge"; planName: string; optionLabel: string; amount: number; totalAmount?: number; walletAmount?: number; walletCashAmount?: number; walletGiftAmount?: number; walletReferralAmount?: number; realCashAmount?: number; virtualCashAmount?: number; status: string; statusText: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; expiresAt: string; paidAt?: string }
-type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; cashValue: number; traffic: string; unlimited?: boolean; devices: number | string; subscriptionUrl: string; vipLevel?: string }
-type SelfHostedTraffic = { uploadBytes: number; downloadBytes: number; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; lastSyncedAt: string; stale?: boolean; error?: string }
+type OrderAddOn = { id: string; optionId: string; name: string; regionName?: string; amount: number; durationDays?: number; deliveryMode?: string; deliveryDescription?: string }
+type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge" | "traffic_pack" | "addon"; planName: string; optionLabel: string; amount: number; totalAmount?: number; baseAmount?: number; originalAmount?: number; discountAmount?: number; vipDiscountAmount?: number; subtotal?: number; taxAmount?: number; addOnAmount?: number; addOnSnapshots?: OrderAddOn[]; trafficTier?: number; trafficBaseGb?: number; trafficGb?: number | null; trafficTierMarkupPercent?: number; walletAmount?: number; walletCashAmount?: number; walletGiftAmount?: number; walletReferralAmount?: number; realCashAmount?: number; virtualCashAmount?: number; status: string; statusText: string; paymentProvider?: string; channelCode?: string; couponCode?: string; purchaseAction?: string; fulfillmentStatus?: string; fulfillmentStartedAt?: string; fulfilledAt?: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; updatedAt?: string; expiresAt: string; paidAt?: string }
+type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; unlimited?: boolean; devices: number | string; subscriptionUrl: string; vipLevel?: string }
+type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; stale?: boolean; error?: string }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
-type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; orders: PaymentOrder[]; announcements: Announcement[] }
+type AccountService = { id: string; orderId: string; name: string; regionName?: string; amount: number; durationDays?: number; startedAt: string; expiresAt?: string; status: "pending" | "processing" | "active" | "expired"; deliveryNote?: string }
+type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
 type WalletData = { balance: number; cashBalance: number; giftBalance: number; referralBalance: number; realCashBalance?: number; virtualCashBalance?: number; availableRealCashBalance?: number; availableVirtualCashBalance?: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
 
@@ -83,6 +87,73 @@ function CopySubscription({ value }: { value: string }) {
   return <Button variant={copied ? "success" : "outline"} aria-label={copied ? "订阅链接已复制" : "复制订阅链接"} onClick={copySubscription}><span className={copied ? "motion-safe:animate-[copy-success_180ms_ease-out]" : ""}>{copied ? <Check /> : <Copy />}</span>{copied ? "复制订阅成功" : "复制订阅链接"}</Button>
 }
 
+function PlanStatusCard({ account, subscription, traffic, trafficLoading, trafficError }: { account: Overview; subscription: Subscription | null; traffic: SelfHostedTraffic | null; trafficLoading: boolean; trafficError: string }) {
+  const usagePercent = subscription?.lineType === "self_hosted" ? traffic?.usagePercent : null
+  const remainingPercent = usagePercent == null ? null : Math.max(0, 100 - usagePercent)
+  const trafficTotal = traffic ? `${(traffic.totalBytes / 1024 ** 3).toFixed(0)} GB` : subscription?.traffic || "-"
+  const trafficUsed = traffic ? `${(traffic.usedBytes / 1024 ** 3).toFixed(2)} GB` : "-"
+  const status = !subscription ? "inactive" : subscription.status === "expired" ? "expired" : traffic?.status === "depleted" ? "depleted" : "active"
+  const canBuyTrafficPack = account.trafficPack?.enabled !== false && (status === "active" || status === "depleted") && subscription?.duration !== "lifetime" && subscription?.lineType === "self_hosted" && !subscription.unlimited && Boolean(traffic)
+  const canBuyHomeIp = account.homeIp?.enabled && status === "active" && subscription?.duration !== "lifetime"
+  const expiresAtTime = Date.parse(subscription?.expiresAt || "")
+  const remainingDays = Number.isFinite(expiresAtTime) ? Math.max(0, Math.ceil((expiresAtTime - Date.now()) / 86400000)) : null
+  const accountType = account.isSuperAccount ? "super" : account.isBusiness ? "business" : account.isFamilyFriend ? "family" : "regular"
+  const vipTarget = account.vipSpend < 360 ? { level: "VIP 2", start: 0, amount: 360 } : account.vipSpend < 900 ? { level: "VIP 3", start: 360, amount: 900 } : null
+  const vipProgress = vipTarget ? Math.min(100, Math.max(0, (account.vipSpend - vipTarget.start) / (vipTarget.amount - vipTarget.start) * 100)) : 100
+
+  return <Card id="subscription" className="scroll-mt-16">
+    <CardHeader><CardTitle className="flex items-center gap-2">个人信息<Badge variant="outline" className="tabular-nums">ID #{account.customerID}</Badge></CardTitle></CardHeader>
+    <CardContent className="grid gap-4">
+      <div className="flex min-w-0 items-center gap-4">
+        <Avatar size="lg" className="data-[size=lg]:size-15"><AvatarFallback className="bg-slate-600 text-lg font-semibold text-white dark:bg-slate-500">{account.email.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
+        <div className="grid min-w-0 flex-1 gap-2">
+          <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium"><span className="truncate">{account.email}</span><AccountVerificationIcon type={accountType} /></p>
+          <div className="flex flex-wrap items-center gap-2"><VipBadge level={account.vipLevel} /><span className="flex items-center gap-1 text-xs text-muted-foreground">专属折扣 {account.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>VIP 1：0% · VIP 2：5% · VIP 3：10%</TooltipContent></Tooltip></span></div>
+        </div>
+      </div>
+      <div className="grid gap-1.5"><div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground"><span>{vipTarget ? `距离 ${vipTarget.level}` : "已达到最高等级"}</span><span>{vipTarget ? `还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "100%"}</span></div><Progress value={vipProgress} aria-label={`VIP 消费进度 ${Math.round(vipProgress)}%`} /></div>
+    </CardContent>
+    <Separator />
+    <CardHeader>
+      <div className="flex min-w-0 items-center gap-3">
+        <Avatar size="lg"><AvatarFallback><Zap className="size-5" /></AvatarFallback></Avatar>
+        <div className="grid min-w-0 gap-1">
+          <CardTitle className="truncate text-lg">{subscription ? subscription.activeGroup.toUpperCase() : "暂无套餐"}</CardTitle>
+          <Badge variant={status === "active" ? "success" : status === "inactive" ? "warning" : "destructive"}>{status === "active" ? <><CheckCircle2 />生效中</> : status === "expired" ? "已过期" : status === "depleted" ? "流量耗尽" : "未开通"}</Badge>
+        </div>
+      </div>
+    </CardHeader>
+    <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(20rem,0.95fr)]">
+      <section className="grid content-start gap-4" aria-labelledby="traffic-usage-title">
+        <header className="grid gap-2">
+          <p id="traffic-usage-title" className="flex items-center gap-2 text-sm font-medium"><HardDrive className="size-4" />流量使用</p>
+          <p className="flex items-baseline gap-2"><strong className="text-3xl font-semibold tabular-nums">{remainingPercent == null ? subscription?.unlimited ? "不限" : trafficLoading ? "同步中" : "-" : `${Math.round(remainingPercent)}%`}</strong>{remainingPercent == null || subscription?.unlimited ? null : <span className="text-sm text-muted-foreground">剩余</span>}</p>
+        </header>
+        <Progress value={usagePercent ?? 0} aria-label={usagePercent == null ? "流量用量暂不可用" : `已使用流量 ${Math.round(usagePercent)}%`} />
+        <p className="flex justify-between gap-3 text-xs text-muted-foreground"><span>已用 {trafficUsed} / {subscription?.unlimited ? "不限" : trafficTotal}</span>{traffic?.nextResetAt ? <span>{formatDate(traffic.nextResetAt)} 重置</span> : null}</p>
+        {canBuyTrafficPack ? <Alert variant="warning"><Info /><AlertTitle className="flex items-center justify-between gap-3"><span>流量不够用？随时购买流量包！</span><Button asChild variant="link" className="h-auto p-0 text-current underline"><Link to="/account/plans/checkout?product=traffic-pack">去购买→</Link></Button></AlertTitle></Alert> : trafficError ? <Alert variant="warning"><Info /><AlertTitle>流量同步暂不可用</AlertTitle><AlertDescription>{trafficError}</AlertDescription></Alert> : null}
+      </section>
+
+      <section className="grid content-start gap-4" aria-labelledby="plan-details-title">
+        <header className="flex items-center justify-between gap-3">
+          <h3 id="plan-details-title" className="flex items-center gap-2 text-sm font-medium"><Star className="size-4 text-primary" />套餐详情</h3>
+          <strong className="text-sm">{remainingDays === null ? "-" : `剩余 ${remainingDays} 天`}</strong>
+        </header>
+        <ItemGroup className="sm:grid-cols-2">
+          <Item variant="muted"><ItemContent><ItemDescription>到期日期</ItemDescription><ItemTitle>{subscription ? formatDate(subscription.expiresAt) : "-"}</ItemTitle>{subscription?.giftedDays ? <ItemDescription>原到期日 {formatDate(subscription.planExpiresAt)}，已赠送 {subscription.giftedDays} 天</ItemDescription> : null}</ItemContent></Item>
+          <Item variant="muted"><ItemContent><ItemDescription>流量配额</ItemDescription><ItemTitle>{subscription?.unlimited ? "不限" : trafficTotal}</ItemTitle></ItemContent></Item>
+          <Item variant="muted"><ItemContent><ItemDescription>{traffic ? "在线IP限制" : "可绑定设备"}</ItemDescription><ItemTitle>{traffic ? `${traffic.connectedIpCount ?? "-"} / ${traffic.ipLimit || "不限"}` : subscription ? `${subscription.devices} 台` : "-"}</ItemTitle></ItemContent></Item>
+        </ItemGroup>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {canBuyTrafficPack ? <Button asChild className="sm:col-span-2"><Link to="/account/plans/checkout?product=traffic-pack"><PackagePlus />购买 {account.trafficPack?.trafficGb || 0} GB 流量包 · {formatMoney(account.trafficPack?.price || 0)}</Link></Button> : null}
+          {canBuyHomeIp ? <Button asChild variant="outline" className="sm:col-span-2"><Link to="/account/plans/checkout?product=home-ip"><HousePlug />购买家宽 IP 服务</Link></Button> : null}
+          {subscription ? null : <Button asChild variant="outline"><Link to="/account/plans"><PackagePlus />购买服务</Link></Button>}
+        </div>
+      </section>
+    </CardContent>
+  </Card>
+}
+
 export function AccountOverviewPage() {
   const { data, error } = useOverview()
   const [importClient, setImportClient] = React.useState<"shadowrocket" | "sparkle" | null>(null)
@@ -126,9 +197,8 @@ export function AccountOverviewPage() {
       return
     }
     let active = true
-    const refresh = () => {
-      if (!selfHostedTraffic) setTrafficLoading(true)
-      return fetchJson<SelfHostedTraffic>("/api/account/self-hosted-traffic")
+    setTrafficLoading(true)
+    fetchJson<SelfHostedTraffic>("/api/account/self-hosted-traffic")
         .then(value => {
           if (!active) return
           setSelfHostedTraffic(value)
@@ -136,26 +206,8 @@ export function AccountOverviewPage() {
         })
         .catch(error => { if (active) setTrafficError(error instanceof Error ? error.message : "流量同步失败") })
         .finally(() => { if (active) setTrafficLoading(false) })
-    }
-    void refresh()
-    const timer = window.setInterval(refresh, 15000)
-    const onVisibility = () => { if (document.visibilityState === "visible") void refresh() }
-    document.addEventListener("visibilitychange", onVisibility)
-    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility) }
+    return () => { active = false }
   }, [data?.subscription?.lineType])
-
-  async function refreshSelfHostedTraffic() {
-    setTrafficLoading(true)
-    try {
-      const value = await fetchJson<SelfHostedTraffic>("/api/account/self-hosted-traffic")
-      setSelfHostedTraffic(value)
-      setTrafficError(value.error || "")
-    } catch (error) {
-      setTrafficError(error instanceof Error ? error.message : "流量同步失败")
-    } finally {
-      setTrafficLoading(false)
-    }
-  }
 
   function changeAnnouncementOpen(open: boolean) {
     if (!open && reminderDialog && muteToday && data) localStorage.setItem(`account-announcement-muted:${data.email}`, todayKey())
@@ -178,13 +230,12 @@ export function AccountOverviewPage() {
       ? `shadowrocket://add/${encodeURIComponent(subscription.subscriptionUrl)}`
       : `mihomo://install-config?url=${encodeURIComponent(subscription.subscriptionUrl)}`
     : ""
-  const vipSpend = data.vipSpend
-  const accountType = data.isSuperAccount ? "super" : data.isBusiness ? "business" : data.isFamilyFriend ? "family" : "regular"
-  const vipTarget = vipSpend < 360 ? { level: "VIP 2", start: 0, amount: 360 } : vipSpend < 900 ? { level: "VIP 3", start: 360, amount: 900 } : null
-  const vipProgress = vipTarget ? Math.min(100, Math.max(0, (vipSpend - vipTarget.start) / (vipTarget.amount - vipTarget.start) * 100)) : 100
   return (
     <>
       <div className="grid gap-4 px-4 lg:px-6">
+        <PlanStatusCard account={data} subscription={subscription} traffic={selfHostedTraffic} trafficLoading={trafficLoading} trafficError={trafficError} />
+        {data.services?.length ? <Card><CardHeader><CardTitle>附加服务</CardTitle><CardDescription>已购买的地区规格、交付进度和有效期。</CardDescription></CardHeader><CardContent><ItemGroup>{data.services.map(service => <Item key={service.id} variant="muted"><ItemContent><ItemTitle>{service.name}{service.regionName ? ` · ${service.regionName}` : ""}</ItemTitle><ItemDescription>{service.status === "pending" ? "等待人工交付" : service.status === "active" ? `服务中${service.expiresAt ? ` · ${formatDate(service.expiresAt)} 到期` : ""}` : service.status === "expired" ? "已到期" : "处理中"}</ItemDescription>{service.deliveryNote ? <ItemDescription>{service.deliveryNote}</ItemDescription> : null}</ItemContent><Badge variant={service.status === "active" ? "success" : service.status === "pending" ? "warning" : "secondary"}>{service.status === "active" ? "生效中" : service.status === "pending" ? "待交付" : service.status === "expired" ? "已到期" : "处理中"}</Badge></Item>)}</ItemGroup></CardContent></Card> : null}
+        {subscription ? <Card><CardHeader><CardTitle>订阅链接</CardTitle><CardDescription>请勿将订阅链接分享给其他人。</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></CardContent></Card> : null}
         {data.announcements.length ? <Card>
           <CardHeader><CardTitle>网站公告</CardTitle><CardDescription>最新服务动态与使用提醒</CardDescription></CardHeader>
           <CardContent>
@@ -199,32 +250,6 @@ export function AccountOverviewPage() {
             </Carousel>
           </CardContent>
         </Card> : null}
-        <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2">个人信息<Badge variant="outline" className="tabular-nums">ID #{data.customerID}</Badge></CardTitle></CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="flex min-w-0 items-center gap-4">
-              <Avatar size="lg" className="data-[size=lg]:size-15"><AvatarFallback className="bg-slate-600 text-lg font-semibold text-white dark:bg-slate-500">{data.email.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
-              <div className="grid min-w-0 flex-1 gap-2">
-                <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium"><span className="truncate">{data.email}</span><AccountVerificationIcon type={accountType} /></p>
-                <div className="flex flex-wrap items-center gap-2"><VipBadge level={data.vipLevel} /><span className="flex items-center gap-1 text-xs text-muted-foreground">专属折扣 {data.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>VIP 1：0% · VIP 2：5% · VIP 3：10%</TooltipContent></Tooltip></span></div>
-              </div>
-            </div>
-            <div className="grid gap-1.5"><div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground"><span>{vipTarget ? `距离 ${vipTarget.level}` : "已达到最高等级"}</span><span>{vipTarget ? `还差 ${formatMoney(vipTarget.amount - vipSpend)}` : "100%"}</span></div><Progress value={vipProgress} aria-label={`VIP 消费进度 ${Math.round(vipProgress)}%`} /></div>
-          </CardContent>
-        </Card>
-        <Card id="subscription" className="scroll-mt-16">
-          <CardHeader className="flex-row items-start justify-between gap-4"><div><CardDescription>当前订阅</CardDescription><CardTitle className="mt-1 text-2xl">{subscription ? subscription.activeGroup.toUpperCase() : "暂无订阅"}</CardTitle></div><Badge variant={subscription?.status === "active" ? "success" : subscription?.status === "expired" ? "destructive" : "warning"} className="leading-none [&>svg]:size-3.5">{subscription?.status === "active" ? <><CheckCircle2 />生效中</> : subscription?.status === "expired" ? "已过期" : "未开通"}</Badge></CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-          <Metric label="到期日" value={subscription ? <span className="grid gap-1"><span>{formatDate(subscription.expiresAt)}</span>{subscription.giftedDays ? <span className="text-xs font-normal text-muted-foreground">原到期日 {formatDate(subscription.planExpiresAt)} · 赠送 {subscription.giftedDays} 天</span> : null}</span> : "-"} />
-            <Metric label="流量" value={subscription?.lineType === "self_hosted" ? (selfHostedTraffic ? `${(selfHostedTraffic.usedBytes / 1024 ** 3).toFixed(2)} / ${(selfHostedTraffic.totalBytes / 1024 ** 3).toFixed(0)} GB` : trafficLoading ? "正在同步..." : "暂不可用") : (subscription?.traffic || "-")} description={subscription?.lineType === "self_hosted" ? (selfHostedTraffic ? `${selfHostedTraffic.stale ? "缓存数据" : "实时数据"} · ${formatDateTime(selfHostedTraffic.lastSyncedAt)}` : trafficError || "正在从3x-ui读取流量") : undefined} />
-            <Metric label="可绑定设备" value={subscription ? `${subscription.devices} 台` : "-"} />
-            <Metric label="剩余现金价值" value={subscription ? formatMoney(subscription.cashValue) : "-"} description="根据当前套餐剩余有效期折算，更换套餐时可用于抵扣。" />
-            {subscription?.lineType === "self_hosted" && selfHostedTraffic?.usagePercent !== null && selfHostedTraffic ? <div className="col-span-2 grid gap-2 xl:col-span-4"><Progress value={selfHostedTraffic.usagePercent || 0} aria-label={`流量使用 ${selfHostedTraffic.usagePercent || 0}%`} /><p className="text-xs text-muted-foreground">已使用 {selfHostedTraffic.usagePercent || 0}% · 剩余 {((selfHostedTraffic.remainingBytes || 0) / 1024 ** 3).toFixed(2)} GB</p></div> : null}
-            {subscription?.lineType === "self_hosted" ? <div className="col-span-2 xl:col-span-4"><Button variant="outline" size="sm" onClick={() => void refreshSelfHostedTraffic()} disabled={trafficLoading}><RefreshCw className={trafficLoading ? "animate-spin" : undefined} />刷新流量</Button>{trafficError ? <p className="mt-2 text-xs text-destructive">{trafficError}</p> : null}</div> : null}
-            <div className="col-span-2 flex flex-wrap gap-2 xl:col-span-4"><Button asChild><Link to="/account/plans">{subscription ? "续费或更换套餐" : "购买套餐"}</Link></Button></div>
-            {subscription ? <><Separator className="col-span-2 xl:col-span-4" /><Field className="col-span-2 xl:col-span-4"><FieldLabel htmlFor="subscription-url">订阅链接</FieldLabel><FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></> : null}
-          </CardContent>
-        </Card>
       </div>
       <Dialog open={announcementOpen} onOpenChange={changeAnnouncementOpen}>
         <DialogContent>
@@ -345,7 +370,7 @@ export function AccountReferralPage() {
 export function AccountOrdersPage() {
   const { data: orders, error } = useCachedAccountData<PaymentOrder[]>("/api/account/orders")
   if (!orders) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
-  return <div className="px-4 lg:px-6"><Card><CardHeader><CardTitle>订单记录</CardTitle><CardDescription>所有购买、续费和换套餐订单</CardDescription></CardHeader><CardContent>{orders.length ? <OrdersTable orders={orders} /> : <p className="text-sm text-muted-foreground">仅展示2026年7月15日后的订单</p>}</CardContent></Card></div>
+  return <div className="px-4 lg:px-6"><Card className="contents md:flex"><CardHeader className="hidden md:grid"><CardTitle>订单记录</CardTitle><CardDescription>所有商品订单</CardDescription></CardHeader><CardContent className="px-0 md:px-6">{orders.length ? <OrdersTable orders={orders} /> : <p className="text-sm text-muted-foreground">仅展示2026年7月15日后的订单</p>}</CardContent></Card></div>
 }
 
 export function AccountOrderDetailPage() {
@@ -354,12 +379,16 @@ export function AccountOrderDetailPage() {
   const [loading, setLoading] = React.useState(false)
   const [cancelling, setCancelling] = React.useState(false)
   const [cancelOpen, setCancelOpen] = React.useState(false)
+  const [testOpen, setTestOpen] = React.useState(false)
+  const [testStatus, setTestStatus] = React.useState("paid")
+  const [settingTestStatus, setSettingTestStatus] = React.useState(false)
   const [now, setNow] = React.useState(Date.now())
   async function refresh(showToast = false) {
     setLoading(true)
     try {
       const nextOrder = await fetchJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(id)}`)
       setOrder(nextOrder)
+      if (nextOrder.paymentProvider === "test" && nextOrder.status === "pending") setTestOpen(true)
       if (order?.status === "pending" && nextOrder.status !== "pending") window.dispatchEvent(new Event("payment-order-updated"))
       if (showToast) nextOrder.status === "paid" ? toast.success("支付成功") : toast.info(`当前状态：${nextOrder.statusText}`)
     } catch (error) {
@@ -394,6 +423,21 @@ export function AccountOrderDetailPage() {
       setCancelOpen(false)
     }
   }
+  async function setLocalPaymentStatus() {
+    setSettingTestStatus(true)
+    try {
+      const nextOrder = await putJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(id)}/test-status`, { status: testStatus })
+      setOrder(nextOrder)
+      setTestOpen(false)
+      clearJsonCache()
+      window.dispatchEvent(new Event("payment-order-updated"))
+      toast.success(`测试订单已设为${nextOrder.statusText}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "测试付款状态设置失败")
+    } finally {
+      setSettingTestStatus(false)
+    }
+  }
   if (!order) return <PageLoading />
   const countdown = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`
   return (
@@ -418,9 +462,37 @@ export function AccountOrderDetailPage() {
             <OrderInfo label="创建时间" value={formatDateTime(order.createdAt)} />
             <OrderInfo label="支付时间" value={order.paidAt ? formatDateTime(order.paidAt) : "尚未支付"} />
           </div>
+          {order.purpose !== "recharge" ? <>
+            <Separator />
+            <section className="grid gap-3"><h3 className="font-medium">商品快照</h3><ItemGroup className="sm:grid-cols-2">
+              <OrderInfo label="购买类型" value={order.purchaseAction === "replace" ? "覆盖套餐" : order.purchaseAction === "extend" ? "续费" : order.purchaseAction === "add_on" ? "附加服务" : "新购"} />
+              <OrderInfo label="基础商品" value={`${order.planName} / ${order.optionLabel}`} />
+              {order.trafficGb ? <OrderInfo label="流量规格" value={`每月 ${order.trafficGb} GB`} /> : null}
+              {order.trafficTierMarkupPercent && (order.trafficTier || 1) > 1 ? <OrderInfo label="流量定制计价" value={`每增加 ${order.trafficBaseGb} GB，加收周期原价的 ${order.trafficTierMarkupPercent}%`} /> : null}
+              {(order.addOnSnapshots || []).map(addOn => <OrderInfo key={addOn.optionId} label="附加服务" value={`${addOn.name}${addOn.regionName ? ` · ${addOn.regionName}` : ""} · ${formatMoney(addOn.amount)}${addOn.durationDays ? ` / ${addOn.durationDays} 天` : ""}`} />)}
+            </ItemGroup></section>
+            <Separator />
+            <section className="grid gap-3"><h3 className="font-medium">金额明细</h3><ItemGroup className="sm:grid-cols-2">
+              <OrderInfo label="套餐基础价" value={formatMoney(order.baseAmount ?? order.originalAmount ?? order.totalAmount ?? order.amount)} />
+              {(order.originalAmount || 0) > (order.baseAmount || order.originalAmount || 0) ? <OrderInfo label="流量定制加价" value={`+${formatMoney((order.originalAmount || 0) - (order.baseAmount || 0))}`} /> : null}
+              {order.discountAmount ? <OrderInfo label={`优惠码${order.couponCode ? ` ${order.couponCode}` : ""}`} value={`-${formatMoney(order.discountAmount)}`} /> : null}
+              {order.vipDiscountAmount ? <OrderInfo label="VIP 折扣" value={`-${formatMoney(order.vipDiscountAmount)}`} /> : null}
+              {order.taxAmount ? <OrderInfo label="税费" value={`+${formatMoney(order.taxAmount)}`} /> : null}
+              {order.addOnAmount ? <OrderInfo label="附加服务合计" value={`+${formatMoney(order.addOnAmount)}`} /> : null}
+              <OrderInfo label="订单支付合计" value={formatMoney(order.totalAmount ?? order.amount)} emphasis />
+            </ItemGroup></section>
+            <Separator />
+            <section className="grid gap-3"><h3 className="font-medium">处理记录</h3><ItemGroup className="sm:grid-cols-2">
+              <OrderInfo label="创建订单" value={formatDateTime(order.createdAt)} />
+              <OrderInfo label="支付确认" value={order.paidAt ? formatDateTime(order.paidAt) : "等待支付"} />
+              <OrderInfo label="套餐发放" value={order.fulfilledAt ? formatDateTime(order.fulfilledAt) : order.fulfillmentStatus === "manual_pending" ? "基础套餐已发放，附加服务待人工交付" : order.fulfillmentStatus || "等待处理"} />
+              <OrderInfo label="最后更新" value={order.updatedAt ? formatDateTime(order.updatedAt) : "-"} />
+            </ItemGroup></section>
+          </> : null}
         </CardContent>
         <CardFooter className="grid gap-2 sm:flex sm:flex-wrap">
           {order.status === "pending" && order.payUrl ? <Button asChild className="w-full sm:w-auto"><a href={order.payUrl} target="_blank" rel="noreferrer"><ExternalLink />打开支付页面</a></Button> : null}
+          {order.status === "pending" && order.paymentProvider === "test" ? <Button className="w-full sm:w-auto" onClick={() => setTestOpen(true)}>设置测试付款状态</Button> : null}
           {order.status === "pending" ? <Button className="w-full sm:w-auto" variant="outline" onClick={() => refresh(true)} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}检测支付状态</Button> : null}
           {order.status === "pending" ? <Button className="w-full sm:w-auto" variant="destructive" onClick={() => setCancelOpen(true)} disabled={cancelling}><XCircle />取消订单</Button> : null}
           <Button asChild className="w-full sm:ml-auto sm:w-auto" variant="ghost"><Link to="/account/orders"><ArrowLeft />返回订单列表</Link></Button>
@@ -432,6 +504,17 @@ export function AccountOrderDetailPage() {
           <AlertDialogFooter><AlertDialogCancel disabled={cancelling}>保留订单</AlertDialogCancel><AlertDialogAction className={buttonVariants({ variant: "destructive" })} onClick={() => void cancelOrder()} disabled={cancelling}>{cancelling ? <Loader2 className="animate-spin" /> : <XCircle />}确认取消</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog open={testOpen} onOpenChange={setTestOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>测试付款</DialogTitle><DialogDescription>仅更新本地订单，不会向线上支付平台创建订单或扣款。</DialogDescription></DialogHeader>
+          <RadioGroup value={testStatus} onValueChange={setTestStatus}>
+            <Label className="flex items-center gap-3"><RadioGroupItem value="paid" />已支付</Label>
+            <Label className="flex items-center gap-3"><RadioGroupItem value="failed" />支付失败</Label>
+            <Label className="flex items-center gap-3"><RadioGroupItem value="closed" />已关闭</Label>
+          </RadioGroup>
+          <DialogFooter><DialogClose asChild><Button variant="outline" disabled={settingTestStatus}>取消</Button></DialogClose><Button onClick={() => void setLocalPaymentStatus()} disabled={settingTestStatus}>{settingTestStatus ? <Loader2 className="animate-spin" /> : null}确认状态</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -441,7 +524,7 @@ function OrderInfo({ label, value, emphasis = false }: { label: string; value: R
 }
 
 function PaymentOrderErrorAlert({ order }: { order: PaymentOrder }) {
-  if (order.fulfillmentError) return <Alert variant="error"><AlertCircle /><AlertTitle>{order.purpose === "recharge" ? "充值处理失败" : "套餐发放失败"}</AlertTitle><AlertDescription><strong>支付已成功，款项已经扣除。</strong> <strong>{order.fulfillmentError}</strong> <strong>请勿再次下单。</strong> 请联系网页右下角的 <strong>在线客服</strong> 处理。</AlertDescription></Alert>
+  if (order.fulfillmentError) return <Alert variant="error"><AlertCircle /><AlertTitle>{order.purpose === "recharge" ? "充值处理失败" : order.purpose === "traffic_pack" ? "流量包发放失败" : order.purpose === "addon" ? "附加服务处理失败" : "套餐发放失败"}</AlertTitle><AlertDescription><strong>支付已成功，款项已经扣除。</strong> <strong>{order.fulfillmentError}</strong> <strong>请勿再次下单。</strong> 请联系网页右下角的 <strong>在线客服</strong> 处理。</AlertDescription></Alert>
   return <Alert variant="error"><AlertCircle /><AlertTitle>支付处理失败</AlertTitle><AlertDescription>{order.paymentError}</AlertDescription></Alert>
 }
 
@@ -496,10 +579,10 @@ export function PaymentResultPage() {
             <span className="absolute inset-2 rounded-full border-2 border-primary/30 motion-safe:animate-ping" />
             <CheckCircle2 className="relative size-10 text-emerald-600 dark:text-emerald-500" />
           </span>
-          <header className="grid gap-2"><h1 className="text-2xl font-semibold tracking-tight">支付成功 🎉</h1><p className="text-sm text-muted-foreground">{order.purpose === "recharge" ? "充值金额已存入账户余额" : "您的套餐已成功开通"}</p></header>
+          <header className="grid gap-2"><h1 className="text-2xl font-semibold tracking-tight">支付成功 🎉</h1><p className="text-sm text-muted-foreground">{order.purpose === "recharge" ? "充值金额已存入账户余额" : order.purpose === "traffic_pack" ? "流量已加入当前周期" : order.purpose === "addon" ? "订单已进入人工交付流程" : "您的套餐已成功开通"}</p></header>
           <section className="grid gap-1" aria-label="支付信息"><strong className="text-4xl font-semibold tracking-tight">{formatMoney(order.totalAmount ?? order.amount)}</strong><p className="text-xs text-muted-foreground">已支付 · {order.planName} / {order.optionLabel}</p></section>
           <PaymentVipProgress order={order} />
-          <Button asChild size="lg" className="w-full"><Link to={order.purpose === "recharge" ? "/account/wallet" : "/account"}>{order.purpose === "recharge" ? "查看账户余额 →" : "开始畅游网络 →"}</Link></Button>
+          <Button asChild size="lg" className="w-full"><Link to={order.purpose === "recharge" ? "/account/wallet" : "/account"}>{order.purpose === "recharge" ? "查看账户余额 →" : order.purpose === "traffic_pack" ? "查看当前流量 →" : order.purpose === "addon" ? "查看附加服务 →" : "开始畅游网络 →"}</Link></Button>
         </CardContent>
       </Card>
     </div>
@@ -540,5 +623,5 @@ function Metric({ label, value, description }: { label: string; value: React.Rea
 }
 
 function OrdersTable({ orders }: { orders: PaymentOrder[] }) {
-  return <Table><TableHeader><TableRow><TableHead>订单</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{orders.map(order => <TableRow key={order.id}><TableCell className="font-mono text-xs">{order.merOrderTid}</TableCell><TableCell>{order.planName} / {order.optionLabel}</TableCell><TableCell>{formatMoney(order.totalAmount ?? order.amount)}</TableCell><TableCell><Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge></TableCell><TableCell>{formatDate(order.createdAt)}</TableCell><TableCell><div className="flex justify-end"><DataTableRowActions detail={<Button asChild variant="ghost" size="icon"><Link to={`/account/orders/${encodeURIComponent(order.id)}`} aria-label="查看订单详情"><Eye /></Link></Button>} /></div></TableCell></TableRow>)}</TableBody></Table>
+  return <><ItemGroup className="md:hidden">{orders.map(order => <OrderMobileItem key={order.id} amount={formatMoney(order.totalAmount ?? order.amount)} createdAt={order.createdAt} detailUrl={`/account/orders/${encodeURIComponent(order.id)}`} orderNumber={order.merOrderTid} product={`${order.planName} / ${order.optionLabel}`} status={order.statusText} statusVariant={order.status === "paid" ? "success" : order.status === "pending" ? "warning" : order.status === "failed" ? "destructive" : "secondary"} />)}</ItemGroup><div className="hidden md:block"><Table><TableHeader><TableRow><TableHead>订单</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{orders.map(order => <TableRow key={order.id}><TableCell className="font-mono text-xs">{order.merOrderTid}</TableCell><TableCell>{order.planName} / {order.optionLabel}</TableCell><TableCell>{formatMoney(order.totalAmount ?? order.amount)}</TableCell><TableCell><Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge></TableCell><TableCell>{formatDate(order.createdAt)}</TableCell><TableCell><div className="flex justify-end"><DataTableRowActions detail={<Button asChild variant="ghost" size="icon"><Link to={`/account/orders/${encodeURIComponent(order.id)}`} aria-label="查看订单详情"><Eye /></Link></Button>} /></div></TableCell></TableRow>)}</TableBody></Table></div></>
 }

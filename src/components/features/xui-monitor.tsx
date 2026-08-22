@@ -8,18 +8,17 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Field, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatBytes, formatDateTime } from "@/utils"
 
 type MonitorData = {
   configured: boolean
   latency?: number
   checkedAt?: string
+  onlineUsers: number | null
   system: null | {
     cpu: number
     cpuCores: number
@@ -56,42 +55,10 @@ type MonitorData = {
     clientCount: number
     onlineCount: number
     lastError: string
-    multiplier: number
     trafficTokenRequired: boolean
     trafficConfigured: boolean
     trafficError: string
-  }>
-  inbounds: Array<{
-    id: string
-    name: string
-    protocol: string
-    port: number | null
-    enabled: boolean
-    clients: number
-    uploadBytes: number
-    downloadBytes: number
-    totalBytes: number
-    expiryTime: number
-    uptime: {
-      availability: number | null
-      incidents: number
-      downtimeMs: number
-      lastCheckedAt: number | null
-      lastOk: boolean | null
-      buckets: Array<{ from: number; status: "up" | "down" | "unknown"; checks: number; failedAt: number | null; error: string }>
-    }
-  }>
-  billingUsers: Array<{
-    id: string
-    name: string
-    email: string
-    rawUsedBytes: number
-    usedBytes: number
-    totalBytes: number
-    remainingBytes: number | null
-    usagePercent: number | null
-    depleted: boolean
-    nodes: Array<{ guid: string; name: string; multiplier: number; rawBytes: number; weightedBytes: number }>
+    multiplier: number
   }>
 }
 
@@ -101,28 +68,12 @@ function uptimeLabel(seconds: number) {
   return days ? `${days} 天 ${hours} 小时` : `${hours} 小时`
 }
 
-function durationLabel(milliseconds: number) {
-  const minutes = Math.round(milliseconds / 60000)
-  return minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分` : `${minutes} 分钟`
-}
-
-function UptimeStrip({ uptime }: { uptime: MonitorData["inbounds"][number]["uptime"] }) {
-  return <div className="grid min-w-64 gap-2">
-    <div className="flex items-center justify-between gap-3 text-xs"><span>最近 24 小时</span><span className="font-medium tabular-nums">{uptime.availability === null ? "暂无数据" : `${uptime.availability}%`}</span></div>
-    <TooltipProvider><div className="flex gap-1">{uptime.buckets.map(bucket => <Tooltip key={bucket.from}>
-      <TooltipTrigger asChild><span role="img" tabIndex={0} aria-label={`${formatDateTime(bucket.from)} ${bucket.status === "up" ? "正常" : bucket.status === "down" ? "断连" : "未检测"}`} className={`h-7 min-w-1 flex-1 rounded-sm ${bucket.status === "up" ? "bg-green-500" : bucket.status === "down" ? "bg-destructive" : "bg-muted"}`} /></TooltipTrigger>
-      <TooltipContent>{formatDateTime(bucket.failedAt || bucket.from)}：{bucket.status === "up" ? `${bucket.checks} 次正常` : bucket.status === "down" ? `检测失败${bucket.error ? `，${bucket.error}` : ""}` : "未检测"}</TooltipContent>
-    </Tooltip>)}</div></TooltipProvider>
-    <p className="text-xs text-muted-foreground">{uptime.incidents ? `${uptime.incidents} 次断连，约 ${durationLabel(uptime.downtimeMs)}` : uptime.lastCheckedAt ? "未发现断连" : "等待首次检测"}</p>
-  </div>
-}
-
 export function XuiMonitorPage() {
   const [data, setData] = React.useState<MonitorData | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState("")
-  const [multipliers, setMultipliers] = React.useState<Record<string, string>>({})
   const [nodeTokens, setNodeTokens] = React.useState<Record<string, string>>({})
+  const [nodeMultipliers, setNodeMultipliers] = React.useState<Record<string, string>>({})
   const [savingGuid, setSavingGuid] = React.useState("")
   const [settingsGuid, setSettingsGuid] = React.useState("")
 
@@ -131,7 +82,6 @@ export function XuiMonitorPage() {
     try {
       const result = await fetchJson<MonitorData>("/api/xui-monitor")
       setData(result)
-      setMultipliers(current => Object.fromEntries(result.nodes.map(node => [node.guid, current[node.guid] ?? String(node.multiplier)])))
       setError("")
     } catch (error) {
       setError(error instanceof Error ? error.message : "无法读取 3x-ui 状态")
@@ -147,26 +97,21 @@ export function XuiMonitorPage() {
   }, [refresh])
 
   function openNodeSettings(node: MonitorData["nodes"][number]) {
-    setMultipliers(current => ({ ...current, [node.guid]: String(node.multiplier) }))
     setNodeTokens(current => ({ ...current, [node.guid]: "" }))
+    setNodeMultipliers(current => ({ ...current, [node.guid]: String(node.multiplier) }))
     setSettingsGuid(node.guid)
   }
 
   async function saveNodeSettings(guid: string) {
-    const multiplier = Number(multipliers[guid])
-    if (!Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) {
-      toast.error("流量倍率必须在 0 到 100 之间")
-      return
-    }
     setSavingGuid(guid)
     try {
-      await putJson(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/multiplier`, { multiplier })
       const apiToken = nodeTokens[guid]?.trim()
-      if (apiToken) await putJson(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/credentials`, { apiToken })
+      const multiplier = Number(nodeMultipliers[guid])
+      if (!nodeMultipliers[guid]?.trim() || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw new Error("节点倍率必须在 0 到 100 之间")
+      await putJson(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { apiToken, multiplier })
       setNodeTokens(current => ({ ...current, [guid]: "" }))
-      setData(current => current ? { ...current, nodes: current.nodes.map(node => node.guid === guid ? { ...node, multiplier } : node) } : current)
       setSettingsGuid("")
-      if (apiToken) await refresh()
+      await refresh()
       toast.success("节点设置已保存")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败")
@@ -193,6 +138,16 @@ export function XuiMonitorPage() {
 
       {error ? <div className="px-4 lg:px-6"><Alert variant="destructive"><Activity /><AlertDescription>{error}</AlertDescription></Alert></div> : null}
 
+      <div className="px-4 lg:px-6">
+        <Card>
+          <CardHeader>
+            <CardDescription>当前在线客户端</CardDescription>
+            <CardTitle className="text-3xl tabular-nums">{data.onlineUsers ?? "-"}</CardTitle>
+            <CardDescription>{data.nodes.map(node => `${node.name} ${node.onlineCount}`).join(" · ") || "暂无节点"}</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+
       <div className="grid gap-4 px-4 md:grid-cols-2 lg:px-6 xl:grid-cols-3">
         {data.nodes.map(node => {
           const online = node.enabled && node.status.toLowerCase() === "online"
@@ -206,6 +161,7 @@ export function XuiMonitorPage() {
                   </div>
                   <div className="grid justify-items-end gap-2">
                     <Badge variant={online ? "success" : "secondary"}>{node.enabled ? node.status : "disabled"}</Badge>
+                    <Badge variant="outline">× {node.multiplier}</Badge>
                     <Button variant="outline" size="sm" onClick={() => openNodeSettings(node)}><Settings2 />节点设置</Button>
                   </div>
                 </div>
@@ -237,47 +193,17 @@ export function XuiMonitorPage() {
         })}
       </div>
 
-      <div className="px-4 lg:px-6">
-        <Card>
-          <CardHeader><CardTitle>Inbound 状态</CardTitle><CardDescription>3x-ui 入站运行与流量状态</CardDescription></CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader><TableRow><TableHead>入站</TableHead><TableHead>状态</TableHead><TableHead>协议 / 端口</TableHead><TableHead>24 小时连通性</TableHead><TableHead>客户端</TableHead><TableHead>上传</TableHead><TableHead>下载</TableHead><TableHead>流量额度</TableHead></TableRow></TableHeader>
-              <TableBody>
-                {data.inbounds.map(inbound => {
-                  const used = inbound.uploadBytes + inbound.downloadBytes
-                  return <TableRow key={inbound.id}><TableCell className="font-medium">{inbound.name}</TableCell><TableCell><div className="grid justify-items-start gap-1"><Badge variant={inbound.enabled ? "success" : "secondary"}>{inbound.enabled ? "启用" : "停用"}</Badge><Badge variant={inbound.recentlyActive ? "success" : "secondary"}>{inbound.recentlyActive === null ? "活跃状态未知" : inbound.recentlyActive ? "近期有流量" : "近期无流量"}</Badge></div></TableCell><TableCell>{inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</TableCell><TableCell><UptimeStrip uptime={inbound.uptime} /></TableCell><TableCell>{inbound.clients}</TableCell><TableCell>{formatBytes(inbound.uploadBytes)}</TableCell><TableCell>{formatBytes(inbound.downloadBytes)}</TableCell><TableCell>{inbound.totalBytes ? `${formatBytes(used)} / ${formatBytes(inbound.totalBytes)}` : "不限"}</TableCell></TableRow>
-                })}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="px-4 lg:px-6">
-        <Card>
-          <CardHeader><CardTitle>用户倍率流量</CardTitle><CardDescription>按用户和节点累计；倍率修改仅影响之后产生的流量</CardDescription></CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader><TableRow><TableHead>用户</TableHead><TableHead>节点明细</TableHead><TableHead>原始流量</TableHead><TableHead>折算流量</TableHead><TableHead>套餐额度</TableHead><TableHead>状态</TableHead></TableRow></TableHeader>
-              <TableBody>
-                {data.billingUsers.map(user => <TableRow key={user.id}><TableCell><p className="font-medium">{user.name}</p><p className="text-xs text-muted-foreground">{user.email}</p></TableCell><TableCell><div className="grid gap-1">{user.nodes.map(node => <p key={node.guid} className="text-xs">{node.name}：{formatBytes(node.rawBytes)} × {node.multiplier} = {formatBytes(node.weightedBytes)}</p>)}</div></TableCell><TableCell>{formatBytes(user.rawUsedBytes)}</TableCell><TableCell className="font-medium">{formatBytes(user.usedBytes)}</TableCell><TableCell>{user.totalBytes ? `${formatBytes(user.usedBytes)} / ${formatBytes(user.totalBytes)}` : "不限"}</TableCell><TableCell><Badge variant={user.depleted ? "destructive" : "success"}>{user.depleted ? "已耗尽" : "正常"}</Badge></TableCell></TableRow>)}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </div>
-
       <Dialog open={Boolean(settingsNode)} onOpenChange={open => { if (!open) setSettingsGuid("") }}>
         <DialogContent>
           {settingsNode ? <form className="grid gap-6" onSubmit={event => { event.preventDefault(); void saveNodeSettings(settingsNode.guid) }}>
             <DialogHeader>
               <DialogTitle>{settingsNode.name} 节点设置</DialogTitle>
-              <DialogDescription>配置流量倍率和节点 API 访问凭据。</DialogDescription>
+              <DialogDescription>配置整个面板的流量倍率；该面板中的所有端口和协议统一按此倍率计费。</DialogDescription>
             </DialogHeader>
             <Field>
               <FieldLabel htmlFor={`settings-multiplier-${settingsNode.id}`}>流量倍率</FieldLabel>
-              <Input id={`settings-multiplier-${settingsNode.id}`} type="number" min="0" max="100" step="0.1" value={multipliers[settingsNode.guid] ?? String(settingsNode.multiplier)} onChange={event => setMultipliers(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
+              <Input id={`settings-multiplier-${settingsNode.id}`} type="number" min="0" max="100" step="0.1" value={nodeMultipliers[settingsNode.guid] ?? "1"} onChange={event => setNodeMultipliers(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
+              <FieldDescription>保存后，该节点所有入站新增流量统一按此倍率计算。</FieldDescription>
             </Field>
             {settingsNode.trafficTokenRequired ? <Field>
               <FieldLabel htmlFor={`settings-token-${settingsNode.id}`}>节点 API Token <Badge variant={settingsNode.trafficConfigured ? "success" : "secondary"}>{settingsNode.trafficConfigured ? "已配置" : "未配置"}</Badge></FieldLabel>

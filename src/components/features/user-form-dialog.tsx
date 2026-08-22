@@ -38,6 +38,7 @@ export type UserFormValues = {
   subscriptionId?: string
   allowDisabled?: boolean
   allowFull?: boolean
+  lineType?: "upstream" | "self_hosted"
   activeGroup?: string
   unlimited?: boolean
   duration?: string
@@ -53,7 +54,7 @@ type Recommendation = {
   expiresAt: string
 }
 
-const planOptions = ["basic", "pro", "ultra", "self_hosted"]
+const planOptions = ["basic", "pro", "ultra"]
 const durationOptions = ["monthly", "quarterly", "half_yearly", "yearly", "custom", "lifetime"]
 const durationPriceKeys = {
   monthly: ["monthly", "unlimitedMonthly"],
@@ -74,6 +75,7 @@ const steps = ["基本信息", "套餐信息", "线路配置"]
 function defaultFormValues(): UserFormValues {
   return {
     activeGroup: "pro",
+    lineType: "upstream",
     unlimited: false,
     duration: "monthly",
     purchasedAt: toDateInputValue(),
@@ -94,6 +96,7 @@ function toFormValues(user: User | null): UserFormValues {
     email: user.email || "",
     imessage: user.imessage || "",
     subscriptionId: user.subscriptionId || "",
+    lineType: user.lineType || "upstream",
     activeGroup: user.activeGroup || defaults.activeGroup,
     unlimited: Boolean(user.unlimited),
     duration: durationOptions.includes(user.duration || "") ? user.duration : defaults.duration,
@@ -174,20 +177,25 @@ export function UserFormDialog({
       if (values.duration === "custom" && !values.expiresAt) nextErrors.expiresAt = "请选择到期日"
       if (price === undefined && values.actualPaid === undefined) nextErrors.actualPaid = "请填写本次消费金额"
     }
-    if (index === 2 && values.activeGroup !== "self_hosted" && !values.subscriptionId) nextErrors.subscriptionId = "请选择订阅池"
+    if (index === 2 && values.lineType !== "self_hosted" && !values.subscriptionId) nextErrors.subscriptionId = "请选择订阅池"
     setErrors(current => ({ ...current, ...nextErrors }))
     return Object.keys(nextErrors).length === 0
   }
 
   async function nextStep() {
     if (!validateStep(stepIndex)) return
+    if (stepIndex === 1 && values.lineType === "self_hosted" && !/^\S+@\S+\.\S+$/.test(values.email || "")) {
+      setErrors(current => ({ ...current, email: "自研线路需要有效邮箱，用于创建 3x-ui 客户端" }))
+      setStepIndex(0)
+      return
+    }
     if (stepIndex === 0) {
       setStepIndex(1)
       return
     }
-    if (values.activeGroup === "self_hosted") {
-      setValues(current => ({ ...current, actualPaid: 0, unlimited: false, duration: "monthly", subscriptionId: "" }))
-      setRecommendationMessage("自研线路由3x-ui自动发放，不绑定订阅池，也不可使用换池功能。")
+    if (values.lineType === "self_hosted") {
+      setValues(current => ({ ...current, actualPaid: current.actualPaid ?? price, subscriptionId: "" }))
+      setRecommendationMessage(`${String(values.activeGroup || "").toUpperCase()} 套餐会按入站管理中的分组自动筛选可用节点。`)
       setStepIndex(2)
       return
     }
@@ -256,10 +264,19 @@ export function UserFormDialog({
               <>
                 <FieldGroup className="grid-cols-1 sm:grid-cols-2">
                   <Field>
+                    <FieldLabel>线路类型</FieldLabel>
+                    <Tabs value={values.lineType} onValueChange={value => {
+                      const lineType = value as UserFormValues["lineType"]
+                      setValues(current => ({ ...current, lineType, subscriptionId: lineType === "self_hosted" ? "" : current.subscriptionId }))
+                    }}>
+                      <TabsList className="grid w-full grid-cols-2"><TabsTrigger value="upstream">订阅池</TabsTrigger><TabsTrigger value="self_hosted">自研线路</TabsTrigger></TabsList>
+                    </Tabs>
+                  </Field>
+                  <Field>
                     <FieldLabel>套餐级别</FieldLabel>
                     <Tabs value={values.activeGroup} onValueChange={value => update("activeGroup", value)}>
-                      <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
-                        {planOptions.map(plan => <TabsTrigger key={plan} value={plan}>{plan === "self_hosted" ? "自研测试" : plan.toUpperCase()}</TabsTrigger>)}
+                      <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3">
+                        {planOptions.map(plan => <TabsTrigger key={plan} value={plan}>{plan.toUpperCase()}</TabsTrigger>)}
                       </TabsList>
                     </Tabs>
                   </Field>
@@ -297,7 +314,7 @@ export function UserFormDialog({
               </>
             ) : (
               <>
-                {values.activeGroup === "self_hosted" ? (
+                {values.lineType === "self_hosted" ? (
                   <Field><FieldLabel>自研线路</FieldLabel><FieldDescription>{recommendationMessage}</FieldDescription></Field>
                 ) : <SubscriptionPoolSelect
                   id="subscriptionId"

@@ -84,6 +84,7 @@ type DataTableProps<TData, TValue> = {
   className?: string
   renderMobileItem?: (item: TData) => React.ReactNode
   frame?: "default" | "card"
+  columnLayout?: "uniform" | "content"
 }
 
 export function DataTable<TData, TValue>({
@@ -100,6 +101,7 @@ export function DataTable<TData, TValue>({
   className,
   renderMobileItem,
   frame = "default",
+  columnLayout = "uniform",
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
@@ -214,7 +216,7 @@ export function DataTable<TData, TValue>({
       </ItemGroup>
       <div className={cn("hidden w-full overflow-x-auto md:block", frame === "default" && "rounded-lg border")}>
         <Table className="min-w-full table-auto">
-          <colgroup>
+          {columnLayout === "uniform" ? <colgroup>
             {table.getVisibleLeafColumns().map((column, index) => (
               <col
                 key={column.id}
@@ -225,7 +227,7 @@ export function DataTable<TData, TValue>({
                 )}
               />
             ))}
-          </colgroup>
+          </colgroup> : null}
           <TableHeader className={cn("sticky top-0 z-10", frame === "default" ? "bg-muted" : "bg-card")}>
             {table.getHeaderGroups().map(headerGroup => (
               <TableRow key={headerGroup.id}>
@@ -233,7 +235,7 @@ export function DataTable<TData, TValue>({
                   <TableHead
                     key={header.id}
                     colSpan={header.colSpan}
-                    className={cn("w-40 min-w-40 overflow-hidden px-4 text-left font-semibold first:w-48 first:min-w-48 first:pl-6", header.column.id === "actions" && "sticky right-0 z-20 w-24 min-w-24 border-l pr-4 pl-2 text-right", header.column.id === "actions" && (frame === "default" ? "bg-muted" : "bg-card"))}
+                    className={cn("overflow-hidden px-4 text-left font-semibold first:pl-6", columnLayout === "uniform" && "w-40 min-w-40 first:w-48 first:min-w-48", header.column.id === "actions" && "sticky right-0 z-20 w-24 min-w-24 border-l pr-4 pl-2 text-right", header.column.id === "actions" && (frame === "default" ? "bg-muted" : "bg-card"))}
                   >
                     {header.isPlaceholder ? null : typeof header.column.columnDef.header === "string"
                       ? <div className="text-xs font-semibold">{header.column.columnDef.header}</div>
@@ -248,7 +250,7 @@ export function DataTable<TData, TValue>({
               table.getRowModel().rows.map(row => (
                 <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
                   {row.getVisibleCells().map(cell => (
-                    <TableCell key={cell.id} className={cn("w-40 min-w-40 overflow-hidden px-4 text-left text-sm first:w-48 first:min-w-48 first:pl-6", cell.column.id === "actions" && "sticky right-0 z-[1] w-24 min-w-24 border-l px-2 text-right", cell.column.id === "actions" && (frame === "default" ? "bg-background" : "bg-card"))}>
+                    <TableCell key={cell.id} className={cn("overflow-hidden px-4 text-left text-sm first:pl-6", columnLayout === "uniform" && "w-40 min-w-40 first:w-48 first:min-w-48", cell.column.id === "actions" && "sticky right-0 z-[1] w-24 min-w-24 border-l px-2 text-right", cell.column.id === "actions" && (frame === "default" ? "bg-background" : "bg-card"))}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}

@@ -1,5 +1,8 @@
 const { spawn, execFileSync } = require("child_process");
 const path = require("path");
+const { loadLocalEnv } = require("../env");
+
+loadLocalEnv();
 
 const rootDir = path.join(__dirname, "..");
 const npmCommand = process.platform === "win32" ? "npm" : "npm";
@@ -42,5 +45,7 @@ process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
 run("backend", ["run", "dev:server"]);
+if (process.env.XUI_SERVICE_URL) run("xui", ["run", "dev:xui"]);
+else console.warn("XUI_SERVICE_URL is not configured; using the existing direct 3x-ui connection.");
 run("frontend", ["run", "dev"]);
 run("docs", ["run", "dev:docs"]);

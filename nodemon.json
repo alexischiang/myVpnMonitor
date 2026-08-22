@@ -2,6 +2,9 @@
   "watch": [
     "server.js",
     "database.js",
+    "env.js",
+    "main-app.js",
+    "xui-client.js",
     "public"
   ],
   "ext": "js,html,css,json",

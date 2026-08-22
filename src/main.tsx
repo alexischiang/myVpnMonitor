@@ -12,6 +12,7 @@ import { AppShell } from "@/components/features/app-shell"
 
 const DashboardPage = lazy(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
 const XuiMonitorPage = lazy(() => import("@/components/features/xui-monitor").then(module => ({ default: module.XuiMonitorPage })))
+const XuiInboundsPage = lazy(() => import("@/components/features/xui-inbounds").then(module => ({ default: module.XuiInboundsPage })))
 const SubscriptionsPage = lazy(() => import("@/components/features/subscriptions").then(module => ({ default: module.SubscriptionsPage })))
 const UsersPage = lazy(() => import("@/components/features/users").then(module => ({ default: module.UsersPage })))
 const OrdersPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrdersPage })))
@@ -20,6 +21,7 @@ const SubscriptionDetailPage = lazy(() => import("@/components/features/details"
 const UserDetailPage = lazy(() => import("@/components/features/details").then(module => ({ default: module.UserDetailPage })))
 const EmbyPage = lazy(() => import("@/components/features/emby").then(module => ({ default: module.EmbyPage })))
 const PricingSettingsPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingSettingsPage })))
+const PricingDetailPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingDetailPage })))
 const SalesSettingsPage = lazy(() => import("@/components/features/sales-settings").then(module => ({ default: module.SalesSettingsPage })))
 const PaymentSettingsPage = lazy(() => import("@/components/features/payment-settings").then(module => ({ default: module.PaymentSettingsPage })))
 const StatusPage = lazy(() => import("@/components/features/status-page").then(module => ({ default: module.StatusPage })))
@@ -118,6 +120,7 @@ function App() {
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="xui-monitor" element={<XuiMonitorPage />} />
+              <Route path="xui-inbounds" element={<XuiInboundsPage />} />
               <Route path="urls" element={<SubscriptionsPage />} />
               <Route path="urls/detail/:id" element={<SubscriptionDetailPage />} />
               <Route path="users" element={<UsersPage />} />
@@ -126,6 +129,9 @@ function App() {
               <Route path="orders/:id" element={<OrderDetailPage />} />
               <Route path="bills" element={<Navigate to="/orders" replace />} />
               <Route path="pricing-settings" element={<PricingSettingsPage />} />
+              <Route path="pricing-settings/new" element={<PricingDetailPage />} />
+              <Route path="pricing-settings/:group/:serviceType" element={<PricingDetailPage />} />
+              <Route path="pricing-settings/:group" element={<PricingDetailPage />} />
               <Route path="sales-settings" element={<SalesSettingsPage />} />
               <Route path="payment-settings" element={<PaymentSettingsPage />} />
               <Route path="emby" element={<EmbyPage />} />

@@ -10,7 +10,11 @@ const {
   statusFor,
   toBytes,
   remainingPlanCashValue,
+  inferUserProductBinding,
+  bindUserProduct,
+  grantTrafficPack,
   paymentQuote,
+  planQuoteWithAddOns,
   paymentChannelCode,
   configuredPaymentChannel,
   paymentMethodForPlatform,
@@ -24,6 +28,7 @@ const {
   isPaymentOrderExpired,
   normalizeSalesSettings,
   normalizePaymentSettings,
+  publicInviterLabel,
   sendJson,
   batchItems,
   classifyCurrentPoolFit,
@@ -32,20 +37,45 @@ const {
   postSubconverter,
   normalizeSubscription,
   normalizeXuiClientResult,
+  normalizeXuiConnectedIps,
   normalizeXuiMonitor,
   normalizeXuiInbounds,
+  normalizeXuiInboundGroups,
+  normalizeXuiInboundMetadata,
+  normalizeXuiInboundEnable,
   xuiActiveInboundKeys,
-  summarizeXuiUptime,
+  normalizeXuiPresence,
   xuiTrafficByUser,
   calculateXuiBillingLedger,
+  createXuiBillingBaseline,
   xuiClientCycleKey,
+  xuiMonthlyResetAt,
+  legacyMigrationTrafficLimitBytes,
+  withXuiUserMigrationLock,
   xuiNodeBaseUrl,
   sealXuiNodeToken,
   openXuiNodeToken,
   xuiClientWritePayload,
   xuiTrafficPayload,
+  markMissingXuiClients,
+  disabledAccountPlaceholderSubscription,
   clearSubscriptionSourceState
 } = require("./server");
+
+const gib = 1024 ** 3;
+const missingXuiUser = { xuiClientPresent: true, xuiLastError: "" };
+assert.deepStrictEqual(markMissingXuiClients(new Map([["missing@example.com", missingXuiUser]]), new Set(), "2026-08-22T00:00:00.000Z"), [missingXuiUser]);
+assert.deepStrictEqual(missingXuiUser, { xuiClientPresent: false, xuiClientMissingAt: "2026-08-22T00:00:00.000Z", xuiLastError: "3x-ui Client 已被删除或不存在。" });
+const trafficPackUser = {
+  xuiTrafficCycleKey: "cycle-1",
+  xuiLastTraffic: { usedBytes: 55 * gib, remainingBytes: 645 * gib, totalBytes: 700 * gib },
+  xuiWeightedTraffic: { usedBytes: 55 * gib, remainingBytes: 645 * gib, totalBytes: 700 * gib, depleted: false }
+};
+assert.deepStrictEqual(grantTrafficPack(trafficPackUser, "order-1"), { replayed: false, remainingBytesBefore: 645 * gib, remainingBytesAfter: 745 * gib, totalBytes: 800 * gib });
+assert.strictEqual(trafficPackUser.xuiTrafficLimitBytes, 800 * gib);
+assert.strictEqual(trafficPackUser.xuiLastTraffic.remainingBytes, 745 * gib);
+assert.deepStrictEqual(grantTrafficPack(trafficPackUser, "order-1"), { replayed: true });
+assert.strictEqual(trafficPackUser.xuiTrafficLimitBytes, 800 * gib);
 
 assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: 20 }).status, "high");
 assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: 21 }).status, "adjust");
@@ -61,6 +91,30 @@ sendJson(compressedResponse, 200, { data: "x".repeat(2000) });
 assert.strictEqual(compressedResponse.headers["content-encoding"], "gzip");
 assert.strictEqual(JSON.parse(zlib.gunzipSync(compressedResponse.body)).data.length, 2000);
 assert.deepStrictEqual(batchItems([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+assert.strictEqual(publicInviterLabel({ customerID: 10001 }, { userId: "Alice" }), "Alice");
+assert.strictEqual(publicInviterLabel({ customerID: 10001 }, { userId: "alice@example.com" }), "alice@example.com");
+
+const recurringBinding = inferUserProductBinding({ activeGroup: "basic", duration: "quarterly", unlimited: false, expiresAt: "2026-12-01T00:00:00.000Z" });
+assert.deepStrictEqual([recurringBinding.productId, recurringBinding.optionId], ["basic", "basic-90"]);
+assert.strictEqual(inferUserProductBinding({ activeGroup: "basic", duration: "quarterly", unlimited: true }).optionId, "basic-unlimited-90");
+assert.throws(() => paymentQuote("basic-unlimited-90"), /Unsupported pricing option/);
+const familyUser = { activeGroup: "pro", duration: "lifetime", isFamilyFriend: true, unlimited: false, expiresAt: "9999-12-31T00:00:00.000Z" };
+const familyBinding = inferUserProductBinding(familyUser);
+assert.deepStrictEqual([familyBinding.productId, familyBinding.optionId, familyBinding.snapshot.unlimited], ["friends-lifetime-unlimited", "friends-lifetime-unlimited-lifetime", true]);
+assert.strictEqual(bindUserProduct(familyUser, familyBinding, { source: "test" }), true);
+assert.deepStrictEqual([familyUser.currentProductId, familyUser.unlimited, familyUser.duration], ["friends-lifetime-unlimited", true, "lifetime"]);
+const regularLifetimeBinding = inferUserProductBinding({ activeGroup: "ultra", duration: "lifetime", isFamilyFriend: false, unlimited: false });
+assert.deepStrictEqual([regularLifetimeBinding.productId, regularLifetimeBinding.optionId, regularLifetimeBinding.snapshot.unlimited], ["friends-lifetime-unlimited", "friends-lifetime-unlimited-lifetime", true]);
+const regularLifetimeUser = { activeGroup: "ultra", duration: "lifetime", lineType: "self_hosted", xuiTrafficLimitBytes: 100 * gib, xuiWeightedTraffic: { totalBytes: 100 * gib, remainingBytes: 0, usagePercent: 100, depleted: true } };
+bindUserProduct(regularLifetimeUser, regularLifetimeBinding, { source: "test" });
+assert.deepStrictEqual([regularLifetimeUser.currentProductId, regularLifetimeUser.unlimited, regularLifetimeUser.xuiTrafficLimitBytes, regularLifetimeUser.xuiWeightedTraffic.depleted], ["friends-lifetime-unlimited", true, 0, false]);
+assert.throws(() => paymentQuote("friends-lifetime-unlimited-lifetime"), /Unsupported pricing option/);
+const customBinding = inferUserProductBinding({ activeGroup: "pro", duration: "custom", purchasedAt: "2026-01-01T00:00:00.000Z", expiresAt: "2026-03-02T00:00:00.000Z", actualPaid: 98, userLogs: [{ details: { duration: "custom", amount: 98 } }] });
+assert.deepStrictEqual([customBinding.productId, customBinding.optionId, customBinding.normalizedDuration], ["pro", "pro-30", "monthly"]);
+const customUser = { activeGroup: "pro", duration: "custom", expiresAt: "2026-03-02T00:00:00.000Z" };
+assert.strictEqual(bindUserProduct(customUser, customBinding, { source: "test" }), true);
+assert.deepStrictEqual([customUser.currentProductId, customUser.currentOptionId, customUser.duration], ["pro", "pro-30", "monthly"]);
+assert.match(inferUserProductBinding({ duration: "invalid" }).error, /无法识别套餐周期/);
 
 const legacyCashValueUser = {
   id: "legacy-user",
@@ -165,48 +219,79 @@ assert.strictEqual(discountedQuote.subtotal, 35.1);
 assert.strictEqual(discountedQuote.taxAmount, 1.05);
 assert.strictEqual(discountedQuote.amount, 36.15);
 assert.deepStrictEqual(discountedQuote.cycles.map(cycle => cycle.devices), [1, 2, 3, 3]);
-const selfHostedQuote = paymentQuote("self-hosted-test-30");
-assert.strictEqual(selfHostedQuote.originalAmount, 0);
-assert.strictEqual(selfHostedQuote.amount, 0);
-assert.strictEqual(selfHostedQuote.group, "self_hosted");
-assert.deepStrictEqual(selfHostedQuote.cycles.map(cycle => cycle.optionId), ["self-hosted-test-30"]);
+const lifetimeQuote = paymentQuote("basic-lifetime");
+assert.strictEqual(lifetimeQuote.duration, "lifetime");
+assert.strictEqual(lifetimeQuote.unlimited, undefined);
+assert.strictEqual(lifetimeQuote.traffic, "100G 固定流量");
+assert.strictEqual(paymentQuote("pro-lifetime").trafficGb, 200);
+assert.deepStrictEqual(lifetimeQuote.cycles.map(cycle => cycle.optionId), ["basic-lifetime"]);
+const customTrafficQuote = paymentQuote("basic-30", "", undefined, "vip1", "", 3);
+assert.deepStrictEqual([customTrafficQuote.baseAmount, customTrafficQuote.originalAmount, customTrafficQuote.trafficTier, customTrafficQuote.trafficGb], [39, 78, 3, 150]);
+const quoteWithHomeIp = planQuoteWithAddOns(discountedQuote, ["home_ip:us"]);
+assert.strictEqual(quoteWithHomeIp.planAmount, discountedQuote.amount);
+assert.strictEqual(quoteWithHomeIp.addOnAmount, 40);
+assert.strictEqual(quoteWithHomeIp.amount, Number((discountedQuote.amount + 40).toFixed(2)));
+assert.deepStrictEqual(quoteWithHomeIp.selectedAddOnSnapshots.map(item => [item.name, item.regionName, item.durationDays]), [["家宽 IP 定制", "美国", 30]]);
+assert.strictEqual(quoteWithHomeIp.availableAddOns.some(item => item.id === "traffic_pack"), false);
+assert.throws(() => planQuoteWithAddOns(discountedQuote, ["traffic_pack"]), /家宽 IP 地区无效/);
+assert.throws(() => planQuoteWithAddOns(lifetimeQuote, ["home_ip:us"]), /不限时套餐不能购买附加服务/);
 const xuiClient = normalizeXuiClientResult({ client: { email: "self@test", totalGB: 1000 }, inboundIds: [3], traffic: { up: 100, down: 250 } });
+assert.deepStrictEqual(normalizeXuiClientResult({ client: { email: "nested@test", inboundIds: [4, 5] } }).inboundIds, [4, 5]);
+assert.deepStrictEqual(normalizeXuiConnectedIps({ hk: { "SELF@test": [{ ip: "1.2.3.4" }, { ip: "1.2.3.4" }] }, jp: { "self@test": [{ ip: "5.6.7.8" }] } }, "self@test"), ["1.2.3.4", "5.6.7.8"]);
+assert.match(disabledAccountPlaceholderSubscription({}).body, /该账户已停用，请联系官网客服。/);
 assert.deepStrictEqual(xuiClient.inboundIds, [3]);
 assert.deepStrictEqual(xuiClientWritePayload({ uuid: "keep", createdAt: "readonly" }, { email: "self@test", totalGB: 1000 }), { email: "self@test", totalGB: 1000, uuid: "keep" });
+assert.strictEqual(xuiClientWritePayload({}, { flow: "xtls-rprx-vision" }).flow, "xtls-rprx-vision");
+assert.strictEqual(xuiClientWritePayload({ id: 123 }, {}).id, "123");
+assert.deepStrictEqual(["basic", "pro", "ultra"].map(activeGroup => legacyMigrationTrafficLimitBytes({ activeGroup, duration: "monthly" }) / gib), [50, 100, 100]);
 const selfHostedTraffic = xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z", xuiWeightedTraffic: { rawUsedBytes: 350, usedBytes: 350, totalBytes: 1000, depleted: false } }, xuiClient);
 assert.deepStrictEqual(
   [selfHostedTraffic.status, selfHostedTraffic.uploadBytes, selfHostedTraffic.downloadBytes, selfHostedTraffic.usedBytes, selfHostedTraffic.totalBytes, selfHostedTraffic.remainingBytes, selfHostedTraffic.usagePercent],
   ["active", 100, 250, 350, 1000, 650, 35]
 );
 const xuiUsedTraffic = normalizeXuiClientResult({ client: { email: "self@test", totalGB: 1000 }, usedTraffic: 400 });
-assert.strictEqual(xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z" }, xuiUsedTraffic).usedBytes, 400);
+assert.strictEqual(xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z" }, xuiUsedTraffic).usedBytes, 0);
 const trafficByUser = xuiTrafficByUser([
-  { originNodeGuid: "hk", clientStats: [{ email: "USER@test.com", up: 100, down: 50 }] },
-  { originNodeGuid: "jp", clientStats: [{ email: "user@test.com", up: 20, down: 30 }] }
+  { id: 1, originNodeGuid: "hk", clientStats: [{ email: "USER@test.com", up: 100, down: 50 }] },
+  { id: 2, originNodeGuid: "hk", clientStats: [{ email: "user@test.com", up: 100, down: 50 }] },
+  { id: 3, originNodeGuid: "jp", clientStats: [{ email: "user@test.com", up: 20, down: 30 }] }
 ]);
 assert.deepStrictEqual(trafficByUser, { "user@test.com": { hk: 150, jp: 50 } });
 const firstLedger = calculateXuiBillingLedger(null, trafficByUser["user@test.com"], { hk: 2, jp: 0.5 }, "cycle-1");
 assert.deepStrictEqual([firstLedger.rawBytes, firstLedger.weightedBytes], [200, 325]);
+const linkedBaseline = createXuiBillingBaseline(trafficByUser["user@test.com"], "linked-cycle", { hk: 2, jp: 0.5 });
+assert.deepStrictEqual([linkedBaseline.rawBytes, linkedBaseline.weightedBytes, linkedBaseline.nodes.hk.baselineBytes], [200, 325, 150]);
+const linkedUsage = calculateXuiBillingLedger(linkedBaseline, { hk: 180, jp: 70 }, { hk: 2, jp: 0.5 }, "linked-cycle");
+assert.deepStrictEqual([linkedUsage.rawBytes, linkedUsage.weightedBytes], [250, 395]);
 const nextLedger = calculateXuiBillingLedger(firstLedger, { hk: 180, jp: 70 }, { hk: 2, jp: 0.5 }, "cycle-1");
 assert.deepStrictEqual([nextLedger.rawBytes, nextLedger.weightedBytes], [250, 395]);
 const resetLedger = calculateXuiBillingLedger(nextLedger, { hk: 180, jp: 70 }, { hk: 2, jp: 0.5 }, "cycle-2");
 assert.deepStrictEqual([resetLedger.rawBytes, resetLedger.weightedBytes], [0, 0]);
+const migratedLedger = calculateXuiBillingLedger({ cycleKey: "plan|direct-inbounds-v1", inbounds: { "hk:1": { baselineBytes: 180, rawBytes: 20, weightedBytes: 20 }, "hk:2": { baselineBytes: 180, rawBytes: 20, weightedBytes: 40 } } }, { hk: 200 }, { hk: 2 }, "plan|direct-nodes-v2");
+assert.deepStrictEqual([migratedLedger.rawBytes, migratedLedger.weightedBytes, migratedLedger.nodes.hk.baselineBytes], [40, 80, 200]);
 const clientCreatedAt = Date.UTC(2026, 0, 1);
 assert.notStrictEqual(xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 29 * 864e5), xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 31 * 864e5));
+assert.strictEqual(xuiMonthlyResetAt(31, Date.parse("2026-01-01T00:00:00.000Z")), "2026-01-30T16:00:00.000Z");
+assert.strictEqual(xuiMonthlyResetAt(31, Date.parse("2026-02-28T00:00:00.000Z")), "2026-03-30T16:00:00.000Z");
 assert.strictEqual(xuiNodeBaseUrl({ scheme: "https", address: "node.example.com", port: 8443, basePath: "/secret/" }), "https://node.example.com:8443/secret");
 const sealedNodeToken = sealXuiNodeToken("node-secret");
 assert.notStrictEqual(sealedNodeToken.includes("node-secret"), true);
 assert.strictEqual(openXuiNodeToken(sealedNodeToken), "node-secret");
-const uptimeSummary = summarizeXuiUptime([{ at: Date.UTC(2026, 0, 1, 10), ok: true }, { at: Date.UTC(2026, 0, 1, 11), ok: false, error: "refused" }, { at: Date.UTC(2026, 0, 1, 12), ok: true }], Date.UTC(2026, 0, 1, 13));
-assert.deepStrictEqual([uptimeSummary.availability, uptimeSummary.incidents, uptimeSummary.downtimeMs], [66.667, 1, 300000]);
 assert.deepStrictEqual([...xuiActiveInboundKeys({ "node-a": ["in-443-tcp", "in-8443-tcp"] })], ["node-a:in-443-tcp", "node-a:in-8443-tcp"]);
+const xuiPresence = normalizeXuiPresence({ "node-a": ["USER@test.com", "user@test.com"] }, { "USER@test.com": 1700000000 }, [{ guid: "node-a", remark: "Hong Kong" }], { panelGuid: "local" });
+assert.deepStrictEqual([xuiPresence.onlineEmails, xuiPresence.onlineByGuid["node-a"], xuiPresence.lastOnline["user@test.com"], xuiPresence.nodeNames["node-a"]], [["user@test.com"], ["user@test.com"], 1700000000, "Hong Kong"]);
 const xuiMonitor = normalizeXuiMonitor(
   { cpu: 12.5, mem: { current: 40, total: 100 }, disk: { current: 20, total: 200 }, xray: { state: "running", version: "1.0" } },
   [{ id: 1, remark: "Tokyo", address: "node.example.com", port: 443, status: "online", cpuPct: 10, memPct: 20, netUp: 10, netDown: 20, clientCount: 2, onlineCount: 1 }]
 );
 assert.deepStrictEqual([xuiMonitor.system.cpu, xuiMonitor.system.memoryUsed, xuiMonitor.nodes[0].clientCount, xuiMonitor.nodes[0].downloadBytes], [12.5, 40, 2, 20]);
-const xuiInbounds = normalizeXuiInbounds([{ id: 2, remark: "VLESS", protocol: "vless", port: 443, up: 10, down: 20, total: 100, clientStats: [{}, {}] }]);
-assert.deepStrictEqual([xuiInbounds[0].clients, xuiInbounds[0].uploadBytes, xuiInbounds[0].downloadBytes], [2, 10, 20]);
+  const xuiInbounds = normalizeXuiInbounds([{ id: 2, remark: "VLESS", protocol: "vless", port: 443, up: 10, down: 20, total: 100, clientStats: [{}, {}] }]);
+  assert.deepStrictEqual([xuiInbounds[0].clients, xuiInbounds[0].uploadBytes, xuiInbounds[0].downloadBytes], [2, 10, 20]);
+assert.deepStrictEqual(normalizeXuiInboundGroups({ groups: { basic: [2, "3", 2, -1], pro: [7] } }), { basic: [2, 3], pro: [7], ultra: [] });
+assert.deepStrictEqual(normalizeXuiInboundMetadata({ metadata: { "node-a:2": { networkLevel: "premium", region: " 香港 ", multiplier: 2 }, bad: { networkLevel: "vip" } } }), { "node-a:2": { networkLevel: "premium", region: "香港" } });
+assert.deepStrictEqual(normalizeXuiInboundEnable("7", true), { id: 7, enable: true });
+assert.throws(() => normalizeXuiInboundEnable("0", true), /ID 无效/);
+assert.throws(() => normalizeXuiInboundEnable("7", "true"), /布尔值/);
 assert.throws(() => paymentQuote("basic-30", "invalid", "SAVE10:10"), /优惠码无效/);
 assert.strictEqual(paymentChannelCode("100"), "100");
 assert.strictEqual(paymentChannelCode("200"), "200");
@@ -248,6 +333,10 @@ assert.strictEqual(normalizedPaymentSettings.merchantSecret, "existing-secret");
 assert.strictEqual(normalizedPaymentSettings.wechatChannelCode, "custom-wechat");
 assert.strictEqual(normalizedPaymentSettings.alipayEnabled, false);
 assert.throws(() => normalizePaymentSettings({ name: "测试", merchantId: "merchant-1", merchantSecret: "secret", alipayChannelCode: "100", wechatChannelCode: "200", apiBaseUrl: "not-a-url" }), /HTTP 或 HTTPS/);
+const testPaymentSettings = normalizePaymentSettings({ name: "测试支付", provider: "test" });
+assert.strictEqual(testPaymentSettings.apiBaseUrl, "");
+assert.strictEqual(testPaymentSettings.merchantId, "");
+assert.strictEqual(testPaymentSettings.alipayChannelCode, "100");
 const xinhui = normalizePaymentSettings({
   name: "新汇",
   provider: "xinhui",
@@ -345,6 +434,16 @@ rules: ["MATCH,🚀 节点选择"]
 assert.deepStrictEqual(pinnedGroups["proxy-groups"][0].proxies, ["DIRECT"]);
 assert.deepStrictEqual(pinnedGroups["proxy-groups"][1].proxies, ["REJECT"]);
 assert.deepStrictEqual(pinnedGroups["proxy-groups"][2].proxies, ["notice", "node"]);
+const excludedPlaceholderGroups = require("js-yaml").load(injectPlaceholderNodes(Buffer.from(`proxies:
+  - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }
+proxy-groups:
+  - { name: 🐟 漏网之鱼, type: select, proxies: [🚀 节点选择] }
+  - { name: 🤖 AI服务, type: select, proxies: [♻️ 自动选择] }
+  - { name: ♻️ 自动选择, type: url-test, proxies: [node] }
+`), { showUserInfo: false }, [{ tag: "default", nodes: ["notice"] }]).toString("utf8"));
+assert.deepStrictEqual(excludedPlaceholderGroups["proxy-groups"].map(group => group.proxies), [["🚀 节点选择"], ["♻️ 自动选择"], ["node"]]);
+const userInfoConfig = require("js-yaml").load(injectPlaceholderNodes(Buffer.from("proxies: []\n"), { lineType: "self_hosted", activeGroup: "pro", vipSpend: 400, xuiLastTraffic: { remainingBytes: 25.5 * gib } }, []).toString("utf8"));
+assert.strictEqual(userInfoConfig.proxies[0].name, "VIP 2 | PRO | 剩余流量25.5G");
 
 const pinnedWithoutPlaceholders = require("js-yaml").load(injectPlaceholderNodes(Buffer.from(`proxies:
   - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }
@@ -389,4 +488,12 @@ rules: ["MATCH,PROXY"]
 assert.ok(!("global-client-fingerprint" in nextinCompatibleConfig));
 assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chrome");
 
-console.log("All checks passed.");
+let migrationRuns = 0;
+Promise.all([
+  withXuiUserMigrationLock("user-1", async () => { migrationRuns += 1; await new Promise(resolve => setImmediate(resolve)); return "done"; }),
+  withXuiUserMigrationLock("user-1", async () => { migrationRuns += 1; return "duplicate"; })
+]).then(results => {
+  assert.deepStrictEqual(results, ["done", "done"]);
+  assert.strictEqual(migrationRuns, 1);
+  console.log("All checks passed.");
+}).catch(error => { console.error(error); process.exitCode = 1; });
