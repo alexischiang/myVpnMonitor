@@ -73,24 +73,36 @@ jobs:
             if [ -f dist/index.html ]; then
               touch dist/index.html
             fi
-            if [ -n "${XUI_BASE_URL:-}" ] || [ -n "$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_BASE_URL || '')")" ]; then
-              export XUI_SERVICE_URL="${XUI_SERVICE_URL:-http://127.0.0.1:3002}"
-              export XUI_SERVICE_TOKEN="${XUI_SERVICE_TOKEN:-$(openssl rand -hex 32)}"
-              export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
-              export XUI_DATABASE_URL="${XUI_DATABASE_URL:-${LOCAL_DATABASE_URL:-${DATABASE_URL:-}}}"
-              if [ "$REDIS_URL" = "redis://127.0.0.1:6379" ] && command -v redis-cli > /dev/null 2>&1 && ! redis-cli ping > /dev/null 2>&1 && command -v redis-server > /dev/null 2>&1; then
-                redis-server --daemonize yes
+            xui_base_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_BASE_URL || '')")
+            if [ -n "$xui_base_url" ]; then
+              export XUI_BASE_URL="$xui_base_url"
+              xui_service_env=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_SERVICE_URL || '')")
+              xui_token_env=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_SERVICE_TOKEN || '')")
+              redis_env=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.REDIS_URL || '')")
+              export XUI_SERVICE_URL="${XUI_SERVICE_URL:-${xui_service_env:-http://127.0.0.1:3002}}"
+              export XUI_SERVICE_TOKEN="${XUI_SERVICE_TOKEN:-${xui_token_env:-$(openssl rand -hex 32)}}"
+              export REDIS_URL="${REDIS_URL:-${redis_env:-redis://127.0.0.1:6379}}"
+              xui_database_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_DATABASE_URL || process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL || '')")
+              export XUI_DATABASE_URL="${XUI_DATABASE_URL:-$xui_database_url}"
+              if [ "$REDIS_URL" = "redis://127.0.0.1:6379" ] && ( ! command -v redis-cli > /dev/null 2>&1 || ! redis-cli ping > /dev/null 2>&1 ); then
+                if ! command -v redis-server > /dev/null 2>&1 && command -v sudo > /dev/null 2>&1 && command -v apt-get > /dev/null 2>&1; then
+                  sudo apt-get update -y && sudo apt-get install -y redis-server
+                fi
+                if command -v redis-server > /dev/null 2>&1 && ! redis-cli ping > /dev/null 2>&1; then
+                  if command -v systemctl > /dev/null 2>&1; then sudo systemctl enable --now redis-server || true; fi
+                  redis-server --daemonize yes || true
+                fi
               fi
+              npm run migrate:xui-data
             fi
             xui_service_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_SERVICE_URL || '')")
             if [ -n "$xui_service_url" ]; then
               xui_service_host=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(new URL(process.env.XUI_SERVICE_URL).hostname)")
               if [ "$xui_service_host" = "127.0.0.1" ] || [ "$xui_service_host" = "localhost" ]; then
-                if pm2 describe nexora-xui > /dev/null 2>&1; then
-                  pm2 restart nexora-xui --update-env
-                else
-                  npm run migrate:xui-data
-                  pm2 start xui-server.js --name nexora-xui
+              if pm2 describe nexora-xui > /dev/null 2>&1; then
+                pm2 restart nexora-xui --update-env
+              else
+                pm2 start xui-server.js --name nexora-xui
                   pm2 save
                 fi
               fi
