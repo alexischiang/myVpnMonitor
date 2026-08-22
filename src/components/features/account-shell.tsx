@@ -16,7 +16,7 @@ import { SiteHeader } from "@/components/features/site-header"
 const accountNav = [
   { title: "总览", url: "/account", icon: Gauge, exact: true },
   { title: "使用入门", url: "/onboarding?replay=1", icon: GraduationCap },
-  { title: "购买套餐", url: "/account/plans", icon: CreditCard },
+  { title: "购买服务", url: "/account/plans", icon: CreditCard },
   { title: "使用文档", url: "/account/docs", icon: BookOpen },
   { title: "账户余额", url: "/account/wallet", icon: WalletCards },
   { title: "邀请返利", url: "/account/referrals", icon: Gift },

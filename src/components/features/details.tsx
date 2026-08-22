@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { AlertCircle, ArrowLeft, ArrowRight, Banknote, Eye, Gift, Loader2, MailCheck, Power, RefreshCw, UserCog } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, UserCog } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
@@ -27,6 +28,7 @@ import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStat
 import { ProviderBadge } from "@/components/features/provider-badge"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserBillsCard } from "@/components/features/user-bills-card"
+import { XuiClientDialog } from "@/components/features/xui-client-dialog"
 import type { User } from "@/types"
 import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, userStatus } from "@/utils"
 
@@ -42,7 +44,6 @@ type ManualPaymentQuote = {
   originalAmount: number
   vipLevel: string
   vipDiscountAmount: number
-  cashCredit: number
   amount: number
   purchaseAction: "initial" | "extend" | "replace"
 }
@@ -67,12 +68,31 @@ function poolDisplayName(pool?: User["subscription"] | null) {
 }
 
 const userTypeLabels = { regular: "普通账户", family: "亲友账户", business: "企业账户", super: "超级账户" } as const
+const xuiMigrationLabels = {
+  completed: { label: "已完成", variant: "success" },
+  activation_required: { label: "待激活", variant: "warning" },
+  failed: { label: "失败", variant: "destructive" },
+} as const
 
 function userType(user: User): keyof typeof userTypeLabels {
   if (user.isSuperAccount) return "super"
   if (user.isBusiness) return "business"
   if (user.isFamilyFriend) return "family"
   return "regular"
+}
+
+function xuiMigrationStatus(user: User) {
+  return user.xuiMigrationStatus
+    ? xuiMigrationLabels[user.xuiMigrationStatus]
+    : user.xuiClientEmail
+      ? { label: "无需迁移", variant: "secondary" as const }
+      : { label: "未触发", variant: "secondary" as const }
+}
+
+function xuiMigrationSource(user: User) {
+  if (user.xuiMigrationSource === "linked_existing" || user.xuiManagementMode === "link") return "关联已有客户端"
+  if (user.xuiMigrationSource === "created" || user.xuiManagementMode === "import") return "新建客户端"
+  return "-"
 }
 
 export function SubscriptionDetailPage() {
@@ -273,9 +293,15 @@ export function UserDetailPage() {
   const [allowFullGiftPool, setAllowFullGiftPool] = React.useState(false)
   const [accountStatusOpen, setAccountStatusOpen] = React.useState(false)
   const [accountStatusSaving, setAccountStatusSaving] = React.useState(false)
+  const [xuiRecoverOpen, setXuiRecoverOpen] = React.useState(false)
+  const [xuiRecoverSaving, setXuiRecoverSaving] = React.useState(false)
   const [userTypeOpen, setUserTypeOpen] = React.useState(false)
   const [selectedUserType, setSelectedUserType] = React.useState<keyof typeof userTypeLabels>("regular")
   const [userTypeSaving, setUserTypeSaving] = React.useState(false)
+  const [lineOpen, setLineOpen] = React.useState(false)
+  const [xuiOpen, setXuiOpen] = React.useState(false)
+  const [lineGroup, setLineGroup] = React.useState("pro")
+  const [lineSaving, setLineSaving] = React.useState(false)
   const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const purchaseCount = userBills.filter(item => !item.reversedAt).length
@@ -303,6 +329,7 @@ export function UserDetailPage() {
   }, [user?.referralRate, user?.recurringReferral])
 
   if (!user) return <EmptyState title="未找到用户" />
+  const weightedTraffic = user.xuiWeightedTraffic
 
   async function sendAccountInvite(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -468,6 +495,39 @@ export function UserDetailPage() {
     }
   }
 
+  async function recoverXuiClient() {
+    setXuiRecoverSaving(true)
+    try {
+      await postJson(`/api/users/${user.id}/xui-recover`, {})
+      await refreshUserDetails()
+      setXuiRecoverOpen(false)
+      toast.success("3x-ui 客户端已恢复")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "3x-ui 客户端恢复失败")
+    } finally {
+      setXuiRecoverSaving(false)
+    }
+  }
+
+  function openLineDialog() {
+    setLineGroup(manualPaymentPlans.some(item => item.value === user.activeGroup) ? user.activeGroup || "pro" : "pro")
+    setLineOpen(true)
+  }
+
+  async function migrateToSelfHosted() {
+    setLineSaving(true)
+    try {
+      await postJson(`/api/users/${user.id}/line`, { lineType: "self_hosted", activeGroup: lineGroup })
+      await refreshUserDetails()
+      setLineOpen(false)
+      toast.success(user.lineType === "self_hosted" ? "自研套餐分组已更新" : "用户已迁移到自研线路")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "线路迁移失败")
+    } finally {
+      setLineSaving(false)
+    }
+  }
+
   async function loadManualPaymentQuote(plan: string, traffic: string, duration: string) {
     setManualPaymentLoading(true)
     setManualPaymentError("")
@@ -524,6 +584,8 @@ export function UserDetailPage() {
       setManualPaymentSaving(false)
     }
   }
+
+  const migrationStatus = xuiMigrationStatus(user)
 
   return (
     <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
@@ -601,10 +663,24 @@ export function UserDetailPage() {
           <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={userTypeSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void saveUserType()} disabled={userTypeSaving}>{userTypeSaving ? <Loader2 className="animate-spin" /> : <UserCog />}{userTypeSaving ? "保存中..." : "保存类型"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={lineOpen} onOpenChange={setLineOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{user.lineType === "self_hosted" ? "调整自研套餐分组" : "迁移到自研线路"}</DialogTitle><DialogDescription>系统将按入站管理中的套餐分组关联可用节点。未配置有效入站时不会迁移。</DialogDescription></DialogHeader>
+          <Field><FieldLabel htmlFor="self-hosted-plan">套餐分组</FieldLabel><Select value={lineGroup} onValueChange={setLineGroup} disabled={lineSaving}><SelectTrigger id="self-hosted-plan" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{manualPaymentPlans.map(plan => <SelectItem key={plan.value} value={plan.value}>{plan.label}</SelectItem>)}</SelectContent></Select></Field>
+          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={lineSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void migrateToSelfHosted()} disabled={lineSaving}>{lineSaving ? <Loader2 className="animate-spin" /> : <Network />}{lineSaving ? "同步中..." : "确认迁移"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <XuiClientDialog user={user} open={xuiOpen} onOpenChange={setXuiOpen} onComplete={refreshUserDetails} />
       <AlertDialog open={accountStatusOpen} onOpenChange={setAccountStatusOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>{user.accountStatus === "active" ? "确认停用账户？" : "确认恢复账户？"}</AlertDialogTitle><AlertDialogDescription>{user.accountStatus === "active" ? "停用后用户将无法登录，当前登录状态也会失效；已绑定的订阅链接仍然有效。" : "恢复后用户可以重新登录账户，原有订阅和余额保持不变。"}</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogHeader><AlertDialogTitle>{user.accountStatus === "active" ? "确认停用账户？" : "确认恢复账户？"}</AlertDialogTitle><AlertDialogDescription>{user.accountStatus === "active" ? "停用后用户将无法登录，当前登录状态也会失效；订阅链接将返回停用提示，3x-ui 客户端也会停用。" : "恢复后用户可以重新登录账户；有效期内的自研线路 3x-ui 客户端也会恢复，原有订阅和余额保持不变。"}</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter><AlertDialogCancel disabled={accountStatusSaving}>取消</AlertDialogCancel><AlertDialogAction className={user.accountStatus === "active" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined} onClick={event => { event.preventDefault(); void toggleAccountStatus() }} disabled={accountStatusSaving}>{accountStatusSaving ? <Loader2 className="animate-spin" /> : <Power />}{accountStatusSaving ? "处理中..." : user.accountStatus === "active" ? "确认停用" : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={xuiRecoverOpen} onOpenChange={setXuiRecoverOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>恢复3x-ui客户端？</AlertDialogTitle><AlertDialogDescription>将使用原邮箱、套餐额度、到期时间、重置日和入站组重新创建客户端。已有折算流量和历史账本不会清空。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={xuiRecoverSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "恢复中..." : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
       {user.accountStatus === "disabled" ? <Alert variant="warning"><AlertCircle /><AlertDescription>该用户已停用</AlertDescription></Alert> : null}
@@ -650,6 +726,12 @@ export function UserDetailPage() {
               <Info label="套餐" value={user.registeredOnly ? "未开通" : (user.activeGroup?.toUpperCase() || "-")} />
               <Info label="VIP" value={user.vipLevel?.toUpperCase() || "-"} />
               <Info label="当前到期" value={formatUserExpiry(user)} />
+              <Info label="迁移状态" value={<Badge variant={migrationStatus.variant}>{migrationStatus.label}</Badge>} />
+              <Info label="迁移方式" value={xuiMigrationSource(user)} />
+              <Info label="3x-ui 客户端" value={user.xuiClientEmail || "-"} />
+              <Info label="3x-ui 状态" value={<Badge variant={user.xuiClientPresent === false ? "destructive" : user.xuiClientPresent === true ? "success" : "secondary"}>{user.xuiClientPresent === false ? "客户端缺失" : user.xuiClientPresent === true ? "正常" : "等待检查"}</Badge>} />
+              <Info label="迁移时间" value={user.xuiMigratedAt ? formatDateTime(user.xuiMigratedAt) : "-"} />
+              {user.xuiMigrationError ? <Info label="迁移错误" value={user.xuiMigrationError} /> : null}
             </div>
           </CardContent>
           {user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : (
@@ -657,7 +739,9 @@ export function UserDetailPage() {
               {user.accountStatus === "active" && user.accountId ? <Button variant="outline" className="w-full" onClick={openManualPaymentDialog}><Banknote />人工收款</Button> : null}
               {user.registeredOnly ? null : <>
                 <Button variant="outline" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
-                <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>
+                <Button variant="outline" className="w-full" onClick={user.lineType === "self_hosted" ? openLineDialog : () => setXuiOpen(true)}><Network />{user.lineType === "self_hosted" ? "调整自研套餐" : "切换到自研线路"}</Button>
+                {user.lineType === "self_hosted" && user.xuiClientPresent === false ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)}><RefreshCw />恢复3x-ui客户端</Button> : null}
+                {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
                 <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
               </>}
               {user.accountStatus === "active" ? <>
@@ -694,6 +778,29 @@ export function UserDetailPage() {
                 <Info label="订阅状态" value={<UserStatusBadge user={user} />} />
               </CardContent>
             </Card>
+            {user.lineType === "self_hosted" ? <Card>
+              <CardHeader>
+                <CardTitle>倍率流量</CardTitle>
+                <CardDescription>按节点倍率折算用户流量；节点倍率修改仅影响之后产生的流量</CardDescription>
+                <CardAction><Badge variant={!weightedTraffic ? "secondary" : weightedTraffic.depleted ? "destructive" : "success"}>{!weightedTraffic ? "未同步" : weightedTraffic.depleted ? "已耗尽" : "正常"}</Badge></CardAction>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                {weightedTraffic ? <>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <Info label="原始流量" value={formatBytes(weightedTraffic.rawUsedBytes)} />
+                    <Info label="折算流量" value={formatBytes(weightedTraffic.usedBytes)} />
+                    <Info label="套餐额度" value={weightedTraffic.totalBytes ? `${formatBytes(weightedTraffic.usedBytes)} / ${formatBytes(weightedTraffic.totalBytes)}` : "不限"} />
+                  </div>
+                  {weightedTraffic.totalBytes ? <TrafficProgress remaining={weightedTraffic.remainingBytes} total={weightedTraffic.totalBytes} /> : null}
+                  <Separator />
+                  {weightedTraffic.nodes.length ? <Table>
+                    <TableHeader><TableRow><TableHead>节点</TableHead><TableHead>原始流量</TableHead><TableHead>倍率</TableHead><TableHead className="text-right">折算流量</TableHead></TableRow></TableHeader>
+                    <TableBody>{weightedTraffic.nodes.map(node => <TableRow key={node.key}><TableCell className="font-medium">{node.name}</TableCell><TableCell>{formatBytes(node.rawBytes)}</TableCell><TableCell>× {node.multiplier}</TableCell><TableCell className="text-right font-medium">{formatBytes(node.weightedBytes)}</TableCell></TableRow>)}</TableBody>
+                  </Table> : <EmptyState title="暂无节点流量明细" />}
+                  <p className="text-xs text-muted-foreground">最后同步：{weightedTraffic.lastSyncedAt ? formatDateTime(weightedTraffic.lastSyncedAt) : "-"}</p>
+                </> : <EmptyState title="暂无倍率流量数据" description="完成首次 3x-ui 流量同步后显示节点明细。" />}
+              </CardContent>
+            </Card> : null}
             {user.poolCompatibility ? (
               <Card>
                 <CardHeader>

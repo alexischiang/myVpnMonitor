@@ -4,7 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { Copy, ExternalLink, Eye, Gift, Loader2, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
-import { deleteJson, postJson, putJson } from "@/api"
+import { deleteJson, fetchJson, postJson, putJson } from "@/api"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,8 +24,8 @@ import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-
 import { UserFormDialog, type UserFormValues } from "@/components/features/user-form-dialog"
 import { UsersSummaryCard } from "@/components/features/users-summary-card"
 import { VipBadge } from "@/components/features/vip-badge"
-import type { User } from "@/types"
-import { absoluteUrl, formatDate, formatMoney, userStatus } from "@/utils"
+import type { User, XuiPresence } from "@/types"
+import { absoluteUrl, formatDate, formatDateTime, formatMoney, userStatus } from "@/utils"
 
 type GiftPreview = {
   expiresAt: string
@@ -59,7 +59,9 @@ export function UsersPage() {
   const accountFilter = searchParams.get("account") || "all"
   const planFilter = searchParams.get("plan") || "all"
   const statusFilter = searchParams.get("status") || "all"
+  const activityFilter = searchParams.get("activity") || "all"
   const searchQuery = searchParams.get("q") || ""
+  const [presence, setPresence] = React.useState<XuiPresence | null>(null)
   const [giftDays, setGiftDays] = React.useState("")
   const [giftExpiresAt, setGiftExpiresAt] = React.useState("")
   const [giftPoolId, setGiftPoolId] = React.useState("")
@@ -76,15 +78,49 @@ export function UsersPage() {
   const [batchGiftSaving, setBatchGiftSaving] = React.useState(false)
   const currentPool = subscriptions.find(item => item.id === poolUser?.subscriptionId)
   const planOptions = React.useMemo(() => [...new Set(users.map(item => item.activeGroup).filter((value): value is string => Boolean(value)))].sort(), [users])
+  const onlineGuidsByEmail = React.useMemo(() => {
+    const result: Record<string, string[]> = {}
+    for (const [guid, emails] of Object.entries(presence?.onlineByGuid || {})) {
+      for (const email of emails) (result[email] ||= []).push(guid)
+    }
+    return result
+  }, [presence])
+  const matchesActivity = React.useCallback((item: User) => {
+    if (activityFilter === "all") return true
+    if (!presence?.configured) return false
+    const email = String(item.xuiClientEmail || "").toLowerCase()
+    if (!email) return false
+    const online = Boolean(onlineGuidsByEmail[email]?.length)
+    const lastSeen = presence?.lastOnline[email] || 0
+    if (activityFilter === "online") return online
+    if (activityFilter === "never") return !online && !lastSeen
+    const days = { day: 1, week: 7, month: 30 }[activityFilter as "day" | "week" | "month"]
+    return !online && Boolean(days && lastSeen && lastSeen <= Date.now() / 1000 - days * 86400)
+  }, [activityFilter, onlineGuidsByEmail, presence])
   const filteredUsers = React.useMemo(() => users.filter(item =>
     (accountFilter === "all" || (item.accountStatus || "unclaimed") === accountFilter) &&
     (planFilter === "all" || item.activeGroup === planFilter) &&
-    (statusFilter === "all" || userStatus(item) === statusFilter)
-  ), [users, accountFilter, planFilter, statusFilter])
+    (statusFilter === "all" || userStatus(item) === statusFilter) &&
+    matchesActivity(item)
+  ), [users, accountFilter, planFilter, statusFilter, matchesActivity])
   const totalUsers = users.length
   const activeUsers = users.filter(item => !item.registeredOnly && userStatus(item) !== "expired").length
   const addedToday = users.filter(item => item.createdAt && new Date(item.createdAt).toDateString() === new Date().toDateString()).length
   const expiringUsers = users.filter(item => userStatus(item) === "warning").length
+
+  const refreshPresence = React.useCallback(async () => {
+    try {
+      setPresence(await fetchJson<XuiPresence>("/api/xui-presence"))
+    } catch {
+      // Keep the last successful snapshot during a transient 3x-ui failure.
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void refreshPresence()
+    const timer = window.setInterval(refreshPresence, 30_000)
+    return () => window.clearInterval(timer)
+  }, [refreshPresence])
 
   function updateSearchParam(key: string, value: string, defaultValue = "") {
     setSearchParams(current => {
@@ -240,9 +276,21 @@ export function UsersPage() {
     return user.deliveryToken ? absoluteUrl(`/delivery/${user.deliveryToken}`) : ""
   }
 
+  function xuiPresenceFor(user: User) {
+    const email = String(user.xuiClientEmail || "").toLowerCase()
+    const guids = email ? onlineGuidsByEmail[email] || [] : []
+    return {
+      available: Boolean(email && presence?.configured),
+      online: guids.length > 0,
+      nodes: guids.map(guid => presence?.nodeNames[guid] || guid),
+      lastOnline: email ? presence?.lastOnline[email] || 0 : 0,
+    }
+  }
+
   function renderMobileUser(item: User) {
     const claimed = ["active", "disabled"].includes(item.accountStatus || "unclaimed")
-    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="min-w-0 truncate">{item.userId ? <span className="font-medium">{item.userId}</span> : null}<span className={`${item.userId ? "ml-1 " : ""}text-xs font-normal text-muted-foreground`}>#{item.customerID}</span></span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}</ItemTitle><ItemDescription className="flex items-center gap-2 text-xs"><span>{item.registeredOnly ? formatDate(item.createdAt) : `${formatDate(item.expiresAt)} · ${formatMoney(item.actualPaid)} · ${(item.activeGroup || "-").toUpperCase()}`}</span>{item.subscription ? <ProviderBadge name={item.subscription.serviceProvider || item.subscription.provider} /> : null}</ItemDescription></ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}<DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem><DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
+    const xui = xuiPresenceFor(item)
+    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="min-w-0 truncate">{item.userId ? <span className="font-medium">{item.userId}</span> : null}<span className={`${item.userId ? "ml-1 " : ""}text-xs font-normal text-muted-foreground`}>#{item.customerID}</span></span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}{xui.available ? <Badge variant={xui.online ? "success" : "secondary"}>{xui.online ? "在线" : "离线"}</Badge> : null}</ItemTitle><ItemDescription className="flex items-center gap-2 text-xs"><span>{item.registeredOnly ? formatDate(item.createdAt) : `${formatDate(item.expiresAt)} · ${formatMoney(item.actualPaid)} · ${(item.activeGroup || "-").toUpperCase()}`}</span>{item.subscription ? <ProviderBadge name={item.subscription.serviceProvider || item.subscription.provider} /> : null}</ItemDescription>{xui.available ? <ItemDescription>{xui.online ? xui.nodes.join(" / ") : xui.lastOnline ? `最后在线 ${formatDateTime(new Date(xui.lastOnline * 1000).toISOString())}` : "从未在线"}</ItemDescription> : null}</ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}{item.lineType === "self_hosted" ? null : <DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem>}<DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
   }
 
   const columns = React.useMemo<ColumnDef<User>[]>(() => [
@@ -301,6 +349,27 @@ export function UsersPage() {
       cell: ({ row }) => <UserStatusBadge user={row.original} />,
     },
     {
+      id: "online",
+      accessorFn: item => xuiPresenceFor(item).online ? "在线" : "离线",
+      header: DataTableColumnHeader({ title: "在线状态" }),
+      meta: { label: "在线状态" },
+      cell: ({ row }) => { const xui = xuiPresenceFor(row.original); return xui.available ? <Badge variant={xui.online ? "success" : "secondary"}>{xui.online ? "在线" : "离线"}</Badge> : "-" },
+    },
+    {
+      id: "currentNode",
+      accessorFn: item => xuiPresenceFor(item).nodes.join(" "),
+      header: DataTableColumnHeader({ title: "当前节点" }),
+      meta: { label: "当前节点" },
+      cell: ({ row }) => xuiPresenceFor(row.original).nodes.join(" / ") || "-",
+    },
+    {
+      id: "lastOnline",
+      accessorFn: item => xuiPresenceFor(item).lastOnline,
+      header: DataTableColumnHeader({ title: "最后在线" }),
+      meta: { label: "最后在线" },
+      cell: ({ row }) => { const xui = xuiPresenceFor(row.original); return !xui.available ? "-" : xui.online ? "当前在线" : xui.lastOnline ? formatDateTime(new Date(xui.lastOnline * 1000).toISOString()) : "从未在线" },
+    },
+    {
       id: "actions",
       header: "操作",
       cell: ({ row }) => {
@@ -312,7 +381,7 @@ export function UsersPage() {
           >
             {item.registeredOnly ? null : <>
               {deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}
-              <DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />换池</DropdownMenuItem>
+              {item.lineType === "self_hosted" ? null : <DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />换池</DropdownMenuItem>}
               <DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送</DropdownMenuItem>
               {!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}
               {!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => remove(item)}><Trash2 />删除</DropdownMenuItem> : null}
@@ -323,7 +392,7 @@ export function UsersPage() {
       enableHiding: false,
       enableSorting: false,
     },
-  ], [location.search])
+  ], [location.search, onlineGuidsByEmail, presence])
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
@@ -332,6 +401,7 @@ export function UsersPage() {
         <Field><FieldLabel htmlFor="account-filter">账户状态</FieldLabel><Select value={accountFilter} onValueChange={value => updateSearchParam("account", value, "all")}><SelectTrigger id="account-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="active">已认领</SelectItem><SelectItem value="disabled">已停用</SelectItem><SelectItem value="invited">等待认领</SelectItem><SelectItem value="unclaimed">未认领</SelectItem></SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="plan-filter">套餐</FieldLabel><Select value={planFilter} onValueChange={value => updateSearchParam("plan", value, "all")}><SelectTrigger id="plan-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem>{planOptions.map(plan => <SelectItem key={plan} value={plan}>{plan}</SelectItem>)}</SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="status-filter">套餐状态</FieldLabel><Select value={statusFilter} onValueChange={value => updateSearchParam("status", value, "all")}><SelectTrigger id="status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="registered">未购买</SelectItem><SelectItem value="ok">Active</SelectItem><SelectItem value="warning">Expiring</SelectItem><SelectItem value="expired">Expired</SelectItem></SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="activity-filter">在线情况</FieldLabel><Select value={activityFilter} onValueChange={value => updateSearchParam("activity", value, "all")}><SelectTrigger id="activity-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="online">当前在线</SelectItem><SelectItem value="day">超过 24 小时未在线</SelectItem><SelectItem value="week">超过 7 天未在线</SelectItem><SelectItem value="month">超过 30 天未在线</SelectItem><SelectItem value="never">从未在线</SelectItem></SelectContent></Select></Field>
       </>}>
         <DataTable
           columns={columns}

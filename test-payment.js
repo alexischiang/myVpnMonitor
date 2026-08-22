@@ -62,11 +62,42 @@ async function main() {
     const result = queryResults.get(params.merOrderTid) || { payOrderStatus: 0, money: "1.03" };
     return sendJson(response, 200, { status: 0, result });
   });
+  const xuiClients = new Map();
+  const xui = http.createServer(async (request, response) => {
+    let body = {};
+    if (request.method !== "GET") {
+      let raw = "";
+      for await (const chunk of request) raw += chunk;
+      if (raw) body = JSON.parse(raw);
+    }
+    const clientMatch = request.url.match(/^\/panel\/api\/clients\/get\/(.+)$/);
+    if (clientMatch) {
+      const client = xuiClients.get(decodeURIComponent(clientMatch[1]));
+      return sendJson(response, client ? 200 : 404, client ? { success: true, obj: client } : { success: false, msg: "not found" });
+    }
+    if (request.url === "/panel/api/clients/list") return sendJson(response, 200, { success: true, obj: [...xuiClients.values()] });
+    if (request.url === "/panel/api/inbounds/list") return sendJson(response, 200, { success: true, obj: [{ id: 1 }] });
+    if (request.url === "/panel/api/clients/add") {
+      const client = { ...body.client, subId: body.client.subId || crypto.randomUUID(), inboundIds: body.inboundIds || [] };
+      xuiClients.set(client.email, client);
+      return sendJson(response, 200, { success: true, obj: client });
+    }
+    const updateMatch = request.url.match(/^\/panel\/api\/clients\/update\/(.+)$/);
+    if (updateMatch) {
+      const oldEmail = decodeURIComponent(updateMatch[1]);
+      const client = { ...(xuiClients.get(oldEmail) || {}), ...body };
+      xuiClients.delete(oldEmail);
+      xuiClients.set(client.email, client);
+      return sendJson(response, 200, { success: true, obj: client });
+    }
+    return sendJson(response, 200, { success: true, obj: {} });
+  });
 
   let app;
   let handler;
   try {
     const gatewayPort = await listen(gateway);
+    const xuiPort = await listen(xui);
     await database.query(`
       CREATE TABLE IF NOT EXISTS app_records (
         collection TEXT NOT NULL,
@@ -78,6 +109,10 @@ async function main() {
       )
     `);
     await database.query("TRUNCATE app_records");
+    await database.query(
+      "INSERT INTO app_records (collection, id, position, data) VALUES ('xuiInboundGroups', 'state', 0, $1::jsonb)",
+      [JSON.stringify({ groups: { basic: [1], pro: [1], ultra: [1], self_hosted: [1] } })]
+    );
     const subscription = {
       id: "payment-test-pool",
       name: "Payment test pool",
@@ -128,7 +163,10 @@ async function main() {
       PAYMENT_COUPONS: "",
       ADMIN_USERNAME: "payment-admin",
       ADMIN_PASSWORD: "payment-admin-password",
-      SESSION_SECRET: "payment-test-session-secret"
+      SESSION_SECRET: "payment-test-session-secret",
+      XUI_BASE_URL: `http://127.0.0.1:${xuiPort}`,
+      XUI_API_TOKEN: "xui-test-token",
+      XUI_SUBSCRIPTION_BASE_URL: "https://subscription.test"
     });
 
     handler = require("./server");
@@ -206,6 +244,10 @@ async function main() {
     assert.strictEqual(savedSettings.data.coupons[0].code, "SAVE20");
     const publicSettings = await request("/api/public/sales-settings");
     assert.deepStrictEqual(publicSettings.data, { registrationMode: "open", faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }] });
+    const adminPricing = await request("/api/pricing", { cookie: adminCookie });
+    const shopperPricing = await request("/api/public/pricing");
+    assert.ok(adminPricing.data.some(item => item.group === "friends-lifetime-unlimited" && item.internal === true));
+    assert.ok(!shopperPricing.data.some(item => item.internal === true));
 
     const quote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001" } });
     assert.strictEqual(quote.response.status, 200);
@@ -231,6 +273,7 @@ async function main() {
         body: {
           optionId: "pro-test-001",
           channelCode: "100",
+          confirmReplacement: true,
           returnUrl: `${origin}/account/payment/result`,
           ...extra
         }
@@ -313,6 +356,7 @@ async function main() {
     assert.strictEqual(status.data.fulfillmentStatus, "failed");
 
     const paidOrder = await createOrder();
+    assert.strictEqual(xuiClients.size, 0, "pending orders must not touch 3x-ui");
     await Promise.all([
       callback(paidOrder.data, 1, "1.03", true),
       callback(paidOrder.data, 1, "1.03", true)
@@ -334,6 +378,8 @@ async function main() {
     const createdUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
     assert.strictEqual(createdUser.userId, "buyer@example.test");
     assert.strictEqual(createdUser.email, "buyer@example.test");
+    assert.deepStrictEqual([createdUser.currentProductId, createdUser.currentOptionId, createdUser.currentProductOrderId], ["pro", "pro-test-001", paidOrder.data.id]);
+    assert.deepStrictEqual([xuiClients.get("buyer@example.test").flow, xuiClients.get("buyer@example.test").totalGB], ["xtls-rprx-vision", 200 * 1024 ** 3]);
     const adminBills = await request("/api/bills", { cookie: adminCookie });
     const billDetail = await request(`/api/bills/${adminBills.data[0].id}`, { cookie: adminCookie });
     assert.strictEqual(billDetail.data.payment.channelCode, "100");
@@ -352,29 +398,25 @@ async function main() {
     assert.strictEqual(status.data.fulfillmentStatus, "fulfilled");
     const adminUsers = await request("/api/users", { cookie: adminCookie });
     const purchaseLogs = adminUsers.data[0].userLogs;
-    const createdLog = purchaseLogs.find(log => log.reason === "user-created");
-    const switchedLog = purchaseLogs.find(log => log.reason === "purchase-pool-changed");
-    assert.ok(createdLog?.toSubscriptionLabel, "new purchases must log the recommended pool");
-    assert.ok(switchedLog?.fromSubscriptionLabel && switchedLog?.toSubscriptionLabel, "purchase-triggered pool changes must log both pools");
     const managedUser = adminUsers.data[0];
+    assert.strictEqual(managedUser.lineType, "self_hosted", "new purchases must use self-hosted delivery");
     const protectedUpdate = await request(`/api/users/${managedUser.id}`, { method: "PUT", cookie: adminCookie, body: { actualPaid: 999, duration: "yearly", expiresAt: "2030-01-01" } });
     assert.strictEqual(protectedUpdate.response.status, 400);
     const blockedRenewal = await request(`/api/users/${managedUser.id}/renew`, { method: "POST", cookie: adminCookie, body: { actualPaid: 1, duration: "monthly" } });
     assert.strictEqual(blockedRenewal.response.status, 400);
     const manualPoolChange = await request(`/api/users/${managedUser.id}/pool`, { method: "POST", cookie: adminCookie, body: { subscriptionId: subscription.id } });
-    assert.strictEqual(manualPoolChange.data.subscriptionId, subscription.id);
-    assert.strictEqual(manualPoolChange.data.userLogs[0].reason, "manual-pool-changed");
+    assert.strictEqual(manualPoolChange.response.status, 410);
     const disabledPool = await request(`/api/subscriptions/${laterSubscription.id}`, { method: "PUT", cookie: adminCookie, body: { enabled: false } });
     assert.strictEqual(disabledPool.data.enabled, false);
     assert.strictEqual(disabledPool.data.status, "disabled");
     const recommendationWithoutDisabled = await request("/api/subscriptions/recommend", { method: "POST", cookie: adminCookie, body: { expiresAt: new Date(Date.now() + 95 * 86400000).toISOString() } });
     assert.notStrictEqual(recommendationWithoutDisabled.data.subscription?.id, laterSubscription.id);
     const blockedDisabledPool = await request(`/api/users/${managedUser.id}/pool`, { method: "POST", cookie: adminCookie, body: { subscriptionId: laterSubscription.id } });
-    assert.strictEqual(blockedDisabledPool.response.status, 400);
+    assert.strictEqual(blockedDisabledPool.response.status, 410);
     const allowedDisabledPool = await request(`/api/users/${managedUser.id}/pool`, { method: "POST", cookie: adminCookie, body: { subscriptionId: laterSubscription.id, allowDisabled: true } });
-    assert.strictEqual(allowedDisabledPool.data.subscriptionId, laterSubscription.id);
+    assert.strictEqual(allowedDisabledPool.response.status, 410);
     const blockedExpiredPool = await request(`/api/users/${managedUser.id}/pool`, { method: "POST", cookie: adminCookie, body: { subscriptionId: expiredSubscription.id, allowDisabled: true } });
-    assert.strictEqual(blockedExpiredPool.response.status, 400);
+    assert.strictEqual(blockedExpiredPool.response.status, 410);
 
     const crossAccount = await request("/api/auth/register", {
       method: "POST",
@@ -402,41 +444,30 @@ async function main() {
     assert.strictEqual(unknownCallback.text, "success");
 
     const extensionQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-90" } });
-    assert.strictEqual(extensionQuote.data.purchaseAction, "extend");
+    assert.strictEqual(extensionQuote.data.purchaseAction, "replace");
     assert.strictEqual(extensionQuote.data.cashCredit, 0);
+    const unconfirmedReplacement = await request("/api/payments/orders", { method: "POST", cookie, body: { optionId: "pro-90", channelCode: "100" } });
+    assert.strictEqual(unconfirmedReplacement.response.status, 400);
+    assert.match(unconfirmedReplacement.data.error, /确认新套餐/);
 
     const replacementQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "basic-30" } });
     assert.strictEqual(replacementQuote.data.purchaseAction, "replace");
-    assert.ok(replacementQuote.data.cashCredit > 2, "replacement must prorate the current plan's paid cash value");
+    assert.strictEqual(replacementQuote.data.cashCredit, 0);
     const replacementOrder = await createOrder({ optionId: "basic-30" });
     assert.strictEqual(replacementOrder.response.status, 201);
     await callback(replacementOrder.data, 1, String(replacementOrder.data.amount), true);
     const replacedUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
     assert.strictEqual(replacedUser.activeGroup, "basic");
+    assert.deepStrictEqual([replacedUser.currentProductId, replacedUser.currentOptionId, replacedUser.currentProductOrderId], ["basic", "basic-30", replacementOrder.data.id]);
     assert.strictEqual(replacedUser.unlimited, false);
     assert.strictEqual(replacedUser.cashValue, replacementOrder.data.amount, "replacement cash value must only include the new payment");
     assert.ok(new Date(replacedUser.expiresAt).getTime() < Date.now() + 31 * 86400000, "replacement must restart, not extend, the term");
 
     const sameTierQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "basic-90" } });
-    assert.strictEqual(sameTierQuote.data.purchaseAction, "extend");
+    assert.strictEqual(sameTierQuote.data.purchaseAction, "replace");
     const unlimitedQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "basic-unlimited-90" } });
-    assert.strictEqual(unlimitedQuote.data.purchaseAction, "replace");
-    assert.ok(unlimitedQuote.data.cashCredit > 0);
-
-    const unlimitedOrder = await createOrder({ optionId: "basic-unlimited-30" });
-    await callback(unlimitedOrder.data, 1, String(unlimitedOrder.data.amount), true);
-    const unlimitedOverview = await request("/api/account/overview", { cookie });
-    assert.strictEqual(unlimitedOverview.data.subscription.unlimited, true);
-    assert.strictEqual(unlimitedOverview.data.subscription.traffic, "无限流量");
-
-    const zeroQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001" } });
-    assert.strictEqual(zeroQuote.data.amount, 0);
-    assert.strictEqual(zeroQuote.data.cashCredit, zeroQuote.data.beforeCreditAmount);
-    const zeroOrder = await createOrder();
-    assert.strictEqual(zeroOrder.response.status, 201);
-    assert.strictEqual(zeroOrder.data.status, "paid");
-    assert.strictEqual(zeroOrder.data.fulfillmentStatus, "fulfilled");
-    assert.strictEqual(zeroOrder.data.payUrl, "");
+    assert.strictEqual(unlimitedQuote.response.status, 400);
+    assert.match(unlimitedQuote.data.error, /Unsupported pricing option/);
 
     const couponOrder = await createOrder({ couponCode: "SAVE20" });
     if (couponOrder.data.status === "pending") await callback(couponOrder.data, 1, String(couponOrder.data.amount), true);
@@ -468,7 +499,7 @@ async function main() {
     assert.strictEqual(manualPurchasedUser.vipSpend, 2.34);
     const manualRenewal = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: "pro-test-001", amount: 3.21 } });
     assert.strictEqual(manualRenewal.response.status, 201);
-    assert.strictEqual(manualRenewal.data.purchaseAction, "extend");
+    assert.strictEqual(manualRenewal.data.purchaseAction, "replace");
     const manualRenewedUsers = await request("/api/users", { cookie: adminCookie });
     assert.strictEqual(manualRenewedUsers.data.find(item => item.email === "manual@example.test").vipSpend, 5.55);
 
@@ -486,7 +517,7 @@ async function main() {
     const inviteeOrder = await request("/api/payments/orders", {
       method: "POST",
       cookie: inviteeCookie,
-      body: { optionId: "pro-test-001", channelCode: "100" }
+      body: { optionId: "pro-test-001", channelCode: "100", confirmReplacement: true }
     });
     await callback(inviteeOrder.data, 1, String(inviteeOrder.data.amount), true);
 
@@ -545,7 +576,7 @@ async function main() {
     const walletOrder = await request("/api/payments/orders", {
       method: "POST",
       cookie: inviteeCookie,
-      body: { optionId: "pro-test-001", channelCode: "100" }
+      body: { optionId: "pro-test-001", channelCode: "100", confirmReplacement: true }
     });
     assert.strictEqual(walletOrder.data.status, "paid");
     assert.deepStrictEqual(
@@ -554,8 +585,6 @@ async function main() {
     );
     assert.strictEqual(walletOrder.data.realCashAmount, 0.63);
     assert.strictEqual(walletOrder.data.virtualCashAmount, 0.4);
-    const walletOrderOverview = await request("/api/account/overview", { cookie: inviteeCookie });
-    assert.strictEqual(walletOrderOverview.data.subscription.cashValue, 1.66, "现金价值只能包含实际现金支付和充值余额");
     inviteeWallet = await request("/api/account/wallet", { cookie: inviteeCookie });
     assert.deepStrictEqual(
       [inviteeWallet.data.cashBalance, inviteeWallet.data.giftBalance, inviteeWallet.data.vipSpend],
@@ -640,7 +669,8 @@ async function main() {
     assert.strictEqual(noPoolOrder.response.status, 201);
     await callback(noPoolOrder.data, 1, String(noPoolOrder.data.amount), true);
     status = await request(`/api/payments/orders/${noPoolOrder.data.id}`, { cookie });
-    assert.strictEqual(status.data.fulfillmentError, "目前没有可用 BASIC 池发放。");
+    assert.strictEqual(status.data.fulfillmentStatus, "fulfilled");
+    assert.strictEqual(status.data.fulfillmentError, "");
 
     const visiblePendingOrder = await createOrder({ optionId: "ultra-360", useBalance: false });
     assert.strictEqual(visiblePendingOrder.response.status, 201);
@@ -651,8 +681,8 @@ async function main() {
     for (const order of [visiblePendingOrder.data, cancelledOrder.data, failedOrder.data, paidOrder.data, noPoolOrder.data]) assert.ok(adminOrderIds.has(order.id));
     const noPoolAdminOrder = adminOrders.data.find(item => item.id === noPoolOrder.data.id);
     assert.strictEqual(noPoolAdminOrder.status, "paid");
-    assert.strictEqual(noPoolAdminOrder.fulfillmentStatus, "failed");
-    assert.strictEqual(noPoolAdminOrder.internalFulfillmentError, "没有可用的池 URL。");
+    assert.strictEqual(noPoolAdminOrder.fulfillmentStatus, "fulfilled");
+    assert.strictEqual(noPoolAdminOrder.internalFulfillmentError, "");
     const adminOrderDetail = await request(`/api/admin/orders/${noPoolOrder.data.id}`, { cookie: adminCookie });
     assert.strictEqual(adminOrderDetail.data.id, noPoolOrder.data.id);
     const reversedFailedFulfillment = await request(`/api/admin/orders/${noPoolOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
@@ -678,6 +708,7 @@ async function main() {
     if (app) await close(app);
     if (handler) await handler.closeDataStore();
     await close(gateway);
+    await close(xui);
     await database.end();
   }
 }

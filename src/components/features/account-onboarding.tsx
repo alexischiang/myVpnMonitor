@@ -17,7 +17,7 @@ import { VipBadge } from "@/components/features/vip-badge"
 const steps = [
   {
     title: "先选择适合你的套餐",
-    description: "从左侧边栏点击“购买套餐”，选择套餐和使用周期并完成付款。付款成功后，订阅会自动出现在用户中心。",
+    description: "从左侧边栏点击“购买服务”，在基础套餐服务中选择套餐和使用周期并完成付款。付款成功后，订阅会自动出现在用户中心。",
   },
   {
     title: "在总览中找到你的订阅",
@@ -41,7 +41,7 @@ function StepPreview({ step }: { step: number }) {
   if (step === 0) return (
     <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
       <CardHeader className="px-4 sm:px-6">
-        <CardDescription>购买套餐</CardDescription>
+        <CardDescription>购买服务</CardDescription>
         <CardTitle>选择适合你的套餐</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4 px-4 sm:px-6">

@@ -4,11 +4,13 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const alertVariants = cva(
-  "relative grid w-full grid-cols-[0_1fr] items-center gap-y-0.5 rounded-lg border px-4 py-3 text-sm has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] has-[>svg]:gap-x-3 [&>svg]:size-4 [&>svg]:text-current",
+  "relative grid w-full min-w-0 grid-cols-[0_minmax(0,1fr)] items-center gap-y-0.5 rounded-lg border px-4 py-3 text-sm has-[>svg]:grid-cols-[calc(var(--spacing)*4)_minmax(0,1fr)] has-[>svg]:gap-x-3 [&>svg]:size-4 [&>svg]:text-current",
   {
     variants: {
       variant: {
         default: "bg-card text-card-foreground",
+        success:
+          "border-green-600/50 bg-green-600/10 text-green-600 *:data-[slot=alert-description]:text-green-600 dark:border-green-400/50 dark:bg-green-400/10 dark:text-green-400 dark:*:data-[slot=alert-description]:text-green-400",
         error:
           "border-destructive/50 bg-destructive/5 text-destructive *:data-[slot=alert-description]:text-destructive/90",
         warning:
@@ -59,7 +61,7 @@ function AlertDescription({
     <div
       data-slot="alert-description"
       className={cn(
-        "col-start-2 grid justify-items-start gap-1 text-sm text-muted-foreground [&_p]:leading-relaxed",
+        "col-start-2 grid min-w-0 justify-items-start gap-1 break-words text-sm text-muted-foreground [overflow-wrap:anywhere] [&_p]:leading-relaxed",
         className
       )}
       {...props}

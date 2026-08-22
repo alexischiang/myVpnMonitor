@@ -3,7 +3,7 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useParams } from "react-router-dom"
 import { AlertCircle, ArrowLeft, Eye, Loader2, Undo2 } from "lucide-react"
 
-import { fetchJson, postJson } from "@/api"
+import { fetchJson, postJson, putJson } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -12,16 +12,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
+import { Textarea } from "@/components/ui/textarea"
 import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
+import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { EmptyState, PageHeader } from "@/components/features/shared"
 import { durationLabels, formatDateTime, formatMoney } from "@/utils"
 
 type AdminOrder = {
   id: string
   merOrderTid: string
-  purpose: "plan" | "recharge"
-  purchaseAction?: "initial" | "extend" | "replace"
+  purpose: "plan" | "recharge" | "traffic_pack" | "addon"
+  purchaseAction?: "initial" | "extend" | "replace" | "add_on"
   planName: string
   optionLabel: string
   duration?: string
@@ -34,17 +36,26 @@ type AdminOrder = {
   realCashAmount?: number
   virtualCashAmount?: number
   originalAmount?: number
+  baseAmount?: number
+  trafficTier?: number
+  trafficGb?: number
+  trafficTierMarkupPercent?: number
+  addOnAmount?: number
+  addOnSnapshots?: Array<{ id: string; optionId: string; name: string; regionName?: string; amount: number; durationDays?: number; deliveryMode?: string; deliveryDescription?: string }>
   discountAmount?: number
   vipDiscountAmount?: number
   subtotal?: number
   taxAmount?: number
-  cashCredit?: number
   channelCode?: string
   couponCode?: string
+  userId?: string
   email?: string
   status: string
   statusText: string
   fulfillmentStatus?: string
+  fulfillmentStartedAt?: string
+  fulfilledAt?: string
+  deliveryNote?: string
   fulfillmentError?: string
   internalFulfillmentError?: string
   paymentError?: string
@@ -62,16 +73,19 @@ const orderStatusLabels: Record<string, string> = {
   failed: "支付失败",
   abnormal: "支付异常",
   unfulfilled: "已付款未发放套餐",
+  manual_pending: "待人工交付",
   fulfilled: "已完成",
   reversed: "已撤销",
 }
 
-const paymentChannelLabels: Record<string, string> = { "100": "支付宝", "200": "微信支付", manual: "人工收款", wallet: "账户余额", "cash-credit": "现金价值全额抵扣" }
+const paymentChannelLabels: Record<string, string> = { "100": "支付宝", "200": "微信支付", manual: "人工收款", wallet: "账户余额", "cash-credit": "零元订单" }
 
 const orderTypeLabels: Record<string, string> = {
   initial: "新购",
   extend: "续费",
-  replace: "升级 / 变更",
+  replace: "覆盖套餐",
+  add_on: "流量包",
+  addon: "附加服务",
   recharge: "余额充值",
 }
 
@@ -80,15 +94,17 @@ const orderTypeVariants = {
   extend: "default",
   replace: "warning",
   recharge: "secondary",
+  addon: "secondary",
 } as const
 
 function orderType(order: AdminOrder) {
-  return order.purpose === "recharge" ? "recharge" : order.purchaseAction || "initial"
+  return order.purpose === "recharge" ? "recharge" : order.purpose === "addon" ? "addon" : order.purchaseAction || "initial"
 }
 
 function orderStatus(order: AdminOrder) {
   if (order.reversedAt || order.fulfillmentStatus === "reversed") return "reversed"
   if (order.status === "paid" && order.fulfillmentStatus === "fulfilled") return "fulfilled"
+  if (order.status === "paid" && order.fulfillmentStatus === "manual_pending") return "manual_pending"
   if (order.status === "paid") return "unfulfilled"
   return order.status
 }
@@ -96,8 +112,13 @@ function orderStatus(order: AdminOrder) {
 function statusBadgeVariant(status: string) {
   if (status === "fulfilled") return "success" as const
   if (["failed", "abnormal", "unfulfilled"].includes(status)) return "destructive" as const
-  if (["pending", "paid"].includes(status)) return "warning" as const
+  if (["pending", "paid", "manual_pending"].includes(status)) return "warning" as const
   return "secondary" as const
+}
+
+function renderMobileOrder(order: AdminOrder) {
+  const status = orderStatus(order)
+  return <OrderMobileItem amount={formatMoney(order.totalAmount ?? order.amount)} createdAt={order.createdAt} customer={order.email || "-"} customerUrl={order.userId ? `/users/detail/${order.userId}` : undefined} detailUrl={`/orders/${order.id}`} orderNumber={order.merOrderTid} product={`${order.planName} / ${order.optionLabel}`} status={orderStatusLabels[status] || order.statusText} statusVariant={statusBadgeVariant(status)} />
 }
 
 export function OrdersPage() {
@@ -133,7 +154,7 @@ export function OrdersPage() {
       accessorFn: order => `${order.email || ""} ${order.merOrderTid} ${order.planName} ${order.optionLabel}`,
       header: DataTableColumnHeader({ title: "客户" }),
       meta: { label: "客户" },
-      cell: ({ row }) => row.original.email || "-",
+      cell: ({ row }) => row.original.userId ? <Button asChild variant="link" size="sm"><Link to={`/users/detail/${row.original.userId}`}>{row.original.email || "-"}</Link></Button> : row.original.email || "-",
     },
     {
       id: "product",
@@ -182,9 +203,9 @@ export function OrdersPage() {
       <PageHeader title="Orders" description="显示所有客户创建的订单，包括待付款、取消、失败、未发放和已完成订单。" />
       <DataTableCard filters={<>
         <Field><FieldLabel htmlFor="order-status-filter">订单状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="order-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(orderStatusLabels).map(([status, label]) => <SelectItem key={status} value={status}>{label}</SelectItem>)}</SelectContent></Select></Field>
-        <Field><FieldLabel htmlFor="order-purpose-filter">订单类型</FieldLabel><Select value={purposeFilter} onValueChange={setPurposeFilter}><SelectTrigger id="order-purpose-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem value="plan">套餐购买</SelectItem><SelectItem value="recharge">余额充值</SelectItem></SelectContent></Select></Field>
+        <Field><FieldLabel htmlFor="order-purpose-filter">订单类型</FieldLabel><Select value={purposeFilter} onValueChange={setPurposeFilter}><SelectTrigger id="order-purpose-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem value="plan">套餐购买</SelectItem><SelectItem value="traffic_pack">流量包购买</SelectItem><SelectItem value="addon">附加服务</SelectItem><SelectItem value="recharge">余额充值</SelectItem></SelectContent></Select></Field>
       </>}>
-        <DataTable columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={30} frame="card" />
+        <DataTable columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={30} frame="card" renderMobileItem={renderMobileOrder} />
       </DataTableCard>
     </div>
   )
@@ -199,6 +220,8 @@ export function OrderDetailPage() {
   const [retrying, setRetrying] = React.useState(false)
   const [reverseOpen, setReverseOpen] = React.useState(false)
   const [reversing, setReversing] = React.useState(false)
+  const [deliveryNote, setDeliveryNote] = React.useState("")
+  const [delivering, setDelivering] = React.useState(false)
 
   React.useEffect(() => {
     if (!id) return
@@ -237,6 +260,19 @@ export function OrderDetailPage() {
     }
   }
 
+  async function completeDelivery() {
+    if (!id || !deliveryNote.trim()) return
+    setDelivering(true)
+    try {
+      setOrder(await putJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}`, { deliveryNote }))
+      setDeliveryNote("")
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "提交交付记录失败")
+    } finally {
+      setDelivering(false)
+    }
+  }
+
   return (
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="订单详情" description={order.merOrderTid} actions={<>
@@ -270,11 +306,16 @@ export function OrderDetailPage() {
             <DetailRow label="客户" value={order.email || "-"} />
             <DetailRow label="账单种类" value={<Badge variant={orderTypeVariants[orderType(order)]}>{orderTypeLabels[orderType(order)]}</Badge>} />
             <DetailRow label="订单状态" value={<Badge variant={statusBadgeVariant(status)}>{orderStatusLabels[status] || order.statusText}</Badge>} />
-            <DetailRow label="发放状态" value={order.fulfillmentStatus === "fulfilled" ? "已发放" : order.fulfillmentStatus === "failed" ? "发放失败" : order.fulfillmentStatus === "reversed" ? "已撤销" : "尚未发放"} />
+            <DetailRow label="发放状态" value={order.fulfillmentStatus === "fulfilled" ? "已全部交付" : order.fulfillmentStatus === "manual_pending" ? "基础套餐已发放，附加服务待人工交付" : order.fulfillmentStatus === "failed" ? "发放失败" : order.fulfillmentStatus === "reversed" ? "已撤销" : "尚未发放"} />
             <DetailRow label="创建时间" value={formatDateTime(order.createdAt)} />
             <DetailRow label="支付时间" value={order.paidAt ? formatDateTime(order.paidAt) : "尚未支付"} />
             {order.reversedAt ? <DetailRow label="撤销时间" value={formatDateTime(order.reversedAt)} /> : null}
             <DetailRow label="套餐周期" value={durationLabels[order.duration || ""] || order.optionLabel} />
+            {order.trafficGb ? <DetailRow label="流量规格" value={`第 ${order.trafficTier || 1} 档 · 每月 ${order.trafficGb} GB`} /> : null}
+            {order.trafficTierMarkupPercent && (order.trafficTier || 1) > 1 ? <DetailRow label="流量加价规则" value={`每档加收周期原价 ${order.trafficTierMarkupPercent}%`} /> : null}
+            {order.fulfillmentStartedAt ? <DetailRow label="开始交付" value={formatDateTime(order.fulfillmentStartedAt)} /> : null}
+            {order.fulfilledAt ? <DetailRow label="完成交付" value={formatDateTime(order.fulfilledAt)} /> : null}
+            {order.deliveryNote ? <DetailRow label="交付说明" value={order.deliveryNote} /> : null}
           </TableBody></Table></CardContent>
         </Card>
         <Card>
@@ -282,11 +323,13 @@ export function OrderDetailPage() {
           <CardContent><Table><TableBody>
             <DetailRow label="商品" value={`${order.planName} · ${order.optionLabel}`} />
             <DetailRow label="支付渠道" value={paymentChannelLabels[order.channelCode || ""] || order.channelCode || "未知"} />
-            <DetailRow label="商品原价" value={formatMoney(order.originalAmount ?? order.totalAmount ?? order.amount)} />
-            <DetailRow label="优惠金额" value={`-${formatMoney((order.discountAmount || 0) + (order.vipDiscountAmount || 0))}`} />
+            <DetailRow label="套餐第 1 档原价" value={formatMoney(order.baseAmount ?? order.originalAmount ?? order.totalAmount ?? order.amount)} />
+            {(order.originalAmount || 0) > (order.baseAmount || order.originalAmount || 0) ? <DetailRow label="流量定制加价" value={`+${formatMoney((order.originalAmount || 0) - (order.baseAmount || 0))}`} /> : null}
+            <DetailRow label="定制后商品原价" value={formatMoney(order.originalAmount ?? order.totalAmount ?? order.amount)} />
+            <DetailRow label="优惠金额" value={`-${formatMoney((order.discountAmount || 0) + (order.vipDiscountAmount || 0))}${order.couponCode ? `（优惠码：${order.couponCode}）` : ""}`} />
             <DetailRow label="优惠后小计" value={formatMoney(order.subtotal ?? order.totalAmount ?? order.amount)} />
             <DetailRow label="税费" value={formatMoney(order.taxAmount || 0)} />
-            <DetailRow label="现金价值抵扣" value={`-${formatMoney(order.cashCredit || 0)}`} />
+            {order.addOnAmount ? <DetailRow label="附加服务合计" value={`+${formatMoney(order.addOnAmount)}`} /> : null}
             {order.walletGiftAmount ? <DetailRow label="赠送余额支付" value={formatMoney(order.walletGiftAmount)} /> : null}
             {order.walletReferralAmount ? <DetailRow label="返利余额支付" value={formatMoney(order.walletReferralAmount)} /> : null}
             {order.walletCashAmount ? <DetailRow label="充值余额支付" value={formatMoney(order.walletCashAmount)} /> : null}
@@ -297,6 +340,7 @@ export function OrderDetailPage() {
           </TableBody></Table></CardContent>
         </Card>
       </div>
+      {order.addOnSnapshots?.length ? <Card><CardHeader><CardTitle>附加服务快照</CardTitle></CardHeader><CardContent><Table><TableBody>{order.addOnSnapshots.map(addOn => <React.Fragment key={addOn.optionId}><DetailRow label="服务" value={`${addOn.name}${addOn.regionName ? ` · ${addOn.regionName}` : ""}`} /><DetailRow label="成交价格" value={formatMoney(addOn.amount)} />{addOn.durationDays ? <DetailRow label="服务期限" value={`${addOn.durationDays} 天`} /> : null}<DetailRow label="交付方式" value={addOn.deliveryMode === "manual" ? "人工交付" : "自动交付"} />{addOn.deliveryDescription ? <DetailRow label="交付约定" value={addOn.deliveryDescription} /> : null}</React.Fragment>)}</TableBody></Table>{order.fulfillmentStatus === "manual_pending" ? <section className="grid gap-3 pt-4"><Textarea aria-label="交付说明" value={deliveryNote} onChange={event => setDeliveryNote(event.target.value)} placeholder="填写已交付的账号、地区、有效期、联系记录或其他必要说明" rows={5} /><Button onClick={() => void completeDelivery()} disabled={delivering || !deliveryNote.trim()}>{delivering ? <Loader2 className="animate-spin" /> : null}标记人工服务已交付</Button></section> : null}</CardContent></Card> : null}
     </div>
   )
 }

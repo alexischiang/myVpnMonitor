@@ -86,6 +86,46 @@ pkill -f subconverter
 
 subconverter 是独立后台进程，`ctrl+c` 停止 `dev:all` 时不会自动停止，下次 `npm run dev:all` 会检测到已在运行并跳过启动。
 
+## 3x-ui 自研线路测试套餐
+
+服务端支持 `SELF-HOSTED` 0 元、30 天测试套餐。自研用户与订阅池互斥，节点仍经过现有 subconverter 交付，且不能使用换池功能。
+
+需要配置以下环境变量：
+
+```env
+XUI_BASE_URL=https://panel.example.com/<web-base-path>
+XUI_API_TOKEN=<3x-ui Settings → Security → API Token>
+XUI_SUBSCRIPTION_BASE_URL=https://sub.example.com
+XUI_SUBSCRIPTION_PATH=sub
+XUI_TIMEOUT_MS=15000
+```
+
+- `XUI_BASE_URL` 是管理 API 地址，不应暴露给浏览器。
+- `XUI_SUBSCRIPTION_BASE_URL` 是 3x-ui 独立订阅服务或其 HTTPS 反向代理地址。
+- 开通和续期时会动态读取主控面板的全部入站并关联，无需在环境变量中维护入站 ID。
+- 3x-ui Client 的邮箱直接使用本站账户的注册邮箱。
+- `SUB_CONVERTER_URL` 仍必须配置；最终公开链接继续使用本站 `/sub/<token>`。
+
+### 本地独立 3x-ui 服务
+
+主站可以通过独立 Express 服务访问 3x-ui。生产数据库不受本地配置影响。
+
+1. 启动本地 Redis，并在 `.env` 配置 `REDIS_URL`、`XUI_SERVICE_URL` 和 `XUI_SERVICE_TOKEN`。
+2. 运行 `npm run setup:xui-db` 创建 `xui_*` 表。
+3. 运行 `npm run migrate:xui-data` 复制本地 3x-ui 计费状态和 Client 映射。
+4. 使用 `npm run dev:all` 同时启动主站、3x-ui 服务和前端。
+
+本地未配置 `XUI_SERVICE_URL` 时，主站继续使用原来的 3x-ui 直连方式。生产环境应显式配置独立的 `XUI_DATABASE_URL`。
+
+流量重置使用内部接口 `POST /internal/clients/:userId/traffic-reset`，并携带 `Authorization: Bearer <XUI_SERVICE_TOKEN>`：
+
+```json
+{ "reason": "calendar_month", "month": "2026-08" }
+{ "reason": "paid", "paymentOrderId": "order-id" }
+```
+
+自然月任务每月可重复调用，`userId + month` 保证只执行一次；付费流程只能在验签并确认订单已支付后调用，`paymentOrderId` 保证回调重试不会重复执行。成功时接口会同时清零 3x-ui Client 和本站加权流量账本，响应中的 `replayed` 表示是否命中幂等结果。
+
 ## 常用命令
 
 ```bash

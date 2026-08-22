@@ -1,8 +1,9 @@
 import * as React from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
-import { Loader2 } from "lucide-react"
+import { Loader2, Users } from "lucide-react"
 
 import { apiFetch, fetchJson, postJson } from "@/api"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { FieldError } from "@/components/ui/field"
@@ -93,6 +94,8 @@ export function RegisterPage() {
   const [error, setError] = React.useState("")
   const [registrationMode, setRegistrationMode] = React.useState<"open" | "invite_only" | "disabled">("open")
   const [referralCode, setReferralCode] = React.useState(() => searchParams.get("ref") || "")
+  const [inviterLabel, setInviterLabel] = React.useState("")
+  const [referralError, setReferralError] = React.useState("")
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
   const emailInvalid = email.trim().length > 0 && !emailValid
   const passwordTooShort = password.length > 0 && password.length < 8
@@ -104,6 +107,22 @@ export function RegisterPage() {
       .then(result => setRegistrationMode(result.registrationMode))
       .catch(() => undefined)
   }, [])
+
+  React.useEffect(() => {
+    let active = true
+    setInviterLabel("")
+    setReferralError("")
+    if (!/^\d{6}$/.test(referralCode)) {
+      if (searchParams.has("ref")) setReferralError("该邀请码无效，请核对")
+      return
+    }
+    void fetchJson<{ inviterLabel: string }>(`/api/public/referrals/${referralCode}`)
+      .then(result => { if (active) setInviterLabel(result.inviterLabel) })
+      .catch(error => {
+        if (active && error instanceof Error && error.message === "邀请码无效") setReferralError("该邀请码无效，请核对")
+      })
+    return () => { active = false }
+  }, [referralCode, searchParams])
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -123,6 +142,8 @@ export function RegisterPage() {
   return (
     <AuthLayout title="创建账户" description={registrationMode === "invite_only" ? "本站仅接受邀请制注册，请向推荐你的好友询问邀请码。" : registrationMode === "disabled" ? "当前暂时不开放注册" : "请输入有效的邮箱"}>
       {registrationMode === "disabled" ? <FieldError>当前暂时不开放注册</FieldError> : null}
+      {inviterLabel ? <Alert variant="success"><Users aria-hidden="true" /><AlertDescription><span className="whitespace-nowrap">您正在接受来自 <strong>{inviterLabel}</strong> 的邀请</span></AlertDescription></Alert> : null}
+      {referralError ? <Alert variant="error"><AlertDescription>{referralError}</AlertDescription></Alert> : null}
       <form className="grid gap-4" onSubmit={submit} noValidate>
         <div className="grid gap-2"><Label htmlFor="email">邮箱</Label><Input id="email" type="email" autoComplete="email" value={email} onChange={event => { setEmail(event.target.value); setError("") }} aria-invalid={emailInvalid} required /><FieldError>{emailInvalid ? "请输入有效邮箱。" : null}</FieldError></div>
         <div className="grid gap-2"><Label htmlFor="new-password">密码</Label><Input id="new-password" type="password" minLength={8} autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} aria-invalid={passwordTooShort} required /><FieldError>{passwordTooShort ? "密码至少需要 8 位。" : null}</FieldError></div>

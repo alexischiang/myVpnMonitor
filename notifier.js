@@ -216,15 +216,21 @@ function buildLowTrafficAlert(item, remaining, threshold) {
 
 function buildPaymentAlert(order) {
   const recharge = order.purpose === "recharge";
+  const trafficPack = order.purpose === "traffic_pack";
   const total = Number(order.totalAmount ?? order.amount ?? 0).toFixed(2);
+  const channel = { "100": "支付宝", alipay: "支付宝", "200": "微信支付", wxpay: "微信支付", manual: "人工收款", wallet: "账户余额", "cash-credit": "现金价值全额抵扣" }[order.channelCode] || order.channelCode || "-";
+  const platform = order.paymentPlatformName || { manual: "人工收款", wallet: "站内钱包" }[order.paymentProvider] || order.paymentProvider || "-";
+  const paidAt = new Date(order.paidAt || Date.now()).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
   return [
     "🔔 用户消费提醒",
     `📧 用户邮箱：${order.email || "-"}`,
-    `🛒 消费类型：${recharge ? "余额充值" : "套餐购买"}`,
+    `🛒 消费类型：${recharge ? "余额充值" : trafficPack ? "流量包购买" : "套餐购买"}`,
     `📦 消费详情：${recharge ? `充值 ¥${total}` : `${order.planName || "-"} / ${order.optionLabel || "-"}`}`,
     `💰 消费金额：¥${total}`,
+    `💳 付款渠道：${channel}`,
+    `🏦 支付平台：${platform}`,
     `🧾 订单编号：${order.merOrderTid || order.id || "-"}`,
-    `🕒 消费时间：${order.paidAt || new Date().toISOString()}`
+    `🕒 消费时间：${paidAt}`
   ].join("\n");
 }
 

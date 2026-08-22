@@ -7,24 +7,11 @@ const crypto = require("crypto");
 const zlib = require("zlib");
 const { createDataStore } = require("./database");
 const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
+const { loadLocalEnv } = require("./env");
+const { requestXui, requestXuiService } = require("./xui-client");
 const yaml = require("js-yaml");
 const notifier = require("./notifier");
 const packageJson = require("./package.json");
-
-function loadLocalEnv({ override = false } = {}) {
-  const envPath = path.join(__dirname, ".env");
-  if (!fsSync.existsSync(envPath)) return;
-  const content = fsSync.readFileSync(envPath, "utf8");
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const separatorIndex = trimmed.indexOf("=");
-    if (separatorIndex === -1) continue;
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const value = trimmed.slice(separatorIndex + 1).trim().replace(/^["']|["']$/g, "");
-    if (key && (override || process.env[key] === undefined)) process.env[key] = value;
-  }
-}
 
 loadLocalEnv();
 
@@ -45,6 +32,21 @@ const RELAY_DEBUG_LOGS = process.env.RELAY_DEBUG_LOGS === "true";
 const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 const REFRESH_CONCURRENCY = Math.max(1, Number(process.env.REFRESH_CONCURRENCY || 5));
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
+const XUI_BASE_URL = (process.env.XUI_BASE_URL || "").replace(/\/+$/, "");
+const XUI_API_TOKEN = String(process.env.XUI_API_TOKEN || "").trim();
+const XUI_PANEL_NAME = String(process.env.XUI_PANEL_NAME || "主面板").trim();
+const XUI_SUBSCRIPTION_BASE_URL = (process.env.XUI_SUBSCRIPTION_BASE_URL || "").replace(/\/+$/, "");
+const XUI_SUBSCRIPTION_PATH = `/${String(process.env.XUI_SUBSCRIPTION_PATH || "sub").replace(/^\/+|\/+$/g, "")}/`;
+const XUI_TIMEOUT_MS = Math.max(1000, Number(process.env.XUI_TIMEOUT_MS || 15000));
+const XUI_SERVICE_URL = (process.env.XUI_SERVICE_URL || "").replace(/\/+$/, "");
+const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
+const XUI_TRAFFIC_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const XUI_DEFAULT_TRAFFIC_BYTES = 100 * 1024 ** 3;
+const XUI_VISION_FLOW = "xtls-rprx-vision";
+const LEGACY_RECURRING_TRAFFIC_GB = Object.freeze({ basic: 50, pro: 100, ultra: 100 });
+const TRAFFIC_PACK_BYTES = 100 * 1024 ** 3;
+const TRAFFIC_PACK_PRICE = 20;
+const CHINA_TIME_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const SUBCONVERTER_BOOLEAN_DEFAULTS = Object.freeze({
   emoji: true,
@@ -63,16 +65,75 @@ const SUBCONVERTER_BOOLEAN_DEFAULTS = Object.freeze({
   strict: false
 });
 const DEFAULT_SERVICE_PROVIDER = "YKK Cloud";
+const FRIENDS_PRODUCT_ID = "friends-lifetime-unlimited";
+const LEGACY_CUSTOM_PRODUCT_ID = "legacy-custom-entitlement";
 const DEFAULT_PRICING = [
-  { id: "basic", group: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", recommended: false, traffic: "每月 100G", features: ["基础线路", "流媒体支持", "在线客服"], unavailableFeatures: ["稳定 GPT 解锁", "国际内网专线", "独享级带宽体验"], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 39, quarterly: 109, half_yearly: 199, yearly: 369, unlimitedMonthly: 79, unlimitedQuarterly: 219, unlimitedHalfYearly: 399, unlimitedYearly: 599 },
-  { id: "pro", group: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], unavailableFeatures: ["国际内网专线", "独享级带宽体验"], monthlyDevices: 3, quarterlyDevices: 3, half_yearlyDevices: 5, yearlyDevices: 5, monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429, unlimitedMonthly: 95, unlimitedQuarterly: 249, unlimitedHalfYearly: 439, unlimitedYearly: 679 },
-  { id: "ultra", group: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", recommended: false, traffic: "每月 300G", features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], unavailableFeatures: [], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859, unlimitedMonthly: 129, unlimitedQuarterly: 349, unlimitedHalfYearly: 659, unlimitedYearly: 1109 }
+  { id: "basic", group: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", recommended: false, traffic: "每月 50G", trafficBaseGb: 50, trafficMaxTier: 10, trafficTierMarkupPercent: 50, features: ["基础线路", "流媒体支持", "在线客服"], unavailableFeatures: ["稳定 GPT 解锁", "国际内网专线", "独享级带宽体验"], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 39, quarterly: 109, half_yearly: 199, yearly: 369, lifetimeName: "BASIC 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "100G 固定流量", lifetimeTrafficBytes: 100 * 1024 ** 3, lifetimePrice: 79, lifetimeDevices: 1, lineType: "self_hosted" },
+  { id: "pro", group: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", trafficBaseGb: 200, trafficMaxTier: 10, trafficTierMarkupPercent: 50, features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], unavailableFeatures: ["国际内网专线", "独享级带宽体验"], monthlyDevices: 3, quarterlyDevices: 3, half_yearlyDevices: 5, yearlyDevices: 5, monthly: 49, quarterly: 129, half_yearly: 229, yearly: 429, lifetimeName: "PRO 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "200G 固定流量", lifetimeTrafficBytes: 200 * 1024 ** 3, lifetimePrice: 95, lifetimeDevices: 3, lifetimeRecommended: true, lineType: "self_hosted" },
+  { id: "ultra", group: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", recommended: false, traffic: "每月 300G", trafficBaseGb: 300, trafficMaxTier: 10, trafficTierMarkupPercent: 50, features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], unavailableFeatures: [], monthlyDevices: 1, quarterlyDevices: 2, half_yearlyDevices: 3, yearlyDevices: 3, monthly: 89, quarterly: 239, half_yearly: 449, yearly: 859, lifetimeName: "ULTRA 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "300G 固定流量", lifetimeTrafficBytes: 300 * 1024 ** 3, lifetimePrice: 129, lifetimeDevices: 1, lineType: "self_hosted" },
+  { id: FRIENDS_PRODUCT_ID, group: FRIENDS_PRODUCT_ID, productKind: "plan", internal: true, name: "亲友永久不限量", title: "后台免费授予的永久不限量服务", description: "仅用于亲友账户，不在用户购买页面展示。", enabled: true, recurringDeleted: true, lifetimeName: "亲友永久不限量", lifetimeTitle: "永久有效 · 不限流量", lifetimeDescription: "后台内部授予，不公开售卖。", lifetimeTraffic: "不限流量", lifetimeTrafficBytes: 0, lifetimePrice: 0, lifetimeDevices: 5, lifetimeUnlimited: true, lineType: "self_hosted", features: ["自研线路", "永久有效", "不限流量"], unavailableFeatures: ["不可购买流量包", "不可叠加附加服务"] },
+  { id: "traffic_pack", group: "traffic_pack", productKind: "addon", addonType: "traffic_pack", name: "流量包", title: "临时补充当前周期流量", description: "仅适用于已生效的周期性固定流量套餐。", enabled: true, addonPrice: 20, addonTrafficGb: 100, addonUnit: "100 GB", addonDeliveryMode: "automatic", addonDeliveryDescription: "支付成功后立即加入当前周期，套餐续费、更换或月度重置后失效。" },
+  { id: "home_ip", group: "home_ip", productKind: "addon", addonType: "home_ip", name: "家宽 IP 定制", title: "按地区提供家庭宽带出口 IP", description: "可随周期性套餐购买，服务有效期 30 天。", enabled: true, addonPrice: 0, addonUnit: "30 天", addonDurationDays: 30, addonDeliveryMode: "manual", addonDeliveryDescription: "支付成功后进入人工交付，客服将联系确认使用信息。", addonRegions: [{ id: "us", name: "美国", price: 40 }, { id: "uk", name: "英国", price: 40 }, { id: "th", name: "泰国", price: 55 }, { id: "vn", name: "越南", price: 60 }] },
+  { id: "tiktok_custom", group: "tiktok_custom", productKind: "custom", addonType: "manual", name: "TikTok 专线定制", title: "根据地区、账号规模和业务场景人工报价", description: "提交需求后由客服确认线路与最终价格。", enabled: true, addonPrice: 0, addonUnit: "项", addonDeliveryMode: "manual", addonDeliveryDescription: "联系客服提交需求，确认方案后创建人工订单。" },
+  { id: "emby_custom", group: "emby_custom", productKind: "custom", addonType: "manual", name: "Emby 影视服务", title: "人工确认服务器与使用期限", description: "由客服根据库存和服务周期报价交付。", enabled: true, addonPrice: 0, addonUnit: "项", addonDeliveryMode: "manual", addonDeliveryDescription: "联系客服确认账号、期限和交付方式。" }
 ];
 function publicPricing() {
-  return DEFAULT_PRICING.map(defaultRow => {
-    const saved = pricing.find(item => item.group === defaultRow.group) || {};
-    return { ...defaultRow, ...saved, features: Array.isArray(saved.features) ? saved.features : defaultRow.features, unavailableFeatures: Array.isArray(saved.unavailableFeatures) ? saved.unavailableFeatures : defaultRow.unavailableFeatures };
+  return (pricing.length ? pricing : DEFAULT_PRICING).map(saved => {
+    const defaultRow = DEFAULT_PRICING.find(item => item.group === saved.group) || {};
+    return { ...defaultRow, ...saved, ...(!["addon", "custom"].includes(saved.productKind) ? { lineType: "self_hosted" } : {}), enabled: saved.enabled !== false, features: Array.isArray(saved.features) ? saved.features : defaultRow.features || [], unavailableFeatures: Array.isArray(saved.unavailableFeatures) ? saved.unavailableFeatures : defaultRow.unavailableFeatures || [] };
   });
+}
+const PRICING_PERIODS = {
+  30: { priceKey: "monthly", duration: "monthly", label: "月付 30天" },
+  90: { priceKey: "quarterly", duration: "quarterly", label: "季付 90天" },
+  180: { priceKey: "half_yearly", duration: "half_yearly", label: "半年付 180天" },
+  360: { priceKey: "yearly", duration: "yearly", label: "年付 360天" }
+};
+
+function pricingProduct(group) {
+  return publicPricing().find(item => item.group === group) || null;
+}
+
+function recurringTrafficConfig(plan = {}) {
+  const parsed = String(plan.traffic || "").match(/(\d+(?:\.\d+)?)\s*(?:GB|G)/i);
+  const baseGb = Number(plan.trafficBaseGb ?? parsed?.[1]);
+  const maxTier = Number(plan.trafficMaxTier ?? 10);
+  const markupPercent = Number(plan.trafficTierMarkupPercent ?? 50);
+  return {
+    baseGb: Number.isFinite(baseGb) && baseGb > 0 ? baseGb : 0,
+    maxTier: Number.isSafeInteger(maxTier) && maxTier > 0 ? Math.min(maxTier, 50) : 1,
+    markupPercent: Number.isFinite(markupPercent) && markupPercent >= 0 ? Math.min(markupPercent, 1000) : 0
+  };
+}
+
+function normalizeTrafficTier(plan, value) {
+  const { maxTier } = recurringTrafficConfig(plan);
+  const tier = Number(value ?? 1);
+  if (!Number.isSafeInteger(tier) || tier < 1 || tier > maxTier) throw new Error(`流量档位必须为 1-${maxTier} 档。`);
+  return tier;
+}
+
+function dynamicPaymentPlanOption(optionId) {
+  const id = String(optionId || "");
+  const lifetimeMatch = id.match(/^(.+)-lifetime$/);
+  if (lifetimeMatch) {
+    const plan = pricingProduct(lifetimeMatch[1]);
+    if (!plan || plan.internal === true || plan.productKind === "addon" || plan.productKind === "custom" || plan.lifetimeDeleted || plan.lifetimeEnabled === false || plan.lifetimeStock === 0 || !Number.isFinite(Number(plan.lifetimePrice))) return null;
+    return { planId: plan.group, planName: plan.lifetimeName || `${plan.name || plan.group} 不限时`, optionLabel: "固定流量 · 不限时", priceKey: "lifetimePrice", duration: "lifetime", group: plan.group, lineType: "self_hosted", lifetime: true, fallbackPrice: Number(plan.lifetimePrice) };
+  }
+  const recurringMatch = id.match(/^(.+)-(30|90|180|360)$/);
+  if (!recurringMatch) return null;
+  const plan = pricingProduct(recurringMatch[1]);
+  const period = PRICING_PERIODS[recurringMatch[2]];
+  if (!plan || plan.internal === true || plan.productKind === "addon" || plan.productKind === "custom" || plan.recurringDeleted || plan.enabled === false || plan.stock === 0 || !Number.isFinite(Number(plan[period.priceKey]))) return null;
+  return { planId: plan.group, planName: plan.name || plan.group.toUpperCase(), optionLabel: period.label, priceKey: period.priceKey, duration: period.duration, group: plan.group, lineType: "self_hosted", fallbackPrice: Number(plan[period.priceKey]) };
+}
+
+function planCycleOptions(plan, selectedOption) {
+  if (selectedOption.lifetime) return [{ optionId: `${plan.group}-lifetime`, label: "固定流量 · 不限时", amount: Number(plan.lifetimePrice), devices: Number(plan.lifetimeDevices || 0) }];
+  return Object.entries(PRICING_PERIODS).flatMap(([days, period]) => Number.isFinite(Number(plan[period.priceKey]))
+    ? [{ optionId: `${plan.group}-${days}`, label: period.label, amount: Number(plan[period.priceKey]), devices: Number(plan[`${period.duration}Devices`] || 0) }]
+    : []);
 }
 const PAYMENT_PLAN_OPTIONS = {
   "basic-30": { planId: "basic", planName: "BASIC", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "basic", fallbackPrice: 39 },
@@ -100,6 +161,9 @@ const PAYMENT_PLAN_OPTIONS = {
   "ultra-unlimited-180": { planId: "ultra", planName: "ULTRA", optionLabel: "半年付 180天 无限流量", priceKey: "unlimitedHalfYearly", duration: "half_yearly", group: "ultra", unlimited: true, fallbackPrice: 659 },
   "ultra-unlimited-360": { planId: "ultra", planName: "ULTRA", optionLabel: "年付 360天 无限流量", priceKey: "unlimitedYearly", duration: "yearly", group: "ultra", unlimited: true, fallbackPrice: 1109 }
 };
+for (const row of DEFAULT_PRICING.filter(item => item.lifetimePrice !== undefined && item.internal !== true)) {
+  PAYMENT_PLAN_OPTIONS[`${row.group}-lifetime`] = { planId: row.group, planName: row.lifetimeName, optionLabel: "固定流量 · 不限时", priceKey: "lifetimePrice", duration: "lifetime", group: row.group, lifetime: true, fallbackPrice: row.lifetimePrice };
+}
 if (process.env.NODE_ENV === "test") {
   PAYMENT_PLAN_OPTIONS["pro-test-001"] = { planId: "pro", planName: "PRO", optionLabel: "支付测试 1 元", duration: "monthly", group: "pro", fallbackPrice: 1 };
 }
@@ -107,7 +171,7 @@ const DEFAULT_PRICING_FAQS = [
   { id: "devices", question: "“可绑定设备”是指什么？", answer: "指同一订阅可同时使用的设备数量，手机、电脑和平板等各计为一台；具体数量以所选套餐和计费周期显示为准。", enabled: true },
   { id: "gpt", question: "哪些套餐支持 GPT 解锁？", answer: "当前 PRO 套餐明确包含稳定 GPT 解锁。其他套餐能力请以套餐卡片的功能列表为准；实际可用性可能受目标平台策略和网络环境影响。", enabled: true },
   { id: "discount", question: "季度、半年和年度套餐如何计算优惠？", answer: "页面折扣以月付价格乘以对应月数作为基准计算，周期价格旁的百分比就是相比连续月付节省的比例。", enabled: true },
-  { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "同级同流量版本的新购会延长有效期；购买不同级别，或在同一级别切换固定/无限流量版本，会立即覆盖当前套餐。覆盖时按当前套餐剩余有效期折算实付现金价值并自动抵扣，最多抵扣至新订单 0 元，不退现、不结转余额。", enabled: true },
+  { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "新套餐支付成功后会立即覆盖当前套餐，原套餐剩余有效期和流量不再保留。提交订单前会要求再次确认。", enabled: true },
   { id: "delivery", question: "支付后多久生效？可以退款吗？", answer: "支付成功并完成确认后套餐会自动生效。套餐属于即时交付的数字商品，购买后不支持退款。", enabled: true }
 ];
 const DEFAULT_PAYMENT_API_BASE_URL = "http://RfBseViEKZlMAmu7ArWO.itxt002.xyz";
@@ -229,6 +293,38 @@ const mimeTypes = {
 let dataInitializationPromise = null;
 let dataInitialized = false;
 
+const PRODUCT_CATALOG_MIGRATION_ID = "product-catalog-v3";
+
+async function ensureProductCatalog() {
+  const previous = await dataStore.getRecord("migrationState", PRODUCT_CATALOG_MIGRATION_ID);
+  if (previous?.completedAt) return previous;
+  let added = 0;
+  let backfilled = 0;
+  for (const defaultRow of DEFAULT_PRICING) {
+    const existing = pricing.find(row => row.group === defaultRow.group);
+    if (!existing) {
+      pricing.push(structuredClone(defaultRow));
+      added++;
+      continue;
+    }
+    for (const [key, value] of Object.entries(defaultRow)) {
+      if (existing[key] !== undefined) continue;
+      existing[key] = structuredClone(value);
+      backfilled++;
+    }
+  }
+  if (added || backfilled) await savePricing();
+  const obsoleteInUse = users.some(user => user.currentProductId === "self_hosted" || user.currentOptionId === "self-hosted-test-30" || user.activeGroup === "self_hosted" || user.group === "self_hosted");
+  const beforeCleanup = pricing.length;
+  if (!obsoleteInUse) pricing = pricing.filter(item => item.group !== "self_hosted");
+  const removed = beforeCleanup - pricing.length;
+  if (removed) await savePricing();
+  const report = { id: PRODUCT_CATALOG_MIGRATION_ID, added, backfilled, removed, completedAt: new Date().toISOString() };
+  await dataStore.setRecord("migrationState", PRODUCT_CATALOG_MIGRATION_ID, report);
+  console.log(`[migration:${PRODUCT_CATALOG_MIGRATION_ID}] ${JSON.stringify({ added, backfilled, removed })}`);
+  return report;
+}
+
 async function initializeDataFile() {
   await dataStore.init();
   const state = await dataStore.loadAll();
@@ -248,7 +344,7 @@ async function initializeDataFile() {
   referralRewards = state.referralRewards || [];
   if (ensureReferralAccountFields()) await saveAccounts();
   lastLoadedAt = Date.now();
-  if (!pricing.length) { pricing = DEFAULT_PRICING.map(r => ({ ...r })); await savePricing(); }
+  await ensureProductCatalog();
   if (!salesSettings.length) { salesSettings = [initialSalesSettings()]; await saveSalesSettings(); }
   let embyVendorsMigrated = false;
   for (const v of embyVendors) {
@@ -265,6 +361,7 @@ async function initializeDataFile() {
   const usersMigrated = ensureUserRelayTokens();
   const cashValuesMigrated = ensureUserCashValues();
   if (usersMigrated || cashValuesMigrated) await saveUsers();
+  await ensureUserProductBindings();
 
   // 预设解耦迁移：将 vendor.defaultSubconverterConfig 拆为全局预设 + 供应商覆盖字段
   const existingPreset = presets.find(p => p.id === "default");
@@ -797,10 +894,10 @@ function paymentConfigs() {
     id: settings.id || (index ? `payment-${index + 1}` : "default"),
     name: settings.name || (index ? `支付平台 ${index + 1}` : "默认支付平台"),
     displayName: settings.displayName || settings.name || (index ? `支付平台 ${index + 1}` : "默认支付平台"),
-    provider: settings.provider === "xinhui" ? "xinhui" : "legacy",
+    provider: ["legacy", "xinhui", "test"].includes(settings.provider) ? settings.provider : "legacy",
     enabled: settings.enabled !== false,
     priority: Number.isInteger(Number(settings.priority)) ? Number(settings.priority) : index,
-    apiBaseUrl: String(settings.apiBaseUrl || DEFAULT_PAYMENT_API_BASE_URL).replace(/\/+$/, ""),
+    apiBaseUrl: settings.provider === "test" ? "" : String(settings.apiBaseUrl || DEFAULT_PAYMENT_API_BASE_URL).replace(/\/+$/, ""),
     merchantId: settings.merchantId || "",
     merchantSecret: settings.merchantSecret || "",
     alipayChannelCode: settings.alipayChannelCode || settings.channelCode || "",
@@ -824,19 +921,19 @@ function normalizePaymentSettings(payload, current = {}) {
     return normalized;
   };
   const provider = String(payload?.provider || current.provider || "legacy");
-  if (!['legacy', 'xinhui'].includes(provider)) throw new Error("不支持的支付平台类型。");
+  if (!["legacy", "xinhui", "test"].includes(provider)) throw new Error("不支持的支付平台类型。");
   const name = String(payload?.name || current.name || "").trim();
   if (!name || name.length > 80) throw new Error("平台名称不能为空且不能超过 80 个字符。");
   const displayName = String(payload?.displayName || current.displayName || name).trim();
   if (!displayName || displayName.length > 80) throw new Error("前台显示名称不能为空且不能超过 80 个字符。");
-  const merchantId = String(payload?.merchantId || "").trim();
-  if (!merchantId) throw new Error("商户 ID 不能为空。");
-  const merchantSecret = String(payload?.merchantSecret || "").trim() || current.merchantSecret || "";
-  if (!merchantSecret) throw new Error("商户密钥不能为空。");
-  const alipayChannelCode = paymentChannelCode(payload?.alipayChannelCode || payload?.channelCode);
-  const wechatChannelCode = paymentChannelCode(payload?.wechatChannelCode);
-  const apiBaseUrl = url(payload?.apiBaseUrl, "支付平台地址") || (provider === "xinhui" ? "https://api.shrtxs.cn" : "");
-  if (!apiBaseUrl) throw new Error("支付平台地址不能为空。");
+  const merchantId = provider === "test" ? "" : String(payload?.merchantId || "").trim();
+  if (provider !== "test" && !merchantId) throw new Error("商户 ID 不能为空。");
+  const merchantSecret = provider === "test" ? "" : String(payload?.merchantSecret || "").trim() || current.merchantSecret || "";
+  if (provider !== "test" && !merchantSecret) throw new Error("商户密钥不能为空。");
+  const alipayChannelCode = paymentChannelCode(provider === "test" ? "100" : payload?.alipayChannelCode || payload?.channelCode);
+  const wechatChannelCode = paymentChannelCode(provider === "test" ? "200" : payload?.wechatChannelCode);
+  const apiBaseUrl = provider === "test" ? "" : url(payload?.apiBaseUrl, "支付平台地址") || (provider === "xinhui" ? "https://api.shrtxs.cn" : "");
+  if (provider !== "test" && !apiBaseUrl) throw new Error("支付平台地址不能为空。");
   return {
     id: current.id || String(payload?.id || crypto.randomUUID()),
     name,
@@ -901,7 +998,7 @@ function verifyPaymentSign(params, config = paymentConfig()) {
 }
 
 function paymentConfigCredentialsReady(config) {
-  return Boolean(config?.merchantId && config.merchantSecret && config.alipayChannelCode && config.wechatChannelCode);
+  return config?.provider === "test" || Boolean(config?.merchantId && config.merchantSecret && config.alipayChannelCode && config.wechatChannelCode);
 }
 
 function paymentConfigReady(config, method = "") {
@@ -953,6 +1050,17 @@ function publicPaymentOrder(order) {
     optionId: order.optionId,
     optionLabel: order.optionLabel,
     purpose: order.purpose || "plan",
+    addOns: order.addOns || [],
+    addOnSnapshots: order.addOnSnapshots || [],
+    addOnAmount: order.addOnAmount || 0,
+    productSnapshot: order.productSnapshot || null,
+    trafficTier: order.trafficTier || 1,
+    trafficBaseGb: order.trafficBaseGb || 0,
+    trafficGb: order.trafficGb ?? null,
+    trafficMaxTier: order.trafficMaxTier || 1,
+    trafficTierMarkupPercent: order.trafficTierMarkupPercent || 0,
+    baseAmount: order.baseAmount ?? order.originalAmount ?? order.amount,
+    planPayableAmount: order.planPayableAmount ?? order.totalAmount ?? order.amount,
     amount: order.amount,
     totalAmount: order.totalAmount ?? order.amount,
     walletAmount: order.walletAmount || 0,
@@ -975,6 +1083,7 @@ function publicPaymentOrder(order) {
     cashCredit: order.cashCredit || 0,
     purchaseAction: order.purchaseAction || "initial",
     channelCode: order.channelCode || "",
+    paymentProvider: order.paymentProvider || "",
     couponCode: order.couponCode || "",
     payUrl: order.payUrl || "",
     status,
@@ -983,7 +1092,10 @@ function publicPaymentOrder(order) {
     accountId: order.accountId || "",
     deliveryUrl: order.deliveryUrl || "",
     fulfillmentStatus: order.fulfillmentStatus || "",
-    fulfillmentError: poolFulfillmentError || (order.fulfillmentError ? (order.purpose === "recharge" ? "充值暂未成功入账。" : "套餐暂未成功发放。") : ""),
+    fulfillmentStartedAt: order.fulfillmentStartedAt || "",
+    fulfilledAt: order.fulfilledAt || "",
+    deliveryNote: order.deliveryNote || "",
+    fulfillmentError: poolFulfillmentError || (order.fulfillmentError ? (order.purpose === "recharge" ? "充值暂未成功入账。" : order.purpose === "traffic_pack" ? "流量包暂未成功发放。" : order.purpose === "addon" ? "附加服务暂未进入交付流程。" : "套餐暂未成功发放。") : ""),
     paymentError: order.paymentError || "",
     createdAt: order.createdAt,
     expiresAt: paymentOrderExpiresAt(order),
@@ -997,6 +1109,7 @@ function adminPaymentOrder(order) {
   return {
     ...publicPaymentOrder(order),
     email: order.email || account?.email || "",
+    userId: order.userId || account?.linkedUserId || (account ? `account:${account.id}` : ""),
     duration: order.duration || "",
     group: order.group || "",
     internalFulfillmentError: order.fulfillmentError || "",
@@ -1090,6 +1203,7 @@ function requestIp(req) {
 }
 
 async function createGatewayPayment(config, params) {
+  if (config.provider === "test") return { result: { tid: `test-${params.merOrderTid}`, payOrderStatus: 0 }, requestParams: {} };
   if (config.provider !== "xinhui") {
     const signed = compactPaymentParams(params);
     signed.sign = paymentSign(signed, config);
@@ -1152,12 +1266,14 @@ function normalizePaymentAmountForGateway(value) {
   return amount.toFixed(2);
 }
 
-function resolvePaymentPlanOption(optionId) {
-  const option = PAYMENT_PLAN_OPTIONS[String(optionId || "")];
+function resolvePaymentPlanOption(optionId, { allowLegacy = false } = {}) {
+  const id = String(optionId || "");
+  const option = dynamicPaymentPlanOption(id)
+    || ((allowLegacy || (process.env.NODE_ENV === "test" && id === "pro-test-001")) ? PAYMENT_PLAN_OPTIONS[id] : null);
   if (!option) throw new Error("Unsupported pricing option.");
-  const priceRow = pricing.find(item => item.group === option.planId);
+  const priceRow = pricingProduct(option.planId);
   const managedPrice = option.priceKey ? Number(priceRow?.[option.priceKey]) : NaN;
-  const amount = Number.isFinite(managedPrice) && managedPrice > 0 ? managedPrice : option.fallbackPrice;
+  const amount = Number.isFinite(managedPrice) && managedPrice >= 0 ? managedPrice : option.fallbackPrice;
   return { ...option, amount };
 }
 
@@ -1425,6 +1541,29 @@ function normalizeReferralCode(value) {
   return /^\d{6}$/.test(code) ? code : "";
 }
 
+function accountServiceInstances(accountId, now = Date.now()) {
+  return paymentOrders.filter(order => order.accountId === accountId && order.status === "paid" && !order.reversedAt).flatMap(order => (order.addOnSnapshots || []).map((item, index) => {
+    const startedAt = order.paidAt || order.createdAt;
+    const durationDays = Number(item.durationDays || 0);
+    const expiresAt = durationDays ? new Date(new Date(startedAt).getTime() + durationDays * 864e5).toISOString() : "";
+    const status = expiresAt && new Date(expiresAt).getTime() <= now ? "expired" : order.fulfillmentStatus === "manual_pending" ? "pending" : order.fulfillmentStatus === "fulfilled" ? "active" : "processing";
+    return { id: `${order.id}:${index}`, orderId: order.id, name: item.name, optionId: item.optionId, regionName: item.regionName || "", amount: item.amount, durationDays, startedAt, expiresAt, status, deliveryNote: order.deliveryNote || "" };
+  }));
+}
+
+function publicInviterLabel(account, linkedUser = userForAccount(account)) {
+  const name = [linkedUser?.userId, linkedUser?.wechatName]
+    .map(value => String(value || "").trim())
+    .find(value => value && !value.includes("@"));
+  if (name) return name.slice(0, 32);
+  const email = [linkedUser?.email, account?.email, linkedUser?.userId]
+    .map(value => String(value || "").trim())
+    .find(value => value.includes("@"));
+  if (email) return email.slice(0, 254);
+  const customerID = linkedUser?.customerID || account?.customerID;
+  return customerID ? `#${customerID}` : "一位用户";
+}
+
 function randomReferralCode() {
   let code = "";
   do code = String(Math.floor(100000 + Math.random() * 900000));
@@ -1443,6 +1582,7 @@ function ensureReferralAccountFields() {
 }
 
 function referralRewardBaseCents(order) {
+  if (Number.isFinite(Number(order.planCashValueAmount))) return Math.max(0, Math.round(Number(order.planCashValueAmount) * 100));
   return Math.max(0, Math.round((Number(order.amount || 0) + Number(order.walletCashAmount || 0)) * 100));
 }
 
@@ -1471,7 +1611,7 @@ async function createReferralReward(order, account) {
   const inviter = accounts.find(item => item.id === inviterId);
   const baseCents = referralRewardBaseCents(order);
   if (!inviter || !baseCents) return;
-  const priorPaid = paymentOrders.some(item => item.accountId === account.id && item.id !== order.id && item.purpose !== "recharge" && item.status === "paid");
+  const priorPaid = paymentOrders.some(item => item.accountId === account.id && item.id !== order.id && (!item.purpose || item.purpose === "plan") && item.status === "paid");
   if (priorPaid && inviter.recurringReferral !== true) return;
   if (referralRewards.some(item => item.sourceOrderId === order.id)) return;
   const rate = Math.max(0, Math.min(100, Number(inviter.referralRate ?? 10)));
@@ -1496,11 +1636,8 @@ function syncWalletVip(account, wallet) {
   }
 }
 
-async function paymentQuoteForAccount(payload, account) {
-  const wallet = await walletForAccount(account);
-  const quote = paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id);
+function quoteWithWallet(quote, wallet, useBalance = true) {
   const payableCents = Math.round(quote.amount * 100);
-  const useBalance = payload.useBalance !== false;
   const walletGiftCents = useBalance ? Math.min(payableCents, wallet.availableGiftCents) : 0;
   const walletReferralCents = useBalance ? Math.min(payableCents - walletGiftCents, wallet.availableReferralCents) : 0;
   const walletCashCents = useBalance ? Math.min(payableCents - walletGiftCents - walletReferralCents, wallet.availableCashCents) : 0;
@@ -1516,6 +1653,145 @@ async function paymentQuoteForAccount(payload, account) {
     paymentPlatforms: publicPaymentPlatforms(),
     wallet: publicWallet(wallet)
   };
+}
+
+function requireTrafficPackUser(account) {
+  const user = userForAccount(account);
+  if (!user || isUserExpired(user)) throw new Error("当前没有生效中的套餐。");
+  if (!isSelfHostedUser(user)) throw new Error("流量包仅适用于自研线路套餐。");
+  if (user.duration === "lifetime") throw new Error("不限时套餐不能购买附加服务。");
+  if (user.unlimited) throw new Error("无限流量套餐无需购买流量包。");
+  if (isUserAccountDisabled(user)) throw new Error("当前账户已停用，暂时无法购买流量包。");
+  if (!user.xuiClientEmail) throw new Error("当前套餐尚未关联 3x-ui Client。");
+  if (user.xuiLastTraffic?.remainingBytes == null || !Number.isFinite(Number(user.xuiLastTraffic.remainingBytes))) throw new Error("当前流量尚未完成同步，请稍后重试。");
+  return user;
+}
+
+function trafficPackConfig() {
+  const product = pricingProduct("traffic_pack") || {};
+  const trafficGb = Number(product.addonTrafficGb);
+  const price = Number(product.addonPrice);
+  return {
+    product,
+    trafficGb: Number.isFinite(trafficGb) && trafficGb > 0 ? trafficGb : TRAFFIC_PACK_BYTES / 1024 ** 3,
+    price: Number.isFinite(price) && price >= 0 ? price : TRAFFIC_PACK_PRICE
+  };
+}
+
+function trafficPackQuote(account) {
+  const user = requireTrafficPackUser(account);
+  const { product, trafficGb, price } = trafficPackConfig();
+  if (product.enabled === false) throw new Error("流量包暂未开放。");
+  return {
+    optionId: "traffic-pack-100g",
+    planId: "traffic-pack",
+    planName: "流量包",
+    group: activeUserGroup(user),
+    optionLabel: `${trafficGb} GB`,
+    title: `${trafficGb} GB ${product.name || "流量包"}`,
+    description: product.addonDeliveryDescription || product.description || "购买后立即叠加到当前周期，月度重置、续费或更换套餐后失效。",
+    traffic: `当前周期增加 ${trafficGb} GB 流量`,
+    features: Array.isArray(product.features) && product.features.length ? product.features : ["支付成功后立即生效", "同一周期可重复购买并累计"],
+    devices: 0,
+    trafficGb,
+    originalAmount: price,
+    discountAmount: 0,
+    vipLevel: "vip1",
+    vipDiscountPercent: 0,
+    vipDiscountAmount: 0,
+    subtotal: price,
+    taxRate: 0,
+    taxAmount: 0,
+    beforeCreditAmount: price,
+    cashCredit: 0,
+    purchaseAction: "add_on",
+    amount: price,
+    couponCode: "",
+    discountPercent: 0,
+    cycles: []
+  };
+}
+
+function requireRecurringPlanUser(account) {
+  const user = userForAccount(account);
+  if (!user || isUserExpired(user)) throw new Error("当前没有生效中的套餐。");
+  if (user.duration === "lifetime") throw new Error("不限时套餐不能购买附加服务。");
+  if (isUserAccountDisabled(user)) throw new Error("当前账户已停用，暂时无法购买附加服务。");
+  return user;
+}
+
+function homeIpQuote(account, requestedOptionId = "") {
+  const user = requireRecurringPlanUser(account);
+  const product = pricingProduct("home_ip");
+  const regions = Array.isArray(product?.addonRegions) ? product.addonRegions : [];
+  if (!product || product.enabled === false || product.stock === 0 || !regions.length) throw new Error("家宽 IP 暂未开放。");
+  const requestedRegionId = String(requestedOptionId || "").replace(/^home_ip:/, "");
+  const region = regions.find(item => item.id === requestedRegionId) || (!requestedRegionId ? regions[0] : null);
+  if (!region) throw new Error("家宽 IP 地区无效。");
+  const amount = Number(region.price);
+  const snapshot = { id: "home_ip", optionId: `home_ip:${region.id}`, name: product.name || "家宽 IP 定制", regionId: region.id, regionName: region.name, amount, durationDays: Number(product.addonDurationDays || 30), deliveryMode: "manual", deliveryDescription: product.addonDeliveryDescription || "" };
+  return {
+    optionId: snapshot.optionId,
+    planId: "home_ip",
+    planName: product.name || "家宽 IP 定制",
+    group: activeUserGroup(user),
+    optionLabel: `${region.name} · ${snapshot.durationDays} 天`,
+    title: product.title || "家宽 IP 定制",
+    description: product.description || "按地区提供家庭宽带出口 IP。",
+    traffic: "",
+    features: Array.isArray(product.features) ? product.features : [],
+    devices: 0,
+    originalAmount: amount,
+    baseAmount: amount,
+    discountAmount: 0,
+    vipLevel: "vip1",
+    vipDiscountPercent: 0,
+    vipDiscountAmount: 0,
+    subtotal: amount,
+    taxRate: 0,
+    taxAmount: 0,
+    beforeCreditAmount: amount,
+    cashCredit: 0,
+    purchaseAction: "add_on",
+    amount,
+    couponCode: "",
+    discountPercent: 0,
+    selectedAddOns: [snapshot.optionId],
+    selectedAddOnSnapshots: [snapshot],
+    addOnAmount: 0,
+    cycles: regions.map(item => ({ optionId: `home_ip:${item.id}`, label: item.name, amount: Number(item.price), devices: 0 }))
+  };
+}
+
+function planQuoteWithAddOns(quote, requestedAddOns) {
+  const selectedAddOns = [...new Set(Array.isArray(requestedAddOns) ? requestedAddOns.map(String) : [])];
+  const homeIp = pricingProduct("home_ip");
+  const homeIpAvailable = !quote.lifetime && homeIp?.productKind === "addon" && homeIp.enabled !== false && homeIp.stock !== 0;
+  const regions = Array.isArray(homeIp?.addonRegions) ? homeIp.addonRegions : [];
+  const selectedAddOnSnapshots = selectedAddOns.map(id => {
+    const match = id.match(/^home_ip:([a-z0-9_-]+)$/i);
+    const region = match && regions.find(item => item.id === match[1]);
+    if (!homeIpAvailable || !region) throw new Error(quote.lifetime ? "不限时套餐不能购买附加服务。" : "家宽 IP 地区无效。");
+    return { id: "home_ip", optionId: id, name: homeIp.name || "家宽 IP 定制", regionId: region.id, regionName: region.name, amount: Number(region.price), durationDays: Number(homeIp.addonDurationDays || 30), deliveryMode: homeIp.addonDeliveryMode || "manual", deliveryDescription: homeIp.addonDeliveryDescription || "" };
+  });
+  const addOnAmount = selectedAddOnSnapshots.reduce((sum, item) => sum + item.amount, 0);
+  return {
+    ...quote,
+    planAmount: quote.amount,
+    addOnAmount,
+    amount: Number((quote.amount + addOnAmount).toFixed(2)),
+    selectedAddOns,
+    selectedAddOnSnapshots,
+    availableAddOns: homeIp ? [{ id: "home_ip", name: homeIp.name || "家宽 IP 定制", description: homeIp.description || "按地区定制家庭宽带出口 IP。", available: homeIpAvailable, unavailableReason: homeIpAvailable ? "" : "仅适用于周期性套餐", options: regions.map(region => ({ id: `home_ip:${region.id}`, label: region.name, amount: Number(region.price) })) }] : []
+  };
+}
+
+async function paymentQuoteForAccount(payload, account) {
+  const wallet = await walletForAccount(account);
+  const quote = payload.product === "traffic_pack" ? trafficPackQuote(account)
+    : payload.product === "home_ip" ? homeIpQuote(account, payload.optionId)
+    : planQuoteWithAddOns(paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id, payload.trafficTier), payload.addOns);
+  return quoteWithWallet(quote, wallet, payload.useBalance !== false);
 }
 
 function planCashValueFromBills(user, userBills = bills) {
@@ -1574,28 +1850,258 @@ function remainingPlanCashValue(user, now = new Date(), userBills = bills) {
   return Math.round(cashValue * Math.min(Math.max((expiresAt - currentTime) / (expiresAt - valuedAt), 0), 1) * 100) / 100;
 }
 
-function paymentPurchaseTerms(user, option, beforeCreditAmount, now = new Date()) {
+function paymentPurchaseTerms(user, now = new Date()) {
   const active = user && new Date(user.expiresAt || 0).getTime() > now.getTime();
   if (!active) return { purchaseAction: "initial", cashCredit: 0 };
-  const replaces = activeUserGroup(user) !== option.group || Boolean(user.unlimited) !== Boolean(option.unlimited);
-  const cashCredit = replaces ? Math.min(remainingPlanCashValue(user, now), beforeCreditAmount) : 0;
-  return { purchaseAction: replaces ? "replace" : "extend", cashCredit };
+  return { purchaseAction: "replace", cashCredit: 0 };
 }
 
 function billCashValueAmount(bill) {
   const order = paymentOrders.find(item => item.id === bill.paymentOrderId);
   if (!order) return Math.max(Number(bill.amount) || 0, 0);
+  if (Number.isFinite(Number(order.planCashValueAmount))) return Math.max(Number(order.planCashValueAmount), 0);
   return Math.max(Number(order.amount || 0) + Number(order.walletCashAmount || 0), 0);
 }
 
-function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1", accountId = "") {
+const PRODUCT_BINDING_MIGRATION_ID = "user-product-binding-v5";
+const PRODUCT_DURATION_SUFFIX = Object.freeze({ monthly: "30", quarterly: "90", half_yearly: "180", yearly: "360" });
+
+function inferCustomUserDuration(user = {}) {
+  const group = activeUserGroup(user);
+  const prices = pricingProduct(group) || {};
+  const logs = Array.isArray(user.userLogs) ? user.userLogs : [];
+  const customLog = logs.find(log => log.details?.duration === "custom" && Number(log.details.amount) > 0);
+  const amount = Number(customLog?.details?.amount ?? user.actualPaid);
+  const exactPrice = Object.keys(PRODUCT_DURATION_SUFFIX).find(duration => Number(prices[duration]) === amount);
+  if (exactPrice) return { duration: exactPrice, rule: `金额匹配${exactPrice}` };
+  const monthlyPrice = Number(prices.monthly);
+  const monthlyUnits = amount / monthlyPrice;
+  if (monthlyPrice > 0 && Number.isInteger(monthlyUnits) && monthlyUnits >= 1 && monthlyUnits <= 12) {
+    return { duration: "monthly", rule: `金额为月付价格的 ${monthlyUnits} 倍` };
+  }
+  for (const log of logs) {
+    const change = log.details?.changes?.find(item => item.field === "duration" && item.after === "custom" && PRODUCT_DURATION_SUFFIX[item.before]);
+    if (change) return { duration: change.before, rule: `日志记录由 ${change.before} 改为 custom` };
+  }
+  const days = (Date.parse(user.expiresAt || "") - Date.parse(user.purchasedAt || "")) / 864e5;
+  if (!Number.isFinite(days) || days <= 0) return { error: "自定义期限缺少有效的购买或到期时间" };
+  const duration = Object.keys(PRODUCT_DURATION_SUFFIX).reduce((best, candidate) => Math.abs(durationDays(candidate) - days) < Math.abs(durationDays(best) - days) ? candidate : best, "monthly");
+  return { duration, rule: `有效期 ${Number(days.toFixed(1))} 天，映射到最接近的标准周期` };
+}
+
+function inferUserProductBinding(user = {}) {
+  let duration = String(user.duration || "");
+  const group = activeUserGroup(user);
+  if (duration === "lifetime") {
+    return productBinding(FRIENDS_PRODUCT_ID, `${FRIENDS_PRODUCT_ID}-lifetime`, user, {
+      name: "亲友永久不限量",
+      optionLabel: "永久有效 · 不限流量",
+      internal: true,
+      lifetime: true,
+      unlimited: true
+    });
+  }
+  if (duration === "custom") {
+    const inferred = inferCustomUserDuration(user);
+    if (inferred.error) return inferred;
+    duration = inferred.duration;
+    const optionId = `${group}-${PRODUCT_DURATION_SUFFIX[duration]}`;
+    let option;
+    try { option = resolvePaymentPlanOption(optionId, { allowLegacy: true }); } catch { return { error: `找不到匹配商品：${optionId}` }; }
+    return { ...productBinding(option.planId, optionId, user, { name: option.planName, optionLabel: option.optionLabel, duration, mappingRule: inferred.rule }), normalizedDuration: duration };
+  }
+  const suffix = duration === "lifetime" ? "lifetime" : PRODUCT_DURATION_SUFFIX[duration];
+  if (!suffix) return { error: `无法识别套餐周期：${duration || "空"}` };
+  const optionId = `${group}${user.unlimited && suffix !== "lifetime" ? "-unlimited" : ""}-${suffix}`;
+  let option;
+  try { option = resolvePaymentPlanOption(optionId, { allowLegacy: true }); } catch { return { error: `找不到匹配商品：${optionId}` }; }
+  return productBinding(option.planId, optionId, user, {
+    name: option.planName,
+    optionLabel: option.optionLabel,
+    lifetime: Boolean(option.lifetime),
+    unlimited: Boolean(option.unlimited)
+  });
+}
+
+function productBinding(productId, optionId, user, details = {}) {
+  return {
+    productId,
+    optionId,
+    snapshot: {
+      version: 1,
+      productId,
+      optionId,
+      name: details.name || productId,
+      optionLabel: details.optionLabel || optionId,
+      productKind: details.custom ? "legacy_custom_plan" : "plan",
+      internal: details.internal === true,
+      group: activeUserGroup(user),
+      duration: details.duration || String(user.duration || ""),
+      lifetime: details.lifetime === true,
+      unlimited: details.unlimited === true,
+      trafficTier: Number(user.trafficTier || 1),
+      trafficGb: user.purchasedTrafficGb ?? null,
+      expiresAt: user.expiresAt || "",
+      ...(details.mappingRule ? { mappingRule: details.mappingRule, migratedFromDuration: "custom" } : {})
+    }
+  };
+}
+
+function bindUserProduct(user, binding, { source, orderId = "", boundAt = new Date().toISOString() } = {}) {
+  if (!user || binding?.error || !binding?.productId || !binding?.optionId) return false;
+  if (binding.productId === FRIENDS_PRODUCT_ID) {
+    user.duration = "lifetime";
+    user.expiresAt = LIFETIME_EXPIRES_AT;
+    user.unlimited = true;
+    if (isSelfHostedUser(user)) {
+      user.xuiTrafficLimitBytes = 0;
+      if (user.xuiWeightedTraffic) Object.assign(user.xuiWeightedTraffic, { totalBytes: 0, remainingBytes: null, usagePercent: null, depleted: false });
+      if (user.xuiLastTraffic) Object.assign(user.xuiLastTraffic, { totalBytes: 0, remainingBytes: null, usagePercent: null, status: "active" });
+    }
+  }
+  if (binding.normalizedDuration) user.duration = binding.normalizedDuration;
+  Object.assign(user, {
+    currentProductId: binding.productId,
+    currentOptionId: binding.optionId,
+    currentProductOrderId: orderId,
+    currentProductSource: source || "unknown",
+    currentProductBoundAt: boundAt,
+    currentProductSnapshot: structuredClone(binding.snapshot)
+  });
+  return true;
+}
+
+function bindUserProductFromOrder(user, order) {
+  const snapshot = {
+    version: 1,
+    ...(order.productSnapshot || {}),
+    productId: order.planId,
+    optionId: order.optionId,
+    name: order.planName,
+    optionLabel: order.optionLabel,
+    productKind: "plan",
+    internal: false,
+    group: order.group,
+    duration: order.duration,
+    lifetime: order.duration === "lifetime",
+    unlimited: Boolean(order.unlimited),
+    trafficTier: order.trafficTier || 1,
+    trafficGb: order.trafficGb ?? null
+  };
+  return bindUserProduct(user, { productId: order.planId, optionId: order.optionId, snapshot }, { source: order.paymentProvider === "manual" ? "manual_order" : "payment_order", orderId: order.id, boundAt: order.paidAt || new Date().toISOString() });
+}
+
+function latestMatchingPlanOrder(user) {
+  const account = accounts.find(item => item.linkedUserId === user.id);
+  return paymentOrders
+    .filter(order => order.status === "paid" && !order.reversedAt && (order.purpose || "plan") === "plan" && (order.userId === user.id || account && order.accountId === account.id) && order.group === activeUserGroup(user) && order.duration === user.duration)
+    .sort((a, b) => Date.parse(b.paidAt || b.createdAt || 0) - Date.parse(a.paidAt || a.createdAt || 0))[0] || null;
+}
+
+function familyGrantOrder(user, binding, now) {
+  const account = accounts.find(item => item.linkedUserId === user.id);
+  const id = `family-grant-${user.id}`;
+  return {
+    id,
+    merOrderTid: id,
+    purpose: "plan",
+    planId: binding.productId,
+    planName: binding.snapshot.name,
+    optionId: binding.optionId,
+    optionLabel: binding.snapshot.optionLabel,
+    duration: "lifetime",
+    group: activeUserGroup(user),
+    unlimited: true,
+    trafficTier: 1,
+    trafficGb: null,
+    baseAmount: 0,
+    originalAmount: 0,
+    subtotal: 0,
+    taxAmount: 0,
+    beforeCreditAmount: 0,
+    cashCredit: 0,
+    totalAmount: 0,
+    amount: 0,
+    purchaseAction: "grant",
+    productSnapshot: binding.snapshot,
+    paymentProvider: "manual",
+    paymentPlatformName: "后台内部授予",
+    channelCode: "manual",
+    status: "paid",
+    fulfillmentStatus: "fulfilled",
+    accountId: account?.id || "",
+    userId: user.id,
+    email: user.email || account?.email || "",
+    createdAt: now,
+    updatedAt: now,
+    paidAt: now,
+    planFulfilledAt: now,
+    fulfilledAt: now
+  };
+}
+
+async function ensureUserProductBindings() {
+  const previous = await dataStore.getRecord("migrationState", PRODUCT_BINDING_MIGRATION_ID);
+  if (previous?.completedAt) return previous;
+  const now = new Date().toISOString();
+  const report = { id: PRODUCT_BINDING_MIGRATION_ID, startedAt: now, total: users.length, mapped: 0, alreadyBound: 0, familyGrants: 0, lifetimeMapped: 0, customMapped: 0, deprecatedSelfHostedMapped: 0, failed: [] };
+  let ordersChanged = false;
+  for (const user of users) {
+    const remapCustom = user.duration === "custom" || user.currentProductId === LEGACY_CUSTOM_PRODUCT_ID;
+    const remapDeprecatedSelfHosted = user.currentProductId === "self_hosted" || user.currentOptionId === "self-hosted-test-30" || user.activeGroup === "self_hosted" || user.group === "self_hosted";
+    const remapLifetime = user.duration === "lifetime" && (user.currentProductId !== FRIENDS_PRODUCT_ID || user.unlimited !== true || isSelfHostedUser(user) && Number(user.xuiTrafficLimitBytes) !== 0);
+    if (user.currentProductId && user.currentOptionId && !remapCustom && !remapDeprecatedSelfHosted && !remapLifetime) { report.alreadyBound++; continue; }
+    if ((user.currentProductId || user.currentOptionId) && !(user.currentProductId && user.currentOptionId)) {
+      report.failed.push({ userId: user.id, reason: "商品绑定字段不完整" });
+      continue;
+    }
+    const binding = inferUserProductBinding(remapDeprecatedSelfHosted ? { ...user, group: "pro", activeGroup: "pro" } : user);
+    if (binding.error) { report.failed.push({ userId: user.id, reason: binding.error }); continue; }
+    if (remapDeprecatedSelfHosted) { user.group = "pro"; user.activeGroup = "pro"; }
+    let order = latestMatchingPlanOrder(user);
+    let source = order ? "payment_order_migration" : "legacy_migration";
+    if (binding.productId === FRIENDS_PRODUCT_ID) {
+      user.unlimited = true;
+      const grantId = `family-grant-${user.id}`;
+      order = paymentOrders.find(item => item.id === grantId) || familyGrantOrder(user, binding, now);
+      if (!paymentOrders.some(item => item.id === grantId)) { paymentOrders.unshift(order); ordersChanged = true; }
+      source = "family_friend_grant";
+      report.familyGrants++;
+    }
+    if (remapCustom) report.customMapped++;
+    if (user.duration === "lifetime") report.lifetimeMapped++;
+    if (remapDeprecatedSelfHosted) report.deprecatedSelfHostedMapped++;
+    bindUserProduct(user, binding, { source, orderId: order?.id || "", boundAt: now });
+    appendUserLogToUser(user, createUserLog({ event: "system", status: "recorded", reason: "product-binding-migrated", message: `已绑定商品：${binding.snapshot.name} / ${binding.snapshot.optionLabel}`, details: { migrationId: PRODUCT_BINDING_MIGRATION_ID, productBinding: binding, orderId: order?.id || "" } }));
+    report.mapped++;
+  }
+  if (report.mapped) await saveUsers();
+  if (ordersChanged) await savePaymentOrders();
+  if (!users.some(user => user.currentProductId === LEGACY_CUSTOM_PRODUCT_ID || user.currentProductId === "self_hosted")) {
+    const nextPricing = pricing.filter(item => item.group !== LEGACY_CUSTOM_PRODUCT_ID && item.group !== "self_hosted");
+    if (nextPricing.length !== pricing.length) { pricing = nextPricing; await savePricing(); }
+  }
+  report.completedAt = new Date().toISOString();
+  report.status = report.failed.length ? "needs_review" : "completed";
+  await dataStore.setRecord("migrationState", PRODUCT_BINDING_MIGRATION_ID, report);
+  console.log(`[migration:${PRODUCT_BINDING_MIGRATION_ID}] ${JSON.stringify({ total: report.total, mapped: report.mapped, alreadyBound: report.alreadyBound, familyGrants: report.familyGrants, lifetimeMapped: report.lifetimeMapped, customMapped: report.customMapped, deprecatedSelfHostedMapped: report.deprecatedSelfHostedMapped, failed: report.failed.length })}`);
+  return report;
+}
+
+function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1", accountId = "", requestedTrafficTier = 1) {
   const option = resolvePaymentPlanOption(optionId);
+  const plan = pricingProduct(option.planId) || {};
+  const trafficConfig = recurringTrafficConfig(plan);
+  const trafficTier = option.lifetime || option.unlimited ? 1 : normalizeTrafficTier(plan, requestedTrafficTier);
+  const trafficGb = option.lifetime ? planTrafficBytes({ activeGroup: option.group, duration: "lifetime", unlimited: Boolean(option.unlimited) }) / 1024 ** 3 : trafficConfig.baseGb * trafficTier;
+  const trafficPriceFactor = option.lifetime || option.unlimited ? 1 : 1 + (trafficTier - 1) * trafficConfig.markupPercent / 100;
   const code = String(couponCode || "").trim().toUpperCase();
   const coupon = code ? paymentCoupons(couponConfig).get(code) : null;
   if (code && !coupon) throw new Error("优惠码无效。");
   if (coupon) validateCouponUsage(coupon, option, accountId);
   const percent = Number(coupon?.percent) || 0;
-  const originalAmount = Number(option.amount.toFixed(2));
+  const baseAmount = Number(option.amount.toFixed(2));
+  const originalAmount = Number((baseAmount * trafficPriceFactor).toFixed(2));
   const originalCents = Math.round(originalAmount * 100);
   const discountCents = Math.round(originalCents * percent / 100);
   const discountAmount = discountCents / 100;
@@ -1607,16 +2113,22 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
   const taxAmount = Math.round(subtotalCents * 0.03) / 100;
   const beforeCreditAmount = Number((subtotal + taxAmount).toFixed(2));
   const account = accounts.find(item => item.id === accountId);
-  const terms = paymentPurchaseTerms(userForAccount(account), option, beforeCreditAmount);
-  const plan = publicPricing().find(item => item.group === option.planId) || {};
-  const cycles = Object.entries(PAYMENT_PLAN_OPTIONS)
-    .filter(([, item]) => item.planId === option.planId && Boolean(item.unlimited) === Boolean(option.unlimited) && (item.priceKey || item.unlimited))
-    .map(([id, item]) => ({ optionId: id, label: item.optionLabel, amount: resolvePaymentPlanOption(id).amount, devices: Number(plan[`${item.duration}Devices`] || 0) }));
+  const terms = paymentPurchaseTerms(userForAccount(account));
+  const cycleSource = option.unlimited
+    ? Object.entries(PAYMENT_PLAN_OPTIONS).filter(([, item]) => item.planId === option.planId && item.unlimited).map(([id, item]) => ({ optionId: id, label: item.optionLabel, amount: resolvePaymentPlanOption(id).amount, devices: Number(plan[`${item.duration}Devices`] || 0) }))
+    : planCycleOptions(plan, option);
+  const cycles = cycleSource.map(item => ({ ...item, amount: Number((item.amount * trafficPriceFactor).toFixed(2)) }));
   if (!cycles.some(item => item.optionId === String(optionId))) cycles.unshift({ optionId: String(optionId), label: option.optionLabel, amount: originalAmount, devices: 0 });
   return {
     ...option,
     optionId: String(optionId),
+    baseAmount,
     originalAmount,
+    trafficTier,
+    trafficBaseGb: trafficConfig.baseGb,
+    trafficGb,
+    trafficMaxTier: trafficConfig.maxTier,
+    trafficTierMarkupPercent: trafficConfig.markupPercent,
     discountAmount,
     vipLevel,
     vipDiscountPercent: vipPercent,
@@ -1627,22 +2139,85 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
     beforeCreditAmount,
     cashCredit: terms.cashCredit,
     purchaseAction: terms.purchaseAction,
-    amount: Number((beforeCreditAmount - terms.cashCredit).toFixed(2)),
+    amount: beforeCreditAmount,
     couponCode: code,
     discountPercent: percent || 0,
-    title: plan.title || option.planName,
-    description: plan.description || "",
-    traffic: option.unlimited ? "无限流量" : plan.traffic || "",
-    features: Array.isArray(plan.features) ? plan.features : [],
-    devices: Number(plan[`${option.duration}Devices`] || 0),
+    title: option.lifetime ? plan.lifetimeTitle || option.planName : plan.title || option.planName,
+    description: option.lifetime ? plan.lifetimeDescription || "" : plan.description || "",
+    traffic: option.lifetime ? trafficGb ? `${Number.isInteger(trafficGb) ? trafficGb : Number(trafficGb.toFixed(2))}G 固定流量` : plan.lifetimeTraffic || "固定流量" : option.unlimited ? "无限流量" : `每月 ${trafficGb} GB`,
+    features: option.lifetime ? Array.isArray(plan.lifetimeFeatures) ? plan.lifetimeFeatures : [] : Array.isArray(plan.features) ? plan.features : [],
+    devices: Number(option.lifetime ? plan.lifetimeDevices : plan[`${option.duration}Devices`] || 0),
     cycles
   };
+}
+
+async function fulfillTrafficPackOrderOnce(order, req) {
+  const account = accounts.find(item => item.id === order.accountId);
+  if (!account) throw new Error("购买账户不存在。");
+  const user = requireTrafficPackUser(account);
+  const wallet = await dataStore.settleWalletPurchase({
+    id: crypto.randomUUID(),
+    accountId: account.id,
+    orderId: order.id,
+    vipDeltaCents: 0,
+    description: "100 GB 流量包",
+    initialVipCents: initialWalletVipCents(account)
+  });
+  syncWalletVip(account, wallet);
+  const trafficPackBytes = Math.round(Number(order.trafficGb || trafficPackConfig().trafficGb) * 1024 ** 3);
+  const grant = grantTrafficPack(user, order.id, trafficPackBytes);
+  await enableXuiClientAfterTrafficPack(user);
+  if (!grant.replayed) {
+    appendUserLogToUser(user, createUserLog({
+      event: "user-action",
+      status: "recorded",
+      reason: "traffic-pack-purchased",
+      req,
+      message: `购买流量包：当前周期增加 ${order.trafficGb || trafficPackConfig().trafficGb} GB`,
+      details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, trafficPackBytes, remainingBytesBefore: grant.remainingBytesBefore, remainingBytesAfter: grant.remainingBytesAfter }
+    }));
+  }
+  order.userId = user.id;
+  order.vipSpendAmount = 0;
+  order.vipSpendBefore = wallet.vipSpendCents / 100;
+  order.vipSpendAfter = wallet.vipSpendCents / 100;
+  order.trafficPackBytes = trafficPackBytes;
+  order.trafficCycleKey = user.xuiTrafficCycleKey || "";
+  order.fulfilledAt = new Date().toISOString();
+  order.fulfillmentStatus = "fulfilled";
+  order.fulfillmentError = "";
+  await saveUsers();
+  await saveAccounts();
+  await savePaymentOrders();
+  await notifyPaymentOrder(order);
+  return order;
+}
+
+async function fulfillStandaloneAddOnOrderOnce(order, req) {
+  const account = accounts.find(item => item.id === order.accountId);
+  if (!account) throw new Error("购买账户不存在。");
+  const user = requireRecurringPlanUser(account);
+  const wallet = await dataStore.settleWalletPurchase({ id: crypto.randomUUID(), accountId: account.id, orderId: order.id, vipDeltaCents: 0, description: `${order.planName} ${order.optionLabel}`, initialVipCents: initialWalletVipCents(account) });
+  syncWalletVip(account, wallet);
+  order.userId = user.id;
+  order.vipSpendAmount = 0;
+  order.vipSpendBefore = wallet.vipSpendCents / 100;
+  order.vipSpendAfter = wallet.vipSpendCents / 100;
+  order.fulfillmentStartedAt = new Date().toISOString();
+  order.fulfillmentStatus = "manual_pending";
+  order.fulfillmentError = "";
+  appendUserLogToUser(user, createUserLog({ event: "user-action", status: "recorded", reason: "addon-purchased", req, message: `购买附加服务：${order.addOnSnapshots?.map(item => `${item.name}${item.regionName ? `（${item.regionName}）` : ""}`).join("、") || order.planName}`, details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, amount: order.totalAmount ?? order.amount, addOns: order.addOnSnapshots || [] } }));
+  await saveUsers();
+  await saveAccounts();
+  await savePaymentOrders();
+  await notifyPaymentOrder(order);
+  return order;
 }
 
 const paymentFulfillmentTasks = new Map();
 
 async function fulfillPaymentOrderOnce(order, req) {
-  if (!order || order.status !== "paid" || order.reversedAt || (order.fulfilledAt && order.fulfillmentStatus !== "failed")) return order;
+  if (!order || order.status !== "paid" || order.reversedAt || ["fulfilled", "manual_pending"].includes(order.fulfillmentStatus)) return order;
   if (order.purpose === "recharge") {
     const account = accounts.find(item => item.id === order.accountId);
     if (!account) throw new Error("充值账户不存在。");
@@ -1671,8 +2246,11 @@ async function fulfillPaymentOrderOnce(order, req) {
     await notifyPaymentOrder(order);
     return order;
   }
+  if (order.purpose === "traffic_pack") return fulfillTrafficPackOrderOnce(order, req);
+  if (order.purpose === "addon") return fulfillStandaloneAddOnOrderOnce(order, req);
   const email = normalizePaymentEmail(order.email);
-  const selectedOption = resolvePaymentPlanOption(order.optionId);
+  const selectedOption = { ...resolvePaymentPlanOption(order.optionId, { allowLegacy: true }), ...(order.productSnapshot || {}) };
+  const selectedTrafficBytes = Number(order.trafficGb) > 0 ? Math.round(Number(order.trafficGb) * 1024 ** 3) : 0;
   const purchasedAt = order.paidAt || new Date().toISOString();
   const account = order.accountId ? accounts.find(item => item.id === order.accountId) : null;
   let user = account?.linkedUserId
@@ -1690,39 +2268,54 @@ async function fulfillPaymentOrderOnce(order, req) {
     await savePaymentOrders();
   }
   if (user && !user.email) user.email = email;
+  const planGatewayAmount = Number.isFinite(Number(order.planGatewayAmount)) ? Number(order.planGatewayAmount) : Number(order.amount || 0);
+  const planCashValueAmount = Number.isFinite(Number(order.planCashValueAmount)) ? Number(order.planCashValueAmount) : Number(order.amount || 0) + Number(order.walletCashAmount || 0);
   const wallet = await dataStore.settleWalletPurchase({
     id: crypto.randomUUID(),
     accountId: account.id,
     orderId: order.id,
-    vipDeltaCents: Math.round(order.amount * 100),
+    vipDeltaCents: Math.round(planGatewayAmount * 100),
     description: `${order.planName} ${order.optionLabel}`,
     initialVipCents: initialWalletVipCents(account)
   });
-  const vipSpendBefore = (wallet.vipSpendCents - Math.round(order.amount * 100)) / 100;
+  const vipSpendBefore = (wallet.vipSpendCents - Math.round(planGatewayAmount * 100)) / 100;
   syncWalletVip(account, wallet);
   const expiresAt = nextUserExpiry(user, purchasedAt, selectedOption.duration, order.purchaseAction === "replace");
-  const recommendation = recommendSubscriptionForExpiry(expiresAt, { group: selectedOption.group, ignoredUserId: user?.id || "" });
-  if (!recommendation.subscription) throw new Error(recommendation.reason || "No available subscription pool.");
+  const recommendation = { subscription: null, reason: "商品统一使用自研线路。", details: null };
 
   if (user) {
+    const previousUserState = structuredClone(user);
     const previousSubscription = subscriptions.find(item => item.id === user.subscriptionId) || null;
-    const poolChanged = previousSubscription?.id !== recommendation.subscription.id;
-    const renewal = renewUser(user, {
-      purchasedAt,
-      actualPaid: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
-      vipSpendAmount: order.amount,
-      cashValueAmount: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
-      duration: selectedOption.duration,
-      group: selectedOption.group,
-      unlimited: Boolean(selectedOption.unlimited),
-      replace: order.purchaseAction === "replace",
-      subscriptionId: recommendation.subscription.id
-    });
+    const poolChanged = false;
+    let renewal;
+    try {
+      renewal = renewUser(user, {
+        purchasedAt,
+        actualPaid: planCashValueAmount,
+        vipSpendAmount: planGatewayAmount,
+        cashValueAmount: planCashValueAmount,
+        duration: selectedOption.duration,
+        group: selectedOption.group,
+        lineType: "self_hosted",
+        unlimited: Boolean(selectedOption.unlimited),
+        trafficTier: order.trafficTier || 1,
+        trafficLimitBytes: selectedTrafficBytes,
+        replace: order.purchaseAction === "replace",
+        subscriptionId: recommendation.subscription?.id || ""
+      });
+      bindUserProductFromOrder(user, order);
+      await provisionXuiClient(user);
+      await resetXuiTrafficAfterPlanPurchase(user, order);
+    } catch (error) {
+      Object.keys(user).forEach(key => delete user[key]);
+      Object.assign(user, previousUserState);
+      throw error;
+    }
     bills.unshift(makeBill({
       user,
       type: order.purchaseAction === "replace" ? "replacement" : "renewal",
       paymentOrderId: order.id,
-      amount: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
+      amount: planCashValueAmount,
       vipSpendAmount: renewal.vipSpendAmount,
       occurredAt: renewal.renewedAt,
       duration: user.duration,
@@ -1735,7 +2328,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       status: poolChanged ? "switched" : "recorded",
       reason: poolChanged ? "purchase-pool-changed" : "user-renewed",
       fromSubscription: poolChanged ? previousSubscription : null,
-      toSubscription: recommendation.subscription,
+      toSubscription: recommendation.subscription || null,
       req,
       message: userActionMessage(poolChanged ? "purchase-pool-changed" : "user-renewed", {
         amount: renewal.amount,
@@ -1748,6 +2341,10 @@ async function fulfillPaymentOrderOnce(order, req) {
         paymentOrderId: order.id,
         merOrderTid: order.merOrderTid,
         amount: renewal.amount,
+        productSnapshot: order.productSnapshot || null,
+        trafficTier: order.trafficTier || 1,
+        trafficGb: order.trafficGb ?? null,
+        addOns: order.addOnSnapshots || [],
         duration: user.duration,
         afterExpiresAt: renewal.afterExpiresAt,
         recommendation: recommendation.details || null
@@ -1764,26 +2361,34 @@ async function fulfillPaymentOrderOnce(order, req) {
       email,
       wechatName: "",
       purchasedAt,
-      actualPaid: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
+      actualPaid: planCashValueAmount,
       vipSpend: wallet.vipSpendCents / 100,
       duration: selectedOption.duration,
       group: selectedOption.group,
       activeGroup: selectedOption.group,
+      lineType: "self_hosted",
       unlimited: Boolean(selectedOption.unlimited),
-      cashValue: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
+      trafficTier: order.trafficTier || 1,
+      xuiTrafficLimitBytes: selectedTrafficBytes || undefined,
+      cashValue: planCashValueAmount,
       cashValueAt: purchasedAt,
-      subscriptionId: recommendation.subscription.id,
+      subscriptionId: recommendation.subscription?.id || "",
       outputMode: "subconverter",
       blockUserinfo: true
     }, item);
     user.outputMode = "subconverter";
     user.blockUserinfo = true;
+    user.trafficTier = order.trafficTier || 1;
+    if (selectedTrafficBytes) user.xuiTrafficLimitBytes = selectedTrafficBytes;
+    bindUserProductFromOrder(user, order);
+    await provisionXuiClient(user);
+    await resetXuiTrafficAfterPlanPurchase(user, order);
     users.unshift(user);
     bills.unshift(makeBill({
       user,
       type: "initial",
       paymentOrderId: order.id,
-      amount: Number(order.amount || 0) + Number(order.walletCashAmount || 0),
+      amount: planCashValueAmount,
       vipSpendAmount: userVipSpend(user),
       occurredAt: user.purchasedAt,
       duration: user.duration,
@@ -1801,12 +2406,25 @@ async function fulfillPaymentOrderOnce(order, req) {
         paymentOrderId: order.id,
         merOrderTid: order.merOrderTid,
         snapshot: userSnapshotForLog(user),
+        productSnapshot: order.productSnapshot || null,
+        trafficTier: order.trafficTier || 1,
+        trafficGb: order.trafficGb ?? null,
+        addOns: order.addOnSnapshots || [],
         amount: user.actualPaid,
         duration: user.duration,
         afterExpiresAt: user.expiresAt,
         recommendation: recommendation.details || null
       }
     }));
+  }
+
+  if (selectedTrafficBytes) user.xuiTrafficLimitBytes = selectedTrafficBytes;
+  user.trafficTier = order.trafficTier || 1;
+  user.purchasedTrafficGb = order.trafficGb ?? null;
+  if (Array.isArray(order.addOnSnapshots) && order.addOnSnapshots.length) {
+    order.fulfillmentStatus = "manual_pending";
+    order.fulfillmentStartedAt = new Date().toISOString();
+    appendUserLogToUser(user, createUserLog({ event: "user-action", status: "recorded", reason: "addon-purchased", req, message: `订单包含附加服务：${order.addOnSnapshots.map(item => `${item.name}${item.regionName ? `（${item.regionName}）` : ""}`).join("、")}`, details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, addOns: order.addOnSnapshots } }));
   }
 
   order.userId = user.id;
@@ -1820,12 +2438,13 @@ async function fulfillPaymentOrderOnce(order, req) {
     await saveAccounts();
   }
   order.deliveryUrl = deliveryUrlForUser(user, req);
+  order.planFulfilledAt = new Date().toISOString();
   await saveUsers();
   await saveAccounts();
   await saveBills();
   await createReferralReward(order, account);
-  order.fulfilledAt = new Date().toISOString();
-  order.fulfillmentStatus = "fulfilled";
+  order.fulfilledAt = order.fulfillmentStatus === "manual_pending" ? "" : new Date().toISOString();
+  order.fulfillmentStatus = order.fulfillmentStatus === "manual_pending" ? "manual_pending" : "fulfilled";
   order.fulfillmentError = "";
   await savePaymentOrders();
   await notifyPaymentOrder(order);
@@ -1861,7 +2480,7 @@ async function reversePaymentOrderOnce(order) {
   if (order.purpose !== "recharge") {
     const orderIndex = paymentOrders.findIndex(item => item.id === order.id);
     const laterOrder = paymentOrders.find((item, index) =>
-      item.id !== order.id && item.accountId === order.accountId && item.purpose !== "recharge" &&
+      item.id !== order.id && item.accountId === order.accountId && (!item.purpose || item.purpose === "plan") &&
       item.status === "paid" && item.fulfillmentStatus === "fulfilled" && !item.reversedAt &&
       index < orderIndex
     );
@@ -1973,7 +2592,13 @@ function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
 async function createPaymentOrder(payload, req, account, paymentSource = "online") {
   const manualPayment = paymentSource === "manual";
   const wallet = await walletForAccount(account);
-  const selectedOption = paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id);
+  const trafficPackPurchase = payload.product === "traffic_pack";
+  const homeIpPurchase = payload.product === "home_ip";
+  const addOnPurchase = trafficPackPurchase || homeIpPurchase;
+  const selectedOption = trafficPackPurchase ? trafficPackQuote(account)
+    : homeIpPurchase ? homeIpQuote(account, payload.optionId)
+    : planQuoteWithAddOns(paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id, payload.trafficTier), payload.addOns);
+  if (!manualPayment && !addOnPurchase && selectedOption.purchaseAction === "replace" && payload.confirmReplacement !== true) throw new Error("请确认新套餐将立即覆盖当前套餐。");
   assertPendingPaymentOrderLimit(account.id);
   const email = normalizePaymentEmail(account.email);
   const id = crypto.randomUUID();
@@ -1985,6 +2610,11 @@ async function createPaymentOrder(payload, req, account, paymentSource = "online
     ? { cashCents: 0, giftCents: 0, referralCents: 0 }
     : await dataStore.reserveWallet({ accountId: account.id, orderId: id, amountCents: payableCents, expiresAt, initialVipCents: initialWalletVipCents(account) });
   const gatewayCents = payableCents - hold.cashCents - hold.giftCents - hold.referralCents;
+  const planAmountCents = addOnPurchase ? 0 : manualPayment ? payableCents : Math.round(Number(selectedOption.planAmount ?? selectedOption.amount) * 100);
+  const planAfterGiftCents = Math.max(planAmountCents - Math.min(planAmountCents, hold.giftCents), 0);
+  const planAfterReferralCents = Math.max(planAfterGiftCents - Math.min(planAfterGiftCents, hold.referralCents), 0);
+  const planWalletCashCents = Math.min(planAfterReferralCents, hold.cashCents);
+  const planGatewayCents = Math.max(planAfterReferralCents - planWalletCashCents, 0);
   const amount = (gatewayCents / 100).toFixed(2);
   let config;
   let channelCode;
@@ -2022,15 +2652,21 @@ async function createPaymentOrder(payload, req, account, paymentSource = "online
   const order = {
     id,
     merOrderTid,
-    purpose: "plan",
+    purpose: trafficPackPurchase ? "traffic_pack" : homeIpPurchase ? "addon" : "plan",
     tid: result.tid || "",
     planId: selectedOption.planId,
     planName: selectedOption.planName,
-    optionId: String(payload.optionId || "").trim(),
+    optionId: String(selectedOption.optionId || payload.optionId || "").trim(),
     optionLabel: selectedOption.optionLabel,
     duration: selectedOption.duration,
     group: selectedOption.group,
     unlimited: Boolean(selectedOption.unlimited),
+    trafficTier: selectedOption.trafficTier || 1,
+    trafficBaseGb: selectedOption.trafficBaseGb || 0,
+    trafficGb: selectedOption.trafficGb ?? null,
+    trafficMaxTier: selectedOption.trafficMaxTier || 1,
+    trafficTierMarkupPercent: selectedOption.trafficTierMarkupPercent || 0,
+    baseAmount: selectedOption.baseAmount ?? selectedOption.originalAmount,
     originalAmount: selectedOption.originalAmount,
     discountAmount: manualPayment ? 0 : selectedOption.discountAmount,
     vipLevel: selectedOption.vipLevel,
@@ -2041,7 +2677,28 @@ async function createPaymentOrder(payload, req, account, paymentSource = "online
     beforeCreditAmount: manualPayment ? payableCents / 100 : selectedOption.beforeCreditAmount,
     cashCredit: manualPayment ? 0 : selectedOption.cashCredit,
     purchaseAction: selectedOption.purchaseAction,
-    vipSpendAmount: Number(amount),
+    addOns: selectedOption.selectedAddOns || [],
+    addOnSnapshots: selectedOption.selectedAddOnSnapshots || [],
+    addOnAmount: selectedOption.addOnAmount || 0,
+    productSnapshot: {
+      planId: selectedOption.planId,
+      planName: selectedOption.planName,
+      optionId: String(selectedOption.optionId || payload.optionId || "").trim(),
+      optionLabel: selectedOption.optionLabel,
+      duration: selectedOption.duration,
+      group: selectedOption.group,
+      lineType: "self_hosted",
+      lifetime: Boolean(selectedOption.lifetime),
+      trafficTier: selectedOption.trafficTier || 1,
+      trafficGb: selectedOption.trafficGb ?? null,
+      baseAmount: selectedOption.baseAmount ?? selectedOption.originalAmount,
+      originalAmount: selectedOption.originalAmount,
+      addOns: selectedOption.selectedAddOnSnapshots || []
+    },
+    planPayableAmount: planAmountCents / 100,
+    planGatewayAmount: planGatewayCents / 100,
+    planCashValueAmount: (planGatewayCents + planWalletCashCents) / 100,
+    vipSpendAmount: planGatewayCents / 100,
     couponCode: selectedOption.couponCode,
     channelCode,
     paymentPlatformId: config?.id || "",
@@ -2074,7 +2731,15 @@ async function createPaymentOrder(payload, req, account, paymentSource = "online
   }
   if (order.status === "paid") {
     order.paidAt ||= now;
-    await fulfillPaymentOrder(order, req);
+    try {
+      await fulfillPaymentOrder(order, req);
+    } catch (error) {
+      order.fulfillmentStatus = "failed";
+      order.fulfillmentError = error.message;
+      order.updatedAt = new Date().toISOString();
+      await savePaymentOrders();
+      console.error(`Immediate payment fulfillment failed for ${order.merOrderTid}:`, error.message);
+    }
   } else if (["failed", "abnormal", "closed"].includes(order.status)) await dataStore.releaseWalletHold(order.id);
   return order;
 }
@@ -2144,6 +2809,7 @@ async function createRechargeOrder(payload, req, account) {
 }
 
 async function refreshPaymentOrder(order) {
+  if (order.paymentProvider === "test") return order;
   const config = requirePaymentConfig("", order.paymentPlatformId);
   const result = await queryGatewayPayment(config, order);
   order.tid = result.tid || order.tid || "";
@@ -2399,6 +3065,1126 @@ function activeUserGroup(user = {}) {
   return normalizeUserGroup(user.activeGroup || user.group, "pro");
 }
 
+function isSelfHostedUser(user = {}) {
+  return user.lineType === "self_hosted";
+}
+
+function normalizeXuiInboundGroups(value = {}) {
+  const source = value.groups || value;
+  return Object.fromEntries(USER_GROUPS.map(group => [group, [...new Set((Array.isArray(source?.[group]) ? source[group] : [])
+    .map(Number).filter(id => Number.isSafeInteger(id) && id > 0))]]));
+}
+
+function normalizeXuiInboundMetadata(value = {}) {
+  const source = value.metadata || value;
+  const levels = new Set(["premium", "optimized", "standard"]);
+  return Object.fromEntries(Object.entries(source || {}).flatMap(([key, item]) => {
+    const networkLevel = levels.has(item?.networkLevel) ? item.networkLevel : "";
+    const region = String(item?.region || "").trim().slice(0, 64);
+    return key && key.length <= 256 && (networkLevel || region) ? [[key, { networkLevel, region }]] : [];
+  }));
+}
+
+function normalizeXuiInboundEnable(idValue, enable) {
+  const id = Number(idValue);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    const error = new Error("入站 ID 无效。");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (typeof enable !== "boolean") {
+    const error = new Error("enable 必须是布尔值。");
+    error.statusCode = 400;
+    throw error;
+  }
+  return { id, enable };
+}
+
+function pricingForUser(user = {}) {
+  return publicPricing().find(item => item.group === activeUserGroup(user)) || null;
+}
+
+function planTrafficBytes(user = {}) {
+  if (user.unlimited) return 0;
+  const plan = pricingForUser(user);
+  const lifetime = user.duration === "lifetime";
+  const configured = Number(lifetime ? plan?.lifetimeTrafficBytes : plan?.trafficBytes);
+  if (Number.isFinite(configured) && configured >= 0) return Math.round(configured);
+  const match = String(lifetime ? plan?.lifetimeTraffic : plan?.traffic || "").match(/(\d+(?:\.\d+)?)\s*(TB|GB|G|MB|M)/i);
+  if (!match) return 0;
+  const factors = { TB: 1024 ** 4, GB: 1024 ** 3, G: 1024 ** 3, MB: 1024 ** 2, M: 1024 ** 2 };
+  return Math.round(Number(match[1]) * factors[match[2].toUpperCase()]);
+}
+
+function xuiTrafficLimitBytes(user = {}, remote = {}) {
+  const managed = Number(user.xuiTrafficLimitBytes);
+  if (Number.isFinite(managed) && managed >= 0) return Math.round(managed);
+  if (user.unlimited) return 0;
+  const remoteLimit = Number(remote.totalGB);
+  return Number.isFinite(remoteLimit) && remoteLimit > 0 ? Math.round(remoteLimit) : planTrafficBytes(user) || XUI_DEFAULT_TRAFFIC_BYTES;
+}
+
+function grantTrafficPack(user, orderId, trafficPackBytes = Math.round(trafficPackConfig().trafficGb * 1024 ** 3)) {
+  const appliedOrderIds = Array.isArray(user.xuiTrafficPackOrderIds) ? user.xuiTrafficPackOrderIds : [];
+  if (appliedOrderIds.includes(orderId)) return { replayed: true };
+  const usedBytes = Math.max(0, Number(user.xuiLastTraffic?.usedBytes) || 0);
+  const remainingBytesBefore = Math.max(0, Number(user.xuiLastTraffic?.remainingBytes) || 0);
+  const totalBytes = usedBytes + remainingBytesBefore + trafficPackBytes;
+  user.xuiTrafficLimitBytes = totalBytes;
+  user.xuiTrafficPackBytes = Math.max(0, Number(user.xuiTrafficPackBytes) || 0) + trafficPackBytes;
+  user.xuiTrafficPackCycleKey = user.xuiTrafficCycleKey || "";
+  user.xuiTrafficPackOrderIds = [...appliedOrderIds, orderId];
+  if (user.xuiWeightedTraffic) {
+    user.xuiWeightedTraffic.totalBytes = totalBytes;
+    user.xuiWeightedTraffic.remainingBytes = remainingBytesBefore + trafficPackBytes;
+    user.xuiWeightedTraffic.usagePercent = totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null;
+    user.xuiWeightedTraffic.depleted = false;
+  }
+  if (user.xuiLastTraffic) {
+    user.xuiLastTraffic.totalBytes = totalBytes;
+    user.xuiLastTraffic.remainingBytes = remainingBytesBefore + trafficPackBytes;
+    user.xuiLastTraffic.usagePercent = totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null;
+    user.xuiLastTraffic.status = "active";
+  }
+  return { replayed: false, remainingBytesBefore, remainingBytesAfter: remainingBytesBefore + trafficPackBytes, totalBytes };
+}
+
+function ensureTrafficPackSnapshot(user) {
+  if (user.xuiLastTraffic?.remainingBytes != null && Number.isFinite(Number(user.xuiLastTraffic.remainingBytes))) return;
+  const totalBytes = xuiTrafficLimitBytes(user);
+  const usedBytes = Math.max(0, Number(user.xuiWeightedTraffic?.usedBytes) || 0);
+  const remainingBytes = Math.max(totalBytes - usedBytes, 0);
+  const now = new Date().toISOString();
+  user.xuiWeightedTraffic = { ...(user.xuiWeightedTraffic || {}), rawUsedBytes: Number(user.xuiWeightedTraffic?.rawUsedBytes) || usedBytes, usedBytes, totalBytes, remainingBytes, usagePercent: totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null, depleted: totalBytes > 0 && usedBytes >= totalBytes, inbounds: user.xuiWeightedTraffic?.inbounds || [], nodes: user.xuiWeightedTraffic?.nodes || [], lastSyncedAt: user.xuiWeightedTraffic?.lastSyncedAt || now };
+  user.xuiLastTraffic = { ...(user.xuiLastTraffic || {}), available: true, status: "active", uploadBytes: Number(user.xuiLastTraffic?.uploadBytes) || 0, downloadBytes: Number(user.xuiLastTraffic?.downloadBytes) || 0, rawUsedBytes: Number(user.xuiLastTraffic?.rawUsedBytes) || usedBytes, usedBytes, totalBytes, remainingBytes, usagePercent: totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null, connectedIpCount: user.xuiLastTraffic?.connectedIpCount ?? null, ipLimit: Number(user.xuiLastTraffic?.ipLimit) || planDeviceLimit(user), nextResetAt: user.xuiNextTrafficResetAt || "", expiresAt: user.expiresAt, inbounds: user.xuiLastTraffic?.inbounds || [], nodes: user.xuiLastTraffic?.nodes || [], lastSyncedAt: user.xuiLastTraffic?.lastSyncedAt || now };
+}
+
+function expireUserTrafficPacks(user) {
+  if (!(Number(user.xuiTrafficPackBytes) > 0)) return false;
+  const totalBytes = planTrafficBytes(user);
+  const usedBytes = Math.max(0, Number(user.xuiLastTraffic?.usedBytes) || 0);
+  user.xuiTrafficLimitBytes = totalBytes;
+  user.xuiTrafficPackBytes = 0;
+  user.xuiTrafficPackCycleKey = "";
+  if (user.xuiWeightedTraffic) {
+    user.xuiWeightedTraffic.totalBytes = totalBytes;
+    user.xuiWeightedTraffic.remainingBytes = Math.max(totalBytes - usedBytes, 0);
+    user.xuiWeightedTraffic.usagePercent = totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null;
+    user.xuiWeightedTraffic.depleted = totalBytes > 0 && usedBytes >= totalBytes;
+  }
+  if (user.xuiLastTraffic) {
+    user.xuiLastTraffic.totalBytes = totalBytes;
+    user.xuiLastTraffic.remainingBytes = Math.max(totalBytes - usedBytes, 0);
+    user.xuiLastTraffic.usagePercent = totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null;
+  }
+  return true;
+}
+
+async function enableXuiClientAfterTrafficPack(user) {
+  const email = xuiClientEmail(user);
+  const remote = await getXuiClientByEmail(email);
+  await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: user.xuiTrafficLimitBytes, reset: 0, flow: XUI_VISION_FLOW, enable: true }) });
+  await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [email] } });
+  const state = await getXuiBillingState();
+  if (state.users[email]) {
+    state.users[email].totalBytes = user.xuiTrafficLimitBytes;
+    state.users[email].disabled = false;
+    await saveXuiBillingState(state);
+  }
+}
+
+function chinaDateParts(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const shifted = new Date(date.getTime() + CHINA_TIME_OFFSET_MS);
+  return { year: shifted.getUTCFullYear(), month: shifted.getUTCMonth(), day: shifted.getUTCDate() };
+}
+
+function xuiMonthlyResetAt(anchorDay, after = Date.now()) {
+  const day = Math.min(31, Math.max(1, Number(anchorDay) || 1));
+  const current = chinaDateParts(after);
+  if (!current) return "";
+  for (let offset = 0; offset < 2; offset += 1) {
+    const monthIndex = current.month + offset;
+    const year = current.year + Math.floor(monthIndex / 12);
+    const month = ((monthIndex % 12) + 12) % 12;
+    const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    const timestamp = Date.UTC(year, month, Math.min(day, daysInMonth)) - CHINA_TIME_OFFSET_MS;
+    if (timestamp > Number(after)) return new Date(timestamp).toISOString();
+  }
+  return "";
+}
+
+function initializeXuiTrafficSchedule(user, remote = {}, mode = "import", now = Date.now()) {
+  const purchased = chinaDateParts(user.purchasedAt || user.createdAt || now);
+  user.xuiManagementMode = mode;
+  user.xuiTrafficLimitBytes = mode === "link" && Number(remote.totalGB) > 0
+    ? Math.round(Number(remote.totalGB))
+    : XUI_DEFAULT_TRAFFIC_BYTES;
+  user.xuiTrafficResetAnchorDay = purchased?.day || chinaDateParts(now).day;
+  user.xuiTrafficCycleKey = `linked:${new Date(now).toISOString()}`;
+  user.xuiNextTrafficResetAt = xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
+  user.xuiLastTrafficResetAt = "";
+}
+
+function legacyMigrationTrafficLimitBytes(user = {}) {
+  if (user.unlimited) return 0;
+  if (user.duration === "lifetime") return planTrafficBytes(user);
+  return (LEGACY_RECURRING_TRAFFIC_GB[activeUserGroup(user)] || 100) * 1024 ** 3;
+}
+
+function initializeLegacyXuiMigration(user, existing, now = Date.now()) {
+  const purchased = chinaDateParts(user.purchasedAt || user.createdAt || now);
+  user.xuiManagementMode = existing ? "link" : "import";
+  user.xuiTrafficLimitBytes = legacyMigrationTrafficLimitBytes(user);
+  user.xuiTrafficResetAnchorDay ||= purchased?.day || chinaDateParts(now).day;
+  user.xuiTrafficCycleKey ||= `migration:${new Date(now).toISOString()}`;
+  user.xuiNextTrafficResetAt ||= user.duration === "lifetime" ? "" : xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
+  user.xuiLastTrafficResetAt ||= "";
+  user.xuiTrafficBaselinePending = Boolean(existing);
+  user.xuiTrafficBaselineVersion = existing ? 0 : 2;
+}
+
+function planDeviceLimit(user = {}) {
+  const plan = pricingForUser(user);
+  const value = Number(user.duration === "lifetime" ? plan?.lifetimeDevices : plan?.[`${user.duration}Devices`]);
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function xuiConfigured() {
+  return Boolean(XUI_BASE_URL && XUI_API_TOKEN && XUI_SUBSCRIPTION_BASE_URL);
+}
+
+function validAccountEmail(value) {
+  try { return normalizeAccountEmail(value); } catch { return ""; }
+}
+
+function nexoraUserEmail(user = {}) {
+  const linkedAccount = accounts.find(item => item.linkedUserId === user.id);
+  return [user.email, linkedAccount?.email, user.userId].map(validAccountEmail).find(Boolean) || "";
+}
+
+function xuiClientEmail(user = {}) {
+  const email = String(user.xuiClientEmail || nexoraUserEmail(user)).trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("自研线路用户缺少有效的注册邮箱。");
+  return email;
+}
+
+function legacyXuiClientEmail(user = {}) {
+  return `nexora_${String(user.customerID || user.id || "user").replace(/[^a-zA-Z0-9_-]/g, "_")}@internal`.toLowerCase();
+}
+
+async function xuiRequestAt(baseUrl, apiToken, apiPath, { method = "GET", body } = {}) {
+  if (XUI_SERVICE_URL) {
+    return requestXui({
+      serviceUrl: XUI_SERVICE_URL,
+      serviceToken: XUI_SERVICE_TOKEN,
+      baseUrl,
+      apiToken,
+      apiPath,
+      method,
+      body,
+      timeoutMs: XUI_TIMEOUT_MS + 1000
+    });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${baseUrl}${apiPath}`, {
+      method,
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" })
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+    const text = await response.text();
+    let payload;
+    try { payload = text ? JSON.parse(text) : {}; } catch { throw new Error(`3x-ui 返回了无效响应（HTTP ${response.status}）。`); }
+    if (!response.ok || payload.success !== true) {
+      const error = new Error(payload.msg || payload.error || `3x-ui 请求失败（HTTP ${response.status}）。`);
+      error.statusCode = response.status;
+      throw error;
+    }
+    return payload.obj;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("3x-ui 请求超时。");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function xuiRequest(apiPath, options) {
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) throw new Error("3x-ui 尚未配置，请设置 XUI_BASE_URL 和 XUI_API_TOKEN。");
+  return xuiRequestAt(XUI_BASE_URL, XUI_API_TOKEN, apiPath, options);
+}
+
+function xuiNodeBaseUrl(node = {}) {
+  const scheme = String(node.scheme || "https").toLowerCase();
+  if (!['http', 'https'].includes(scheme) || !node.address) throw new Error("节点 API 地址无效。");
+  const basePath = String(node.basePath || "").replace(/^\/+|\/+$/g, "");
+  return `${scheme}://${node.address}${node.port ? `:${node.port}` : ""}${basePath ? `/${basePath}` : ""}`;
+}
+
+function sealXuiNodeToken(token) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", crypto.createHash("sha256").update(XUI_API_TOKEN).digest(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(token), "utf8"), cipher.final()]);
+  return `v1.${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+
+function openXuiNodeToken(value) {
+  const [version, iv, tag, encrypted] = String(value || "").split(".");
+  if (version !== "v1" || !iv || !tag || !encrypted) return "";
+  const decipher = crypto.createDecipheriv("aes-256-gcm", crypto.createHash("sha256").update(XUI_API_TOKEN).digest(), Buffer.from(iv, "base64url"));
+  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
+}
+
+function normalizeXuiClientResult(value, fallbackEmail = "") {
+  const root = value && typeof value === "object" ? value : {};
+  const client = root.client && typeof root.client === "object" ? root.client : root;
+  const traffic = client.traffic || root.traffic || {};
+  const upload = Math.max(0, Number(traffic.up ?? client.up ?? root.up) || 0);
+  const download = Math.max(0, Number(traffic.down ?? client.down ?? root.down) || 0);
+  const usedTraffic = Math.max(0, Number(root.usedTraffic ?? client.usedTraffic ?? traffic.usedTraffic) || upload + download);
+  return {
+    ...client,
+    email: String(client.email || fallbackEmail),
+    inboundIds: (Array.isArray(root.inboundIds) ? root.inboundIds : Array.isArray(client.inboundIds) ? client.inboundIds : []).map(Number).filter(Number.isSafeInteger),
+    usedTraffic,
+    traffic: {
+      up: upload,
+      down: download,
+      enable: traffic.enable !== false
+    }
+  };
+}
+
+function normalizeXuiInboundIds(value) {
+  const rows = Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : Array.isArray(value?.inbounds) ? value.inbounds : [];
+  return [...new Set(rows.map(item => Number(item?.id ?? item)).filter(Number.isSafeInteger))];
+}
+
+function normalizeXuiMonitor(status = {}, value = []) {
+  const rows = Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : Array.isArray(value?.nodes) ? value.nodes : [];
+  const nodes = rows.map((item, index) => {
+    const heartbeat = Math.max(0, Number(item?.lastHeartbeat) || 0);
+    return {
+      id: String(item?.id ?? index),
+      guid: String(item?.guid || `node:${item?.id ?? index}`),
+      name: String(item?.remark || item?.name || `Node ${item?.id ?? index + 1}`),
+      address: String(item?.address || ""),
+      port: Number(item?.port) || null,
+      enabled: item?.enable !== false,
+      status: String(item?.status || "unknown"),
+      lastHeartbeat: heartbeat ? new Date(heartbeat < 1e12 ? heartbeat * 1000 : heartbeat).toISOString() : "",
+      latencyMs: Math.max(0, Number(item?.latencyMs) || 0),
+      cpu: Math.max(0, Number(item?.cpuPct) || 0),
+      memory: Math.max(0, Number(item?.memPct) || 0),
+      uptime: Math.max(0, Number(item?.uptimeSecs) || 0),
+      uploadBytes: Math.max(0, Number(item?.netUp) || 0),
+      downloadBytes: Math.max(0, Number(item?.netDown) || 0),
+      xrayState: String(item?.xrayState || "unknown"),
+      xrayVersion: String(item?.xrayVersion || ""),
+      panelVersion: String(item?.panelVersion || ""),
+      inboundCount: Math.max(0, Number(item?.inboundCount) || 0),
+      clientCount: Math.max(0, Number(item?.clientCount) || 0),
+      onlineCount: Math.max(0, Number(item?.onlineCount) || 0),
+      lastError: String(item?.lastError || item?.xrayError || "")
+    };
+  });
+  const memory = status?.mem || status?.memory || {};
+  const disk = status?.disk || {};
+  const net = status?.netTraffic || {};
+  const netIO = status?.netIO || {};
+  return {
+    system: {
+      cpu: Math.max(0, Number(status?.cpu) || 0),
+      cpuCores: Math.max(0, Number(status?.cpuCores) || 0),
+      memoryUsed: Math.max(0, Number(memory?.current ?? memory?.used) || 0),
+      memoryTotal: Math.max(0, Number(memory?.total) || 0),
+      diskUsed: Math.max(0, Number(disk?.current ?? disk?.used) || 0),
+      diskTotal: Math.max(0, Number(disk?.total) || 0),
+      uptime: Math.max(0, Number(status?.uptime) || 0),
+      xrayState: String(status?.xray?.state ?? status?.xrayState ?? "unknown"),
+      xrayVersion: String(status?.xray?.version ?? status?.xrayVersion ?? ""),
+      sentBytes: Math.max(0, Number(net?.sent ?? netIO?.up) || 0),
+      receivedBytes: Math.max(0, Number(net?.recv ?? netIO?.down) || 0)
+    },
+    nodes
+  };
+}
+
+function normalizeXuiConnectedIps(value, email) {
+  const target = String(email || "").trim().toLowerCase();
+  const ips = new Set();
+  for (const clients of Object.values(value && typeof value === "object" ? value : {})) {
+    if (!clients || typeof clients !== "object") continue;
+    for (const [clientEmail, entries] of Object.entries(clients)) {
+      if (String(clientEmail).trim().toLowerCase() !== target) continue;
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        const ip = String(entry?.ip || entry || "").trim().split(" ")[0];
+        if (ip) ips.add(ip);
+      }
+    }
+  }
+  return [...ips];
+}
+
+function normalizeXuiInbounds(value = []) {
+  const rows = Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : Array.isArray(value?.inbounds) ? value.inbounds : [];
+  return rows.map((item, index) => ({
+    id: String(item?.id ?? index),
+    name: String(item?.remark || item?.tag || `Inbound ${item?.id ?? index + 1}`),
+    protocol: String(item?.protocol || "unknown"),
+    port: Number(item?.port) || null,
+    enabled: item?.enable !== false,
+    clients: Array.isArray(item?.clientStats) ? item.clientStats.length : Array.isArray(item?.settings?.clients) ? item.settings.clients.length : 0,
+    uploadBytes: Math.max(0, Number(item?.up) || 0),
+    downloadBytes: Math.max(0, Number(item?.down) || 0),
+    totalBytes: Math.max(0, Number(item?.total) || 0),
+    expiryTime: Math.max(0, Number(item?.expiryTime) || 0)
+  }));
+}
+
+function xuiInboundKey(inbound = {}) {
+  return `${String(inbound.originNodeGuid || `node:${inbound.nodeId || "local"}`)}:${String(inbound.id ?? "")}`;
+}
+
+function xuiActiveInboundKeys(value) {
+  const keys = new Set();
+  if (!value || typeof value !== "object") return keys;
+  for (const [guid, tags] of Object.entries(value)) {
+    for (const tag of Array.isArray(tags) ? tags : []) keys.add(`${guid}:${tag}`);
+  }
+  return keys;
+}
+
+function normalizeXuiPresence(onlinesByGuid, lastOnline, nodes = [], status = {}) {
+  const onlineByGuid = {};
+  for (const [guid, emails] of Object.entries(onlinesByGuid && typeof onlinesByGuid === "object" ? onlinesByGuid : {})) {
+    onlineByGuid[String(guid)] = [...new Set((Array.isArray(emails) ? emails : []).map(email => String(email).trim().toLowerCase()).filter(Boolean))];
+  }
+  const normalizedLastOnline = Object.fromEntries(Object.entries(lastOnline && typeof lastOnline === "object" ? lastOnline : {})
+    .map(([email, timestamp]) => {
+      const value = Math.max(0, Number(timestamp) || 0);
+      return [String(email).trim().toLowerCase(), value > 1e12 ? Math.floor(value / 1000) : value];
+    }).filter(([email]) => email));
+  const nodeNames = Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(node => [String(node?.guid || `node:${node?.id}`), String(node?.remark || node?.name || node?.address || node?.guid || node?.id)]));
+  nodeNames[String(status?.panelGuid || "node:local")] = XUI_PANEL_NAME;
+  return {
+    onlineEmails: [...new Set(Object.values(onlineByGuid).flat())],
+    onlineByGuid,
+    lastOnline: normalizedLastOnline,
+    nodeNames
+  };
+}
+
+async function getXuiState(key, legacyCollection) {
+  if (!XUI_SERVICE_URL) return dataStore.getRecord(legacyCollection, "state");
+  return requestXuiService({
+    serviceUrl: XUI_SERVICE_URL,
+    serviceToken: XUI_SERVICE_TOKEN,
+    path: `/internal/state/${encodeURIComponent(key)}`,
+    timeoutMs: XUI_TIMEOUT_MS
+  });
+}
+
+async function setXuiState(key, legacyCollection, value) {
+  if (!XUI_SERVICE_URL) return dataStore.setRecord(legacyCollection, "state", value);
+  return requestXuiService({
+    serviceUrl: XUI_SERVICE_URL,
+    serviceToken: XUI_SERVICE_TOKEN,
+    path: `/internal/state/${encodeURIComponent(key)}`,
+    method: "PUT",
+    body: value,
+    timeoutMs: XUI_TIMEOUT_MS
+  });
+}
+
+function xuiTrafficByUser(value = []) {
+  const rows = Array.isArray(value) ? value : [];
+  const result = {};
+  for (const inbound of rows) {
+    const nodeGuid = String(inbound?.originNodeGuid || `node:${inbound?.nodeId || "local"}`);
+    for (const client of Array.isArray(inbound?.clientStats) ? inbound.clientStats : []) {
+      const email = String(client?.email || "").trim().toLowerCase();
+      if (!email) continue;
+      result[email] ||= {};
+      result[email][nodeGuid] = Math.max(result[email][nodeGuid] || 0, Math.max(0, Number(client?.up) || 0) + Math.max(0, Number(client?.down) || 0));
+    }
+  }
+  return result;
+}
+
+function xuiMultiplier(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : 1;
+}
+
+function calculateXuiBillingLedger(previous, currentByNode, multipliers, cycleKey) {
+  const cycleBase = value => String(value || "").replace(/\|direct-(?:nodes|inbounds)-v\d+$/, "");
+  const reset = Boolean(previous?.cycleKey && cycleBase(previous.cycleKey) !== cycleBase(cycleKey));
+  const inboundMigration = !reset && previous?.inbounds && !previous?.nodes;
+  const carriedRawBytes = reset ? 0 : Math.max(0, Number(previous?.carriedRawBytes) || 0);
+  const carriedWeightedBytes = reset ? 0 : Math.max(0, Number(previous?.carriedWeightedBytes) || 0);
+  const nodes = reset ? {} : structuredClone(previous?.nodes || {});
+  if (inboundMigration) for (const [key, item] of Object.entries(previous.inbounds)) {
+    const nodeGuid = key.slice(0, key.lastIndexOf(":"));
+    const prior = nodes[nodeGuid] || {};
+    nodes[nodeGuid] = {
+      baselineBytes: Math.max(Number(prior.baselineBytes) || 0, Number(item.baselineBytes) || 0),
+      rawBytes: Math.max(Number(prior.rawBytes) || 0, Number(item.rawBytes) || 0),
+      weightedBytes: Math.max(Number(prior.weightedBytes) || 0, Number(item.weightedBytes) || 0)
+    };
+  }
+  for (const [nodeGuid, currentBytes] of Object.entries(currentByNode || {})) {
+    const prior = nodes[nodeGuid];
+    const current = Math.max(0, Number(currentBytes) || 0);
+    const delta = reset ? 0 : prior ? (current >= prior.baselineBytes ? current - prior.baselineBytes : current) : current;
+    const multiplier = xuiMultiplier(multipliers?.[nodeGuid]);
+    nodes[nodeGuid] = {
+      baselineBytes: current,
+      rawBytes: Math.max(0, Number(prior?.rawBytes) || 0) + delta,
+      weightedBytes: Math.max(0, Number(prior?.weightedBytes) || 0) + Math.round(delta * multiplier)
+    };
+  }
+  return {
+    cycleKey,
+    cycleReset: Boolean(reset),
+    disabled: reset ? false : previous?.disabled === true,
+    carriedRawBytes,
+    carriedWeightedBytes,
+    nodes,
+    rawBytes: carriedRawBytes + Object.values(nodes).reduce((sum, item) => sum + item.rawBytes, 0),
+    weightedBytes: carriedWeightedBytes + Object.values(nodes).reduce((sum, item) => sum + item.weightedBytes, 0),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function createXuiBillingBaseline(currentByNode, cycleKey, multipliers = {}) {
+  const nodes = Object.fromEntries(Object.entries(currentByNode || {}).map(([key, value]) => [key, {
+    baselineBytes: Math.max(0, Number(value) || 0),
+    rawBytes: Math.max(0, Number(value) || 0),
+    weightedBytes: Math.round(Math.max(0, Number(value) || 0) * xuiMultiplier(multipliers[key]))
+  }]));
+  return { cycleKey, cycleReset: false, disabled: false, carriedRawBytes: 0, carriedWeightedBytes: 0, nodes, rawBytes: Object.values(nodes).reduce((sum, item) => sum + item.rawBytes, 0), weightedBytes: Object.values(nodes).reduce((sum, item) => sum + item.weightedBytes, 0), updatedAt: new Date().toISOString() };
+}
+
+function xuiClientCycleKey(client = {}, now = Date.now()) {
+  const createdAt = Number(client.createdAt) || now;
+  const createdMs = createdAt < 1e12 ? createdAt * 1000 : createdAt;
+  const resetDays = Math.max(0, Number(client.reset) || 0);
+  const period = resetDays ? Math.max(0, Math.floor((now - createdMs) / (resetDays * 86400000))) : 0;
+  return `${createdAt}|${resetDays}|${period}|${Number(client.expiryTime) || 0}`;
+}
+
+let xuiBillingMutation = Promise.resolve();
+
+function withXuiBillingLock(operation) {
+  const next = xuiBillingMutation.catch(() => undefined).then(operation);
+  xuiBillingMutation = next;
+  return next;
+}
+
+async function getXuiBillingState() {
+  const value = await getXuiState("billing", "xuiBilling");
+  return { multipliers: {}, nodeTokens: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
+}
+
+async function saveXuiBillingState(state) {
+  await setXuiState("billing", "xuiBilling", { ...state, updatedAt: new Date().toISOString() });
+}
+
+async function xuiTrafficFromNodes(status, nodes, centralInbounds, state) {
+  const localGuid = String(status?.panelGuid || "node:local");
+  const inbounds = (Array.isArray(centralInbounds) ? centralInbounds : [])
+    .filter(item => String(item?.originNodeGuid || `node:${item?.nodeId || "local"}`) === localGuid)
+    .map(item => ({ ...item, originNodeGuid: localGuid }));
+  const nodeResults = { [localGuid]: { configured: true, error: "" } };
+  await Promise.all((Array.isArray(nodes) ? nodes : []).map(async node => {
+    const guid = String(node?.guid || `node:${node?.id}`);
+    const sealedToken = state.nodeTokens[guid];
+    if (!sealedToken) {
+      nodeResults[guid] = { configured: false, error: "" };
+      return;
+    }
+    try {
+      const token = openXuiNodeToken(sealedToken);
+      const rows = await xuiRequestAt(xuiNodeBaseUrl(node), token, "/panel/api/inbounds/list");
+      inbounds.push(...(Array.isArray(rows) ? rows : []).map(item => ({ ...item, originNodeGuid: guid })));
+      nodeResults[guid] = { configured: true, error: "" };
+    } catch (error) {
+      nodeResults[guid] = { configured: true, error: error.message };
+    }
+  }));
+  return { traffic: xuiTrafficByUser(inbounds), nodeResults, inbounds };
+}
+
+function xuiResetReference(value) {
+  const parts = chinaDateParts(value);
+  return parts ? `${parts.year}-${String(parts.month + 1).padStart(2, "0")}` : "";
+}
+
+async function resetXuiClientTraffic(user, reset = {}) {
+  const paymentOrderId = typeof reset === "object" ? String(reset.paymentOrderId || "") : "";
+  if (XUI_SERVICE_URL) {
+    await requestXuiService({
+      serviceUrl: XUI_SERVICE_URL,
+      serviceToken: XUI_SERVICE_TOKEN,
+      path: `/internal/clients/${encodeURIComponent(user.id)}/traffic-reset`,
+      method: "POST",
+      body: paymentOrderId ? { reason: "paid", paymentOrderId } : { reason: "calendar_month", month: xuiResetReference(reset) },
+      timeoutMs: XUI_TIMEOUT_MS
+    });
+  } else {
+    await xuiRequest(`/panel/api/clients/resetTraffic/${encodeURIComponent(xuiClientEmail(user))}`, { method: "POST" });
+  }
+  if (!isUserExpired(user) && !isUserAccountDisabled(user)) {
+    await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [xuiClientEmail(user)] } });
+  }
+}
+
+async function resetXuiTrafficAfterPlanPurchase(user, order) {
+  await resetXuiClientTraffic(user, { paymentOrderId: order.id });
+  const now = new Date().toISOString();
+  const totalBytes = xuiTrafficLimitBytes(user);
+  user.xuiTrafficCycleKey = `purchase:${order.id}`;
+  user.xuiLastTrafficResetAt = now;
+  user.xuiNextTrafficResetAt = user.duration === "lifetime" ? "" : xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay || chinaDateParts(user.purchasedAt)?.day || 1, user.purchasedAt || now);
+  user.xuiWeightedTraffic = { rawUsedBytes: 0, usedBytes: 0, totalBytes, remainingBytes: totalBytes ? totalBytes : null, usagePercent: totalBytes ? 0 : null, depleted: false, nodes: [], lastSyncedAt: now };
+  user.xuiLastTraffic = { ...(user.xuiLastTraffic || {}), available: true, status: "active", uploadBytes: 0, downloadBytes: 0, rawUsedBytes: 0, usedBytes: 0, totalBytes, remainingBytes: totalBytes ? totalBytes : null, usagePercent: totalBytes ? 0 : null, nextResetAt: user.xuiNextTrafficResetAt || "", expiresAt: user.expiresAt, nodes: [], lastSyncedAt: now };
+  await clearXuiBillingLedger(xuiClientEmail(user));
+}
+
+async function resetDueXuiTraffic() {
+  const now = Date.now();
+  let changed = false;
+  for (const user of users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail)) {
+    if (user.duration === "lifetime") {
+      const lifetimeLimit = xuiTrafficLimitBytes(user);
+      if (user.xuiTrafficLimitBytes !== lifetimeLimit || user.xuiNextTrafficResetAt) {
+        user.xuiTrafficLimitBytes = lifetimeLimit;
+        user.xuiNextTrafficResetAt = "";
+        changed = true;
+      }
+      continue;
+    }
+    if (!user.xuiTrafficResetAnchorDay) {
+      user.xuiTrafficResetAnchorDay = chinaDateParts(user.purchasedAt || user.createdAt || now)?.day || 1;
+      user.xuiNextTrafficResetAt = xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
+      user.xuiTrafficCycleKey ||= `legacy:${user.purchasedAt || user.createdAt || user.id}`;
+      user.xuiTrafficLimitBytes = xuiTrafficLimitBytes(user);
+      changed = true;
+    }
+    const dueAt = Date.parse(user.xuiNextTrafficResetAt || "");
+    if (!Number.isFinite(dueAt) || dueAt > now) continue;
+    try {
+      await resetXuiClientTraffic(user, dueAt);
+      const trafficPackExpired = expireUserTrafficPacks(user);
+      if (trafficPackExpired) await provisionXuiClient(user);
+      user.xuiTrafficCycleKey = `reset:${user.xuiNextTrafficResetAt}`;
+      user.xuiLastTrafficResetAt = new Date().toISOString();
+      user.xuiNextTrafficResetAt = xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
+      user.xuiLastError = "";
+    } catch (error) {
+      user.xuiLastError = `月度流量重置失败：${error.message}`;
+    }
+    changed = true;
+  }
+  if (changed) await saveUsers();
+}
+
+function markMissingXuiClients(appUsersByEmail, remoteEmails, checkedAt = new Date().toISOString()) {
+  const changed = [];
+  for (const [email, user] of appUsersByEmail) {
+    if (remoteEmails.has(email)) continue;
+    if (user.xuiClientPresent !== false) user.xuiClientMissingAt = checkedAt;
+    user.xuiClientPresent = false;
+    user.xuiLastError = "3x-ui Client 已被删除或不存在。";
+    changed.push(user);
+  }
+  return changed;
+}
+
+async function syncXuiWeightedTraffic(snapshot = {}) {
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) return getXuiBillingState();
+  return withXuiBillingLock(async () => {
+    await loadLatestData();
+    await resetDueXuiTraffic();
+    const [status, nodes, inbounds, clients, clientIpsByGuid, onlinesByGuid, lastOnline] = await Promise.all([
+      snapshot.status || xuiRequest("/panel/api/server/status"),
+      snapshot.nodes || xuiRequest("/panel/api/nodes/list"),
+      snapshot.inbounds || xuiRequest("/panel/api/inbounds/list"),
+      snapshot.clients || xuiRequest("/panel/api/clients/list"),
+      xuiRequest("/panel/api/clients/clientIpsByGuid", { method: "POST" }).catch(() => null),
+      xuiRequest("/panel/api/clients/onlinesByGuid", { method: "POST" }).catch(() => null),
+      xuiRequest("/panel/api/clients/lastOnline", { method: "POST" }).catch(() => null)
+    ]);
+    const state = await getXuiBillingState();
+    const { traffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, state);
+    const localGuid = String(status?.panelGuid || "node:local");
+    const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
+    const nodeMultipliers = state.multipliers || {};
+    const disableEmails = [];
+    const enableEmails = [];
+    const changedUsers = [];
+    const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
+    const remoteEmails = new Set();
+
+    for (const remote of Array.isArray(clients) ? clients : []) {
+      const email = String(remote?.email || "").trim().toLowerCase();
+      if (!email) continue;
+      remoteEmails.add(email);
+      const user = appUsersByEmail.get(email);
+      const previous = state.users[email];
+      const planBytes = user ? xuiTrafficLimitBytes(user, remote) : Math.max(0, Number(previous?.totalBytes ?? remote.totalGB) || 0);
+      const cycleKey = `${user ? user.xuiTrafficCycleKey || `legacy:${user.purchasedAt || user.createdAt || user.id}` : xuiClientCycleKey(remote)}|direct-nodes-v2`;
+      const baselinePending = user?.xuiTrafficBaselinePending || (user?.xuiManagementMode === "link" && user.xuiTrafficBaselineVersion !== 2);
+      const ledger = baselinePending
+        ? createXuiBillingBaseline(traffic[email] || {}, cycleKey, nodeMultipliers)
+        : calculateXuiBillingLedger(state.users[email], traffic[email] || {}, nodeMultipliers, cycleKey);
+      const totalBytes = planBytes;
+      const expired = user ? isUserExpired(user) : Number(remote.expiryTime) > 0 && Number(remote.expiryTime) < Date.now();
+      const depleted = totalBytes > 0 && ledger.weightedBytes >= totalBytes;
+      if (depleted && remote.enable !== false && !expired) disableEmails.push(email);
+      if (baselinePending && remote.enable === false && !expired && !isUserAccountDisabled(user)) enableEmails.push(email);
+      ledger.disabled = ledger.disabled || depleted;
+      ledger.totalBytes = totalBytes;
+      state.users[email] = ledger;
+      const weightedTraffic = {
+        rawUsedBytes: ledger.rawBytes,
+        usedBytes: ledger.weightedBytes,
+        totalBytes,
+        remainingBytes: totalBytes ? Math.max(totalBytes - ledger.weightedBytes, 0) : null,
+        usagePercent: totalBytes ? Math.min(100, Math.round(ledger.weightedBytes / totalBytes * 1000) / 10) : null,
+        depleted,
+        nodes: [
+          ...(ledger.carriedRawBytes || ledger.carriedWeightedBytes ? [{ key: "legacy", name: "历史节点统计结转", multiplier: 1, rawBytes: ledger.carriedRawBytes, weightedBytes: ledger.carriedWeightedBytes }] : []),
+          ...Object.entries(ledger.nodes).map(([key, item]) => ({ key, name: nodeNames[key] || key, multiplier: xuiMultiplier(nodeMultipliers[key]), rawBytes: item.rawBytes, weightedBytes: item.weightedBytes }))
+        ],
+        lastSyncedAt: ledger.updatedAt
+      };
+      if (user) {
+        user.xuiClientPresent = true;
+        delete user.xuiClientMissingAt;
+        user.xuiTrafficBaselinePending = false;
+        if (baselinePending) user.xuiTrafficBaselineVersion = 2;
+        user.xuiWeightedTraffic = weightedTraffic;
+        user.xuiLastTraffic = xuiTrafficPayload(user, remote, clientIpsByGuid ? normalizeXuiConnectedIps(clientIpsByGuid, email).length : null);
+        user.xuiLastSyncedAt = weightedTraffic.lastSyncedAt;
+        user.xuiLastError = "";
+        changedUsers.push(user);
+      }
+
+      const quotaChanged = Number(remote.totalGB) !== totalBytes;
+      if (user && (quotaChanged || previous?.disabled) && !depleted && !expired && !isUserAccountDisabled(user)) {
+        try {
+          await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: totalBytes, reset: 0, flow: XUI_VISION_FLOW, enable: true }) });
+          ledger.disabled = false;
+        } catch (error) {
+          console.warn(`[xui-billing] Failed to re-enable ${email}: ${error.message}`);
+        }
+      }
+    }
+
+    const activeUsersByEmail = new Map([...appUsersByEmail].filter(([, user]) => !isUserExpired(user) && !isUserAccountDisabled(user)));
+    for (const user of markMissingXuiClients(activeUsersByEmail, remoteEmails)) if (!changedUsers.includes(user)) changedUsers.push(user);
+
+    if (disableEmails.length) {
+      await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: disableEmails } });
+      for (const email of disableEmails) state.users[email].disabled = true;
+    }
+    if (enableEmails.length) await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: enableEmails } });
+    state.nodeResults = nodeResults;
+    state.nodeNames = nodeNames;
+    state.presence = { ...normalizeXuiPresence(onlinesByGuid, lastOnline, nodes, status), checkedAt: new Date().toISOString() };
+    await saveXuiBillingState(state);
+    await Promise.all(changedUsers.map(saveUser));
+    return { ...state, nodeResults, nodeNames };
+  });
+}
+
+async function getAllXuiInboundIds() {
+  let lastError;
+  for (const apiPath of ["/panel/api/inbounds/list", "/panel/api/inbounds/list/slim", "/panel/api/inbounds/options"]) {
+    try {
+      const ids = normalizeXuiInboundIds(await xuiRequest(apiPath));
+      if (ids.length) return ids;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(lastError ? `无法读取3x-ui入站列表：${lastError.message}` : "3x-ui中没有可关联的入站。");
+}
+
+async function syncXuiClientAccess(emails, group, inboundIds, allInboundIds = null) {
+  if (!emails.length) return;
+  const allIds = allInboundIds || await getAllXuiInboundIds();
+  const detachIds = allIds.filter(id => !inboundIds.includes(id));
+  if (inboundIds.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails, inboundIds } });
+  if (detachIds.length) await xuiRequest("/panel/api/clients/bulkDetach", { method: "POST", body: { emails, inboundIds: detachIds } });
+  await xuiRequest("/panel/api/clients/groups/bulkAdd", { method: "POST", body: { emails, group } });
+}
+
+async function getXuiClientByEmail(email) {
+  let value;
+  try {
+    value = await xuiRequest(`/panel/api/clients/get/${encodeURIComponent(email)}`);
+  } catch (error) {
+    if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+  }
+  if (value) return normalizeXuiClientResult(value, email);
+  const listed = await xuiRequest("/panel/api/clients/list");
+  const match = (Array.isArray(listed) ? listed : []).find(item => String(item?.client?.email || item?.email || "").toLowerCase() === email);
+  if (match) return normalizeXuiClientResult(match, email);
+  const error = new Error("3x-ui Client 不存在。");
+  error.statusCode = 404;
+  throw error;
+}
+
+async function getXuiClient(user) {
+  return getXuiClientByEmail(xuiClientEmail(user));
+}
+
+async function getXuiClientAfterMutation(user) {
+  let lastError;
+  for (const delayMs of [0, 200, 500]) {
+    if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
+    try {
+      return await getXuiClient(user);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+function xuiClientWritePayload(existing, desired) {
+  const writableFields = ["email", "enable", "expiryTime", "totalGB", "limitIp", "reset", "subId", "uuid", "id", "password", "auth", "flow", "tgId", "comment", "security", "reverse", "groupName"];
+  const payload = Object.fromEntries(writableFields
+    .filter(key => desired[key] !== undefined || existing?.[key] !== undefined)
+    .map(key => [key, desired[key] !== undefined ? desired[key] : existing[key]]));
+  if (payload.id != null) payload.id = String(payload.id);
+  return payload;
+}
+
+async function getXuiInboundGroups() {
+  return normalizeXuiInboundGroups((await getXuiState("inbound-groups", "xuiInboundGroups")) || {});
+}
+
+async function xuiInboundIdsForGroup(group) {
+  return (await getXuiInboundGroups())[normalizeUserGroup(group, "")] || [];
+}
+
+async function xuiInboundManagementData() {
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) return { configured: false, groups: normalizeXuiInboundGroups(), metadata: {}, inbounds: [] };
+  const [status, nodes, inbounds, settings, activeInbounds] = await Promise.all([
+    xuiRequest("/panel/api/server/status"),
+    xuiRequest("/panel/api/nodes/list"),
+    xuiRequest("/panel/api/inbounds/list"),
+    getXuiState("inbound-groups", "xuiInboundGroups"),
+    xuiRequest("/panel/api/clients/activeInbounds", { method: "POST" }).catch(() => null)
+  ]);
+  const groups = normalizeXuiInboundGroups(settings || {});
+  const metadata = normalizeXuiInboundMetadata(settings || {});
+  const localGuid = String(status?.panelGuid || "node:local");
+  const nodeNames = Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(node => [String(node?.guid || `node:${node?.id}`), String(node?.remark || node?.name || node?.address || node?.guid || node?.id)]));
+  nodeNames[localGuid] = XUI_PANEL_NAME;
+  const activeInboundKeys = activeInbounds === null ? null : xuiActiveInboundKeys(activeInbounds);
+  return {
+    configured: true,
+    groups,
+    metadata,
+    inbounds: (Array.isArray(inbounds) ? inbounds : []).map(inbound => {
+      const nodeGuid = String(inbound?.originNodeGuid || `node:${inbound?.nodeId || "local"}`);
+      const key = `${nodeGuid}:${inbound.id}`;
+      const activityReported = activeInbounds !== null && Object.prototype.hasOwnProperty.call(activeInbounds, nodeGuid);
+      return {
+        id: Number(inbound.id),
+        key,
+        name: String(inbound.remark || inbound.name || inbound.tag || `Inbound ${inbound.id}`),
+        tag: String(inbound.tag || ""),
+        protocol: String(inbound.protocol || ""),
+        port: Number(inbound.port) || null,
+        enabled: inbound.enable !== false,
+        recentlyActive: activityReported ? activeInboundKeys.has(`${nodeGuid}:${String(inbound.tag || "")}`) : null,
+        nodeGuid,
+        nodeName: nodeNames[nodeGuid] || nodeGuid,
+        clientCount: Array.isArray(inbound.clientStats) ? inbound.clientStats.length : 0,
+        networkLevel: metadata[key]?.networkLevel || "",
+        region: metadata[key]?.region || ""
+      };
+    }).filter(inbound => Number.isSafeInteger(inbound.id) && inbound.id > 0)
+  };
+}
+
+async function syncXuiInboundGroup(group, inboundIds, allInboundIds) {
+  const targets = users.filter(user => isSelfHostedUser(user) && activeUserGroup(user) === group && user.xuiClientEmail);
+  const emails = targets.map(user => String(user.xuiClientEmail).toLowerCase());
+  if (!emails.length) return { group, users: 0 };
+  await syncXuiClientAccess(emails, group, inboundIds, allInboundIds);
+  const syncedAt = new Date().toISOString();
+  for (const user of targets) {
+    user.xuiInboundIds = inboundIds;
+    user.xuiLastSyncedAt = syncedAt;
+    user.xuiLastError = "";
+    await saveXuiClientProjection(user, true);
+  }
+  await saveUsers();
+  return { group, users: emails.length };
+}
+
+function xuiClientNeedsUpdate(existing, desired) {
+  return ["email", "totalGB", "expiryTime", "limitIp", "reset", "flow", "groupName", "enable"]
+    .some(key => String(existing?.[key] ?? "") !== String(desired[key] ?? ""));
+}
+
+function isUserAccountDisabled(user) {
+  return accounts.some(account => account.linkedUserId === user?.id && account.status === "disabled");
+}
+
+async function saveXuiClientProjection(user, enabled) {
+  if (!XUI_SERVICE_URL) return;
+  await requestXuiService({
+    serviceUrl: XUI_SERVICE_URL,
+    serviceToken: XUI_SERVICE_TOKEN,
+    path: `/internal/clients/${encodeURIComponent(user.id)}`,
+    method: "PUT",
+    body: {
+      userId: user.id,
+      email: user.xuiClientEmail || "",
+      subId: user.xuiSubId || "",
+      inboundIds: user.xuiInboundIds || [],
+      enabled,
+      lastSyncedAt: user.xuiLastSyncedAt || "",
+      lastError: user.xuiLastError || ""
+    },
+    timeoutMs: XUI_TIMEOUT_MS
+  });
+}
+
+async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
+  if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
+  const email = xuiClientEmail(user);
+  const inboundIds = await xuiInboundIdsForGroup(activeUserGroup(user));
+  let existing = null;
+  let existingEmail = email;
+  try { existing = await getXuiClientByEmail(email); } catch (error) {
+    if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+  }
+  if (!existing && allowLegacyEmail) {
+    const legacyEmail = legacyXuiClientEmail(user);
+    if (legacyEmail !== email) {
+      try {
+        existing = await getXuiClientByEmail(legacyEmail);
+        existingEmail = legacyEmail;
+      } catch (error) {
+        if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+      }
+    }
+  }
+  const desired = {
+    ...(existing || {}),
+    email,
+    totalGB: xuiTrafficLimitBytes(user, existing || {}),
+    expiryTime: new Date(user.expiresAt).getTime(),
+    limitIp: Number.isFinite(Number(user.xuiIpLimit)) ? Math.max(0, Number(user.xuiIpLimit)) : planDeviceLimit(user),
+    reset: 0,
+    flow: XUI_VISION_FLOW,
+    groupName: activeUserGroup(user),
+    enable: !isUserExpired(user) && !isUserAccountDisabled(user)
+  };
+  delete desired.traffic;
+  delete desired.inboundIds;
+  let mutationResult = null;
+  if (existing?.email) {
+    if (xuiClientNeedsUpdate(existing, desired)) {
+      mutationResult = await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(existingEmail)}`, { method: "POST", body: xuiClientWritePayload(existing, desired) });
+    }
+    await syncXuiClientAccess([email], activeUserGroup(user), inboundIds, existing.inboundIds || []);
+  } else {
+    mutationResult = await xuiRequest("/panel/api/clients/add", { method: "POST", body: { client: xuiClientWritePayload(null, desired), inboundIds } });
+  }
+  let remote;
+  try {
+    remote = await getXuiClientAfterMutation({ ...user, xuiClientEmail: email });
+  } catch (error) {
+    const mutationClient = normalizeXuiClientResult(mutationResult, email);
+    if (!mutationClient.subId) throw error;
+    remote = { ...mutationClient, inboundIds: mutationClient.inboundIds.length ? mutationClient.inboundIds : inboundIds };
+  }
+  user.lineType = "self_hosted";
+  user.subscriptionId = "";
+  user.xuiClientEmail = email;
+  user.xuiSubId = String(remote.subId || user.xuiSubId || "");
+  user.xuiInboundIds = inboundIds;
+  user.xuiLastSyncedAt = new Date().toISOString();
+  user.xuiLastError = "";
+  await saveXuiClientProjection(user, desired.enable);
+  return remote;
+}
+
+async function clearXuiBillingLedger(email) {
+  const state = await getXuiBillingState();
+  delete state.users[String(email || "").trim().toLowerCase()];
+  await saveXuiBillingState(state);
+}
+
+const xuiUserMigrationTasks = new Map();
+
+function withXuiUserMigrationLock(userId, operation) {
+  const key = String(userId || "");
+  if (xuiUserMigrationTasks.has(key)) return xuiUserMigrationTasks.get(key);
+  // ponytail: process-local lock is sufficient for the current single-VPS deployment; use a DB advisory lock before adding app replicas.
+  const task = Promise.resolve().then(operation).finally(() => {
+    if (xuiUserMigrationTasks.get(key) === task) xuiUserMigrationTasks.delete(key);
+  });
+  xuiUserMigrationTasks.set(key, task);
+  return task;
+}
+
+async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
+  return withXuiUserMigrationLock(user.id, async () => {
+    if (isSelfHostedUser(user)) return { status: "completed", inboundIds: user.xuiInboundIds || [] };
+    const email = nexoraUserEmail(user);
+    const fromSubscription = subscriptions.find(item => item.id === user.subscriptionId) || null;
+    if (!email) {
+      if (user.xuiMigrationStatus !== "activation_required") {
+        user.xuiMigrationStatus = "activation_required";
+        user.xuiMigrationError = "缺少有效邮箱";
+        user.xuiMigrationUpdatedAt = new Date().toISOString();
+        appendUserLogToUser(user, createUserLog({ event: "subscription-request", status: "blocked", reason: "xui-migration-activation-required", fromSubscription, req, stage: "xui-migration", message: "旧套餐迁移暂停：缺少有效邮箱，请联系客服激活账户。" }));
+        await saveUsers();
+      }
+      return { status: "activation_required", inboundIds: [] };
+    }
+
+    const previous = structuredClone(user);
+    try {
+      const conflict = users.find(item => item.id !== user.id && String(item.xuiClientEmail || "").trim().toLowerCase() === email);
+      if (conflict) throw new Error("该邮箱对应的3x-ui Client已关联其他用户。");
+      let existing = null;
+      try { existing = await getXuiClientByEmail(email); } catch (error) {
+        if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+      }
+      user.email ||= email;
+      user.xuiClientEmail = email;
+      if (existing) user.xuiIpLimit = Math.max(0, Number(existing.limitIp) || 0);
+      initializeLegacyXuiMigration(user, existing);
+      const remote = await provisionXuiClient(user, { allowLegacyEmail: false });
+      await clearXuiBillingLedger(email);
+      user.xuiMigrationStatus = "completed";
+      user.xuiMigrationSource = existing ? "linked_existing" : "created";
+      user.xuiMigrationError = "";
+      user.xuiMigratedAt = new Date().toISOString();
+      user.xuiMigrationUpdatedAt = user.xuiMigratedAt;
+      appendUserLogToUser(user, createUserLog({
+        event: "subscription-request",
+        status: "recorded",
+        reason: "xui-migration-completed",
+        fromSubscription,
+        req,
+        stage: "xui-migration",
+        message: existing ? "旧套餐已关联现有3x-ui Client并完成迁移。" : "旧套餐已创建3x-ui Client并完成迁移。",
+        details: { source: user.xuiMigrationSource, email, group: activeUserGroup(user), trafficLimitBytes: user.xuiTrafficLimitBytes, resetAnchorDay: user.xuiTrafficResetAnchorDay, nextResetAt: user.xuiNextTrafficResetAt, flow: XUI_VISION_FLOW, inboundIds: user.xuiInboundIds || [], inheritedUsedTrafficBytes: existing ? remote.usedTraffic : 0 }
+      }));
+      await saveUsers();
+      return { status: "completed", inboundIds: user.xuiInboundIds || [] };
+    } catch (error) {
+      Object.keys(user).forEach(key => delete user[key]);
+      Object.assign(user, previous, { xuiMigrationStatus: "failed", xuiMigrationError: error.message, xuiMigrationUpdatedAt: new Date().toISOString() });
+      appendUserLogToUser(user, createUserLog({ event: "subscription-request", status: "failed", reason: "xui-migration-failed", fromSubscription, req, stage: "xui-migration", message: `旧套餐迁移失败：${error.message}`, details: { email, group: activeUserGroup(user), flow: XUI_VISION_FLOW } }));
+      await saveUsers();
+      throw error;
+    }
+  });
+}
+
+async function connectXuiClient(user, { mode, email = "", importedIpLimit } = {}) {
+  if (!new Set(["import", "link"]).has(mode)) throw new Error("请选择导入或关联方式。");
+  if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
+  await xuiInboundIdsForGroup(activeUserGroup(user));
+  const userEmail = nexoraUserEmail(user);
+  if (!userEmail) throw new Error("自研线路用户缺少有效的注册邮箱。");
+  user.email = userEmail;
+  let remote = null;
+  if (mode === "import") {
+    const importEmail = userEmail;
+    try { remote = await getXuiClientByEmail(importEmail); } catch (error) {
+      if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+    }
+    if (remote) throw Object.assign(new Error("同邮箱的3x-ui Client已存在，请使用关联已有 Client。"), { statusCode: 409 });
+    user.xuiClientEmail = importEmail;
+    user.xuiIpLimit = Math.max(0, Number(importedIpLimit) || 0);
+    initializeXuiTrafficSchedule(user, {}, mode);
+  } else {
+    let linkedEmail = String(email || "").trim().toLowerCase();
+    if (!linkedEmail) throw new Error("请选择要关联的3x-ui Client。");
+    const conflict = users.find(item => item.id !== user.id && String(item.xuiClientEmail || "").trim().toLowerCase() === linkedEmail);
+    if (conflict) throw Object.assign(new Error("该3x-ui Client已关联其他用户。"), { statusCode: 409 });
+    remote = await getXuiClientByEmail(linkedEmail);
+    if (linkedEmail !== userEmail) {
+      let target = null;
+      try { target = await getXuiClientByEmail(userEmail); } catch (error) {
+        if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+      }
+      if (target) throw Object.assign(new Error("Nexora用户邮箱已被另一个3x-ui Client使用，请直接选择该 Client。"), { statusCode: 409 });
+      await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(linkedEmail)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, email: userEmail }) });
+      linkedEmail = userEmail;
+      remote = { ...remote, email: userEmail };
+    }
+    const targetConflict = users.find(item => item.id !== user.id && String(item.xuiClientEmail || "").trim().toLowerCase() === linkedEmail);
+    if (targetConflict) throw Object.assign(new Error("Nexora用户邮箱已关联其他用户。"), { statusCode: 409 });
+    user.xuiClientEmail = linkedEmail;
+    user.xuiIpLimit = Math.max(0, Number(remote.limitIp) || 0);
+    initializeXuiTrafficSchedule(user, remote, mode);
+  }
+  user.lineType = "self_hosted";
+  user.subscriptionId = "";
+  remote = await provisionXuiClient(user);
+  await clearXuiBillingLedger(user.xuiClientEmail);
+  user.xuiTrafficBaselinePending = true;
+  user.xuiTrafficBaselineVersion = 0;
+  return remote;
+}
+
+async function disableXuiClient(user) {
+  if (!user?.xuiClientEmail || !XUI_BASE_URL || !XUI_API_TOKEN) return;
+  await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: [user.xuiClientEmail] } });
+  user.xuiLastSyncedAt = new Date().toISOString();
+  await saveXuiClientProjection(user, false);
+}
+
+function xuiTrafficPayload(user, remote, connectedIpCount = null) {
+  const uploadBytes = remote.traffic.up;
+  const downloadBytes = remote.traffic.down;
+  const billing = user.xuiWeightedTraffic;
+  const usedBytes = billing ? billing.usedBytes : 0;
+  const totalBytes = billing?.totalBytes ?? planTrafficBytes(user);
+  return {
+    available: true,
+    status: billing?.depleted ? "depleted" : remote.enable === false || remote.traffic.enable === false ? "disabled" : isUserExpired(user) ? "expired" : "active",
+    uploadBytes,
+    downloadBytes,
+    rawUsedBytes: billing?.rawUsedBytes ?? usedBytes,
+    usedBytes,
+    totalBytes,
+    remainingBytes: totalBytes ? Math.max(totalBytes - usedBytes, 0) : null,
+    usagePercent: totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null,
+    connectedIpCount,
+    ipLimit: Math.max(0, Number(remote.limitIp) || 0),
+    nextResetAt: user.xuiNextTrafficResetAt || "",
+    expiresAt: user.expiresAt,
+    inbounds: billing?.inbounds || [],
+    nodes: billing?.nodes || [],
+    lastSyncedAt: billing?.lastSyncedAt || new Date().toISOString()
+  };
+}
+
 function poolSelectionGroup(user = {}) {
   return user.isSuperAccount ? "" : activeUserGroup(user);
 }
@@ -2438,7 +4224,7 @@ function batchGiftTargets({ days, group = "", allowDisabled = false } = {}) {
   return users
     .filter(user => {
       const expiresAt = Date.parse(user.expiresAt || "");
-      return Number.isFinite(expiresAt) && expiresAt > Date.now() && (!selectedGroup || activeUserGroup(user) === selectedGroup);
+      return !isSelfHostedUser(user) && Number.isFinite(expiresAt) && expiresAt > Date.now() && (!selectedGroup || activeUserGroup(user) === selectedGroup);
     })
     .map(user => {
       const expiresAt = calculateGiftExpiry(user, giftDays);
@@ -2621,6 +4407,7 @@ function poolCompatibilityLabel(pool) {
 }
 
 function currentPoolCompatibility(user) {
+  if (isSelfHostedUser(user)) return null;
   if (!user || user.registeredOnly) return null;
   const currentPool = subscriptions.find(item => item.id === user.subscriptionId);
   if (!currentPool) return {
@@ -2716,10 +4503,14 @@ function normalizeUser(input, existing = {}) {
     : (requestedExpiresDate && !Number.isNaN(requestedExpiresDate.getTime())
       ? requestedExpiresDate.toISOString()
       : calculatedExpiresAt);
-  const subscription = subscriptions.find(item => item.id === requestedSubscriptionId);
+  const requestedGroup = normalizeUserGroup(input.activeGroup !== undefined ? input.activeGroup : input.group, existing.activeGroup || existing.group || "pro");
+  const lineType = String(input.lineType || existing.lineType || "upstream");
+  if (!["upstream", "self_hosted"].includes(lineType)) throw new Error("请选择有效的线路类型。");
+  const selfHosted = lineType === "self_hosted";
+  const subscription = selfHosted ? null : subscriptions.find(item => item.id === requestedSubscriptionId);
 
   if (!userId) throw new Error("请填写用户 ID。");
-  if (!subscription) throw new Error("请选择已添加的 URL。");
+  if (!selfHosted && !subscription) throw new Error("请选择已添加的 URL。");
   if (!isValidDuration(duration)) throw new Error("请选择套餐时长。");
   if (!expiresAt) throw new Error(duration === "custom" ? "请选择到期日期。" : "购买时间格式不正确。");
   if (requestedExpiresAt && (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime()))) throw new Error("到期时间格式不正确。");
@@ -2730,7 +4521,7 @@ function normalizeUser(input, existing = {}) {
   const cashValueAt = String(input.cashValueAt || (input.purchasedAt !== undefined ? purchasedAt : existing.cashValueAt) || purchasedAt);
   if (cashValue === null || Number.isNaN(new Date(cashValueAt).getTime())) throw new Error("Invalid cash value.");
 
-  const group = normalizeUserGroup(input.group, existing.activeGroup || existing.group || "pro");
+  const group = requestedGroup;
   const activeGroup = normalizeUserGroup(
     input.activeGroup !== undefined ? input.activeGroup : input.group,
     existing.activeGroup || group
@@ -2763,7 +4554,8 @@ function normalizeUser(input, existing = {}) {
     isBusiness,
     isFamilyFriend,
     isSuperAccount,
-    subscriptionId: subscription.id,
+    lineType,
+    subscriptionId: subscription?.id || "",
     subscriptionToken: existing.subscriptionToken || relayToken(),
     planExpiresAt: existing.planExpiresAt || expiresAt,
     giftedDays: Number.isSafeInteger(existing.giftedDays) ? existing.giftedDays : 0,
@@ -2895,9 +4687,10 @@ function renewUser(user, input) {
   } else {
     expiresAt = nextUserExpiry(user, renewedAt.toISOString(), duration, replace);
   }
-  const subscription = subscriptions.find(item => item.id === requestedSubscriptionId);
+  const selfHosted = input.lineType === "self_hosted";
+  const subscription = selfHosted ? null : subscriptions.find(item => item.id === requestedSubscriptionId);
   if (!expiresAt) throw new Error("续费时间格式不正确。");
-  if (!subscription) throw new Error("请选择已添加的 URL。");
+  if (!selfHosted && !subscription) throw new Error("请选择已添加的 URL。");
 
   const vipSpend = Math.round((previousVipSpend + vipSpendAmount) * 100) / 100;
   Object.assign(user, {
@@ -2909,13 +4702,17 @@ function renewUser(user, input) {
     group,
     activeGroup: group,
     unlimited: input.unlimited !== undefined ? Boolean(input.unlimited) : Boolean(user.unlimited),
+    trafficTier: Number(input.trafficTier || 1),
+    ...(Number.isFinite(Number(input.trafficLimitBytes)) && Number(input.trafficLimitBytes) >= 0 ? { xuiTrafficLimitBytes: Math.round(Number(input.trafficLimitBytes)) } : {}),
     cashValue: Math.round((replace ? addedCashValue : currentCashValue + addedCashValue) * 100) / 100,
     cashValueAt: renewedAt.toISOString(),
-    subscriptionId: subscription.id,
+    lineType: selfHosted ? "self_hosted" : "upstream",
+    subscriptionId: subscription?.id || "",
     subscriptionToken: user.subscriptionToken || relayToken(),
     expiresAt,
     updatedAt: new Date().toISOString()
   });
+  expireUserTrafficPacks(user);
 
   return { user, amount: actualPaid, vipSpendAmount, renewedAt: renewedAt.toISOString(), beforeExpiresAt: currentExpiry?.toISOString() || null, afterExpiresAt: expiresAt };
 }
@@ -3179,6 +4976,7 @@ function publicUser(user, subscriptionMap = null) {
     customerID: user.customerID,
     email: user.email || linkedAccount?.email || "",
     activeGroup: activeUserGroup(user),
+    deviceLimit: planDeviceLimit(user),
     vipLevel: userVipLevel(user),
     accountStatus: linkedAccount?.status || "unclaimed",
     accountId: linkedAccount?.id || "",
@@ -3751,6 +5549,9 @@ const userLogReasonText = {
   "purchase-pool-changed": "\u8d2d\u4e70\u540e\u81ea\u52a8\u6362\u6c60",
   "user-updated": "\u7528\u6237\u8d44\u6599\u66f4\u65b0",
   "manual-pool-changed": "\u624b\u52a8\u6362\u6c60",
+  "xui-migration-activation-required": "\u7b49\u5f85\u6fc0\u6d3b\u8d26\u6237",
+  "xui-migration-completed": "\u65e7\u5957\u9910\u8fc1\u79fb\u5b8c\u6210",
+  "xui-migration-failed": "\u65e7\u5957\u9910\u8fc1\u79fb\u5931\u8d25",
   "bill-reversed": "\u8d26\u5355\u51b2\u9500",
   "bill-deleted": "\u8d26\u5355\u5220\u9664",
   "user-deleted": "\u7528\u6237\u5220\u9664"
@@ -3951,6 +5752,10 @@ function userSnapshotForLog(user = {}) {
     isSuperAccount: Boolean(user.isSuperAccount),
     purchasedAt: user.purchasedAt || "",
     duration: user.duration || "",
+    currentProductId: user.currentProductId || "",
+    currentOptionId: user.currentOptionId || "",
+    currentProductOrderId: user.currentProductOrderId || "",
+    currentProductSource: user.currentProductSource || "",
     actualPaid: Number(user.actualPaid) || 0,
     expiresAt: user.expiresAt || "",
     subscriptionId: user.subscriptionId || "",
@@ -3974,6 +5779,10 @@ function summarizeUserChanges(before = {}, after = {}) {
     isSuperAccount: "\u8d85\u7ea7\u8d26\u6237",
     purchasedAt: "\u8d2d\u4e70\u65e5\u671f",
     duration: "\u5957\u9910\u65f6\u957f",
+    currentProductId: "当前商品",
+    currentOptionId: "当前商品规格",
+    currentProductOrderId: "商品来源订单",
+    currentProductSource: "商品绑定来源",
     actualPaid: "\u5b9e\u4ed8\u91d1\u989d",
     expiresAt: "\u5230\u671f\u65f6\u95f4",
     subscriptionId: "\u7ed1\u5b9a\u6c60",
@@ -4221,7 +6030,9 @@ function buildUserInfoNodes(user) {
   }
   const level = userVipLevel(user);
   const group = activeUserGroup(user).toUpperCase();
-  nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group} | 前几个不要选`);
+  const remainingBytes = isSelfHostedUser(user) ? user.xuiLastTraffic?.remainingBytes : subscriptions.find(item => item.id === user.subscriptionId)?.metrics?.remainingBytes;
+  const remainingTraffic = Number.isFinite(Number(remainingBytes)) ? `${Number((Math.max(0, Number(remainingBytes)) / 1024 ** 3).toFixed(2))}G` : "未知";
+  nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group} | 剩余流量${remainingTraffic}`);
   return nodes;
 }
 
@@ -4265,6 +6076,7 @@ function injectPlaceholderNodes(bodyBuffer, user, groups = placeholderNodes) {
       for (const pg of proxyGroups) {
         if (String(pg.name || "").includes("全球直连")) pg.proxies = ["DIRECT"];
         else if (String(pg.name || "").includes("全球拦截")) pg.proxies = ["REJECT"];
+        else if (["🐟 漏网之鱼", "🤖 AI服务", "♻️ 自动选择"].includes(String(pg.name || ""))) continue;
         else if (Array.isArray(pg.proxies)) pg.proxies.unshift(...allNames);
       }
     }
@@ -4360,7 +6172,7 @@ function postSubconverter(convertedBody, upstreamBody, user, config = {}) {
 
 function placeholderSubscription(user, nodeName) {
   return {
-    contentType: "application/yaml; charset=utf-8",
+    contentType: "text/plain; charset=utf-8",
     body: [
       "mixed-port: 7890",
       "allow-lan: false",
@@ -4397,6 +6209,24 @@ function disabledCustomUrlPlaceholderSubscription(user) {
   return placeholderSubscription(user, "\u8be5URL\u672a\u542f\u7528-\u8bf7\u8054\u7cfb\u5ba2\u670d");
 }
 
+function disabledAccountPlaceholderSubscription(user) {
+  return placeholderSubscription(user, "\u8be5\u8d26\u6237\u5df2\u505c\u7528\uff0c\u8bf7\u8054\u7cfb\u5b98\u7f51\u5ba2\u670d\u3002");
+}
+
+function activationRequiredPlaceholderSubscription(user) {
+  return placeholderSubscription(user, "请联系客服激活账户");
+}
+
+function personalInfoPlaceholderSubscription(user) {
+  const body = injectPlaceholderNodes(Buffer.from("proxies: []\nproxy-groups:\n  - name: PROXY\n    type: select\n    proxies: []\nrules:\n  - MATCH,PROXY\n"), user, []);
+  return { contentType: "application/yaml; charset=utf-8", body };
+}
+
+function sendPlaceholderSubscription(res, placeholder) {
+  res.writeHead(200, { "content-type": placeholder.contentType, "cache-control": "no-store, max-age=0", pragma: "no-cache", expires: "0" });
+  res.end(placeholder.body);
+}
+
 function sendExpiredPlaceholderSubscription(res, user) {
   const placeholder = expiredPlaceholderSubscription(user);
   res.writeHead(200, {
@@ -4421,6 +6251,17 @@ function sendUnavailablePoolPlaceholderSubscription(res, user) {
 
 function sendDisabledCustomUrlPlaceholderSubscription(res, user) {
   const placeholder = disabledCustomUrlPlaceholderSubscription(user);
+  res.writeHead(200, {
+    "content-type": placeholder.contentType,
+    "cache-control": "no-store, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0"
+  });
+  res.end(placeholder.body);
+}
+
+function sendDisabledAccountPlaceholderSubscription(res, user) {
+  const placeholder = disabledAccountPlaceholderSubscription(user);
   res.writeHead(200, {
     "content-type": placeholder.contentType,
     "cache-control": "no-store, max-age=0",
@@ -4535,6 +6376,183 @@ async function fallbackToUsableSubscription(user, currentSubscription, reason, r
   return fallback;
 }
 
+function selfHostedSubscriptionUrl(user) {
+  if (!XUI_SUBSCRIPTION_BASE_URL || !user?.xuiSubId) return "";
+  return `${XUI_SUBSCRIPTION_BASE_URL}${XUI_SUBSCRIPTION_PATH}${encodeURIComponent(user.xuiSubId)}`;
+}
+
+function selfHostedUserinfo(user, remote) {
+  const upload = Math.max(0, Number(remote?.traffic?.up) || 0);
+  const download = Math.max(0, Number(remote?.traffic?.down) || 0);
+  const total = Math.max(0, Number(remote?.totalGB) || planTrafficBytes(user));
+  const expire = Math.floor(new Date(user.expiresAt).getTime() / 1000);
+  return `upload=${upload}; download=${download}; total=${total}; expire=${expire}`;
+}
+
+async function fetchSelfHostedSubscription(user, remote) {
+  const sourceUrl = selfHostedSubscriptionUrl(user);
+  if (!sourceUrl) throw new Error("3x-ui Client 缺少 subId。");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
+  try {
+    const response = await fetch(sourceUrl, {
+      signal: controller.signal,
+      redirect: "follow",
+      headers: { "User-Agent": "subconverter", Accept: "text/plain, */*", "Cache-Control": "no-cache" }
+    });
+    const body = await response.text();
+    if (!response.ok || !body.trim()) throw new Error(`3x-ui订阅服务请求失败（HTTP ${response.status}）。`);
+    return {
+      body,
+      status: response.status,
+      client: "3x-ui-subscription",
+      fetchedAt: new Date().toISOString(),
+      contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+      subscriptionUserinfo: selfHostedUserinfo(user, remote),
+      score: body.length,
+      bodyLength: body.length,
+      attempts: [],
+      error: null
+    };
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("3x-ui订阅服务请求超时。");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc }) {
+  const liveConfigId = registerLivePoolConfig(liveConfig);
+  cleanupLivePoolConfigs();
+  relayLog("subconverter-live-config-registered", {
+    relayRequestId,
+    userId: user.id,
+    pool: poolLogInfo(subscription),
+    liveConfigId,
+    liveConfigTtlMs: LIVE_POOL_CONFIG_TTL_MS,
+    bodyLength: liveConfig.bodyLength,
+    bodyPreview: bodyPreview(liveConfig.body)
+  });
+  const liveConfigUrl = `http://127.0.0.1:${PORT}/api/internal/pool-live/${liveConfigId}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
+  const params = new URLSearchParams({ target: sc.target, url: liveConfigUrl });
+  if (sc.config) params.set("config", sc.config);
+  if (sc.include) params.set("include", sc.include);
+  if (sc.exclude) params.set("exclude", sc.exclude);
+  for (const key of Object.keys(SUBCONVERTER_BOOLEAN_DEFAULTS)) {
+    if (sc[key] !== undefined) params.set(key, String(sc[key]));
+  }
+  if (sc.rename) params.set("rename", sc.rename);
+  const subUrl = `${SUB_CONVERTER_URL}/sub?${params.toString()}`;
+  relayLog("subconverter-request", {
+    relayRequestId,
+    userId: user.id,
+    url: subUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]"),
+    params: { ...Object.fromEntries(params.entries()), url: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]") },
+    liveConfigUrl: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+  try {
+    const response = await fetch(subUrl, { signal: controller.signal });
+    relayLog("subconverter-response", {
+      relayRequestId,
+      userId: user.id,
+      ok: response.ok,
+      status: response.status,
+      headers: responseHeadersForLog(response)
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      relayLog("subconverter-response-error-body", { relayRequestId, userId: user.id, bodyLength: text.length, bodyPreview: bodyPreview(text) });
+      await recordUserLog(user, {
+        status: "failed",
+        reason: "subconverter-failed",
+        fromSubscription: subscription,
+        req,
+        target: sc.target,
+        stage: "subconverter-response",
+        message: `Subconverter failed (${response.status}).`,
+        details: { status: response.status, bodyPreview: bodyPreview(text) }
+      });
+      sendSubscriptionMessage(res, 502, `Subconverter failed (${response.status}): ${text.slice(0, 200)}`);
+      return;
+    }
+    const body = Buffer.from(await response.arrayBuffer());
+    const finalBody = postSubconverter(body, Buffer.from(liveConfig.body), user, sc);
+    const browserInline = isBrowserNavigationRequest(req);
+    relayLog("response-subconverter-ok", {
+      relayRequestId,
+      userId: user.id,
+      status: response.status,
+      contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+      browserInline,
+      bodyLength: finalBody.length,
+      bodyPreview: bodyPreview(finalBody.toString("utf8"))
+    });
+    const responseHeaders = {
+      "content-type": browserInline ? "text/plain; charset=utf-8" : (response.headers.get("content-type") || "text/plain; charset=utf-8"),
+      "cache-control": "no-store, max-age=0",
+      "pragma": "no-cache",
+      "expires": "0",
+      ...(liveConfig.subscriptionUserinfo && user.blockUserinfo === false ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
+    };
+    if (browserInline) {
+      responseHeaders["content-disposition"] = "inline; filename*=UTF-8''NEXORA.txt";
+      responseHeaders["x-content-type-options"] = "nosniff";
+    } else {
+      responseHeaders["content-disposition"] = "attachment; filename*=UTF-8''NEXORA";
+    }
+    res.writeHead(response.status, responseHeaders);
+    res.end(finalBody);
+  } catch (error) {
+    relayLog("subconverter-request-error", { relayRequestId, userId: user.id, errorName: error.name, errorMessage: error.message });
+    await recordUserLog(user, {
+      status: "failed",
+      reason: error.name === "AbortError" ? "subconverter-timeout" : "subconverter-request-failed",
+      fromSubscription: subscription,
+      req,
+      target: sc.target,
+      stage: "subconverter-request",
+      message: error.name === "AbortError" ? "Subconverter request timed out." : error.message
+    });
+    sendSubscriptionMessage(res, 502, error.name === "AbortError"
+      ? "Subconverter request timed out. Please retry."
+      : `Subconverter request failed: ${error.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function handleSelfHostedRelay(req, res, user, relayRequestId) {
+  if (!Array.isArray(user.xuiInboundIds) || !user.xuiInboundIds.length) {
+    sendPlaceholderSubscription(res, personalInfoPlaceholderSubscription(user));
+    return;
+  }
+  if (!SUB_CONVERTER_URL) {
+    sendSubscriptionMessage(res, 503, "服务端未配置 SUB_CONVERTER_URL，无法转换自研线路订阅。");
+    return;
+  }
+  if (!xuiConfigured()) {
+    sendSubscriptionMessage(res, 503, "自研线路尚未完成3x-ui配置，请联系客服。");
+    return;
+  }
+  try {
+    let remote = await getXuiClient(user);
+    if (!user.xuiSubId || remote.enable === false) {
+      remote = await provisionXuiClient(user);
+      await saveUsers();
+    }
+    const source = { id: `xui:${user.id}`, url: selfHostedSubscriptionUrl(user), sourceType: "url", serviceProvider: "3x-ui", enabled: true };
+    const liveConfig = await fetchSelfHostedSubscription(user, remote);
+    const sc = relaySubconverterConfig(source);
+    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc });
+  } catch (error) {
+    relayLog("self-hosted-relay-failed", { relayRequestId, userId: user.id, error: error.message });
+    sendSubscriptionMessage(res, 502, `自研线路订阅生成失败：${error.message}`);
+  }
+}
+
 async function findDirectFallbackSubscription(user, currentSubscription, req) {
   const errors = [];
   const headers = forwardedSubscriptionHeaders(req);
@@ -4642,6 +6660,15 @@ async function handleRelaySubscription(req, res, token) {
     return;
   }
 
+  if (isUserAccountDisabled(user)) {
+    relayLog("response-placeholder-account-disabled", {
+      relayRequestId,
+      userId: user.id
+    });
+    sendDisabledAccountPlaceholderSubscription(res, user);
+    return;
+  }
+
   const now = Date.now();
   const expiresAtTime = user?.expiresAt ? new Date(user.expiresAt).getTime() : NaN;
   const expired = isUserExpired(user, now);
@@ -4670,6 +6697,25 @@ async function handleRelaySubscription(req, res, token) {
       message: "\u7528\u6237\u8ba2\u9605\u5df2\u5230\u671f\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
     });
     sendExpiredPlaceholderSubscription(res, user);
+    return;
+  }
+
+  if (!isSelfHostedUser(user)) {
+    try {
+      const migration = await migrateLegacyUserOnSubscriptionRefresh(user, req);
+      if (migration.status === "activation_required") {
+        sendPlaceholderSubscription(res, activationRequiredPlaceholderSubscription(user));
+        return;
+      }
+    } catch (error) {
+      relayLog("xui-migration-failed", { relayRequestId, userId: user.id, error: error.message });
+      sendPlaceholderSubscription(res, placeholderSubscription(user, "账户迁移失败-请联系客服"));
+      return;
+    }
+  }
+
+  if (isSelfHostedUser(user)) {
+    await handleSelfHostedRelay(req, res, user, relayRequestId);
     return;
   }
 
@@ -4864,118 +6910,7 @@ async function handleRelaySubscription(req, res, token) {
       });
       }
     }
-    const liveConfigId = registerLivePoolConfig(liveConfig);
-    cleanupLivePoolConfigs();
-    relayLog("subconverter-live-config-registered", {
-      relayRequestId,
-      userId: user.id,
-      pool: poolLogInfo(subscription),
-      liveConfigId,
-      liveConfigTtlMs: LIVE_POOL_CONFIG_TTL_MS,
-      bodyLength: liveConfig.bodyLength,
-      bodyPreview: bodyPreview(liveConfig.body)
-    });
-    const liveConfigUrl = `http://127.0.0.1:${PORT}/api/internal/pool-live/${liveConfigId}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
-    const params = new URLSearchParams({ target: sc.target, url: liveConfigUrl });
-    if (sc.config) params.set("config", sc.config);
-    if (sc.include) params.set("include", sc.include);
-    if (sc.exclude) params.set("exclude", sc.exclude);
-    for (const key of Object.keys(SUBCONVERTER_BOOLEAN_DEFAULTS)) {
-      if (sc[key] !== undefined) params.set(key, String(sc[key]));
-    }
-    if (sc.rename) params.set("rename", sc.rename);
-    const subUrl = `${SUB_CONVERTER_URL}/sub?${params.toString()}`;
-    relayLog("subconverter-request", {
-      relayRequestId,
-      userId: user.id,
-      url: subUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]"),
-      params: {
-        ...Object.fromEntries(params.entries()),
-        url: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
-      },
-      liveConfigUrl: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
-    });
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 25000);
-    try {
-      const response = await fetch(subUrl, { signal: controller.signal });
-      relayLog("subconverter-response", {
-        relayRequestId,
-        userId: user.id,
-        ok: response.ok,
-        status: response.status,
-        headers: responseHeadersForLog(response)
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        relayLog("subconverter-response-error-body", {
-          relayRequestId,
-          userId: user.id,
-          bodyLength: text.length,
-          bodyPreview: bodyPreview(text)
-        });
-        await recordUserLog(user, {
-          status: "failed",
-          reason: "subconverter-failed",
-          fromSubscription: subscription,
-          req,
-          target: sc.target,
-          stage: "subconverter-response",
-          message: `Subconverter failed (${response.status}).`,
-          details: { status: response.status, bodyPreview: bodyPreview(text) }
-        });
-        sendSubscriptionMessage(res, 502, `Subconverter failed (${response.status}): ${text.slice(0, 200)}`);
-        return;
-      }
-      const body = Buffer.from(await response.arrayBuffer());
-      const finalBody = postSubconverter(body, liveConfig.body, user, sc);
-      const browserInline = isBrowserNavigationRequest(req);
-      relayLog("response-subconverter-ok", {
-        relayRequestId,
-        userId: user.id,
-        status: response.status,
-        contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
-        browserInline,
-        bodyLength: finalBody.length,
-        bodyPreview: bodyPreview(finalBody.toString("utf8"))
-      });
-      const responseHeaders = {
-        "content-type": browserInline ? "text/plain; charset=utf-8" : (response.headers.get("content-type") || "text/plain; charset=utf-8"),
-        "cache-control": "no-store, max-age=0",
-        "pragma": "no-cache",
-        "expires": "0",
-        ...(liveConfig.subscriptionUserinfo && user.blockUserinfo === false ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
-      };
-      if (browserInline) {
-        responseHeaders["content-disposition"] = "inline; filename*=UTF-8''NEXORA.txt";
-        responseHeaders["x-content-type-options"] = "nosniff";
-      } else {
-        responseHeaders["content-disposition"] = "attachment; filename*=UTF-8''NEXORA";
-      }
-      res.writeHead(response.status, responseHeaders);
-      res.end(finalBody);
-    } catch (error) {
-      relayLog("subconverter-request-error", {
-        relayRequestId,
-        userId: user.id,
-        errorName: error.name,
-        errorMessage: error.message
-      });
-      await recordUserLog(user, {
-        status: "failed",
-        reason: error.name === "AbortError" ? "subconverter-timeout" : "subconverter-request-failed",
-        fromSubscription: subscription,
-        req,
-        target: sc.target,
-        stage: "subconverter-request",
-        message: error.name === "AbortError" ? "Subconverter request timed out." : error.message
-      });
-      sendSubscriptionMessage(res, 502, error.name === "AbortError"
-        ? "Subconverter request timed out. Please retry."
-        : `Subconverter request failed: ${error.message}`);
-    } finally {
-      clearTimeout(timer);
-    }
+    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc });
     return;
   }
 
@@ -5009,7 +6944,7 @@ async function handleRelaySubscription(req, res, token) {
     });
     res.writeHead(200, {
       ...manualSubscriptionHeaders(req, { sourceType: "yaml" }),
-      "content-type": liveConfig.contentType || "text/plain; charset=utf-8",
+      "content-type": isBrowserNavigationRequest(req) ? "text/plain; charset=utf-8" : (liveConfig.contentType || "text/plain; charset=utf-8"),
       "profile-update-interval": String(Math.max(1, Math.round(POOL_CONFIG_CACHE_TTL_MS / 3600000))),
       ...(liveConfig.subscriptionUserinfo ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
     });
@@ -5532,17 +7467,35 @@ async function handleApi(req, res, pathname) {
       subscription: user ? {
         ...publicDeliveryPayload(user, req),
         id: user.id,
+        lineType: isSelfHostedUser(user) ? "self_hosted" : "upstream",
         status: isUserExpired(user) ? "expired" : "active",
         purchasedAt: user.purchasedAt || "",
         duration: user.duration || "",
-        cashValue: remainingPlanCashValue(user),
         unlimited: Boolean(user.unlimited),
-        traffic: user.unlimited ? "无限流量" : (plan?.traffic || "-"),
+        traffic: user.unlimited ? "无限流量" : Number(user.purchasedTrafficGb) > 0 ? `每月 ${user.purchasedTrafficGb} GB` : (plan?.traffic || "-"),
         devices: plan?.[`${user.duration}Devices`] || "-"
       } : null,
+      services: accountServiceInstances(account.id),
+      trafficPack: (() => { const config = trafficPackConfig(); return { trafficGb: config.trafficGb, price: config.price, enabled: config.product.enabled !== false }; })(),
+      homeIp: (() => { const product = pricingProduct("home_ip"); return { enabled: Boolean(product && product.enabled !== false && product.stock !== 0), regions: Array.isArray(product?.addonRegions) ? product.addonRegions : [] }; })(),
       orders: paymentOrders.filter(item => item.accountId === account.id).slice(0, 5).map(publicPaymentOrder),
       announcements: publicAnnouncements()
     });
+    return;
+  }
+
+  if (pathname === "/api/account/self-hosted-traffic" && req.method === "GET") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    await loadLatestData();
+    const account = accountBySession(session);
+    const user = account?.linkedUserId ? users.find(item => item.id === account.linkedUserId) : null;
+    if (!user || !isSelfHostedUser(user)) {
+      sendJson(res, 404, { error: "当前用户不是自研线路套餐。" });
+      return;
+    }
+    if (user.xuiLastTraffic) sendJson(res, 200, user.xuiLastTraffic);
+    else sendJson(res, 503, { error: "流量数据正在进行首次同步，请稍后查看。" });
     return;
   }
 
@@ -5638,6 +7591,23 @@ async function handleApi(req, res, pathname) {
           services.database = { status: "ok", latency: Date.now() - startedAt };
         } catch (error) {
           services.database = { status: "error", message: error.message };
+        }
+      })(),
+      (async () => {
+        if (!XUI_SERVICE_URL) {
+          services.xuiService = { status: "unconfigured" };
+          return;
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const startedAt = Date.now();
+        try {
+          const response = await fetch(`${XUI_SERVICE_URL}/health`, { signal: controller.signal });
+          services.xuiService = { status: response.ok ? "ok" : "error", latency: Date.now() - startedAt };
+        } catch (error) {
+          services.xuiService = { status: "error", message: error.message };
+        } finally {
+          clearTimeout(timer);
         }
       })(),
       (async () => {
@@ -5748,13 +7718,25 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/public/pricing" && req.method === "GET") {
     await loadLatestData();
-    sendJson(res, 200, publicPricing());
+    sendJson(res, 200, publicPricing().filter(item => item.internal !== true));
     return;
   }
 
   if (pathname === "/api/public/sales-settings" && req.method === "GET") {
     await loadLatestData();
     sendJson(res, 200, { registrationMode: currentSalesSettings().registrationMode, faqs: currentSalesSettings().faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })) });
+    return;
+  }
+
+  const publicReferralMatch = pathname.match(/^\/api\/public\/referrals\/(\d{6})$/);
+  if (publicReferralMatch && req.method === "GET") {
+    await loadLatestData();
+    const inviter = accounts.find(item => item.referralCode === publicReferralMatch[1]);
+    if (!inviter) {
+      sendJson(res, 404, { error: "邀请码无效" });
+      return;
+    }
+    sendJson(res, 200, { inviterLabel: publicInviterLabel(inviter) });
     return;
   }
 
@@ -5831,6 +7813,38 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  const testPaymentStatusMatch = pathname.match(/^\/api\/payments\/orders\/([^/]+)\/test-status$/);
+  if (testPaymentStatusMatch && req.method === "PUT") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      const order = paymentOrders.find(item => item.id === testPaymentStatusMatch[1] && item.accountId === session.accountId);
+      if (!order || order.paymentProvider !== "test") throw new Error("测试支付订单不存在。");
+      if (order.status !== "pending") throw new Error("只能设置待付款测试订单的状态。");
+      const { status } = await readJson(req);
+      if (!["paid", "failed", "closed"].includes(status)) throw new Error("不支持的测试付款状态。");
+      order.status = status;
+      order.platformStatus = ({ paid: 1, failed: 2, closed: 4 })[status];
+      order.paidAt = status === "paid" ? new Date().toISOString() : "";
+      order.updatedAt = new Date().toISOString();
+      order.paymentError = paymentStatusError(status);
+      await savePaymentOrders();
+      if (status === "paid") {
+        try {
+          await fulfillPaymentOrder(order, req);
+        } catch (error) {
+          order.fulfillmentStatus = "failed";
+          order.fulfillmentError = error.message;
+          await savePaymentOrders();
+        }
+      } else await dataStore.releaseWalletHold(order.id);
+      sendJson(res, 200, publicPaymentOrder(order));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const publicPaymentOrderMatch = pathname.match(/^\/api\/payments\/orders\/([^/]+)$/);
   if (publicPaymentOrderMatch && req.method === "DELETE") {
     const session = requireUser(req, res);
@@ -5863,7 +7877,7 @@ async function handleApi(req, res, pathname) {
         }
       }
       const config = paymentConfig(order.paymentPlatformId);
-      const shouldQueryGateway = order.status === "pending" && paymentConfigCredentialsReady(config);
+      const shouldQueryGateway = order.status === "pending" && order.paymentProvider !== "test" && paymentConfigCredentialsReady(config);
       const refreshedOrder = shouldQueryGateway ? await refreshPaymentOrder(order) : order;
       if (refreshedOrder.status === "paid") {
         try {
@@ -5904,6 +7918,204 @@ async function handleApi(req, res, pathname) {
       pricing: publicPricing(),
       meta: appMeta()
     });
+    return;
+  }
+
+  if (pathname === "/api/xui-clients" && req.method === "GET") {
+    try {
+      const requestUrl = new URL(req.url, "http://localhost");
+      const user = users.find(item => item.id === String(requestUrl.searchParams.get("userId") || ""));
+      if (!user) throw Object.assign(new Error("用户不存在。"), { statusCode: 404 });
+      const clients = await xuiRequest("/panel/api/clients/list");
+      const linkedByEmail = new Map(users.filter(item => item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
+      const resetDay = chinaDateParts(user.purchasedAt || user.createdAt || Date.now())?.day || 1;
+      sendJson(res, 200, { importPreview: {
+        email: nexoraUserEmail(user),
+        totalBytes: XUI_DEFAULT_TRAFFIC_BYTES,
+        limitIp: planDeviceLimit(user),
+        expiresAt: user.expiresAt || "",
+        resetDay
+      }, clients: (Array.isArray(clients) ? clients : []).map(value => {
+        const client = normalizeXuiClientResult(value);
+        const linked = linkedByEmail.get(client.email.toLowerCase());
+        return {
+          email: client.email,
+          subId: String(client.subId || ""),
+          totalBytes: Math.max(0, Number(client.totalGB) || 0),
+          usedBytes: client.usedTraffic,
+          limitIp: Math.max(0, Number(client.limitIp) || 0),
+          expiryTime: Math.max(0, Number(client.expiryTime) || 0),
+          enabled: client.enable !== false,
+          inboundIds: client.inboundIds,
+          linkedUserId: linked?.id || "",
+          linkedUserName: linked?.userId || linked?.email || ""
+        };
+      }).filter(item => item.email) });
+    } catch (error) {
+      sendJson(res, error.statusCode || 502, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/xui-inbounds" && req.method === "GET") {
+    try {
+      sendJson(res, 200, await xuiInboundManagementData());
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
+    }
+    return;
+  }
+
+  const xuiInboundEnableMatch = pathname.match(/^\/api\/xui-inbounds\/(\d+)\/set-enable$/);
+  if (xuiInboundEnableMatch && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const { id, enable } = normalizeXuiInboundEnable(xuiInboundEnableMatch[1], payload.enable);
+      await xuiRequest(`/panel/api/inbounds/setEnable/${id}`, { method: "POST", body: { enable } });
+      sendJson(res, 200, { id, enabled: enable });
+    } catch (error) {
+      sendJson(res, error.statusCode === 400 ? 400 : 502, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/xui-inbound-groups" && req.method === "PUT") {
+    try {
+      const payload = await readJson(req);
+      const next = normalizeXuiInboundGroups(payload);
+      const management = await xuiInboundManagementData();
+      const allInboundIds = management.inbounds.map(inbound => inbound.id);
+      const validIds = new Set(allInboundIds);
+      const validKeys = new Set(management.inbounds.map(inbound => inbound.key));
+      const metadata = Object.fromEntries(Object.entries(normalizeXuiInboundMetadata(payload.metadata === undefined ? management.metadata : payload.metadata)).filter(([key]) => validKeys.has(key)));
+      for (const [group, ids] of Object.entries(next)) {
+        if (ids.some(id => !validIds.has(id))) throw new Error(`${group.toUpperCase()} 包含不存在的入站。`);
+      }
+      await setXuiState("inbound-groups", "xuiInboundGroups", { groups: next, metadata });
+      const synced = [];
+      if (payload.syncGroups !== false) for (const group of USER_GROUPS) synced.push(await syncXuiInboundGroup(group, next[group], allInboundIds));
+      sendJson(res, 200, { groups: next, metadata, synced });
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/xui-presence" && req.method === "GET") {
+    if (!XUI_BASE_URL || !XUI_API_TOKEN) {
+      sendJson(res, 200, { configured: false, checkedAt: new Date().toISOString(), onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} });
+      return;
+    }
+    const state = await getXuiBillingState();
+    sendJson(res, 200, { configured: true, ...(state.presence || { checkedAt: "", onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} }) });
+    return;
+  }
+
+  if (pathname === "/api/xui-monitor" && req.method === "GET") {
+    if (!XUI_BASE_URL || !XUI_API_TOKEN) {
+      sendJson(res, 200, { configured: false, system: null, nodes: [] });
+      return;
+    }
+    try {
+      const startedAt = Date.now();
+      const [status, nodes, inbounds, onlinesByGuid] = await Promise.all([
+        xuiRequest("/panel/api/server/status"),
+        xuiRequest("/panel/api/nodes/list"),
+        xuiRequest("/panel/api/inbounds/list"),
+        xuiRequest("/panel/api/clients/onlinesByGuid", { method: "POST" }).catch(error => {
+          console.warn(`[xui-monitor] Failed to read online clients: ${error.message}`);
+          return null;
+        })
+      ]);
+      const billing = await getXuiBillingState();
+      const monitor = normalizeXuiMonitor(status, nodes);
+      const localGuid = String(status?.panelGuid || "node:local");
+      const panelUrl = new URL(XUI_BASE_URL);
+      const localInbounds = (Array.isArray(inbounds) ? inbounds : []).filter(item => String(item?.originNodeGuid || `node:${item?.nodeId || "local"}`) === localGuid);
+      monitor.nodes.unshift({
+        id: "local",
+        guid: localGuid,
+        name: XUI_PANEL_NAME,
+        address: panelUrl.hostname,
+        port: Number(panelUrl.port) || (panelUrl.protocol === "https:" ? 443 : 80),
+        enabled: true,
+        status: "online",
+        lastHeartbeat: new Date().toISOString(),
+        latencyMs: 0,
+        cpu: monitor.system.cpu,
+        memory: monitor.system.memoryTotal ? monitor.system.memoryUsed / monitor.system.memoryTotal * 100 : 0,
+        uptime: monitor.system.uptime,
+        uploadBytes: monitor.system.sentBytes,
+        downloadBytes: monitor.system.receivedBytes,
+        xrayState: monitor.system.xrayState,
+        xrayVersion: monitor.system.xrayVersion,
+        panelVersion: String(status?.panelVersion || ""),
+        inboundCount: localInbounds.length,
+        clientCount: new Set(localInbounds.flatMap(item => (item.clientStats || []).map(client => String(client.email || "").toLowerCase()).filter(Boolean))).size,
+        onlineCount: 0,
+        lastError: ""
+      });
+      monitor.nodes.forEach(node => {
+        const trafficStatus = billing.nodeResults[node.guid] || {};
+        node.trafficTokenRequired = node.id !== "local";
+        node.trafficConfigured = trafficStatus.configured === true;
+        node.trafficError = String(trafficStatus.error || "");
+        node.multiplier = xuiMultiplier(billing.multipliers[node.guid]);
+        if (onlinesByGuid && Object.prototype.hasOwnProperty.call(onlinesByGuid, node.guid)) {
+          node.onlineCount = new Set((Array.isArray(onlinesByGuid[node.guid]) ? onlinesByGuid[node.guid] : []).map(email => String(email).toLowerCase())).size;
+        }
+      });
+      const onlineUsers = onlinesByGuid ? normalizeXuiPresence(onlinesByGuid, {}).onlineEmails.length : null;
+      sendJson(res, 200, { configured: true, latency: Date.now() - startedAt, checkedAt: new Date().toISOString(), onlineUsers, ...monitor });
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
+    }
+    return;
+  }
+
+  const xuiCredentialsMatch = pathname.match(/^\/api\/xui-monitor\/nodes\/([^/]+)\/credentials$/);
+  if (xuiCredentialsMatch && req.method === "PUT") {
+    try {
+      const payload = await readJson(req);
+      const apiToken = String(payload.apiToken || "").trim();
+      if (!apiToken || apiToken.length > 4096) throw new Error("请输入有效的节点 API Token。");
+      const guid = decodeURIComponent(xuiCredentialsMatch[1]);
+      const nodes = await xuiRequest("/panel/api/nodes/list");
+      if (!(Array.isArray(nodes) ? nodes : []).some(node => String(node?.guid) === guid)) throw new Error("节点不存在。");
+      await withXuiBillingLock(async () => {
+        const state = await getXuiBillingState();
+        state.nodeTokens[guid] = sealXuiNodeToken(apiToken);
+        await saveXuiBillingState(state);
+      });
+      sendJson(res, 200, { ok: true, guid, configured: true });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const xuiNodeSettingsMatch = pathname.match(/^\/api\/xui-monitor\/nodes\/([^/]+)\/settings$/);
+  if (xuiNodeSettingsMatch && req.method === "PUT") {
+    try {
+      const payload = await readJson(req);
+      const multiplier = Number(payload.multiplier);
+      if (payload.multiplier === "" || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw new Error("节点倍率必须在 0 到 100 之间。");
+      const guid = decodeURIComponent(xuiNodeSettingsMatch[1]);
+      const [status, nodes] = await Promise.all([xuiRequest("/panel/api/server/status"), xuiRequest("/panel/api/nodes/list")]);
+      const localGuid = String(status?.panelGuid || "node:local");
+      if (guid !== localGuid && !(Array.isArray(nodes) ? nodes : []).some(node => String(node?.guid) === guid)) throw new Error("节点不存在。");
+      const apiToken = String(payload.apiToken || "").trim();
+      if (apiToken.length > 4096) throw new Error("节点 API Token 无效。");
+      await withXuiBillingLock(async () => {
+        const state = await getXuiBillingState();
+        state.multipliers[guid] = multiplier;
+        if (apiToken) state.nodeTokens[guid] = sealXuiNodeToken(apiToken);
+        await saveXuiBillingState(state);
+      });
+      sendJson(res, 200, { ok: true, guid, multiplier, configured: guid === localGuid || apiToken ? true : undefined });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
     return;
   }
 
@@ -6183,6 +8395,30 @@ async function handleApi(req, res, pathname) {
   }
 
   const adminOrderMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)$/);
+  if (adminOrderMatch && req.method === "PUT") {
+    const order = paymentOrders.find(item => item.id === adminOrderMatch[1]);
+    if (!order) { sendJson(res, 404, { error: "没有找到这个订单。" }); return; }
+    if (order.status !== "paid" || order.fulfillmentStatus !== "manual_pending") { sendJson(res, 400, { error: "该订单没有待交付的人工服务。" }); return; }
+    try {
+      const payload = await readJson(req);
+      const deliveryNote = String(payload.deliveryNote || "").trim();
+      if (!deliveryNote) throw new Error("请填写交付说明。");
+      order.deliveryNote = deliveryNote.slice(0, 1000);
+      order.fulfillmentStatus = "fulfilled";
+      order.fulfilledAt = new Date().toISOString();
+      order.updatedAt = order.fulfilledAt;
+      const user = users.find(item => item.id === order.userId);
+      if (user) {
+        appendUserLogToUser(user, createUserLog({ event: "user-action", status: "recorded", reason: "addon-delivered", req, message: `附加服务已完成交付：${order.addOnSnapshots?.map(item => item.name).join("、") || order.planName}`, details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, deliveryNote: order.deliveryNote, addOns: order.addOnSnapshots || [] } }));
+        await saveUsers();
+      }
+      await savePaymentOrders();
+      sendJson(res, 200, adminPaymentOrder(order));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
   if (adminOrderMatch && req.method === "POST") {
     // A failed fulfillment may have already mutated the in-memory snapshot.
     // Always retry from the last successfully persisted state.
@@ -6246,16 +8482,33 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/users" && req.method === "POST") {
     try {
       const payload = await readJson(req);
+      if (payload.lineType !== "self_hosted" || payload.subscriptionId) throw new Error("池 URL 分配入口已停用，请创建自研线路用户。");
       const item = {
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString()
       };
       const normalized = normalizeUser(payload, item);
+      const productBinding = inferUserProductBinding(normalized);
+      if (productBinding.error) throw new Error(productBinding.error);
+      bindUserProduct(normalized, productBinding, { source: productBinding.productId === FRIENDS_PRODUCT_ID ? "family_friend_grant" : "admin_create" });
+      if (productBinding.productId === FRIENDS_PRODUCT_ID) { normalized.lineType = "self_hosted"; normalized.subscriptionId = ""; }
       const selectedSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
       if (selectedSubscription && subscriptionAtCapacity(selectedSubscription) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
       normalized.outputMode = userOutputMode(payload);
       normalized.blockUserinfo = payload.blockUserinfo !== false;
       users.unshift(normalized);
+      try {
+        if (isSelfHostedUser(normalized)) await provisionXuiClient(normalized);
+      } catch (error) {
+        users = users.filter(entry => entry.id !== normalized.id);
+        throw error;
+      }
+      if (productBinding.productId === FRIENDS_PRODUCT_ID) {
+        const grantOrder = familyGrantOrder(normalized, productBinding, new Date().toISOString());
+        paymentOrders.unshift(grantOrder);
+        normalized.currentProductOrderId = grantOrder.id;
+        await savePaymentOrders();
+      }
       bills.unshift(makeBill({
         user: normalized,
         type: "initial",
@@ -6490,14 +8743,18 @@ async function handleApi(req, res, pathname) {
     try {
       const payload = await readJson(req);
       if (!Array.isArray(payload)) { sendJson(res, 400, { error: "payload must be an array." }); return; }
-      const GROUPS = ["basic", "pro", "ultra"];
       const DURATIONS = ["monthly", "quarterly", "half_yearly", "yearly"];
       const UNLIMITED_PRICE_KEYS = { monthly: "unlimitedMonthly", quarterly: "unlimitedQuarterly", half_yearly: "unlimitedHalfYearly", yearly: "unlimitedYearly" };
-      const TEXT_FIELDS = ["name", "title", "description", "traffic"];
+      const TEXT_FIELDS = ["name", "title", "description", "traffic", "lifetimeName", "lifetimeTitle", "lifetimeDescription", "lifetimeTraffic", "addonUnit", "addonDeliveryDescription"];
+      const nextPricing = [];
       for (const item of payload) {
-        if (!GROUPS.includes(item.group)) continue;
-        let row = pricing.find(r => r.group === item.group);
-        if (!row) { row = { id: item.group, group: item.group }; pricing.push(row); }
+        const group = String(item.group || "").trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(group)) { sendJson(res, 400, { error: "商品标识必须为 2-32 位小写字母、数字、下划线或短横线。" }); return; }
+        if (nextPricing.some(row => row.group === group)) { sendJson(res, 400, { error: `商品标识 ${group} 重复。` }); return; }
+        const existing = pricing.find(row => row.group === group) || DEFAULT_PRICING.find(row => row.group === group) || {};
+        const row = { ...existing, id: group, group };
+        row.productKind = ["addon", "custom"].includes(item.productKind) ? item.productKind : "plan";
+        row.lineType = row.productKind === "plan" ? "self_hosted" : undefined;
         for (const dur of DURATIONS) {
           for (const priceKey of [dur, UNLIMITED_PRICE_KEYS[dur]]) {
             if (item[priceKey] === undefined) continue;
@@ -6514,9 +8771,59 @@ async function handleApi(req, res, pathname) {
         }
         for (const field of TEXT_FIELDS) row[field] = String(item[field] ?? "").trim().slice(0, field === "description" ? 120 : 60);
         row.recommended = Boolean(item.recommended);
+        row.enabled = item.enabled !== false;
+        row.recurringDeleted = Boolean(item.recurringDeleted);
+        if (row.productKind === "plan" && item.recurringDeleted !== true) {
+          for (const [field, fallback] of [["trafficBaseGb", 0], ["trafficMaxTier", 10], ["trafficTierMarkupPercent", 50]]) {
+            const value = Number(item[field] ?? fallback);
+            const valid = field === "trafficMaxTier" ? Number.isSafeInteger(value) && value >= 1 && value <= 50 : field === "trafficBaseGb" ? Number.isFinite(value) && value > 0 : Number.isFinite(value) && value >= 0;
+            if (!valid) { sendJson(res, 400, { error: `${group}.${field} 无效。` }); return; }
+            row[field] = value;
+          }
+        }
+        if (["addon", "custom"].includes(row.productKind)) {
+          const addonPrice = Number(item.addonPrice);
+          if (!Number.isFinite(addonPrice) || addonPrice < 0) { sendJson(res, 400, { error: `${group}.addonPrice 价格无效。` }); return; }
+          row.addonPrice = addonPrice;
+          row.addonType = ["traffic_pack", "home_ip", "manual"].includes(item.addonType) ? item.addonType : "manual";
+          const addonTrafficGb = Number(item.addonTrafficGb || 0);
+          const addonDurationDays = Number(item.addonDurationDays || 0);
+          if (!Number.isFinite(addonTrafficGb) || addonTrafficGb < 0) { sendJson(res, 400, { error: `${group}.addonTrafficGb 无效。` }); return; }
+          if (!Number.isSafeInteger(addonDurationDays) || addonDurationDays < 0) { sendJson(res, 400, { error: `${group}.addonDurationDays 无效。` }); return; }
+          row.addonTrafficGb = addonTrafficGb;
+          row.addonDurationDays = addonDurationDays;
+          row.addonRegions = Array.isArray(item.addonRegions) ? item.addonRegions.map(region => ({ id: String(region.id || "").trim().toLowerCase(), name: String(region.name || "").trim().slice(0, 30), price: Number(region.price) })).filter(region => /^[a-z0-9_-]{1,24}$/.test(region.id) && region.name && Number.isFinite(region.price) && region.price >= 0).slice(0, 30) : [];
+          row.addonDeliveryMode = item.addonDeliveryMode === "automatic" ? "automatic" : "manual";
+        }
+        if (item.stock === undefined || item.stock === null || item.stock === "") delete row.stock;
+        else {
+          const stock = Number(item.stock);
+          if (!Number.isSafeInteger(stock) || stock < 0) { sendJson(res, 400, { error: `${group}.stock 库存无效。` }); return; }
+          row.stock = stock;
+        }
+        for (const field of ["lifetimePrice", "lifetimeDevices", "lifetimeTrafficBytes"]) {
+          if (item[field] === undefined) continue;
+          const value = Number(item[field]);
+          if (!Number.isFinite(value) || value < 0 || (field !== "lifetimePrice" && !Number.isSafeInteger(value))) { sendJson(res, 400, { error: `${group}.${field} 无效。` }); return; }
+          row[field] = value;
+        }
+        row.lifetimeEnabled = item.lifetimeEnabled !== false;
+        row.lifetimeRecommended = Boolean(item.lifetimeRecommended);
+        row.lifetimeDeleted = Boolean(item.lifetimeDeleted);
+        if (item.lifetimeStock === undefined || item.lifetimeStock === null || item.lifetimeStock === "") delete row.lifetimeStock;
+        else {
+          const lifetimeStock = Number(item.lifetimeStock);
+          if (!Number.isSafeInteger(lifetimeStock) || lifetimeStock < 0) { sendJson(res, 400, { error: `${group}.lifetimeStock 库存无效。` }); return; }
+          row.lifetimeStock = lifetimeStock;
+        }
         row.features = Array.isArray(item.features) ? item.features.map(value => String(value).trim()).filter(Boolean).slice(0, 10) : [];
         row.unavailableFeatures = Array.isArray(item.unavailableFeatures) ? item.unavailableFeatures.map(value => String(value).trim()).filter(Boolean).slice(0, 10) : [];
+        row.lifetimeFeatures = Array.isArray(item.lifetimeFeatures) ? item.lifetimeFeatures.map(value => String(value).trim()).filter(Boolean).slice(0, 10) : [];
+        row.lifetimeUnavailableFeatures = Array.isArray(item.lifetimeUnavailableFeatures) ? item.lifetimeUnavailableFeatures.map(value => String(value).trim()).filter(Boolean).slice(0, 10) : [];
+        nextPricing.push(row);
       }
+      for (const product of DEFAULT_PRICING.filter(item => item.internal === true && !nextPricing.some(row => row.group === item.group))) nextPricing.push(structuredClone(product));
+      pricing = nextPricing;
       await savePricing();
       sendJson(res, 200, publicPricing());
     } catch (error) {
@@ -6758,7 +9065,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift|account-status|type))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift|account-status|type|line|xui|xui-recover))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -6779,6 +9086,7 @@ async function handleApi(req, res, pathname) {
     }
 
     if (action === "renew" && req.method === "POST") {
+      const previousUserState = structuredClone(item);
       try {
         if (userHasClaimedAccount(item.id)) throw new Error("已认领用户只能通过自主购买变更付款信息。");
         const payload = await readJson(req);
@@ -6787,6 +9095,8 @@ async function handleApi(req, res, pathname) {
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const renewal = renewUser(item, payload);
+        if (isSelfHostedUser(item)) await provisionXuiClient(item);
+        else if (item.xuiClientEmail) await disableXuiClient(item);
         const toSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         bills.unshift(makeBill({
           user: item,
@@ -6798,7 +9108,7 @@ async function handleApi(req, res, pathname) {
           afterExpiresAt: renewal.afterExpiresAt,
           description: "用户续费"
         }));
-        appendUserLogToUser(item, createUserLog({
+        const renewalLog = createUserLog({
           event: "user-action",
           status: "recorded",
           reason: "user-renewed",
@@ -6820,22 +9130,33 @@ async function handleApi(req, res, pathname) {
             before,
             after: userSnapshotForLog(item)
           }
-        }));
+        });
+        appendUserLogToUser(item, renewalLog);
+        const productBinding = inferUserProductBinding(item);
+        if (productBinding.error) throw new Error(productBinding.error);
+        bindUserProduct(item, productBinding, { source: "admin_renewal" });
+        renewalLog.details.after = userSnapshotForLog(item);
         await saveUsers();
         await saveBills();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
+        Object.keys(item).forEach(key => delete item[key]);
+        Object.assign(item, previousUserState);
         sendJson(res, 400, { error: error.message });
       }
       return;
     }
 
     if (action === "gift" && req.method === "POST") {
+      const previousUserState = structuredClone(item);
       try {
         const payload = await readJson(req);
         const expiresAt = calculateGiftExpiry(item, payload.days);
         if (!expiresAt) throw new Error("请输入正确的赠送天数。");
-        const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id, group: poolSelectionGroup(item) });
+        const selfHosted = isSelfHostedUser(item);
+        const recommendation = selfHosted
+          ? { subscription: null, reason: "自研线路不使用订阅池。", details: null }
+          : recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id, group: poolSelectionGroup(item) });
         if (payload.preview === true) {
           sendJson(res, 200, {
             expiresAt,
@@ -6845,18 +9166,19 @@ async function handleApi(req, res, pathname) {
           });
           return;
         }
-        const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || recommendation.subscription?.id || ""));
-        if (!toSubscription) throw new Error("请选择有效的订阅池。");
-        if (!subscriptionAllowsGroup(toSubscription, poolSelectionGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
-        if ((toSubscription.enabled === false && payload.allowDisabled !== true) || !subscriptionCanBeManuallyAssigned(toSubscription)) throw new Error("请选择已启用且未过期的订阅池，或有效的手动 Base64 池。");
+        const toSubscription = selfHosted ? null : subscriptions.find(entry => entry.id === String(payload.subscriptionId || recommendation.subscription?.id || ""));
+        if (!selfHosted && !toSubscription) throw new Error("请选择有效的订阅池。");
+        if (!selfHosted && !subscriptionAllowsGroup(toSubscription, poolSelectionGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
+        if (!selfHosted && ((toSubscription.enabled === false && payload.allowDisabled !== true) || !subscriptionCanBeManuallyAssigned(toSubscription))) throw new Error("请选择已启用且未过期的订阅池，或有效的手动 Base64 池。");
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
-        if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
+        if (!selfHosted && fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
         const beforeExpiresAt = item.expiresAt || null;
         item.planExpiresAt ||= beforeExpiresAt;
         item.giftedDays = (Number(item.giftedDays) || 0) + Number(payload.days);
         item.expiresAt = expiresAt;
-        item.subscriptionId = toSubscription.id;
+        if (!selfHosted) item.subscriptionId = toSubscription.id;
         item.updatedAt = new Date().toISOString();
+        if (selfHosted) await provisionXuiClient(item);
         appendUserLogToUser(item, createUserLog({
           event: "user-action",
           status: "recorded",
@@ -6870,6 +9192,8 @@ async function handleApi(req, res, pathname) {
         await saveUsers();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
+        Object.keys(item).forEach(key => delete item[key]);
+        Object.assign(item, previousUserState);
         sendJson(res, 400, { error: error.message });
       }
       return;
@@ -6905,7 +9229,21 @@ async function handleApi(req, res, pathname) {
         const account = registeredAccount || accounts.find(entry => entry.linkedUserId === item.id);
         if (!account || !["active", "disabled"].includes(account.status)) throw new Error("该用户尚未认领账户。");
         const payload = await readJson(req);
-        account.status = payload.disabled === true ? "disabled" : "active";
+        const disabling = payload.disabled === true;
+        const previousStatus = account.status;
+        account.status = disabling ? "disabled" : "active";
+        try {
+          if (disabling && item?.xuiClientEmail) {
+            await disableXuiClient(item);
+            await saveUsers();
+          } else if (!disabling && item && isSelfHostedUser(item)) {
+            await provisionXuiClient(item);
+            await saveUsers();
+          }
+        } catch (error) {
+          account.status = previousStatus;
+          throw error;
+        }
         account.updatedAt = new Date().toISOString();
         await saveAccounts();
         sendJson(res, 200, registeredAccount ? publicRegisteredAccount(account) : publicUser(item));
@@ -6936,37 +9274,101 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    if (action === "pool" && req.method === "POST") {
+    if (action === "xui" && req.method === "POST") {
+      const previous = item ? structuredClone(item) : null;
       try {
+        if (!item) throw new Error("未开通订阅的账户不能切换自研线路。");
         const payload = await readJson(req);
-        const toSubscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || ""));
-        if (!toSubscription) throw new Error("请选择有效的订阅池。");
-        if (!subscriptionAllowsGroup(toSubscription, poolSelectionGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
-        if (!subscriptionCanBeManuallyAssigned(toSubscription)) throw new Error("无有效到期日、已过期或内容无效的订阅池不能绑定用户。");
-        if (toSubscription.enabled === false && payload.allowDisabled !== true) throw new Error("该订阅池尚未启用。");
-        const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
-        if (fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
-        if (fromSubscription?.id !== toSubscription.id) {
-          item.subscriptionId = toSubscription.id;
-          item.updatedAt = new Date().toISOString();
-          appendUserLogToUser(item, createUserLog({
-            event: "user-action",
-            status: "recorded",
-            reason: "manual-pool-changed",
-            fromSubscription,
-            toSubscription,
-            req,
-            message: userActionMessage("manual-pool-changed", {
-              fromSubscriptionLabel: subscriptionLogLabel(fromSubscription),
-              toSubscriptionLabel: subscriptionLogLabel(toSubscription)
-            })
-          }));
-          await saveUsers();
-        }
+        const group = normalizeUserGroup(payload.activeGroup, "");
+        if (!["basic", "pro", "ultra"].includes(group)) throw new Error("请选择有效的套餐分组。");
+        const importedIpLimit = planDeviceLimit(item);
+        const before = userSnapshotForLog(item);
+        Object.assign(item, { group, activeGroup: group, updatedAt: new Date().toISOString() });
+        await connectXuiClient(item, { mode: String(payload.mode || ""), email: payload.clientEmail, importedIpLimit });
+        const changes = summarizeUserChanges(before, userSnapshotForLog(item));
+        appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "user-updated", req, message: payload.mode === "link" ? "关联已有3x-ui Client并切换到自研线路" : "导入3x-ui并切换到自研线路", details: { changes, xuiManagementMode: item.xuiManagementMode, xuiClientEmail: item.xuiClientEmail } }));
+        await saveUsers();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
-        sendJson(res, 400, { error: error.message });
+        if (item && previous) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previous);
+        }
+        sendJson(res, error.statusCode || 400, { error: error.message });
       }
+      return;
+    }
+
+    if (action === "xui-recover" && req.method === "POST") {
+      const previous = item ? structuredClone(item) : null;
+      try {
+        if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以恢复3x-ui Client。");
+        if (isUserExpired(item)) throw new Error("套餐已过期，不能恢复3x-ui Client。");
+        if (isUserAccountDisabled(item)) throw new Error("账户已停用，不能恢复3x-ui Client。");
+        if (!item.xuiClientEmail) throw new Error("用户尚未关联3x-ui Client。");
+        const previousSubId = item.xuiSubId || "";
+        const remote = await provisionXuiClient(item, { allowLegacyEmail: false });
+        item.xuiClientPresent = true;
+        item.xuiRecoveredAt = new Date().toISOString();
+        item.xuiLastSyncedAt = item.xuiRecoveredAt;
+        item.xuiLastError = "";
+        delete item.xuiClientMissingAt;
+        appendUserLogToUser(item, createUserLog({
+          event: "user-action",
+          status: "recorded",
+          reason: "xui-client-recovered",
+          req,
+          stage: "xui-recovery",
+          message: "已恢复被删除的3x-ui Client。",
+          details: { email: item.xuiClientEmail, previousSubId, newSubId: item.xuiSubId || remote.subId || "", trafficLimitBytes: item.xuiTrafficLimitBytes, resetAnchorDay: item.xuiTrafficResetAnchorDay, nextResetAt: item.xuiNextTrafficResetAt, flow: XUI_VISION_FLOW, inboundIds: item.xuiInboundIds || [] }
+        }));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        if (item && previous) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previous);
+        }
+        sendJson(res, error.statusCode || 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "line" && req.method === "POST") {
+      const previous = item ? structuredClone(item) : null;
+      try {
+        if (!item) throw new Error("未开通订阅的账户不能迁移线路。");
+        const payload = await readJson(req);
+        const lineType = String(payload.lineType || "");
+        if (lineType === "upstream") throw Object.assign(new Error("池 URL 分配入口已停用。"), { statusCode: 410 });
+        const group = normalizeUserGroup(payload.activeGroup, "");
+        if (!["upstream", "self_hosted"].includes(lineType) || !group) throw new Error("请选择有效的线路类型和套餐分组。");
+        const before = userSnapshotForLog(item);
+        if (lineType === "self_hosted") {
+          Object.assign(item, { lineType, group, activeGroup: group, subscriptionId: "", updatedAt: new Date().toISOString() });
+          await provisionXuiClient(item);
+        } else {
+          const subscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || ""));
+          if (!subscription || !subscriptionAllowsGroup(subscription, group)) throw new Error("请选择允许该套餐使用的订阅池。");
+          Object.assign(item, { lineType, group, activeGroup: group, subscriptionId: subscription.id, updatedAt: new Date().toISOString() });
+          if (item.xuiClientEmail) await disableXuiClient(item);
+        }
+        const changes = summarizeUserChanges(before, userSnapshotForLog(item));
+        if (changes.length) appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "user-updated", req, message: userActionMessage("user-updated", { changes }), details: { changes } }));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        if (item && previous) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previous);
+        }
+        sendJson(res, error.statusCode || 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "pool" && req.method === "POST") {
+      sendJson(res, 410, { error: "池 URL 分配入口已停用。" });
       return;
     }
 
@@ -6976,16 +9378,23 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === "PUT") {
+      const previousUserState = structuredClone(item);
       try {
         const payload = await readJson(req);
         if (userHasClaimedAccount(item.id)) throw new Error("已认领账户仅允许换池或赠送时长。");
+        if (payload.lineType === "upstream" || (payload.subscriptionId !== undefined && String(payload.subscriptionId || "") !== String(item.subscriptionId || ""))) throw new Error("池 URL 分配入口已停用。");
         const linkedAccount = accounts.find(account => account.linkedUserId === item.id);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         const normalized = normalizeUser(payload, item);
+        const productBinding = inferUserProductBinding(normalized);
+        if (productBinding.error) throw new Error(productBinding.error);
+        bindUserProduct(normalized, productBinding, { source: "admin_update", orderId: item.currentProductOrderId || "" });
         const toSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
         if (fromSubscription?.id !== toSubscription?.id && toSubscription && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
         Object.assign(item, normalized);
+        if (isSelfHostedUser(item)) await provisionXuiClient(item);
+        else if (item.xuiClientEmail) await disableXuiClient(item);
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
         const after = userSnapshotForLog(item);
@@ -7017,6 +9426,8 @@ async function handleApi(req, res, pathname) {
         if (accountEmailChanged) await saveAccounts();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
+        Object.keys(item).forEach(key => delete item[key]);
+        Object.assign(item, previousUserState);
         sendJson(res, 400, { error: error.message });
       }
       return;
@@ -7026,6 +9437,14 @@ async function handleApi(req, res, pathname) {
       if (userHasClaimedAccount(item.id)) {
         sendJson(res, 400, { error: "已认领账户不能删除。" });
         return;
+      }
+      if (isSelfHostedUser(item)) {
+        try {
+          await disableXuiClient(item);
+        } catch (error) {
+          sendJson(res, 502, { error: `3x-ui 用户停用失败，未删除本地用户：${error.message}` });
+          return;
+        }
       }
       users = users.filter(entry => entry.id !== id);
       await saveUsers();
@@ -7310,6 +9729,12 @@ async function main() {
   setInterval(() => {
     settleReferralRewards().catch(error => console.error("Referral settlement failed:", error));
   }, 60 * 1000);
+  if (XUI_BASE_URL && XUI_API_TOKEN) {
+    syncXuiWeightedTraffic().catch(error => console.error("3x-ui traffic billing sync failed:", error));
+    setInterval(() => {
+      syncXuiWeightedTraffic().catch(error => console.error("3x-ui traffic billing sync failed:", error));
+    }, XUI_TRAFFIC_SYNC_INTERVAL_MS);
+  }
 }
 
 if (require.main === module) {
@@ -7348,7 +9773,10 @@ module.exports = Object.assign(requestHandler, {
   liveConfigFromCachedPoolConfig,
   startOfUtcDate,
   remainingPlanCashValue,
+  inferUserProductBinding,
+  bindUserProduct,
   paymentQuote,
+  planQuoteWithAddOns,
   vipLevelForSpend,
   vipDiscountPercent,
   paymentChannelCode,
@@ -7365,17 +9793,43 @@ module.exports = Object.assign(requestHandler, {
   isPaymentOrderExpired,
   normalizeSalesSettings,
   normalizePaymentSettings,
+  publicInviterLabel,
   batchItems,
   customerIDFromUUID,
   publicRegisteredAccount,
   subscriptionSourceType,
   normalizeManualSubscriptionContent,
   normalizeSubscription,
+  normalizeXuiClientResult,
+  normalizeXuiConnectedIps,
+  normalizeXuiMonitor,
+  normalizeXuiInbounds,
+  normalizeXuiInboundGroups,
+  normalizeXuiInboundMetadata,
+  normalizeXuiInboundEnable,
+  xuiActiveInboundKeys,
+  normalizeXuiPresence,
+  xuiTrafficByUser,
+  calculateXuiBillingLedger,
+  createXuiBillingBaseline,
+  xuiClientCycleKey,
+  xuiMonthlyResetAt,
+  legacyMigrationTrafficLimitBytes,
+  withXuiUserMigrationLock,
+  xuiNodeBaseUrl,
+  sealXuiNodeToken,
+  openXuiNodeToken,
+  xuiClientWritePayload,
+  xuiTrafficPayload,
+  markMissingXuiClients,
+  grantTrafficPack,
+  expireUserTrafficPacks,
   clearSubscriptionSourceState,
   subscriptionCanBeManuallyAssigned,
   subscriptionHasUsableSource,
   classifyCurrentPoolFit,
   restoreUpstreamClashConfig,
   injectPlaceholderNodes,
-  postSubconverter
+  postSubconverter,
+  disabledAccountPlaceholderSubscription
 });

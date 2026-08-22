@@ -73,12 +73,51 @@ export type User = {
   imessage?: string
   email?: string
   subscriptionId?: string
+  lineType?: "upstream" | "self_hosted"
+  xuiClientEmail?: string
+  xuiSubId?: string
+  xuiManagementMode?: "import" | "link"
+  xuiMigrationStatus?: "completed" | "activation_required" | "failed"
+  xuiMigrationSource?: "linked_existing" | "created"
+  xuiMigrationError?: string
+  xuiMigratedAt?: string
+  xuiMigrationUpdatedAt?: string
+  xuiClientPresent?: boolean
+  xuiClientMissingAt?: string
+  xuiRecoveredAt?: string
+  xuiIpLimit?: number
+  xuiTrafficLimitBytes?: number
+  xuiTrafficResetAnchorDay?: number
+  xuiTrafficCycleKey?: string
+  xuiTrafficBaselinePending?: boolean
+  xuiTrafficBaselineVersion?: number
+  xuiNextTrafficResetAt?: string
+  xuiLastTrafficResetAt?: string
+  xuiLastSyncedAt?: string
+  xuiLastError?: string
+  xuiWeightedTraffic?: {
+    rawUsedBytes: number
+    usedBytes: number
+    totalBytes: number
+    remainingBytes: number | null
+    usagePercent: number | null
+    depleted: boolean
+    lastSyncedAt?: string
+    nodes: Array<{ key: string; name: string; multiplier: number; rawBytes: number; weightedBytes: number }>
+  }
   subscription?: Subscription
   activeGroup?: string
+  deviceLimit?: number
   isBusiness?: boolean
   isFamilyFriend?: boolean
   isSuperAccount?: boolean
   unlimited?: boolean
+  currentProductId?: string
+  currentOptionId?: string
+  currentProductOrderId?: string
+  currentProductSource?: string
+  currentProductBoundAt?: string
+  currentProductSnapshot?: Record<string, unknown>
   vipLevel?: string
   duration?: string
   purchasedAt?: string
@@ -214,6 +253,37 @@ export type PricingRow = {
   description?: string
   recommended?: boolean
   traffic?: string
+  trafficBytes?: number
+  lineType?: "upstream" | "self_hosted"
+  enabled?: boolean
+  stock?: number
+  recurringDeleted?: boolean
+  lifetimeName?: string
+  lifetimeTitle?: string
+  lifetimeDescription?: string
+  lifetimeTraffic?: string
+  lifetimeTrafficBytes?: number
+  lifetimePrice?: number
+  lifetimeDevices?: number
+  lifetimeEnabled?: boolean
+  lifetimeStock?: number
+  lifetimeRecommended?: boolean
+  lifetimeFeatures?: string[]
+  lifetimeUnavailableFeatures?: string[]
+  lifetimeDeleted?: boolean
+  productKind?: "plan" | "addon" | "custom"
+  internal?: boolean
+  trafficBaseGb?: number
+  trafficMaxTier?: number
+  trafficTierMarkupPercent?: number
+  addonType?: "traffic_pack" | "home_ip" | "manual"
+  addonPrice?: number
+  addonUnit?: string
+  addonTrafficGb?: number
+  addonDurationDays?: number
+  addonRegions?: Array<{ id: string; name: string; price: number }>
+  addonDeliveryMode?: "automatic" | "manual"
+  addonDeliveryDescription?: string
   features?: string[]
   unavailableFeatures?: string[]
   monthly?: number
@@ -228,6 +298,43 @@ export type PricingRow = {
   quarterlyDevices?: number
   half_yearlyDevices?: number
   yearlyDevices?: number
+}
+
+export type XuiInboundGroups = Record<string, number[]>
+
+export type XuiInboundMetadata = Record<string, {
+  networkLevel: "premium" | "optimized" | "standard" | ""
+  region: string
+}>
+
+export type XuiInboundManagement = {
+  configured: boolean
+  groups: XuiInboundGroups
+  metadata: XuiInboundMetadata
+  inbounds: Array<{
+    id: number
+    key: string
+    name: string
+    tag: string
+    protocol: string
+    port: number | null
+    enabled: boolean
+    recentlyActive: boolean | null
+    nodeGuid: string
+    nodeName: string
+    clientCount: number
+    networkLevel: "premium" | "optimized" | "standard" | ""
+    region: string
+  }>
+}
+
+export type XuiPresence = {
+  configured: boolean
+  checkedAt: string
+  onlineEmails: string[]
+  onlineByGuid: Record<string, string[]>
+  lastOnline: Record<string, number>
+  nodeNames: Record<string, string>
 }
 
 export type CouponSetting = {
@@ -281,7 +388,7 @@ export type PaymentSettings = {
   id: string
   name: string
   displayName: string
-  provider: "legacy" | "xinhui"
+  provider: "legacy" | "xinhui" | "test"
   enabled: boolean
   priority: number
   apiBaseUrl: string
