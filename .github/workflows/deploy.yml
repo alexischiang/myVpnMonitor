@@ -73,6 +73,15 @@ jobs:
             if [ -f dist/index.html ]; then
               touch dist/index.html
             fi
+            if [ -n "${XUI_BASE_URL:-}" ] || [ -n "$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_BASE_URL || '')")" ]; then
+              export XUI_SERVICE_URL="${XUI_SERVICE_URL:-http://127.0.0.1:3002}"
+              export XUI_SERVICE_TOKEN="${XUI_SERVICE_TOKEN:-$(openssl rand -hex 32)}"
+              export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
+              export XUI_DATABASE_URL="${XUI_DATABASE_URL:-${LOCAL_DATABASE_URL:-${DATABASE_URL:-}}}"
+              if [ "$REDIS_URL" = "redis://127.0.0.1:6379" ] && command -v redis-cli > /dev/null 2>&1 && ! redis-cli ping > /dev/null 2>&1 && command -v redis-server > /dev/null 2>&1; then
+                redis-server --daemonize yes
+              fi
+            fi
             xui_service_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_SERVICE_URL || '')")
             if [ -n "$xui_service_url" ]; then
               xui_service_host=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(new URL(process.env.XUI_SERVICE_URL).hostname)")
