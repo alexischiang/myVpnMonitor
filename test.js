@@ -242,7 +242,8 @@ assert.match(disabledAccountPlaceholderSubscription({}).body, /该账户已停�
 assert.deepStrictEqual(xuiClient.inboundIds, [3]);
 assert.deepStrictEqual(xuiClientWritePayload({ uuid: "keep", createdAt: "readonly" }, { email: "self@test", totalGB: 1000 }), { email: "self@test", totalGB: 1000, uuid: "keep" });
 assert.strictEqual(xuiClientWritePayload({}, { flow: "xtls-rprx-vision" }).flow, "xtls-rprx-vision");
-assert.strictEqual(xuiClientWritePayload({ id: 123 }, {}).id, "123");
+assert.strictEqual(xuiClientWritePayload({ id: 123 }, {}).id, undefined);
+assert.deepStrictEqual(xuiClientWritePayload({ id: 123, uuid: "456" }, { email: "numeric@test" }), { email: "numeric@test" });
 assert.deepStrictEqual(["basic", "pro", "ultra"].map(activeGroup => legacyMigrationTrafficLimitBytes({ activeGroup, duration: "monthly" }) / gib), [50, 100, 100]);
 const selfHostedTraffic = xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z", xuiWeightedTraffic: { rawUsedBytes: 350, usedBytes: 350, totalBytes: 1000, depleted: false } }, xuiClient);
 assert.deepStrictEqual(
@@ -433,7 +434,7 @@ rules: ["MATCH,🚀 节点选择"]
 `), { showUserInfo: false }, [{ tag: "default", nodes: ["notice"] }]).toString("utf8"));
 assert.deepStrictEqual(pinnedGroups["proxy-groups"][0].proxies, ["DIRECT"]);
 assert.deepStrictEqual(pinnedGroups["proxy-groups"][1].proxies, ["REJECT"]);
-assert.deepStrictEqual(pinnedGroups["proxy-groups"][2].proxies, ["notice", "node"]);
+assert.deepStrictEqual(pinnedGroups["proxy-groups"][2].proxies, ["node", "*notice"]);
 const excludedPlaceholderGroups = require("js-yaml").load(injectPlaceholderNodes(Buffer.from(`proxies:
   - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }
 proxy-groups:
@@ -443,7 +444,7 @@ proxy-groups:
 `), { showUserInfo: false }, [{ tag: "default", nodes: ["notice"] }]).toString("utf8"));
 assert.deepStrictEqual(excludedPlaceholderGroups["proxy-groups"].map(group => group.proxies), [["🚀 节点选择"], ["♻️ 自动选择"], ["node"]]);
 const userInfoConfig = require("js-yaml").load(injectPlaceholderNodes(Buffer.from("proxies: []\n"), { lineType: "self_hosted", activeGroup: "pro", vipSpend: 400, xuiLastTraffic: { remainingBytes: 25.5 * gib } }, []).toString("utf8"));
-assert.strictEqual(userInfoConfig.proxies[0].name, "VIP 2 | PRO | 剩余流量25.5G");
+assert.strictEqual(userInfoConfig.proxies[0].name, "*VIP 2 | PRO | 剩余流量25.5G");
 
 const pinnedWithoutPlaceholders = require("js-yaml").load(injectPlaceholderNodes(Buffer.from(`proxies:
   - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }
