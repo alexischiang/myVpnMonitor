@@ -125,7 +125,7 @@ export function PricingPage() {
     <main className={inAccount ? "px-4 lg:px-6" : "min-h-svh bg-background px-4 py-12 text-foreground md:py-20"}>
       <section className="mx-auto grid max-w-6xl gap-8">
         <header className="grid justify-items-center gap-4 text-center">
-          <h1 className="text-2xl font-semibold sm:text-3xl md:text-4xl">{inAccount ? "购买服务" : "定制您的套餐"}</h1>
+          <h1 className="text-2xl font-semibold sm:text-3xl md:text-4xl">{inAccount ? "购买套餐" : "定制您的套餐"}</h1>
           <p className="text-sm text-muted-foreground sm:text-base">{inAccount ? "选择基础套餐或按需购买附加服务。" : "选择流量版本与计费周期，支付成功后立即生效。"}</p>
           <div className="flex flex-wrap justify-center gap-2">
             {planMode === "recurring" ? <Tabs value={periods[periodIndex].id} onValueChange={value => setPeriodIndex(periods.findIndex(item => item.id === value))}>
@@ -388,14 +388,14 @@ export function CheckoutPage() {
             <CardHeader><CardTitle>{homeIp ? "选择服务地区" : "选择计费周期"}</CardTitle><CardDescription>{homeIp ? "不同地区按后台配置的月费结算，每次服务 30 天。" : "选择适合你的购买周期"}</CardDescription></CardHeader>
             <CardContent><RadioGroup value={optionId} onValueChange={selectCycle} disabled={loading} className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{quote.cycles.map(cycle => <FieldLabel key={cycle.optionId} htmlFor={`cycle-${cycle.optionId}`} className="w-full cursor-pointer sm:min-w-0 sm:flex-1 sm:basis-[calc(50%-0.375rem)]"><Field orientation="horizontal" className="h-full w-full rounded-md border p-4 has-[[data-state=checked]]:border-primary"><FieldContent className="flex-1"><FieldTitle className="flex items-center gap-1.5 leading-[18px]">{quote.unlimited ? <>{cycle.label.replace(/\s*无限流量$/, "")}<Badge variant="outline" className={`${inlinePlanBadgeClass} relative isolate overflow-hidden border-transparent bg-[linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec4899)] bg-clip-padding text-white dark:bg-[linear-gradient(135deg,#0284c7,#7c3aed,#db2777)]`}><span aria-hidden className="premium-shine absolute inset-0" /><span className="relative flex h-full items-center leading-none">无限流量</span></Badge></> : cycle.label}{homeIp ? null : <BillingDiscount monthlyPrice={monthlyPrice} totalPrice={cycle.amount} months={billingMonths(cycle.optionId)} />}</FieldTitle><FieldDescription>{formatMoney(cycle.amount)}{cycle.devices ? ` · ${quote.lifetime ? `限制 ${cycle.devices} 个 IP` : `可绑定 ${cycle.devices} 台设备`}` : ""}</FieldDescription></FieldContent><RadioGroupItem id={`cycle-${cycle.optionId}`} value={cycle.optionId} /></Field></FieldLabel>)}</RadioGroup></CardContent>
           </Card>}
-          {!trafficPack && (quote.trafficMaxTier || 1) > 1 ? <Card>
+          {!trafficPack && !quote.lifetime && (quote.trafficMaxTier || 1) > 1 ? <Card>
             <CardHeader><CardTitle>定制每月流量</CardTitle><CardDescription>可按套餐默认流量的倍数增加，价格根据所选流量自动计算。</CardDescription></CardHeader>
             <CardContent className="grid gap-4">
               <Slider aria-label="每月流量" min={1} max={quote.trafficMaxTier} step={1} value={[trafficTier]} onValueChange={values => setTrafficTier(values[0] || 1)} onValueCommit={selectTrafficTier} disabled={loading || Boolean(paying)} />
               <Item variant="muted"><ItemContent><ItemDescription>当前选择</ItemDescription><ItemTitle>每月 {(quote.trafficBaseGb || 0) * trafficTier} GB</ItemTitle></ItemContent><ItemActions><span className="text-xl font-semibold tabular-nums">{formatMoney(quote.originalAmount)}</span></ItemActions></Item>
             </CardContent>
           </Card> : null}
-          {standaloneAddOn ? null : <Card>
+          {standaloneAddOn || quote.lifetime ? null : <Card>
             <CardHeader><CardTitle>附加服务</CardTitle><CardDescription>可与基础套餐合并结算，按需选择。</CardDescription></CardHeader>
             <CardContent><ItemGroup>
               {(quote.availableAddOns || []).map(addOn => <Item key={addOn.id} variant="muted">{addOn.id === "home_ip" ? <HousePlug /> : <PackagePlus />}<ItemContent><ItemTitle>{addOn.name}</ItemTitle><ItemDescription>{addOn.description}{addOn.available ? " · 支付后进入人工交付" : ` · ${addOn.unavailableReason}`}</ItemDescription></ItemContent><ItemActions>{addOn.available && addOn.options?.length ? <Select value={addOns.find(id => id.startsWith(`${addOn.id}:`)) || "none"} onValueChange={value => selectAddOnOption(value === "none" ? "" : value)} disabled={loading || Boolean(paying)}><SelectTrigger aria-label={`选择${addOn.name}地区`} className="w-full sm:w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">不购买</SelectItem>{addOn.options.map(option => <SelectItem key={option.id} value={option.id}>{option.label} · {formatMoney(option.amount)}</SelectItem>)}</SelectContent></Select> : <Badge variant="secondary">{addOn.unavailableReason}</Badge>}</ItemActions></Item>)}
