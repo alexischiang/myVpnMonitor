@@ -57,7 +57,7 @@ const initialState: Omit<DataState, "reload" | "runAsync"> = {
 
 const defaultCollections: Collection[] = ["subscriptions", "users", "bills", "meta"]
 const pageCollections: [string, Collection[]][] = [
-  ["/users/detail/", ["users", "subscriptions", "bills"]],
+  ["/users/detail/", ["users", "subscriptions", "bills", "pricing"]],
   ["/users", ["users", "subscriptions", "pricing"]],
   ["/urls/detail/", ["subscriptions", "users"]],
   ["/urls", ["subscriptions", "vendors"]],

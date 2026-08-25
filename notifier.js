@@ -1,12 +1,6 @@
 let cachedTransporter = null;
 const proxyAgents = new Map();
 
-function getAlertConfig() {
-  return {
-    threshold: Number(process.env.ALERT_REMAINING_BYTES || 10 * 1024 * 1024 * 1024)
-  };
-}
-
 function getMailerConfig() {
   return {
     from: process.env.ALERT_EMAIL_FROM || "",
@@ -16,8 +10,7 @@ function getMailerConfig() {
     to: process.env.ALERT_EMAIL_TO || "alexischiangg@gmail.com",
     host: process.env.ALERT_SMTP_HOST || "smtp.gmail.com",
     port: Number(process.env.ALERT_SMTP_PORT || 465),
-    secure: process.env.ALERT_SMTP_SECURE ? process.env.ALERT_SMTP_SECURE === "true" : true,
-    ...getAlertConfig()
+    secure: process.env.ALERT_SMTP_SECURE ? process.env.ALERT_SMTP_SECURE === "true" : true
   };
 }
 
@@ -27,8 +20,7 @@ function getTelegramConfig() {
     chatId: process.env.TELEGRAM_CHAT_ID || "",
     apiBaseUrl: (process.env.TELEGRAM_API_BASE_URL || "https://api.telegram.org").replace(/\/+$/, ""),
     proxyUrl: process.env.TELEGRAM_PROXY_URL || "",
-    parseMode: process.env.TELEGRAM_PARSE_MODE || "",
-    ...getAlertConfig()
+    parseMode: process.env.TELEGRAM_PARSE_MODE || ""
   };
 }
 
@@ -194,26 +186,6 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
-function buildLowTrafficAlert(item, remaining, threshold) {
-  const label = item.email || item.name || item.id || "(unnamed subscription)";
-  const subject = `[XELA] Low traffic alert: ${label}`;
-  const lines = [
-    `Subscription ${label} remaining traffic is below the alert threshold.`,
-    "",
-    `Remaining: ${formatBytes(remaining)}`,
-    `Threshold: ${formatBytes(threshold)}`,
-    `Total: ${formatBytes(item.metrics?.totalBytes)}`,
-    `Used: ${formatBytes(item.metrics?.usedBytes)}`,
-    `Expires at: ${item.metrics?.expireAt || "-"}`,
-    `URL: ${item.url || "-"}`,
-    "",
-    `Checked at: ${item.lastCheckedAt || new Date().toISOString()}`
-  ];
-  const text = lines.join("\n");
-  const html = `<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.6">${escapeHtml(text)}</pre>`;
-  return { subject, text, html };
-}
-
 function buildPaymentAlert(order) {
   const recharge = order.purpose === "recharge";
   const trafficPack = order.purpose === "traffic_pack";
@@ -234,75 +206,6 @@ function buildPaymentAlert(order) {
   ].join("\n");
 }
 
-function isExpiredItem(item, now = Date.now()) {
-  const expireAt = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
-  return Number.isFinite(expireAt) && expireAt <= now;
-}
-
-function isInvalidItem(item) {
-  if (item?.status === "invalid" || item?.lastError || item?.metrics?.unavailable) return true;
-  const expireAt = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
-  return !Number.isFinite(expireAt) || !Number.isFinite(Number(item?.metrics?.remainingBytes));
-}
-
-async function checkAndNotifyLowTraffic(items, store, { logger = console } = {}) {
-  const cfg = getAlertConfig();
-  const mailConfigured = isMailConfigured();
-  const telegramConfigured = isTelegramConfigured();
-  if (!mailConfigured && !telegramConfigured) {
-    return { sent: 0, skipped: items.length, reason: "No mail or Telegram alert channel configured." };
-  }
-
-  const now = Date.now();
-  let sent = 0;
-  const sentByChannel = { mail: 0, telegram: 0 };
-
-  for (const item of items) {
-    const remaining = item.metrics?.remainingBytes;
-    const key = `low:${item.id}`;
-    if (isInvalidItem(item)) {
-      await store.clear(key);
-      continue;
-    }
-    if (remaining === null || remaining === undefined) continue;
-
-    if (isExpiredItem(item, now)) {
-      await store.clear(key);
-      continue;
-    }
-
-    if (remaining >= cfg.threshold) {
-      await store.clear(key);
-      continue;
-    }
-
-    const previous = await store.get(key);
-    if (previous) continue;
-
-    try {
-      const alert = buildLowTrafficAlert(item, remaining, cfg.threshold);
-      const channels = [];
-      if (mailConfigured) {
-        await sendMail(alert);
-        sentByChannel.mail++;
-        channels.push("mail");
-      }
-      if (telegramConfigured) {
-        await sendTelegram({ text: alert.text });
-        sentByChannel.telegram++;
-        channels.push("telegram");
-      }
-      await store.set(key, { sentAt: new Date().toISOString(), remainingBytes: remaining, channels });
-      sent++;
-      logger.log?.(`[alert] low-traffic sent: channels=${channels.join(",")} item=${item.email || item.id} remaining=${remaining}`);
-    } catch (error) {
-      logger.error?.(`[alert] send failed for ${item.id}:`, error.message);
-    }
-  }
-
-  return { sent, sentByChannel, threshold: cfg.threshold };
-}
-
 module.exports = {
   isConfigured,
   isMailConfigured,
@@ -314,7 +217,5 @@ module.exports = {
   sendTelegram,
   renderEmailHtml,
   buildPaymentAlert,
-  checkAndNotifyLowTraffic,
-  isExpiredItem,
   formatBytes
 };

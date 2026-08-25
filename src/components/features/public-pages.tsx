@@ -54,9 +54,9 @@ function lifetimeTrafficLabel(bytes: number | undefined, fallback: string) {
 }
 
 const defaultPlans = [
-  { id: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", traffic: "每月 100G", devices: [1, 2, 3, 3], prices: [39, 109, 199, 369], lifetimeName: "BASIC 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "100G 固定流量", lifetimeTrafficBytes: 100 * 1024 ** 3, lifetimePrice: 79, lifetimeDevices: 1, features: ["基础线路", "流媒体支持", "在线客服"], unavailableFeatures: ["稳定 GPT 解锁", "国际内网专线", "独享级带宽体验"] },
-  { id: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", devices: [3, 3, 5, 5], prices: [49, 129, 229, 429], lifetimeName: "PRO 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "200G 固定流量", lifetimeTrafficBytes: 200 * 1024 ** 3, lifetimePrice: 95, lifetimeDevices: 3, features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], unavailableFeatures: ["国际内网专线", "独享级带宽体验"] },
-  { id: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", traffic: "每月 300G", devices: [1, 2, 3, 3], prices: [89, 239, 449, 859], lifetimeName: "ULTRA 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "300G 固定流量", lifetimeTrafficBytes: 300 * 1024 ** 3, lifetimePrice: 129, lifetimeDevices: 1, features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], unavailableFeatures: [] },
+  { id: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", traffic: "每月 100G", devices: [1, 2, 3, 3], prices: [39, 109, 199, 369], recurringAvailable: true, lifetimeName: "BASIC 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "100G 固定流量", lifetimeTrafficBytes: 100 * 1024 ** 3, lifetimePrice: 79, lifetimeAvailable: true, lifetimeDevices: 1, features: ["基础线路", "流媒体支持", "在线客服"], unavailableFeatures: ["稳定 GPT 解锁", "国际内网专线", "独享级带宽体验"] },
+  { id: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", devices: [3, 3, 5, 5], prices: [49, 129, 229, 429], recurringAvailable: true, lifetimeName: "PRO 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "200G 固定流量", lifetimeTrafficBytes: 200 * 1024 ** 3, lifetimePrice: 95, lifetimeAvailable: true, lifetimeDevices: 3, features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], unavailableFeatures: ["国际内网专线", "独享级带宽体验"] },
+  { id: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", traffic: "每月 300G", devices: [1, 2, 3, 3], prices: [89, 239, 449, 859], recurringAvailable: true, lifetimeName: "ULTRA 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "300G 固定流量", lifetimeTrafficBytes: 300 * 1024 ** 3, lifetimePrice: 129, lifetimeAvailable: true, lifetimeDevices: 1, features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], unavailableFeatures: [] },
 ]
 
 const defaultPricingFaqs: FaqSetting[] = [
@@ -78,8 +78,8 @@ export function PricingPage() {
 
   React.useEffect(() => {
     fetchJson<PricingRow[]>("/api/public/pricing").then(rows => {
-      setAddOnProducts(rows.filter(row => ["addon", "custom"].includes(row.productKind || "") && row.enabled !== false && (row.stock === undefined || row.stock > 0)))
-      setPlans(rows.filter(row => row.productKind !== "addon" && row.productKind !== "custom" && row.testPlan !== true && row.enabled !== false && row.recurringDeleted !== true).map(row => {
+      setAddOnProducts(rows.filter(row => row.availability?.addon && (row.stock === undefined || row.stock > 0)))
+      setPlans(rows.filter(row => row.productKind === "plan" && row.testPlan !== true && (row.availability?.recurring || row.availability?.lifetime)).map(row => {
         const defaultPlan = defaultPlans.find(plan => plan.id === row.group) || { id: row.group, name: row.group.toUpperCase(), title: "周期性套餐", description: "", recommended: false, traffic: "", devices: [1, 1, 1, 1], prices: [Number.NaN, Number.NaN, Number.NaN, Number.NaN], lifetimeName: `${row.group.toUpperCase()} 不限时`, lifetimeTitle: "固定流量不限时长", lifetimeDescription: "", lifetimeTraffic: "固定流量", lifetimeTrafficBytes: undefined, lifetimePrice: Number.NaN, lifetimeDevices: 1, features: [], unavailableFeatures: [] }
         return {
           ...defaultPlan,
@@ -88,6 +88,7 @@ export function PricingPage() {
           title: row.title || defaultPlan.title,
           description: row.description || defaultPlan.description,
           recommended: Boolean(row.recommended),
+          recurringAvailable: row.availability?.recurring === true,
           traffic: row.trafficBaseGb ? `每月 ${row.trafficBaseGb}G，可定制至 ${row.trafficBaseGb * (row.trafficMaxTier || 1)}G` : row.traffic || defaultPlan.traffic,
           features: row.features ?? defaultPlan.features,
           unavailableFeatures: row.unavailableFeatures ?? defaultPlan.unavailableFeatures,
@@ -97,7 +98,8 @@ export function PricingPage() {
           lifetimeDescription: row.lifetimeDescription || defaultPlan.lifetimeDescription,
           lifetimeTraffic: lifetimeTrafficLabel(row.lifetimeTrafficBytes ?? defaultPlan.lifetimeTrafficBytes, row.lifetimeTraffic || defaultPlan.lifetimeTraffic),
           lifetimeTrafficBytes: row.lifetimeTrafficBytes ?? defaultPlan.lifetimeTrafficBytes,
-          lifetimePrice: row.lifetimeDeleted ? Number.NaN : row.lifetimePrice ?? defaultPlan.lifetimePrice,
+          lifetimePrice: row.availability?.lifetime ? row.lifetimePrice ?? defaultPlan.lifetimePrice : Number.NaN,
+          lifetimeAvailable: row.availability?.lifetime === true,
           lifetimeDevices: row.lifetimeDevices ?? defaultPlan.lifetimeDevices,
           lifetimeFeatures: row.lifetimeFeatures,
           lifetimeUnavailableFeatures: row.lifetimeUnavailableFeatures,
@@ -120,6 +122,7 @@ export function PricingPage() {
   const trafficPackProduct = addOnProducts.find(product => product.addonType === "traffic_pack")
   const homeIpProduct = addOnProducts.find(product => product.addonType === "home_ip")
   const otherServices = addOnProducts.filter(product => !["traffic_pack", "home_ip"].includes(product.addonType || ""))
+  const visiblePlans = plans.filter(plan => planMode === "lifetime" ? plan.lifetimeAvailable && Number.isFinite(plan.lifetimePrice) : plan.recurringAvailable && Number.isFinite(plan.prices[periodIndex]))
 
   return (
     <main className={inAccount ? "px-4 lg:px-6" : "min-h-svh bg-background px-4 py-12 text-foreground md:py-20"}>
@@ -143,8 +146,8 @@ export function PricingPage() {
             </Tabs>
           </div>
         </header>
-        <div className="flex flex-col gap-4 md:flex-row">
-          {plans.map(plan => {
+        <div className="flex flex-wrap gap-4">
+          {visiblePlans.map(plan => {
             const lifetime = planMode === "lifetime"
             const displayedPrice = lifetime ? plan.lifetimePrice : plan.prices[periodIndex]
             const checkoutOption = lifetime ? `${plan.id}-lifetime` : `${plan.id}-${periods[periodIndex].suffix}`

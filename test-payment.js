@@ -166,6 +166,7 @@ async function main() {
       SESSION_SECRET: "payment-test-session-secret",
       XUI_BASE_URL: `http://127.0.0.1:${xuiPort}`,
       XUI_API_TOKEN: "xui-test-token",
+      XUI_READ_ONLY: "false",
       XUI_SUBSCRIPTION_BASE_URL: "https://subscription.test"
     });
 
@@ -243,7 +244,7 @@ async function main() {
     assert.strictEqual(savedSettings.response.status, 200);
     assert.strictEqual(savedSettings.data.coupons[0].code, "SAVE20");
     const publicSettings = await request("/api/public/sales-settings");
-    assert.deepStrictEqual(publicSettings.data, { registrationMode: "open", faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }] });
+    assert.deepStrictEqual(publicSettings.data, { registrationMode: "open", onboardingEnabled: true, faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }] });
     const adminPricing = await request("/api/pricing", { cookie: adminCookie });
     const shopperPricing = await request("/api/public/pricing");
     assert.ok(adminPricing.data.some(item => item.group === "friends-lifetime-unlimited" && item.internal === true));

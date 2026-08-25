@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 const express = require("express");
+const defaultLogger = require("./logger");
 const { withRedisLock } = require("./redis");
+const { assertXuiRequestAllowed } = require("./xui-client");
 
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
 
@@ -72,7 +74,16 @@ async function callPanel(request, fetchImpl, timeoutMs) {
   }
 }
 
-function createXuiApp({ redis, store, token, baseUrl = "", apiToken = "", timeoutMs = 15000, fetchImpl = fetch }) {
+async function persistXuiAudit(store, logger, entry) {
+  if (!store.appendXuiAuditLog) return;
+  try {
+    await store.appendXuiAuditLog(entry);
+  } catch (error) {
+    logger.error?.({ error: error.message }, "Failed to persist 3x-ui audit log");
+  }
+}
+
+function createXuiApp({ redis, store, token, baseUrl = "", apiToken = "", readOnly = false, timeoutMs = 15000, fetchImpl = fetch, logger = defaultLogger }) {
   if (!redis) throw new Error("Redis connection is required.");
   if (!store) throw new Error("3x-ui PostgreSQL store is required.");
   if (!token) throw new Error("XUI_SERVICE_TOKEN is required.");
@@ -96,15 +107,27 @@ function createXuiApp({ redis, store, token, baseUrl = "", apiToken = "", timeou
   });
 
   app.post("/internal/request", async (req, res) => {
+    const requestId = String(req.headers["x-request-id"] || crypto.randomUUID());
+    const startedAt = Date.now();
+    let request;
+    res.setHeader("x-request-id", requestId);
     try {
-      const request = validateRequest(req.body, { baseUrl, apiToken });
+      request = validateRequest(req.body, { baseUrl, apiToken });
+      assertXuiRequestAllowed(readOnly, request.method, request.apiPath);
       const operation = () => callPanel(request, fetchImpl, timeoutMs);
-      if (request.method === "GET") return res.json({ ok: true, data: await operation() });
-      // ponytail: one lock per panel is enough until measured write throughput requires per-client locks.
-      const data = await withRedisLock(redis, panelLockKey(request.baseUrl), operation, { ttlMs: timeoutMs + 5000, waitMs: timeoutMs });
+      const data = request.method === "GET"
+        ? await operation()
+        // ponytail: one lock per panel is enough until measured write throughput requires per-client locks.
+        : await withRedisLock(redis, panelLockKey(request.baseUrl), operation, { ttlMs: timeoutMs + 5000, waitMs: timeoutMs });
+      const entry = { event: "xui.request", requestId, level: "info", transport: "proxy", method: request.method, apiPath: request.apiPath, panelHost: new URL(request.baseUrl).host, readOnly, allowed: true, statusCode: 200, durationMs: Date.now() - startedAt };
+      logger.info(entry, "3x-ui request completed");
+      await persistXuiAudit(store, logger, entry);
       res.json({ ok: true, data });
     } catch (error) {
-      res.status(error.statusCode || 502).json({ ok: false, error: error.message });
+      const entry = { event: "xui.request", requestId, level: "warn", transport: "proxy", method: request?.method || req.body?.method, apiPath: request?.apiPath || req.body?.apiPath, panelHost: request ? new URL(request.baseUrl).host : undefined, readOnly, allowed: error.code !== "XUI_READ_ONLY", statusCode: error.statusCode || 502, durationMs: Date.now() - startedAt, error: error.message };
+      logger.warn(entry, error.code === "XUI_READ_ONLY" ? "3x-ui request blocked" : "3x-ui request failed");
+      await persistXuiAudit(store, logger, entry);
+      res.status(error.statusCode || 502).json({ ok: false, error: error.message, code: error.code });
     }
   });
 
@@ -142,10 +165,23 @@ function createXuiApp({ redis, store, token, baseUrl = "", apiToken = "", timeou
     }
   });
 
-  app.post("/internal/clients/:userId/traffic-reset", async (req, res) => {
+  app.get("/internal/logs", async (req, res) => {
     try {
-      const userId = String(req.params.userId || "");
+      if (!store.listXuiAuditLogs) throw Object.assign(new Error("3x-ui 日志存储尚未配置。"), { statusCode: 503 });
+      res.json({ ok: true, data: await store.listXuiAuditLogs(req.query) });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post("/internal/clients/:userId/traffic-reset", async (req, res) => {
+    const requestId = String(req.headers["x-request-id"] || crypto.randomUUID());
+    const startedAt = Date.now();
+    const userId = String(req.params.userId || "");
+    res.setHeader("x-request-id", requestId);
+    try {
       const { reason, reference } = validateTrafficReset(req.body);
+      assertXuiRequestAllowed(readOnly, "POST", "/panel/api/clients/resetTraffic/:email");
       const key = trafficResetKey(userId, reason, reference);
       const operation = async () => {
         const previous = await store.getState(key);
@@ -167,9 +203,15 @@ function createXuiApp({ redis, store, token, baseUrl = "", apiToken = "", timeou
         return result;
       };
       const data = await withRedisLock(redis, `xui:traffic-reset:${crypto.createHash("sha256").update(key).digest("hex").slice(0, 16)}`, operation, { ttlMs: timeoutMs + 5000, waitMs: timeoutMs });
+      const entry = { event: "xui.request", requestId, level: "info", transport: "proxy", method: "POST", apiPath: "/panel/api/clients/resetTraffic/:email", userId, readOnly, allowed: true, statusCode: 200, durationMs: Date.now() - startedAt };
+      logger.info(entry, "3x-ui request completed");
+      await persistXuiAudit(store, logger, entry);
       res.json({ ok: true, data });
     } catch (error) {
-      res.status(error.statusCode || 502).json({ ok: false, error: error.message });
+      const entry = { event: "xui.request", requestId, level: "warn", transport: "proxy", method: "POST", apiPath: "/panel/api/clients/resetTraffic/:email", userId, readOnly, allowed: error.code !== "XUI_READ_ONLY", statusCode: error.statusCode || 502, durationMs: Date.now() - startedAt, error: error.message };
+      logger.warn(entry, error.code === "XUI_READ_ONLY" ? "3x-ui request blocked" : "3x-ui request failed");
+      await persistXuiAudit(store, logger, entry);
+      res.status(error.statusCode || 502).json({ ok: false, error: error.message, code: error.code });
     }
   });
 

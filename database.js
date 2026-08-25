@@ -1,6 +1,7 @@
 const COLLECTIONS = ["subscriptions", "users", "accounts", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "paymentOrders", "salesSettings", "paymentSettings", "referralRewards"];
 const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
 const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
+const { appendXuiAuditLog, initXuiAudit, listXuiAuditLogs } = require("./xui-audit");
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -83,6 +84,7 @@ class PostgresDataStore {
         PRIMARY KEY (collection, id)
       )
       `), "postgres init");
+      await withPgRetry(() => initXuiAudit(pool), "xui audit init");
       await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS wallet_accounts (
         account_id TEXT PRIMARY KEY,
@@ -455,6 +457,14 @@ class PostgresDataStore {
 
   async ping() {
     await this.pool.query("SELECT 1");
+  }
+
+  async appendXuiAuditLog(entry) {
+    await withPgRetry(() => appendXuiAuditLog(this.pool, entry), "append xui audit log");
+  }
+
+  async listXuiAuditLogs(options) {
+    return withPgRetry(() => listXuiAuditLogs(this.pool, options), "list xui audit logs");
   }
 
   async getRecord(collection, id) {

@@ -112,6 +112,8 @@ export type User = {
   isFamilyFriend?: boolean
   isSuperAccount?: boolean
   unlimited?: boolean
+  trafficTier?: number
+  purchasedTrafficGb?: number
   currentProductId?: string
   currentOptionId?: string
   currentProductOrderId?: string
@@ -284,6 +286,7 @@ export type PricingRow = {
   addonRegions?: Array<{ id: string; name: string; price: number }>
   addonDeliveryMode?: "automatic" | "manual"
   addonDeliveryDescription?: string
+  availability?: { recurring: boolean; lifetime: boolean; addon: boolean }
   features?: string[]
   unavailableFeatures?: string[]
   monthly?: number
@@ -378,6 +381,7 @@ export type MarkdownDocumentSetting = {
 export type SalesSettings = {
   id: string
   registrationMode: "open" | "invite_only" | "disabled"
+  onboardingEnabled: boolean
   coupons: CouponSetting[]
   faqs: FaqSetting[]
   announcements: AnnouncementSetting[]

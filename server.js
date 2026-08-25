@@ -8,13 +8,15 @@ const zlib = require("zlib");
 const { createDataStore } = require("./database");
 const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const { loadLocalEnv } = require("./env");
-const { requestXui, requestXuiService } = require("./xui-client");
+const { assertXuiRequestAllowed, requestXui, requestXuiService } = require("./xui-client");
 const yaml = require("js-yaml");
 const notifier = require("./notifier");
 const packageJson = require("./package.json");
 
 loadLocalEnv();
 
+const logger = require("./logger");
+const xuiLogger = logger.child({ component: "xui" });
 const PORT = Number(process.env.PORT || 3000);
 const LOCAL_DATABASE_URL = process.env.VERCEL === "1" ? "" : process.env.LOCAL_DATABASE_URL || "";
 const DATABASE_URL = LOCAL_DATABASE_URL || process.env.DATABASE_URL || "";
@@ -40,6 +42,7 @@ const XUI_TIMEOUT_MS = Math.max(1000, Number(process.env.XUI_TIMEOUT_MS || 15000
 const XUI_METADATA_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const XUI_SERVICE_URL = (process.env.XUI_SERVICE_URL || "").replace(/\/+$/, "");
 const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
+const XUI_READ_ONLY = process.env.XUI_READ_ONLY === "true";
 const XUI_TRAFFIC_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const XUI_DEFAULT_TRAFFIC_BYTES = 100 * 1024 ** 3;
 const XUI_VISION_FLOW = "xtls-rprx-vision";
@@ -80,8 +83,14 @@ const DEFAULT_PRICING = [
 function publicPricing() {
   return (pricing.length ? pricing : DEFAULT_PRICING).map(saved => {
     const defaultRow = DEFAULT_PRICING.find(item => item.group === saved.group) || {};
-    return { ...defaultRow, ...saved, ...(!["addon", "custom"].includes(saved.productKind) ? { lineType: "self_hosted" } : {}), enabled: saved.enabled !== false, features: Array.isArray(saved.features) ? saved.features : defaultRow.features || [], unavailableFeatures: Array.isArray(saved.unavailableFeatures) ? saved.unavailableFeatures : defaultRow.unavailableFeatures || [] };
+    const product = { ...defaultRow, ...saved, ...(!["addon", "custom"].includes(saved.productKind) ? { lineType: "self_hosted" } : {}), enabled: saved.enabled !== false, features: Array.isArray(saved.features) ? saved.features : defaultRow.features || [], unavailableFeatures: Array.isArray(saved.unavailableFeatures) ? saved.unavailableFeatures : defaultRow.unavailableFeatures || [] };
+    const isPlan = !product.productKind || product.productKind === "plan";
+    return { ...product, availability: { recurring: isPlan && product.enabled && product.recurringDeleted !== true && product.stock !== 0, lifetime: isPlan && product.enabled && product.lifetimeDeleted !== true && product.lifetimeEnabled !== false && product.lifetimeStock !== 0 && Number.isFinite(Number(product.lifetimePrice)), addon: ["addon", "custom"].includes(product.productKind || "") && product.enabled && product.stock !== 0 } };
   });
+}
+
+function productVariantAvailable(product, variant) {
+  return product?.availability?.[variant] === true;
 }
 const PRICING_PERIODS = {
   30: { priceKey: "monthly", duration: "monthly", label: "月付 30天" },
@@ -118,14 +127,14 @@ function dynamicPaymentPlanOption(optionId) {
   const lifetimeMatch = id.match(/^(.+)-lifetime$/);
   if (lifetimeMatch) {
     const plan = pricingProduct(lifetimeMatch[1]);
-    if (!plan || plan.internal === true || plan.productKind === "addon" || plan.productKind === "custom" || plan.lifetimeDeleted || plan.lifetimeEnabled === false || plan.lifetimeStock === 0 || !Number.isFinite(Number(plan.lifetimePrice))) return null;
+    if (!plan || plan.internal === true || !productVariantAvailable(plan, "lifetime") || plan.lifetimeStock === 0 || !Number.isFinite(Number(plan.lifetimePrice))) return null;
     return { planId: plan.group, planName: plan.lifetimeName || `${plan.name || plan.group} 不限时`, optionLabel: "固定流量 · 不限时", priceKey: "lifetimePrice", duration: "lifetime", group: plan.group, lineType: "self_hosted", lifetime: true, fallbackPrice: Number(plan.lifetimePrice) };
   }
   const recurringMatch = id.match(/^(.+)-(30|90|180|360)$/);
   if (!recurringMatch) return null;
   const plan = pricingProduct(recurringMatch[1]);
   const period = PRICING_PERIODS[recurringMatch[2]];
-  if (!plan || plan.internal === true || plan.productKind === "addon" || plan.productKind === "custom" || plan.recurringDeleted || plan.enabled === false || plan.stock === 0 || !Number.isFinite(Number(plan[period.priceKey]))) return null;
+  if (!plan || plan.internal === true || !productVariantAvailable(plan, "recurring") || plan.stock === 0 || !Number.isFinite(Number(plan[period.priceKey]))) return null;
   return { planId: plan.group, planName: plan.name || plan.group.toUpperCase(), optionLabel: period.label, priceKey: period.priceKey, duration: period.duration, group: plan.group, lineType: "self_hosted", fallbackPrice: Number(plan[period.priceKey]) };
 }
 
@@ -273,12 +282,6 @@ const dataStore = createDataStore({
   databaseUrl: DATABASE_URL,
   ssl: !LOCAL_DATABASE_URL && process.env.DATABASE_SSL === "true"
 });
-const alertStore = {
-  get: key => dataStore.getRecord("alertState", key),
-  set: (key, value) => dataStore.setRecord("alertState", key, value),
-  clear: key => dataStore.deleteRecord("alertState", key)
-};
-
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -1328,7 +1331,7 @@ function legacyPaymentCoupons(value = process.env.PAYMENT_COUPONS || "") {
 }
 
 function initialSalesSettings() {
-  return { id: "default", registrationMode: "open", coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [] };
+  return { id: "default", registrationMode: "open", onboardingEnabled: true, coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [] };
 }
 
 function readBuffer(req, limit) {
@@ -1359,7 +1362,7 @@ function imageExtension(content) {
 
 function currentSalesSettings() {
   const settings = salesSettings[0];
-  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", announcements: settings.announcements || [], advertisements: settings.advertisements || [] } : initialSalesSettings();
+  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, announcements: settings.announcements || [], advertisements: settings.advertisements || [] } : initialSalesSettings();
 }
 
 function paymentCoupons(value) {
@@ -1399,6 +1402,7 @@ function normalizeCouponDate(value, label) {
 
 function normalizeSalesSettings(payload) {
   const registrationMode = ["open", "invite_only", "disabled"].includes(payload?.registrationMode) ? payload.registrationMode : "open";
+  const onboardingEnabled = payload?.onboardingEnabled !== false;
   const coupons = Array.isArray(payload?.coupons) ? payload.coupons.slice(0, 50) : [];
   const seenCodes = new Set();
   const couponGroups = new Set(["basic", "pro", "ultra"]);
@@ -1449,7 +1453,7 @@ function normalizeSalesSettings(payload) {
     if (category.length > 40 || title.length > 80 || description.length > 200 || content.length > 20000) throw new Error("广告分类最多 40 字，标题最多 80 字，简介最多 200 字，正文最多 20000 字。");
     return { id: String(item.id || crypto.randomUUID()), category, title, description, content, enabled: item.enabled !== false };
   });
-  return { id: "default", registrationMode, coupons: normalizedCoupons, faqs, announcements, advertisements };
+  return { id: "default", registrationMode, onboardingEnabled, coupons: normalizedCoupons, faqs, announcements, advertisements };
 }
 
 function publicAnnouncements() {
@@ -3280,7 +3284,18 @@ function xuiClientComment(user = {}) {
   return `${name}#${customerId}`;
 }
 
+async function persistXuiAudit(entry) {
+  try {
+    await dataStore.appendXuiAuditLog(entry);
+  } catch (error) {
+    xuiLogger.error({ error: error.message }, "Failed to persist 3x-ui audit log");
+  }
+}
+
 async function xuiRequestAt(baseUrl, apiToken, apiPath, { method = "GET", body } = {}) {
+  const startedAt = Date.now();
+  const requestId = crypto.randomUUID();
+  const logContext = { event: "xui.request", requestId, method, apiPath, panelHost: new URL(baseUrl).host, readOnly: XUI_READ_ONLY };
   if (XUI_SERVICE_URL) {
     return requestXui({
       serviceUrl: XUI_SERVICE_URL,
@@ -3290,11 +3305,21 @@ async function xuiRequestAt(baseUrl, apiToken, apiPath, { method = "GET", body }
       apiPath,
       method,
       body,
+      requestId,
       timeoutMs: XUI_TIMEOUT_MS + 1000
     });
   }
+  try {
+    assertXuiRequestAllowed(XUI_READ_ONLY, method, apiPath);
+  } catch (error) {
+    const entry = { ...logContext, level: "warn", transport: "guard", allowed: false, statusCode: error.statusCode, durationMs: Date.now() - startedAt, error: error.message };
+    xuiLogger.warn(entry, "3x-ui request blocked");
+    await persistXuiAudit(entry);
+    throw error;
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
+  let statusCode = 502;
   try {
     const response = await fetch(`${baseUrl}${apiPath}`, {
       method,
@@ -3305,6 +3330,7 @@ async function xuiRequestAt(baseUrl, apiToken, apiPath, { method = "GET", body }
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     });
+    statusCode = response.status;
     const text = await response.text();
     let payload;
     try { payload = text ? JSON.parse(text) : {}; } catch { throw new Error(`3x-ui 返回了无效响应（HTTP ${response.status}）。`); }
@@ -3313,10 +3339,16 @@ async function xuiRequestAt(baseUrl, apiToken, apiPath, { method = "GET", body }
       error.statusCode = response.status;
       throw error;
     }
+    const entry = { ...logContext, level: "info", transport: "direct", allowed: true, statusCode, durationMs: Date.now() - startedAt };
+    xuiLogger.info(entry, "3x-ui request completed");
+    await persistXuiAudit(entry);
     return payload.obj;
   } catch (error) {
-    if (error.name === "AbortError") throw new Error("3x-ui 请求超时。");
-    throw error;
+    const requestError = error.name === "AbortError" ? Object.assign(new Error("3x-ui 请求超时。"), { statusCode: 504 }) : error;
+    const entry = { ...logContext, level: "warn", transport: "direct", allowed: true, statusCode: requestError.statusCode || statusCode, durationMs: Date.now() - startedAt, error: requestError.message };
+    xuiLogger.warn(entry, "3x-ui request failed");
+    await persistXuiAudit(entry);
+    throw requestError;
   } finally {
     clearTimeout(timer);
   }
@@ -3739,7 +3771,7 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
   if (!XUI_BASE_URL || !XUI_API_TOKEN) return getXuiBillingState();
   return withXuiBillingLock(async () => {
     await loadLatestData();
-    await resetDueXuiTraffic();
+    if (!XUI_READ_ONLY) await resetDueXuiTraffic();
     const [status, nodes, inbounds, clients, clientIpsByGuid, onlinesByGuid, lastOnline] = await Promise.all([
       snapshot.status || xuiRequest("/panel/api/server/status"),
       snapshot.nodes || xuiRequest("/panel/api/nodes/list"),
@@ -3807,7 +3839,7 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       }
 
       const quotaChanged = Number(remote.totalGB) !== totalBytes;
-      if (user && (quotaChanged || previous?.disabled) && !depleted && !expired && !isUserAccountDisabled(user)) {
+      if (!XUI_READ_ONLY && user && (quotaChanged || previous?.disabled) && !depleted && !expired && !isUserAccountDisabled(user)) {
         try {
           await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: totalBytes, reset: 0, flow: XUI_VISION_FLOW, enable: true }) });
           ledger.disabled = false;
@@ -3820,11 +3852,11 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     const activeUsersByEmail = new Map([...appUsersByEmail].filter(([, user]) => !isUserExpired(user) && !isUserAccountDisabled(user)));
     for (const user of markMissingXuiClients(activeUsersByEmail, remoteEmails)) if (!changedUsers.includes(user)) changedUsers.push(user);
 
-    if (disableEmails.length) {
+    if (!XUI_READ_ONLY && disableEmails.length) {
       await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: disableEmails } });
       for (const email of disableEmails) state.users[email].disabled = true;
     }
-    if (enableEmails.length) await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: enableEmails } });
+    if (!XUI_READ_ONLY && enableEmails.length) await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: enableEmails } });
     state.nodeResults = nodeResults;
     state.nodeNames = nodeNames;
     state.presence = { ...normalizeXuiPresence(onlinesByGuid, lastOnline, nodes, status), checkedAt: new Date().toISOString() };
@@ -7006,16 +7038,6 @@ async function handleRelaySubscription(req, res, token) {
 async function refreshAll() {
   await refreshSubscriptions(subscriptions);
   await saveData();
-  await runLowTrafficCheck();
-}
-
-async function runLowTrafficCheck() {
-  try {
-    if (!notifier.isConfigured()) return;
-    await notifier.checkAndNotifyLowTraffic(subscriptions, alertStore, { logger: console });
-  } catch (error) {
-    console.error("Alert check failed:", error.message);
-  }
 }
 
 function isLocalRequest(req) {
@@ -7030,7 +7052,7 @@ async function sendAlertTestMessage({ mailOnly = false } = {}) {
     throw error;
   }
   const cfg = notifier.getMailerConfig();
-  const text = `NEXORA alert test.\nThreshold: ${notifier.formatBytes(cfg.threshold)}`;
+  const text = "NEXORA alert test.";
   const sent = [];
   if (notifier.isMailConfigured()) {
     await notifier.sendMail({
@@ -7734,7 +7756,8 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/public/sales-settings" && req.method === "GET") {
     await loadLatestData();
-    sendJson(res, 200, { registrationMode: currentSalesSettings().registrationMode, faqs: currentSalesSettings().faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })) });
+    const settings = currentSalesSettings();
+    sendJson(res, 200, { registrationMode: settings.registrationMode, onboardingEnabled: settings.onboardingEnabled, faqs: settings.faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })) });
     return;
   }
 
@@ -7928,6 +7951,25 @@ async function handleApi(req, res, pathname) {
       pricing: publicPricing(),
       meta: appMeta()
     });
+    return;
+  }
+
+  if (pathname === "/api/xui-logs" && req.method === "GET") {
+    try {
+      const requestUrl = new URL(req.url, "http://localhost");
+      const options = Object.fromEntries(requestUrl.searchParams);
+      const data = XUI_SERVICE_URL
+        ? await requestXuiService({
+          serviceUrl: XUI_SERVICE_URL,
+          serviceToken: XUI_SERVICE_TOKEN,
+          path: `/internal/logs?${requestUrl.searchParams}`,
+          timeoutMs: XUI_TIMEOUT_MS
+        })
+        : await dataStore.listXuiAuditLogs(options);
+      sendJson(res, 200, data);
+    } catch (error) {
+      sendJson(res, error.statusCode || 500, { error: error.message });
+    }
     return;
   }
 
@@ -8261,9 +8303,6 @@ async function handleApi(req, res, pathname) {
       },
       to: cfg.to,
       from: cfg.from ? `${cfg.from.slice(0, 3)}***${cfg.from.slice(cfg.from.indexOf("@"))}` : "",
-      threshold: cfg.threshold,
-      thresholdHuman: notifier.formatBytes(cfg.threshold),
-      cooldownMs: cfg.cooldownMs
     });
     return;
   }
@@ -8286,12 +8325,6 @@ async function handleApi(req, res, pathname) {
     } catch (error) {
       sendJson(res, error.statusCode || 500, { error: error.message });
     }
-    return;
-  }
-
-  if (pathname === "/api/alerts/check" && req.method === "POST") {
-    const result = await notifier.checkAndNotifyLowTraffic(subscriptions, alertStore, { logger: console });
-    sendJson(res, 200, { ok: true, ...result });
     return;
   }
 
@@ -9075,7 +9108,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet-gift|account-status|type|line|xui|xui-recover))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|account-status|type|line|xui|xui-recover))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -9092,6 +9125,17 @@ async function handleApi(req, res, pathname) {
       sendJson(res, 200, registeredAccount
         ? publicRegisteredAccount(registeredAccount)
         : { ...publicUser(item), poolCompatibility: currentPoolCompatibility(item) });
+      return;
+    }
+
+    if (action === "wallet" && req.method === "GET") {
+      try {
+        const account = registeredAccount || accounts.find(entry => entry.linkedUserId === item.id && entry.status === "active");
+        if (!account) throw new Error("用户尚未认领账户。");
+        sendJson(res, 200, publicWallet(await walletForAccount(account)));
+      } catch (error) {
+        sendJson(res, 200, { availableBalance: 0, balance: 0, error: error.message });
+      }
       return;
     }
 

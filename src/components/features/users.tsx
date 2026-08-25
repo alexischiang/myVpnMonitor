@@ -19,7 +19,7 @@ import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { ProviderBadge } from "@/components/features/provider-badge"
-import { UserStatusBadge } from "@/components/features/shared"
+import { TrafficProgress, UserStatusBadge } from "@/components/features/shared"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserFormDialog, type UserFormValues } from "@/components/features/user-form-dialog"
 import { UsersSummaryCard } from "@/components/features/users-summary-card"
@@ -38,6 +38,10 @@ type BatchGiftPreview = {
   readyCount: number
   unavailableCount: number
   unavailableUsers: string[]
+}
+
+function OnlineIndicator({ online }: { online: boolean }) {
+  return <span className="relative flex size-1.5 shrink-0" role="status" aria-label={online ? "在线" : "离线"} title={online ? "在线" : "离线"}>{online ? <span className="absolute inline-flex size-full animate-ping rounded-full bg-green-500 opacity-75 motion-reduce:animate-none" /> : null}<span className={`relative inline-flex size-1.5 rounded-full ${online ? "bg-green-500" : "bg-muted-foreground/40"}`} /></span>
 }
 
 export function UsersPage() {
@@ -290,7 +294,7 @@ export function UsersPage() {
   function renderMobileUser(item: User) {
     const claimed = ["active", "disabled"].includes(item.accountStatus || "unclaimed")
     const xui = xuiPresenceFor(item)
-    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="min-w-0 truncate">{item.userId ? <span className="font-medium">{item.userId}</span> : null}<span className={`${item.userId ? "ml-1 " : ""}text-xs font-normal text-muted-foreground`}>#{item.customerID}</span></span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}{xui.available ? <Badge variant={xui.online ? "success" : "secondary"}>{xui.online ? "在线" : "离线"}</Badge> : null}</ItemTitle><ItemDescription className="flex items-center gap-2 text-xs"><span>{item.registeredOnly ? formatDate(item.createdAt) : `${formatDate(item.expiresAt)} · ${formatMoney(item.actualPaid)} · ${(item.activeGroup || "-").toUpperCase()}`}</span>{item.subscription ? <ProviderBadge name={item.subscription.serviceProvider || item.subscription.provider} /> : null}</ItemDescription>{xui.available ? <ItemDescription>{xui.online ? xui.nodes.join(" / ") : xui.lastOnline ? `最后在线 ${formatDateTime(new Date(xui.lastOnline * 1000).toISOString())}` : "从未在线"}</ItemDescription> : null}</ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}{item.lineType === "self_hosted" ? null : <DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem>}<DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
+    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="min-w-0 truncate">{item.userId ? <span className="font-medium">{item.userId}</span> : null}<span className={`${item.userId ? "ml-1 " : ""}text-xs font-normal text-muted-foreground`}>#{item.customerID}</span></span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}</ItemTitle><ItemDescription className="flex items-center gap-2 text-xs"><span>{item.registeredOnly ? formatDate(item.createdAt) : `${formatDate(item.expiresAt)} · ${formatMoney(item.actualPaid)} · ${(item.activeGroup || "-").toUpperCase()}`}</span>{item.subscription ? <ProviderBadge name={item.subscription.serviceProvider || item.subscription.provider} /> : null}</ItemDescription>{xui.available ? <ItemDescription className="flex items-center gap-1.5 text-xs"><span>{xui.online ? xui.nodes.join(" / ") : xui.lastOnline ? `最后在线 ${formatDateTime(new Date(xui.lastOnline * 1000).toISOString())}` : "从未在线"}</span><OnlineIndicator online={xui.online} /></ItemDescription> : null}</ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}{item.lineType === "self_hosted" ? null : <DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem>}<DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
   }
 
   const columns = React.useMemo<ColumnDef<User>[]>(() => [
@@ -312,16 +316,13 @@ export function UsersPage() {
       cell: ({ row }) => ["active", "disabled"].includes(row.original.accountStatus || "unclaimed") ? row.original.email || "-" : "未认领",
     },
     {
-      id: "subscription",
-      accessorFn: item => `${item.subscription?.serviceProvider || item.subscription?.provider || ""} ${item.subscription?.email || ""}`,
-      header: DataTableColumnHeader({ title: "订阅池" }),
-      meta: { label: "订阅池" },
-      cell: ({ row }) => row.original.subscription ? (
-        <div className="flex min-w-0 items-center gap-2">
-          <ProviderBadge name={row.original.subscription.serviceProvider || row.original.subscription.provider} />
-          <span className="min-w-0 truncate text-xs text-muted-foreground">{row.original.subscription.email || "-"}</span>
-        </div>
-      ) : "-",
+      id: "traffic",
+      accessorFn: item => item.xuiWeightedTraffic?.usagePercent ?? -1,
+      header: DataTableColumnHeader({ title: "流量使用" }),
+      meta: { label: "流量使用" },
+      cell: ({ row }) => row.original.xuiWeightedTraffic?.totalBytes
+        ? <TrafficProgress remaining={row.original.xuiWeightedTraffic.remainingBytes ?? 0} total={row.original.xuiWeightedTraffic.totalBytes} />
+        : row.original.unlimited ? "不限" : "-",
     },
     {
       accessorKey: "activeGroup",
@@ -353,7 +354,7 @@ export function UsersPage() {
       accessorFn: item => xuiPresenceFor(item).online ? "在线" : "离线",
       header: DataTableColumnHeader({ title: "在线状态" }),
       meta: { label: "在线状态" },
-      cell: ({ row }) => { const xui = xuiPresenceFor(row.original); return xui.available ? <Badge variant={xui.online ? "success" : "secondary"}>{xui.online ? "在线" : "离线"}</Badge> : "-" },
+      cell: ({ row }) => { const xui = xuiPresenceFor(row.original); return xui.available ? <OnlineIndicator online={xui.online} /> : "-" },
     },
     {
       id: "currentNode",
