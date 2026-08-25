@@ -415,6 +415,7 @@ export function UsersPage() {
           emptyTitle="暂无用户"
           pageSize={30}
           frame="card"
+          stateKey="users"
           toolbar={<div className="flex gap-2"><Button size="sm" variant="outline" onClick={openBatchGift}><Gift />批量赠送</Button><Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增用户</Button></div>}
         />
       </DataTableCard>

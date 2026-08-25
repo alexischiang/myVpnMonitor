@@ -21,6 +21,7 @@ import { SimpleFormDialog, type Field as SimpleField, type FormValues } from "@/
 import { StatusBadge, TrafficProgress, UrlCell } from "@/components/features/shared"
 import type { Subscription, VendorRating } from "@/types"
 import { formatDate, statusLabels } from "@/utils"
+import { useSearchParamState } from "@/hooks/use-search-param-state"
 
 type ProviderSummary = {
   name: string
@@ -59,11 +60,11 @@ export function SubscriptionsPage() {
   const [ratingProvider, setRatingProvider] = React.useState<ProviderSummary | null>(null)
   const [open, setOpen] = React.useState(false)
   const [pendingAction, setPendingAction] = React.useState("")
-  const [enabledFilter, setEnabledFilter] = React.useState("all")
-  const [statusFilter, setStatusFilter] = React.useState("ok")
-  const [providerFilter, setProviderFilter] = React.useState("all")
+  const [enabledFilter, setEnabledFilter] = useSearchParamState("enabled", "all")
+  const [statusFilter, setStatusFilter] = useSearchParamState("status", "ok")
+  const [providerFilter, setProviderFilter] = useSearchParamState("provider", "all")
   const defaultManualExpiry = React.useMemo(() => format(addMonths(new Date(), 1), "yyyy-MM-dd"), [])
-  const [activeTab, setActiveTab] = React.useState("urls")
+  const [activeTab, setActiveTab] = useSearchParamState("tab", "urls")
 
   async function save(values: FormValues) {
     const payload = {
@@ -440,13 +441,14 @@ export function SubscriptionsPage() {
               emptyTitle="暂无订阅"
               pageSize={30}
               frame="card"
+              stateKey="subscriptions"
               toolbar={<><Button variant="outline" size="sm" onClick={() => refresh()} disabled={!!busy || Boolean(pendingAction)}>{pendingAction === "refresh:all" ? <Loader2 className="animate-spin" /> : <RefreshCw />}全部刷新</Button><Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增订阅</Button></>}
             />
           </DataTableCard>
         </TabsContent>
         <TabsContent value="providers" className="min-w-0">
           <DataTableCard>
-            <DataTable columns={providerColumns} data={providerSummaries} searchKey="name" searchPlaceholder="搜索供应商..." emptyTitle="暂无供应商" pageSize={10} frame="card" />
+            <DataTable columns={providerColumns} data={providerSummaries} searchKey="name" searchPlaceholder="搜索供应商..." emptyTitle="暂无供应商" pageSize={10} frame="card" stateKey="providers" />
           </DataTableCard>
         </TabsContent>
       </Tabs>

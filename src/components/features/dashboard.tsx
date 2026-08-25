@@ -71,11 +71,15 @@ function ServiceMonitor() {
 type XuiDashboardData = {
   configured: boolean
   onlineEmails?: string[]
-  dailyTraffic?: { date: string; nodes: Record<string, { usedBytes: number }> }
+  dailyTraffic?: {
+    date: string
+    nodes: Record<string, { usedBytes: number }>
+    users?: Record<string, { usedBytes: number }>
+  }
   nodeNames?: Record<string, string>
 }
 
-function XuiUsageMonitor() {
+function XuiUsageMonitor({ users }: { users: ReturnType<typeof useData>["users"] }) {
   const [data, setData] = React.useState<XuiDashboardData | null>(null)
 
   const refresh = React.useCallback(() => {
@@ -92,14 +96,23 @@ function XuiUsageMonitor() {
     .sort(([, left], [, right]) => right.usedBytes - left.usedBytes)
     .slice(0, 6)
   const maxBytes = ranking[0]?.[1].usedBytes || 1
+  const usersByEmail = new Map(users.filter(user => user.xuiClientEmail).map(user => [user.xuiClientEmail!.toLowerCase(), user]))
+  const userRanking = Object.entries(data?.dailyTraffic?.users || {})
+    .sort(([, left], [, right]) => right.usedBytes - left.usedBytes)
+    .slice(0, 5)
+  const maxUserBytes = userRanking[0]?.[1].usedBytes || 1
 
-  return <div className="grid gap-4 md:grid-cols-2">
+  return <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
     <Card>
       <CardHeader><CardDescription>当前在线人数</CardDescription><CardTitle className="flex items-center gap-2 text-3xl tabular-nums"><Activity className="size-6 text-emerald-500" />{data?.configured ? data.onlineEmails?.length ?? 0 : "-"}</CardTitle><CardDescription>按当前 3x-ui 在线客户端去重</CardDescription></CardHeader>
     </Card>
     <Card>
       <CardHeader><CardTitle>今日节点使用流量</CardTitle><CardDescription>{data?.dailyTraffic?.date ? `${data.dailyTraffic.date}（北京时间）` : "等待流量采集"}</CardDescription></CardHeader>
       <CardContent className="grid gap-3">{ranking.length ? ranking.map(([guid, item], index) => <div key={guid} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-sm"><span className="truncate"><span className="mr-2 text-muted-foreground">{index + 1}</span>{data?.nodeNames?.[guid] || guid}</span><span className="tabular-nums text-muted-foreground">{formatBytes(item.usedBytes)}</span></div><Progress value={Math.max(3, item.usedBytes / maxBytes * 100)} /></div>) : <p className="text-sm text-muted-foreground">暂无今日流量数据</p>}</CardContent>
+    </Card>
+    <Card>
+      <CardHeader><CardTitle>今日用户流量 Top 5</CardTitle><CardDescription>{data?.dailyTraffic?.date ? `${data.dailyTraffic.date}（北京时间）` : "等待流量采集"}</CardDescription></CardHeader>
+      <CardContent className="grid gap-3">{userRanking.length ? userRanking.map(([email, item], index) => { const user = usersByEmail.get(email); return <div key={email} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-sm"><span className="truncate"><span className="mr-2 text-muted-foreground">{index + 1}</span>{user?.userId || user?.wechatName || user?.email || email}</span><span className="tabular-nums text-muted-foreground">{formatBytes(item.usedBytes)}</span></div><Progress value={Math.max(3, item.usedBytes / maxUserBytes * 100)} /></div> }) : <p className="text-sm text-muted-foreground">暂无今日用户流量数据</p>}</CardContent>
     </Card>
   </div>
 }
@@ -141,7 +154,7 @@ export function DashboardPage() {
         <ServiceMonitor />
       </div>
 
-      <div className="px-4 lg:px-6"><XuiUsageMonitor /></div>
+      <div className="px-4 lg:px-6"><XuiUsageMonitor users={users} /></div>
 
       <div className="grid gap-4 px-4 lg:grid-cols-2 lg:px-6">
         <React.Suspense fallback={<><Skeleton className="h-80" /><Skeleton className="h-80" /></>}>

@@ -14,6 +14,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table"
 import { pinyin } from "pinyin-pro"
+import { useSearchParams } from "react-router-dom"
 import {
   ChevronDown,
   ChevronLeft,
@@ -85,6 +86,15 @@ type DataTableProps<TData, TValue> = {
   renderMobileItem?: (item: TData) => React.ReactNode
   frame?: "default" | "card"
   columnLayout?: "uniform" | "content"
+  stateKey?: string
+}
+
+function sortingFromParam(value: string | null): SortingState {
+  if (!value) return []
+  return value.split(",").flatMap(entry => {
+    const [id, direction] = entry.split(":")
+    return id ? [{ id, desc: direction === "desc" }] : []
+  })
 }
 
 export function DataTable<TData, TValue>({
@@ -102,15 +112,18 @@ export function DataTable<TData, TValue>({
   renderMobileItem,
   frame = "default",
   columnLayout = "uniform",
+  stateKey,
 }: DataTableProps<TData, TValue>) {
-  const [sorting, setSorting] = React.useState<SortingState>([])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const defaultPageSize = window.matchMedia("(min-width: 768px)").matches ? pageSize : Math.min(pageSize, 10)
+  const [sorting, setSorting] = React.useState<SortingState>(() => sortingFromParam(stateKey ? searchParams.get(`${stateKey}-sort`) : null))
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
-    searchKey && initialSearchValue ? [{ id: searchKey, value: initialSearchValue }] : []
+    searchKey && (initialSearchValue || stateKey && searchParams.get(`${stateKey}-q`)) ? [{ id: searchKey, value: initialSearchValue || searchParams.get(`${stateKey}-q`) || "" }] : []
   )
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [pagination, setPagination] = React.useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: window.matchMedia("(min-width: 768px)").matches ? pageSize : Math.min(pageSize, 10),
+    pageIndex: Math.max(0, Number(stateKey ? searchParams.get(`${stateKey}-page`) : 1) - 1 || 0),
+    pageSize: Math.min(100, Math.max(1, Number(stateKey ? searchParams.get(`${stateKey}-size`) : defaultPageSize) || defaultPageSize)),
   })
   const tableTopRef = React.useRef<HTMLDivElement>(null)
   const previousPageIndex = React.useRef(0)
@@ -120,6 +133,20 @@ export function DataTable<TData, TValue>({
     previousPageIndex.current = pagination.pageIndex
     tableTopRef.current?.scrollIntoView({ block: "start" })
   }, [pagination.pageIndex])
+
+  React.useEffect(() => {
+    if (!stateKey) return
+    const sort = sorting.map(item => `${item.id}:${item.desc ? "desc" : "asc"}`).join(",")
+    const query = searchKey && !onSearchChange ? String(columnFilters.find(item => item.id === searchKey)?.value || "") : ""
+    setSearchParams(current => {
+      const next = new URLSearchParams(current)
+      if (sort) next.set(`${stateKey}-sort`, sort); else next.delete(`${stateKey}-sort`)
+      if (query) next.set(`${stateKey}-q`, query); else next.delete(`${stateKey}-q`)
+      if (pagination.pageIndex) next.set(`${stateKey}-page`, String(pagination.pageIndex + 1)); else next.delete(`${stateKey}-page`)
+      if (pagination.pageSize !== defaultPageSize) next.set(`${stateKey}-size`, String(pagination.pageSize)); else next.delete(`${stateKey}-size`)
+      return next.toString() === current.toString() ? current : next
+    }, { replace: true })
+  }, [columnFilters, defaultPageSize, onSearchChange, pagination.pageIndex, pagination.pageSize, searchKey, setSearchParams, sorting, stateKey])
 
   const table = useReactTable({
     data,

@@ -1,7 +1,7 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useParams } from "react-router-dom"
-import { AlertCircle, ArrowLeft, Eye, Loader2, Undo2 } from "lucide-react"
+import { AlertCircle, Eye, Loader2, Undo2 } from "lucide-react"
 
 import { fetchJson, postJson, putJson } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -17,6 +17,8 @@ import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { EmptyState, PageHeader } from "@/components/features/shared"
+import { BackButton } from "@/components/features/back-button"
+import { useSearchParamState } from "@/hooks/use-search-param-state"
 import { durationLabels, formatDateTime, formatMoney } from "@/utils"
 
 type AdminOrder = {
@@ -124,8 +126,8 @@ function renderMobileOrder(order: AdminOrder) {
 export function OrdersPage() {
   const [orders, setOrders] = React.useState<AdminOrder[] | null>(null)
   const [error, setError] = React.useState("")
-  const [statusFilter, setStatusFilter] = React.useState("all")
-  const [purposeFilter, setPurposeFilter] = React.useState("all")
+  const [statusFilter, setStatusFilter] = useSearchParamState("status", "all")
+  const [purposeFilter, setPurposeFilter] = useSearchParamState("purpose", "all")
 
   React.useEffect(() => {
     fetchJson<AdminOrder[]>("/api/admin/orders").then(setOrders).catch(error => setError(error.message))
@@ -205,7 +207,7 @@ export function OrdersPage() {
         <Field><FieldLabel htmlFor="order-status-filter">订单状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="order-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(orderStatusLabels).map(([status, label]) => <SelectItem key={status} value={status}>{label}</SelectItem>)}</SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="order-purpose-filter">订单类型</FieldLabel><Select value={purposeFilter} onValueChange={setPurposeFilter}><SelectTrigger id="order-purpose-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem value="plan">套餐购买</SelectItem><SelectItem value="traffic_pack">流量包购买</SelectItem><SelectItem value="addon">附加服务</SelectItem><SelectItem value="recharge">余额充值</SelectItem></SelectContent></Select></Field>
       </>}>
-        <DataTable columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={30} frame="card" renderMobileItem={renderMobileOrder} />
+        <DataTable columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={30} frame="card" renderMobileItem={renderMobileOrder} stateKey="orders" />
       </DataTableCard>
     </div>
   )
@@ -294,7 +296,7 @@ export function OrderDetailPage() {
           </AlertDialogContent>
           </AlertDialog>
         </> : null}
-        <Button asChild variant="outline" size="sm"><Link to="/orders"><ArrowLeft />返回订单</Link></Button>
+        <BackButton fallback="/orders" size="sm" />
       </>} />
       {retryError ? <Alert variant="error"><AlertCircle /><AlertTitle>重新发放失败</AlertTitle><AlertDescription>{retryError}</AlertDescription></Alert> : null}
       {failure ? <Alert variant="error"><AlertCircle /><AlertTitle>{status === "unfulfilled" ? "已付款但套餐未发放" : "订单处理异常"}</AlertTitle><AlertDescription>{failure}</AlertDescription></Alert> : null}

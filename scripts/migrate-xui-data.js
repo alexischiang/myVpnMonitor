@@ -4,6 +4,12 @@ const { XuiDataStore } = require("../xui-database");
 
 loadLocalEnv();
 
+async function initializeBillingState(target, legacyBilling) {
+  if (!legacyBilling || await target.getState("billing")) return false;
+  await target.setState("billing", legacyBilling);
+  return true;
+}
+
 async function main() {
   const sourceUrl = process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
   const targetUrl = xuiDatabaseUrl();
@@ -21,7 +27,7 @@ async function main() {
       source.query("SELECT data FROM app_records WHERE collection = 'xuiBilling' AND id = 'state'"),
       source.query("SELECT data FROM app_records WHERE collection = 'users' ORDER BY position")
     ]);
-    if (billing.rows[0]?.data) await target.setState("billing", billing.rows[0].data);
+    const migratedBilling = await initializeBillingState(target, billing.rows[0]?.data);
 
     const xuiUsers = users.rows.map(row => row.data).filter(user => user?.xuiClientEmail);
     for (const user of xuiUsers) {
@@ -35,7 +41,7 @@ async function main() {
         lastError: user.xuiLastError || ""
       });
     }
-    console.log(`Migrated ${xuiUsers.length} 3x-ui client mappings and ${billing.rows[0] ? 1 : 0} billing state.`);
+    console.log(`Migrated ${xuiUsers.length} 3x-ui client mappings and ${migratedBilling ? 1 : 0} billing state.`);
   } finally {
     await Promise.all([source.end(), target.close()]);
   }
@@ -45,3 +51,5 @@ if (require.main === module) main().catch(error => {
   console.error(error.message);
   process.exit(1);
 });
+
+module.exports = { initializeBillingState };

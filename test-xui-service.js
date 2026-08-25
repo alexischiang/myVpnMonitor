@@ -3,6 +3,7 @@ const http = require("http");
 const { createXuiApp, validateRequest, validateTrafficReset } = require("./xui-app");
 const { requestXui } = require("./xui-client");
 const { createMainApp } = require("./main-app");
+const { initializeBillingState } = require("./scripts/migrate-xui-data");
 
 class FakeRedis {
   constructor() { this.values = new Map(); }
@@ -44,6 +45,12 @@ function listen(server) {
 }
 
 async function main() {
+  const migratedState = new FakeStore();
+  await migratedState.setState("billing", { nodeTokens: { online: "preserve-me" } });
+  assert.strictEqual(await initializeBillingState(migratedState, { nodeTokens: { stale: "do-not-restore" } }), false);
+  assert.deepStrictEqual(await migratedState.getState("billing"), { nodeTokens: { online: "preserve-me" } });
+  assert.strictEqual(await initializeBillingState(new FakeStore(), { nodeTokens: { initial: "restore-once" } }), true);
+
   assert.throws(() => validateRequest({ baseUrl: "file:///tmp", apiToken: "x", apiPath: "/status" }, {}), /HTTP/);
   assert.throws(() => validateRequest({ baseUrl: "https://panel.test", apiToken: "x", apiPath: "https://evil.test" }, {}), /路径/);
   assert.deepStrictEqual(validateTrafficReset({ reason: "calendar_month", month: "2026-08" }), { reason: "calendar_month", reference: "2026-08" });
