@@ -278,6 +278,7 @@ let paymentOrders = [];
 let salesSettings = [];
 let paymentSettings = [];
 let referralRewards = [];
+let tickets = [];
 const dataStore = createDataStore({
   databaseUrl: DATABASE_URL,
   ssl: !LOCAL_DATABASE_URL && process.env.DATABASE_SSL === "true"
@@ -345,6 +346,7 @@ async function initializeDataFile() {
   salesSettings = state.salesSettings || [];
   paymentSettings = state.paymentSettings || [];
   referralRewards = state.referralRewards || [];
+  tickets = state.tickets || [];
   if (ensureReferralAccountFields()) await saveAccounts();
   lastLoadedAt = Date.now();
   await ensureProductCatalog();
@@ -448,6 +450,7 @@ function _doLoad() {
     salesSettings = state.salesSettings || [];
     paymentSettings = state.paymentSettings || [];
     referralRewards = state.referralRewards || [];
+    tickets = state.tickets || [];
     lastLoadedAt = Date.now();
   }).catch(error => {
     if (lastLoadedAt > 0) {
@@ -535,6 +538,11 @@ async function savePaymentSettings() {
 async function savePaymentOrders() {
   _markWritten();
   await dataStore.saveCollection("paymentOrders", paymentOrders);
+}
+
+async function saveTicket(ticket) {
+  _markWritten();
+  await dataStore.setRecord("tickets", ticket.id, ticket);
 }
 
 
@@ -805,6 +813,66 @@ function verifyAccountPassword(password, stored) {
 
 function accountBySession(session) {
   return session?.role === "user" ? accounts.find(item => item.id === session.accountId && item.status === "active") : null;
+}
+
+function validateTicketText(value, label, min, max) {
+  const text = String(value || "").trim();
+  if (text.length < min) throw new Error(`${label}至少需要 ${min} 个字符。`);
+  if (text.length > max) throw new Error(`${label}不能超过 ${max} 个字符。`);
+  return text;
+}
+
+function normalizeTicketAttachments(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 3) throw new Error("工单最多上传 3 张截图。");
+  return value.map((item, index) => {
+    const url = String(item?.url || "");
+    const name = String(item?.name || `截图 ${index + 1}`).trim();
+    if (!/^\/uploads\/markdown\/[0-9a-f-]+\.(?:png|jpg|webp|gif)$/.test(url) || !name || name.length > 100) throw new Error("截图附件无效。");
+    return { url, name };
+  });
+}
+
+function ticketStatusForReply(sender) {
+  return sender === "admin" ? "pending_user" : "pending_support";
+}
+
+function ticketById(id) {
+  return tickets.find(ticket => ticket.id === id);
+}
+
+function publicTicket(ticket, { admin = false } = {}) {
+  if (!ticket) return null;
+  const account = accounts.find(item => item.id === ticket.accountId);
+  const relatedOrder = paymentOrders.find(item => item.id === ticket.relatedOrderId && item.accountId === ticket.accountId);
+  return {
+    ...ticket,
+    ...(admin ? {
+      user: { id: account?.linkedUserId || "", email: account?.email || ticket.email, customerID: account?.customerID || "" },
+      relatedOrder: relatedOrder ? publicPaymentOrder(relatedOrder) : null
+    } : { relatedOrder: relatedOrder ? publicPaymentOrder(relatedOrder) : null })
+  };
+}
+
+function makeTicketId() {
+  const date = new Date().toISOString().slice(2, 10).replaceAll("-", "");
+  return `T${date}-${crypto.randomInt(1000, 10000)}`;
+}
+
+async function notifyTicketAdmin(ticket, req) {
+  if (!notifier.isTelegramConfigured()) return;
+  const url = `${String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "")}/tickets/${encodeURIComponent(ticket.id)}`;
+  await notifier.sendTelegram({ text: [`📮 工单提醒 #${ticket.id}`, `用户：${ticket.email}`, `主题：${ticket.subject}`, `状态：待客服回复`, url].join("\n") });
+}
+
+async function notifyTicketUser(ticket, message, req) {
+  if (!notifier.isMailConfigured()) return;
+  const url = `${String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "")}/account/tickets/${encodeURIComponent(ticket.id)}`;
+  await notifier.sendMail({
+    to: ticket.email,
+    subject: `工单回复：${ticket.subject}`,
+    text: `客服回复了你的工单 #${ticket.id}\n\n${message}\n\n查看工单：${url}`
+  });
 }
 
 function tokenHash(token) {
@@ -1358,6 +1426,18 @@ function imageExtension(content) {
   if (content.length >= 12 && content.subarray(0, 4).toString("ascii") === "RIFF" && content.subarray(8, 12).toString("ascii") === "WEBP") return ".webp";
   if (content.length >= 6 && ["GIF87a", "GIF89a"].includes(content.subarray(0, 6).toString("ascii"))) return ".gif";
   return "";
+}
+
+async function saveImageUpload(req) {
+  const contentLength = Number(req.headers["content-length"] || 0);
+  if (!contentLength || contentLength > MARKDOWN_IMAGE_MAX_BYTES) throw new Error("请选择不超过 8MB 的图片。");
+  const content = await readBuffer(req, MARKDOWN_IMAGE_MAX_BYTES);
+  const extension = imageExtension(content);
+  if (!extension) throw new Error("仅支持 PNG、JPEG、WebP 和 GIF 图片。");
+  await fs.mkdir(MARKDOWN_UPLOAD_DIR, { recursive: true });
+  const filename = `${crypto.randomUUID()}${extension}`;
+  await fs.writeFile(path.join(MARKDOWN_UPLOAD_DIR, filename), content, { flag: "wx" });
+  return `/uploads/markdown/${filename}`;
 }
 
 function currentSalesSettings() {
@@ -3568,13 +3648,21 @@ function xuiDailyNodeTraffic(traffic = {}, previous = {}) {
   for (const byNode of Object.values(traffic)) for (const [guid, bytes] of Object.entries(byNode || {})) currentByNode[guid] = (currentByNode[guid] || 0) + Math.max(0, Number(bytes) || 0);
   const date = chinaDateKey();
   const baseline = previous.date === date ? previous.nodes || {} : {};
+  const userBaseline = previous.date === date ? previous.users || {} : {};
   const nodes = {};
+  const users = {};
   for (const [guid, current] of Object.entries(currentByNode)) {
     const prior = baseline[guid] || { baselineBytes: current, usedBytes: 0 };
     const delta = current >= Number(prior.baselineBytes) ? current - Number(prior.baselineBytes) : current;
     nodes[guid] = { baselineBytes: current, usedBytes: Math.max(0, Number(prior.usedBytes) || 0) + delta };
   }
-  return { date, nodes };
+  for (const [email, byNode] of Object.entries(traffic)) {
+    const current = Object.values(byNode || {}).reduce((sum, bytes) => sum + Math.max(0, Number(bytes) || 0), 0);
+    const prior = userBaseline[email] || { baselineBytes: current, usedBytes: 0 };
+    const delta = current >= Number(prior.baselineBytes) ? current - Number(prior.baselineBytes) : current;
+    users[email] = { baselineBytes: current, usedBytes: Math.max(0, Number(prior.usedBytes) || 0) + delta };
+  }
+  return { date, nodes, users };
 }
 
 function xuiMultiplier(value) {
@@ -7469,6 +7557,103 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/account/tickets" && req.method === "GET") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    await loadLatestData();
+    sendJson(res, 200, tickets.filter(ticket => ticket.accountId === session.accountId).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)).map(ticket => publicTicket(ticket)));
+    return;
+  }
+
+  if (pathname === "/api/account/tickets" && req.method === "POST") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      await loadLatestData();
+      if (tickets.filter(ticket => ticket.accountId === session.accountId && ticket.status !== "closed").length >= 5) throw new Error("你已有 5 个处理中工单，请先等待客服回复。");
+      const payload = await readJson(req);
+      const account = accountBySession(session);
+      const relatedOrderId = String(payload.relatedOrderId || "");
+      if (relatedOrderId && !paymentOrders.some(order => order.id === relatedOrderId && order.accountId === session.accountId)) throw new Error("关联订单不存在。");
+      const now = new Date().toISOString();
+      const ticket = {
+        id: makeTicketId(),
+        accountId: session.accountId,
+        email: account.email,
+        subject: validateTicketText(payload.subject, "工单主题", 4, 80),
+        status: "pending_support",
+        relatedOrderId,
+        messages: [{ id: crypto.randomUUID(), sender: "user", senderName: account.email, message: validateTicketText(payload.message, "问题描述", 10, 5000), attachments: normalizeTicketAttachments(payload.attachments), createdAt: now }],
+        createdAt: now,
+        updatedAt: now,
+        closedAt: ""
+      };
+      tickets.unshift(ticket);
+      await saveTicket(ticket);
+      void notifyTicketAdmin(ticket, req).catch(error => console.error(`Ticket notification failed for ${ticket.id}:`, error.message));
+      sendJson(res, 201, publicTicket(ticket));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const accountTicketMatch = pathname.match(/^\/api\/account\/tickets\/([^/]+)$/);
+  if (accountTicketMatch && req.method === "GET") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    await loadLatestData();
+    const ticket = ticketById(decodeURIComponent(accountTicketMatch[1]));
+    if (!ticket || ticket.accountId !== session.accountId) return sendJson(res, 404, { error: "工单不存在。" });
+    sendJson(res, 200, publicTicket(ticket));
+    return;
+  }
+
+  if (accountTicketMatch && req.method === "PUT") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      await loadLatestData();
+      const ticket = ticketById(decodeURIComponent(accountTicketMatch[1]));
+      if (!ticket || ticket.accountId !== session.accountId) return sendJson(res, 404, { error: "工单不存在。" });
+      const payload = await readJson(req);
+      const now = new Date().toISOString();
+      if (payload.action === "close" && ticket.status !== "closed") {
+        ticket.status = "closed";
+        ticket.closedAt = now;
+      } else throw new Error("不支持的工单操作。");
+      ticket.updatedAt = now;
+      await saveTicket(ticket);
+      sendJson(res, 200, publicTicket(ticket));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const accountTicketReplyMatch = pathname.match(/^\/api\/account\/tickets\/([^/]+)\/reply$/);
+  if (accountTicketReplyMatch && req.method === "POST") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      await loadLatestData();
+      const ticket = ticketById(decodeURIComponent(accountTicketReplyMatch[1]));
+      if (!ticket || ticket.accountId !== session.accountId) return sendJson(res, 404, { error: "工单不存在。" });
+      if (ticket.status === "closed") throw new Error("已结束工单不能继续回复。");
+      const payload = await readJson(req);
+      const now = new Date().toISOString();
+      ticket.messages.push({ id: crypto.randomUUID(), sender: "user", senderName: ticket.email, message: validateTicketText(payload.message, "回复内容", 1, 5000), createdAt: now });
+      ticket.status = ticketStatusForReply("user");
+      ticket.updatedAt = now;
+      await saveTicket(ticket);
+      void notifyTicketAdmin(ticket, req).catch(error => console.error(`Ticket notification failed for ${ticket.id}:`, error.message));
+      sendJson(res, 200, publicTicket(ticket));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/account/overview" && req.method === "GET") {
     const session = requireUser(req, res);
     if (!session) return;
@@ -7929,8 +8114,74 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/account/ticket-images" && req.method === "POST") {
+    if (!requireUser(req, res)) return;
+    try {
+      sendJson(res, 201, { url: await saveImageUpload(req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (!requireAdmin(req, res)) return;
   await loadLatestData();
+
+  if (pathname === "/api/tickets" && req.method === "GET") {
+    sendJson(res, 200, [...tickets].sort((a, b) => {
+      if (a.status === "pending_support" && b.status !== "pending_support") return -1;
+      if (a.status !== "pending_support" && b.status === "pending_support") return 1;
+      return new Date(a.updatedAt) - new Date(b.updatedAt);
+    }).map(ticket => publicTicket(ticket, { admin: true })));
+    return;
+  }
+
+  const adminTicketMatch = pathname.match(/^\/api\/tickets\/([^/]+)$/);
+  if (adminTicketMatch && req.method === "GET") {
+    const ticket = ticketById(decodeURIComponent(adminTicketMatch[1]));
+    if (!ticket) return sendJson(res, 404, { error: "工单不存在。" });
+    sendJson(res, 200, publicTicket(ticket, { admin: true }));
+    return;
+  }
+
+  if (adminTicketMatch && req.method === "PUT") {
+    try {
+      const ticket = ticketById(decodeURIComponent(adminTicketMatch[1]));
+      if (!ticket) return sendJson(res, 404, { error: "工单不存在。" });
+      const payload = await readJson(req);
+      if (payload.action !== "resolve" || ticket.status === "closed") throw new Error("不支持的工单操作。");
+      ticket.status = "closed";
+      ticket.closedAt = new Date().toISOString();
+      ticket.updatedAt = new Date().toISOString();
+      await saveTicket(ticket);
+      sendJson(res, 200, publicTicket(ticket, { admin: true }));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const adminTicketReplyMatch = pathname.match(/^\/api\/tickets\/([^/]+)\/reply$/);
+  if (adminTicketReplyMatch && req.method === "POST") {
+    try {
+      const ticket = ticketById(decodeURIComponent(adminTicketReplyMatch[1]));
+      if (!ticket) return sendJson(res, 404, { error: "工单不存在。" });
+      if (ticket.status === "closed") throw new Error("已结束工单不能继续回复。");
+      const payload = await readJson(req);
+      const message = validateTicketText(payload.message, "回复内容", 1, 5000);
+      const now = new Date().toISOString();
+      ticket.messages.push({ id: crypto.randomUUID(), sender: "admin", senderName: "NEXORA 团队", message, createdAt: now });
+      ticket.status = ticketStatusForReply("admin");
+      ticket.closedAt = "";
+      ticket.updatedAt = now;
+      await saveTicket(ticket);
+      void notifyTicketUser(ticket, message, req).catch(error => console.error(`Ticket reply email failed for ${ticket.id}:`, error.message));
+      sendJson(res, 200, publicTicket(ticket, { admin: true }));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
 
   if (pathname === "/api/admin-data" && req.method === "GET") {
     const customerCounts = customerCountBySubscriptionId();
@@ -8173,15 +8424,7 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/markdown/images" && req.method === "POST") {
     try {
-      const contentLength = Number(req.headers["content-length"] || 0);
-      if (!contentLength || contentLength > MARKDOWN_IMAGE_MAX_BYTES) throw new Error("请选择不超过 8MB 的图片。");
-      const content = await readBuffer(req, MARKDOWN_IMAGE_MAX_BYTES);
-      const extension = imageExtension(content);
-      if (!extension) throw new Error("仅支持 PNG、JPEG、WebP 和 GIF 图片。");
-      await fs.mkdir(MARKDOWN_UPLOAD_DIR, { recursive: true });
-      const filename = `${crypto.randomUUID()}${extension}`;
-      await fs.writeFile(path.join(MARKDOWN_UPLOAD_DIR, filename), content, { flag: "wx" });
-      sendJson(res, 201, { url: `/uploads/markdown/${filename}` });
+      sendJson(res, 201, { url: await saveImageUpload(req) });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -9826,6 +10069,9 @@ module.exports = Object.assign(requestHandler, {
   initialPoolFallbackReason,
   fallbackCandidateRank,
   injectPlaceholderNodes,
+  normalizeTicketAttachments,
+  ticketStatusForReply,
+  validateTicketText,
   liveConfigFromCachedPoolConfig,
   startOfUtcDate,
   remainingPlanCashValue,

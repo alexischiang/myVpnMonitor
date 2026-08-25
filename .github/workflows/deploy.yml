@@ -93,7 +93,6 @@ jobs:
                   redis-server --daemonize yes || true
                 fi
               fi
-              npm run migrate:xui-data
             fi
             xui_service_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_SERVICE_URL || '')")
             if [ -n "$xui_service_url" ]; then

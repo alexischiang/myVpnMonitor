@@ -45,6 +45,11 @@ const AccountReferralPage = lazy(() => import("@/components/features/account-pag
 const AccountSettingsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountSettingsPage })))
 const AccountWalletPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountWalletPage })))
 const PaymentResultPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.PaymentResultPage })))
+const AccountTicketsPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketsPage })))
+const AccountTicketCreatePage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketCreatePage })))
+const AccountTicketDetailPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketDetailPage })))
+const AdminTicketsPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AdminTicketsPage })))
+const AdminTicketDetailPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AdminTicketDetailPage })))
 
 if (import.meta.env.DEV) document.title = `[LOCAL] ${document.title}`
 
@@ -113,6 +118,9 @@ function App() {
               <Route path="wallet" element={<AccountWalletPage />} />
               <Route path="referrals" element={<AccountReferralPage />} />
               <Route path="orders/:id" element={<AccountOrderDetailPage />} />
+              <Route path="tickets" element={<AccountTicketsPage />} />
+              <Route path="tickets/new" element={<AccountTicketCreatePage />} />
+              <Route path="tickets/:id" element={<AccountTicketDetailPage />} />
               <Route path="settings" element={<AccountSettingsPage />} />
               <Route path="profile" element={<Navigate to="/account/settings" replace />} />
               <Route path="security" element={<Navigate to="/account/settings" replace />} />
@@ -130,6 +138,8 @@ function App() {
               <Route path="users/detail/:id" element={<UserDetailPage />} />
               <Route path="orders" element={<OrdersPage />} />
               <Route path="orders/:id" element={<OrderDetailPage />} />
+              <Route path="tickets" element={<AdminTicketsPage />} />
+              <Route path="tickets/:id" element={<AdminTicketDetailPage />} />
               <Route path="bills" element={<Navigate to="/orders" replace />} />
               <Route path="pricing-settings" element={<PricingSettingsPage />} />
               <Route path="pricing-settings/new" element={<PricingDetailPage />} />

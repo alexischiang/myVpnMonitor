@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { AlertCircle, ArrowLeft, ArrowRight, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, UserCog } from "lucide-react"
+import { AlertCircle, ArrowRight, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, UserCog } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -28,6 +28,7 @@ import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStat
 import { ProviderBadge } from "@/components/features/provider-badge"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserBillsCard } from "@/components/features/user-bills-card"
+import { BackButton } from "@/components/features/back-button"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
 import type { User } from "@/types"
 import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, purchasedPlanName, userStatus } from "@/utils"
@@ -186,7 +187,7 @@ export function SubscriptionDetailPage() {
         description={item.email || item.serviceProvider || item.url || "手动 Base64 订阅"}
         actions={
           <>
-            <Button asChild variant="outline" size="sm"><Link to="/urls"><ArrowLeft />返回</Link></Button>
+            <BackButton fallback="/urls" size="sm" />
             {item.sourceType === "url" ? <Button variant="outline" size="sm" onClick={toggleAutoSwitch} disabled={togglingAutoSwitch}>{togglingAutoSwitch ? <Loader2 className="animate-spin" /> : null}{item.excludeFromAutoSwitch ? "恢复自动切入" : "禁止自动切入"}</Button> : null}
             <Button size="sm" onClick={refresh} disabled={refreshing}>{refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新</Button>
           </>
@@ -697,9 +698,7 @@ export function UserDetailPage() {
       <main className="grid min-w-0 gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
         <Card className="self-start xl:sticky xl:top-4">
           <CardHeader className="relative justify-items-center text-center">
-            <Button asChild variant="ghost" size="icon-sm" className="absolute top-4 left-4">
-              <Link to={`/users${location.search}`} aria-label="返回用户列表"><ArrowLeft /></Link>
-            </Button>
+            <BackButton fallback={`/users${location.search}`} iconOnly size="icon-sm" className="absolute top-4 left-4" />
             <Avatar className="size-20">
               <AvatarFallback className="text-xl">{(user.wechatName || user.userId || user.email || "用户").slice(0, 2).toUpperCase()}</AvatarFallback>
             </Avatar>

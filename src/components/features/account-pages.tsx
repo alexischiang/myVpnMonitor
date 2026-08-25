@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, ArrowLeft, BadgeCheck, BookOpen, Check, CheckCircle2, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, HardDrive, HousePlug, Info, Loader2, PackagePlus, Percent, RefreshCw, Star, Users, WalletCards, XCircle, Zap, type LucideIcon } from "lucide-react"
+import { AlertCircle, BadgeCheck, BookOpen, Check, CheckCircle2, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, HardDrive, HousePlug, Info, Loader2, PackagePlus, Percent, RefreshCw, Star, Users, WalletCards, XCircle, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { clearJsonCache, deleteJson, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
@@ -16,6 +16,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
+import { BackButton } from "@/components/features/back-button"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -236,6 +237,7 @@ export function AccountOverviewPage() {
   return (
     <>
       <div className="grid gap-4 px-4 lg:px-6">
+        <Alert variant="warning"><CircleHelp /><AlertDescription className="flex w-full flex-row items-center justify-between gap-3"><span>遇到问题？发送工单联系客服吧！</span><Button asChild variant="link" size="sm" className="h-auto shrink-0 p-0 underline underline-offset-4"><Link to="/account/tickets/new">发送工单</Link></Button></AlertDescription></Alert>
         <PlanStatusCard account={data} subscription={subscription} traffic={selfHostedTraffic} trafficLoading={trafficLoading} trafficError={trafficError} />
         {data.services?.length ? <Card><CardHeader><CardTitle>附加服务</CardTitle><CardDescription>已购买的地区规格、交付进度和有效期。</CardDescription></CardHeader><CardContent><ItemGroup>{data.services.map(service => <Item key={service.id} variant="muted"><ItemContent><ItemTitle>{service.name}{service.regionName ? ` · ${service.regionName}` : ""}</ItemTitle><ItemDescription>{service.status === "pending" ? "等待人工交付" : service.status === "active" ? `服务中${service.expiresAt ? ` · ${formatDate(service.expiresAt)} 到期` : ""}` : service.status === "expired" ? "已到期" : "处理中"}</ItemDescription>{service.deliveryNote ? <ItemDescription>{service.deliveryNote}</ItemDescription> : null}</ItemContent><Badge variant={service.status === "active" ? "success" : service.status === "pending" ? "warning" : "secondary"}>{service.status === "active" ? "生效中" : service.status === "pending" ? "待交付" : service.status === "expired" ? "已到期" : "处理中"}</Badge></Item>)}</ItemGroup></CardContent></Card> : null}
          {subscription ? <Card><CardHeader><CardTitle>订阅链接</CardTitle><CardDescription>请勿将订阅链接分享给其他人。</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:min-h-11 [&_[data-slot=button]]:text-base [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button variant="outline" onClick={() => setImportClient("clash-meta")}><ExternalLink />导入 Clash Meta</Button><Button variant="outline" onClick={() => setImportClient("clash-verge")}><ExternalLink />导入 Clash Verge</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></CardContent></Card> : null}
@@ -498,7 +500,7 @@ export function AccountOrderDetailPage() {
           {order.status === "pending" && order.paymentProvider === "test" ? <Button className="w-full sm:w-auto" onClick={() => setTestOpen(true)}>设置测试付款状态</Button> : null}
           {order.status === "pending" ? <Button className="w-full sm:w-auto" variant="outline" onClick={() => refresh(true)} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}检测支付状态</Button> : null}
           {order.status === "pending" ? <Button className="w-full sm:w-auto" variant="destructive" onClick={() => setCancelOpen(true)} disabled={cancelling}><XCircle />取消订单</Button> : null}
-          <Button asChild className="w-full sm:ml-auto sm:w-auto" variant="ghost"><Link to="/account/orders"><ArrowLeft />返回订单列表</Link></Button>
+          <BackButton fallback="/account/orders" className="w-full sm:ml-auto sm:w-auto" />
         </CardFooter>
       </Card>
       <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
