@@ -1,4 +1,5 @@
 const { Pool } = require("pg");
+const { appendXuiAuditLog, initXuiAudit, listXuiAuditLogs } = require("./xui-audit");
 
 class XuiDataStore {
   constructor(connectionString, ssl = process.env.XUI_DATABASE_SSL === "true") {
@@ -42,10 +43,19 @@ class XuiDataStore {
     } finally {
       client.release();
     }
+    await initXuiAudit(this.pool);
   }
 
   async ping() {
     await this.pool.query("SELECT 1");
+  }
+
+  async appendXuiAuditLog(entry) {
+    await appendXuiAuditLog(this.pool, entry);
+  }
+
+  async listXuiAuditLogs(options) {
+    return listXuiAuditLogs(this.pool, options);
   }
 
   async getState(key) {

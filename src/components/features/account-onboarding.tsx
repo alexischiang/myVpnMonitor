@@ -137,6 +137,14 @@ export function AccountOnboardingPage() {
   const [email, setEmail] = React.useState("")
   const [carouselApi, setCarouselApi] = React.useState<CarouselApi>()
   const [step, setStep] = React.useState(0)
+  const [onboardingEnabled, setOnboardingEnabled] = React.useState<boolean | null>(null)
+
+  React.useEffect(() => {
+    fetchJson<{ onboardingEnabled: boolean }>("/api/public/sales-settings").then(settings => {
+      setOnboardingEnabled(settings.onboardingEnabled)
+      if (!settings.onboardingEnabled) navigate("/account", { replace: true })
+    }).catch(() => setOnboardingEnabled(true))
+  }, [navigate])
 
   React.useEffect(() => {
     fetchJson<{ role: string; email?: string }>("/api/auth/me")
@@ -162,7 +170,7 @@ export function AccountOnboardingPage() {
     navigate("/account", { replace: true })
   }
 
-  if (!email) return <main className="grid h-svh place-items-center overflow-hidden p-6"><Skeleton className="h-96 w-full max-w-5xl" /></main>
+  if (!email || onboardingEnabled !== true) return <main className="grid h-svh place-items-center overflow-hidden p-6"><Skeleton className="h-96 w-full max-w-5xl" /></main>
 
   const lastStep = step === steps.length - 1
 

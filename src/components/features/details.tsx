@@ -30,7 +30,7 @@ import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-
 import { UserBillsCard } from "@/components/features/user-bills-card"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
 import type { User } from "@/types"
-import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, userStatus } from "@/utils"
+import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, purchasedPlanName, userStatus } from "@/utils"
 
 type GiftPreview = {
   expiresAt: string
@@ -50,7 +50,6 @@ type ManualPaymentQuote = {
 
 const manualPaymentPlans = [{ value: "basic", label: "BASIC" }, { value: "pro", label: "PRO" }, { value: "ultra", label: "ULTRA" }]
 const manualPaymentDurations = [{ value: "30", label: "月付 30 天" }, { value: "90", label: "季付 90 天" }, { value: "180", label: "半年付 180 天" }, { value: "360", label: "年付 360 天" }]
-
 function manualPaymentOptionId(plan: string, traffic: string, duration: string) {
   return `${plan}${traffic === "unlimited" ? "-unlimited" : ""}-${duration}`
 }
@@ -249,7 +248,7 @@ export function UserDetailPage() {
   const { id } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
-  const { users, subscriptions, bills, reload, runAsync } = useData()
+  const { users, subscriptions, bills, pricing, reload, runAsync } = useData()
   const summaryUser = users.find(entry => entry.id === id)
   const [loadedUser, setLoadedUser] = React.useState<User | null>(null)
   const user = summaryUser && loadedUser?.id === id
@@ -302,10 +301,15 @@ export function UserDetailPage() {
   const [xuiOpen, setXuiOpen] = React.useState(false)
   const [lineGroup, setLineGroup] = React.useState("pro")
   const [lineSaving, setLineSaving] = React.useState(false)
+  const [walletBalance, setWalletBalance] = React.useState<number | null>(null)
   const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const purchaseCount = userBills.filter(item => !item.reversedAt).length
   const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed" || log.reason === "user-created")
+
+  const productName = React.useMemo(() => {
+    return user ? purchasedPlanName(user, pricing) : "-"
+  }, [pricing, user])
 
   React.useEffect(() => {
     if (!id || id.startsWith("account:")) return
@@ -327,6 +331,11 @@ export function UserDetailPage() {
     setReferralRate(user?.referralRate ?? 10)
     setRecurringReferral(user?.recurringReferral === true)
   }, [user?.referralRate, user?.recurringReferral])
+
+  React.useEffect(() => {
+    if (!user?.id || user.registeredOnly) return
+    void fetchJson<{ availableBalance?: number }>(`/api/users/${user.id}/wallet`).then(data => setWalletBalance(typeof data.availableBalance === "number" ? data.availableBalance : null)).catch(() => setWalletBalance(null))
+  }, [user?.id, user?.registeredOnly])
 
   if (!user) return <EmptyState title="未找到用户" />
   const weightedTraffic = user.xuiWeightedTraffic
@@ -383,6 +392,7 @@ export function UserDetailPage() {
       setGiftBalanceOpen(false)
       setGiftBalanceAmount("")
       setGiftBalanceNote("")
+      setWalletBalance(wallet.availableBalance)
       toast.success(`已赠送 ${formatMoney(amount)}，用户可用余额 ${formatMoney(wallet.availableBalance)}`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "赠送余额失败")
@@ -723,8 +733,9 @@ export function UserDetailPage() {
               <Info label="邮箱" value={user.email || "-"} />
               <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "disabled" ? "已停用" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
               <Info label="用户类型" value={userTypeLabels[userType(user)]} />
-              <Info label="套餐" value={user.registeredOnly ? "未开通" : (user.activeGroup?.toUpperCase() || "-")} />
-              <Info label="VIP" value={user.vipLevel?.toUpperCase() || "-"} />
+              <Info label="套餐" value={user.registeredOnly ? "未开通" : productName} />
+              <Info label="套餐等级" value={user.registeredOnly ? "-" : (manualPaymentPlans.some(plan => plan.value === user.activeGroup) ? user.activeGroup!.toUpperCase() : "-")} />
+              <Info label="钱包余额" value={walletBalance === null ? "-" : formatMoney(walletBalance)} />
               <Info label="当前到期" value={formatUserExpiry(user)} />
               <Info label="迁移状态" value={<Badge variant={migrationStatus.variant}>{migrationStatus.label}</Badge>} />
               <Info label="迁移方式" value={xuiMigrationSource(user)} />
@@ -767,13 +778,12 @@ export function UserDetailPage() {
             <Card>
               <CardHeader>
                 <CardTitle>当前套餐</CardTitle>
-                <CardDescription>{user.registeredOnly ? "尚未开通订阅" : `${user.activeGroup?.toUpperCase() || "未设置"} 套餐`}</CardDescription>
+                <CardDescription>{user.registeredOnly ? "尚未开通订阅" : productName}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2">
                 <Info label="当前到期" value={formatUserExpiry(user)} />
                 <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
                 <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
-                <Info label="订阅池" value={poolDisplayName(user.subscription)} />
                 <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
                 <Info label="订阅状态" value={<UserStatusBadge user={user} />} />
               </CardContent>

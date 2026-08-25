@@ -37,10 +37,12 @@ export function AccountShell() {
   const { resolvedTheme, setTheme, theme } = useTheme()
   const [email, setEmail] = React.useState("")
   const [pendingOrderId, setPendingOrderId] = React.useState("")
+  const [onboardingEnabled, setOnboardingEnabled] = React.useState(false)
   const dark = (theme ?? resolvedTheme) === "dark"
   const current = accountNav.find(item => item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)) || accountNav[0]
 
   React.useEffect(() => {
+    fetchJson<{ onboardingEnabled: boolean }>("/api/public/sales-settings").then(settings => setOnboardingEnabled(settings.onboardingEnabled)).catch(() => undefined)
     fetchJson<{ role: string; email?: string }>("/api/auth/me")
       .then(me => me.role === "user" ? setEmail(me.email || "") : navigate("/dashboard", { replace: true }))
       .catch(() => navigate("/login", { replace: true }))
@@ -99,7 +101,7 @@ export function AccountShell() {
           <SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild className="data-[slot=sidebar-menu-button]:p-1.5!"><Link to="/account"><ShieldCheck className="size-5" /><span className="text-lg font-semibold">NEXORA</span><Badge variant="outline" className="h-4 self-baseline rounded-sm border-foreground bg-foreground px-1.5 py-0 text-[11px] text-background">beta</Badge></Link></SidebarMenuButton></SidebarMenuItem></SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
-          <SidebarGroup><SidebarGroupContent><SidebarMenu>{accountNav.map(item => (
+          <SidebarGroup><SidebarGroupContent><SidebarMenu>{accountNav.filter(item => onboardingEnabled || !item.url.startsWith("/onboarding")).map(item => (
             <SidebarMenuItem key={item.url}><SidebarMenuButton asChild tooltip={item.title} isActive={item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)}><NavLink to={item.url === "/account/docs" ? "/docs/" : item.url} target={item.url === "/account/docs" ? "_blank" : undefined} rel={item.url === "/account/docs" ? "noopener noreferrer" : undefined}><item.icon /><span>{item.title}</span>{item.url === "/account/docs" ? <ExternalLink className="ml-auto" /> : null}</NavLink></SidebarMenuButton></SidebarMenuItem>
           ))}</SidebarMenu></SidebarGroupContent></SidebarGroup>
         </SidebarContent>

@@ -6,8 +6,10 @@ import {
   IconReceiptDollar,
   IconServer,
   IconNetwork,
+  IconLogs,
   IconSettings,
   IconTag,
+  IconTransform,
   IconUsers,
   IconVideo,
   type Icon,
@@ -22,6 +24,7 @@ export type NavItem = {
 export const navItems: NavItem[] = [
   { title: "Dashboard", url: "/dashboard", icon: IconDashboard },
   { title: "3x-ui 监控", url: "/xui-monitor", icon: IconServer },
+  { title: "访问日志", url: "/xui-logs", icon: IconLogs },
   { title: "入站管理", url: "/xui-inbounds", icon: IconNetwork },
   { title: "Pool", url: "/urls", icon: IconRoute },
   { title: "Users", url: "/users", icon: IconUsers },
@@ -30,7 +33,8 @@ export const navItems: NavItem[] = [
   { title: "销售设置", url: "/sales-settings", icon: IconTag },
   { title: "支付设置", url: "/payment-settings", icon: IconReceiptDollar },
   { title: "Emby", url: "/emby", icon: IconVideo },
-  { title: "Subconverter", url: "/subconverter", icon: IconSettings },
+  { title: "Subconverter", url: "/subconverter", icon: IconTransform },
+  { title: "通用设置", url: "/general-settings", icon: IconSettings },
 ]
 
 export function getPageTitle(pathname: string) {

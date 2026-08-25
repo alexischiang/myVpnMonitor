@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label"
 import { StatusPage } from "@/components/features/status-page"
 
 type AuthResponse = { role?: "admin" | "user" }
+type PublicSettings = { registrationMode: "open" | "invite_only" | "disabled"; onboardingEnabled: boolean }
 
 function AuthLayout({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
@@ -59,7 +60,8 @@ export function LoginPage() {
     try {
       const result = await postJson<AuthResponse>("/api/auth/login", { account, password, remember })
       const returnTo = searchParams.get("returnTo")
-      navigate(returnTo?.startsWith("/") ? returnTo : result.role === "admin" ? "/dashboard" : "/onboarding", { replace: true })
+      const onboardingEnabled = result.role === "user" && (await fetchJson<PublicSettings>("/api/public/sales-settings").catch(() => ({ onboardingEnabled: true } as PublicSettings))).onboardingEnabled
+      navigate(returnTo?.startsWith("/") ? returnTo : result.role === "admin" ? "/dashboard" : onboardingEnabled ? "/onboarding" : "/account", { replace: true })
     } catch (error) {
       setError(error instanceof Error ? error.message : "登录失败")
     } finally {
@@ -93,6 +95,7 @@ export function RegisterPage() {
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState("")
   const [registrationMode, setRegistrationMode] = React.useState<"open" | "invite_only" | "disabled">("open")
+  const [onboardingEnabled, setOnboardingEnabled] = React.useState(true)
   const [referralCode, setReferralCode] = React.useState(() => searchParams.get("ref") || "")
   const [inviterLabel, setInviterLabel] = React.useState("")
   const [referralError, setReferralError] = React.useState("")
@@ -103,8 +106,8 @@ export function RegisterPage() {
   const canSubmit = registrationMode !== "disabled" && emailValid && password.length >= 8 && confirmPassword.length >= 8 && !passwordMismatch && (registrationMode !== "invite_only" || referralCode.length > 0) && !loading
 
   React.useEffect(() => {
-    void fetchJson<{ registrationMode: "open" | "invite_only" | "disabled" }>("/api/public/sales-settings")
-      .then(result => setRegistrationMode(result.registrationMode))
+    void fetchJson<PublicSettings>("/api/public/sales-settings")
+      .then(result => { setRegistrationMode(result.registrationMode); setOnboardingEnabled(result.onboardingEnabled) })
       .catch(() => undefined)
   }, [])
 
@@ -131,7 +134,7 @@ export function RegisterPage() {
     setError("")
     try {
       await postJson("/api/auth/register", { email, password, referralCode })
-      navigate("/onboarding", { replace: true })
+      navigate(onboardingEnabled ? "/onboarding" : "/account", { replace: true })
     } catch (error) {
       setError(error instanceof Error ? error.message : "注册失败")
     } finally {

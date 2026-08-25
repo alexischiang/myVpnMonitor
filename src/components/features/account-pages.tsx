@@ -28,17 +28,25 @@ import { DataTableRowActions } from "@/components/features/data-table"
 import { MarkdownContent } from "@/components/features/markdown-content"
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { VipBadge } from "@/components/features/vip-badge"
-import { formatDate, formatDateTime, formatMoney } from "@/utils"
+import { formatDate, formatDateTime, formatMoney, purchasedPlanName } from "@/utils"
 
 type OrderAddOn = { id: string; optionId: string; name: string; regionName?: string; amount: number; durationDays?: number; deliveryMode?: string; deliveryDescription?: string }
 type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge" | "traffic_pack" | "addon"; planName: string; optionLabel: string; amount: number; totalAmount?: number; baseAmount?: number; originalAmount?: number; discountAmount?: number; vipDiscountAmount?: number; subtotal?: number; taxAmount?: number; addOnAmount?: number; addOnSnapshots?: OrderAddOn[]; trafficTier?: number; trafficBaseGb?: number; trafficGb?: number | null; trafficTierMarkupPercent?: number; walletAmount?: number; walletCashAmount?: number; walletGiftAmount?: number; walletReferralAmount?: number; realCashAmount?: number; virtualCashAmount?: number; status: string; statusText: string; paymentProvider?: string; channelCode?: string; couponCode?: string; purchaseAction?: string; fulfillmentStatus?: string; fulfillmentStartedAt?: string; fulfilledAt?: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; updatedAt?: string; expiresAt: string; paidAt?: string }
-type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; unlimited?: boolean; devices: number | string; subscriptionUrl: string; vipLevel?: string }
+type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; unlimited?: boolean; trafficTier?: number; purchasedTrafficGb?: number; currentProductSnapshot?: Record<string, unknown>; devices: number | string; subscriptionUrl: string; vipLevel?: string }
 type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; stale?: boolean; error?: string }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type AccountService = { id: string; orderId: string; name: string; regionName?: string; amount: number; durationDays?: number; startedAt: string; expiresAt?: string; status: "pending" | "processing" | "active" | "expired"; deliveryNote?: string }
 type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
 type WalletData = { balance: number; cashBalance: number; giftBalance: number; referralBalance: number; realCashBalance?: number; virtualCashBalance?: number; availableRealCashBalance?: number; availableVirtualCashBalance?: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
+type ImportClient = "shadowrocket" | "sparkle" | "clash-meta" | "clash-verge"
+
+const importClients: Record<ImportClient, { name: string; app: string; scheme: string }> = {
+  shadowrocket: { name: "Shadowrocket", app: "小火箭", scheme: "shadowrocket://add/" },
+  sparkle: { name: "Sparkle", app: "Sparkle", scheme: "mihomo://install-config?url=" },
+  "clash-meta": { name: "Clash Meta for Android", app: "Clash Meta", scheme: "clash://install-config?url=" },
+  "clash-verge": { name: "Clash Verge Rev", app: "Clash Verge Rev", scheme: "clash://install-config?url=" },
+}
 
 function todayKey() {
   const now = new Date()
@@ -118,7 +126,7 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
       <div className="flex min-w-0 items-center gap-3">
         <Avatar size="lg"><AvatarFallback><Zap className="size-5" /></AvatarFallback></Avatar>
         <div className="grid min-w-0 gap-1">
-          <CardTitle className="truncate text-lg">{subscription ? subscription.activeGroup.toUpperCase() : "暂无套餐"}</CardTitle>
+          <CardTitle className="truncate text-lg">{subscription ? purchasedPlanName(subscription, [], traffic?.totalBytes) : "暂无套餐"}</CardTitle>
           <Badge variant={status === "active" ? "success" : status === "inactive" ? "warning" : "destructive"}>{status === "active" ? <><CheckCircle2 />生效中</> : status === "expired" ? "已过期" : status === "depleted" ? "流量耗尽" : "未开通"}</Badge>
         </div>
       </div>
@@ -155,7 +163,7 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
 
 export function AccountOverviewPage() {
   const { data, error } = useOverview()
-  const [importClient, setImportClient] = React.useState<"shadowrocket" | "sparkle" | null>(null)
+  const [importClient, setImportClient] = React.useState<ImportClient | null>(null)
   const [announcementOpen, setAnnouncementOpen] = React.useState(false)
   const [selectedAnnouncement, setSelectedAnnouncement] = React.useState<Announcement | null>(null)
   const [reminderDialog, setReminderDialog] = React.useState(false)
@@ -223,18 +231,14 @@ export function AccountOverviewPage() {
 
   if (!data) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
   const subscription = data.subscription
-  const importName = importClient === "shadowrocket" ? "Shadowrocket" : "Sparkle"
-  const importUrl = subscription && importClient
-    ? importClient === "shadowrocket"
-      ? `shadowrocket://add/${encodeURIComponent(subscription.subscriptionUrl)}`
-      : `mihomo://install-config?url=${encodeURIComponent(subscription.subscriptionUrl)}`
-    : ""
+  const importConfig = importClient ? importClients[importClient] : null
+  const importUrl = subscription && importConfig ? `${importConfig.scheme}${encodeURIComponent(subscription.subscriptionUrl)}` : ""
   return (
     <>
       <div className="grid gap-4 px-4 lg:px-6">
         <PlanStatusCard account={data} subscription={subscription} traffic={selfHostedTraffic} trafficLoading={trafficLoading} trafficError={trafficError} />
         {data.services?.length ? <Card><CardHeader><CardTitle>附加服务</CardTitle><CardDescription>已购买的地区规格、交付进度和有效期。</CardDescription></CardHeader><CardContent><ItemGroup>{data.services.map(service => <Item key={service.id} variant="muted"><ItemContent><ItemTitle>{service.name}{service.regionName ? ` · ${service.regionName}` : ""}</ItemTitle><ItemDescription>{service.status === "pending" ? "等待人工交付" : service.status === "active" ? `服务中${service.expiresAt ? ` · ${formatDate(service.expiresAt)} 到期` : ""}` : service.status === "expired" ? "已到期" : "处理中"}</ItemDescription>{service.deliveryNote ? <ItemDescription>{service.deliveryNote}</ItemDescription> : null}</ItemContent><Badge variant={service.status === "active" ? "success" : service.status === "pending" ? "warning" : "secondary"}>{service.status === "active" ? "生效中" : service.status === "pending" ? "待交付" : service.status === "expired" ? "已到期" : "处理中"}</Badge></Item>)}</ItemGroup></CardContent></Card> : null}
-         {subscription ? <Card><CardHeader><CardTitle>订阅链接</CardTitle><CardDescription>请勿将订阅链接分享给其他人。</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:min-h-11 [&_[data-slot=button]]:text-base [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button className="min-h-11" variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button className="min-h-11" variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button asChild className="min-h-11" variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></CardContent></Card> : null}
+         {subscription ? <Card><CardHeader><CardTitle>订阅链接</CardTitle><CardDescription>请勿将订阅链接分享给其他人。</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:min-h-11 [&_[data-slot=button]]:text-base [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button variant="outline" onClick={() => setImportClient("clash-meta")}><ExternalLink />导入 Clash Meta</Button><Button variant="outline" onClick={() => setImportClient("clash-verge")}><ExternalLink />导入 Clash Verge</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></CardContent></Card> : null}
         {data.announcements.length ? <Card>
           <CardHeader><CardTitle>网站公告</CardTitle><CardDescription>最新服务动态与使用提醒</CardDescription></CardHeader>
           <CardContent>
@@ -263,12 +267,12 @@ export function AccountOverviewPage() {
       <AlertDialog open={importClient !== null} onOpenChange={open => { if (!open) setImportClient(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>导入 {importName}</AlertDialogTitle>
-            <AlertDialogDescription>{`⚠️请先关闭${importClient === "shadowrocket" ? "小火箭" : "Sparkle"}的连接开关。`}</AlertDialogDescription>
+            <AlertDialogTitle>导入 {importConfig?.name}</AlertDialogTitle>
+            <AlertDialogDescription>{`⚠️请先关闭${importConfig?.app || "客户端"}的连接开关。`}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { window.location.href = importUrl }}>导入 {importName}</AlertDialogAction>
+            <AlertDialogAction onClick={() => { window.location.href = importUrl }}>导入 {importConfig?.name}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

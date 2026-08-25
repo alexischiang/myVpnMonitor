@@ -1,4 +1,4 @@
-import type { User } from "./types"
+import type { PricingRow, User } from "./types"
 
 export const durationLabels: Record<string, string> = {
   monthly: "月付",
@@ -7,6 +7,24 @@ export const durationLabels: Record<string, string> = {
   yearly: "年付",
   custom: "自定义",
   lifetime: "永久",
+}
+
+const planDurationLabels: Record<string, string> = { monthly: "30天", quarterly: "90天", half_yearly: "180天", yearly: "360天", lifetime: "不限时" }
+
+type PurchasedPlan = Pick<User, "activeGroup" | "duration" | "unlimited" | "trafficTier" | "purchasedTrafficGb" | "currentProductSnapshot"> & { traffic?: string }
+
+export function purchasedPlanName(plan: PurchasedPlan, pricing: PricingRow[] = [], trafficBytes?: number | null) {
+  const snapshot = plan.currentProductSnapshot || {}
+  const group = typeof snapshot.group === "string" ? snapshot.group : plan.activeGroup
+  const duration = typeof snapshot.duration === "string" ? snapshot.duration : plan.duration
+  const row = pricing.find(item => item.group === group)
+  const lifetime = snapshot.lifetime === true || duration === "lifetime"
+  const unlimited = snapshot.unlimited === true || plan.unlimited === true
+  const trafficText = String(plan.traffic || "").match(/(\d+(?:\.\d+)?)\s*(?:GB|G)/i)
+  const candidates = [Number(snapshot.trafficGb), Number(plan.purchasedTrafficGb), Number(trafficBytes) / 1024 ** 3, Number(trafficText?.[1]), lifetime ? Number(row?.lifetimeTrafficBytes) / 1024 ** 3 : Number(row?.trafficBaseGb) * Number(plan.trafficTier || 1)]
+  const trafficGb = candidates.find(value => Number.isFinite(value) && value > 0)
+  const traffic = unlimited ? "无限流量" : trafficGb ? `${Number(trafficGb.toFixed(2))}G` : "-"
+  return `${group?.toUpperCase() || "-"}-${planDurationLabels[duration || ""] || "-"}-${traffic}`
 }
 
 export const billTypeLabels: Record<string, string> = {

@@ -20,12 +20,20 @@ class FakeRedis {
 }
 
 class FakeStore {
-  constructor() { this.state = new Map(); this.clients = new Map(); }
+  constructor() { this.state = new Map(); this.clients = new Map(); this.logs = []; }
   async ping() {}
   async getState(key) { return this.state.get(key) || null; }
   async setState(key, data) { this.state.set(key, data); }
   async getClient(userId) { return this.clients.get(userId) || null; }
   async setClient(userId, data) { this.clients.set(userId, data); }
+  async appendXuiAuditLog(data) { this.logs.push(data); }
+  async listXuiAuditLogs() { return { items: this.logs, total: this.logs.length, page: 1, pageSize: 30, retentionDays: 7 }; }
+}
+
+class FakeLogger {
+  constructor() { this.records = []; }
+  info(data, message) { this.records.push({ level: "info", data, message }); }
+  warn(data, message) { this.records.push({ level: "warn", data, message }); }
 }
 
 function listen(server) {
@@ -43,12 +51,14 @@ async function main() {
 
   const calls = [];
   const store = new FakeStore();
+  const logger = new FakeLogger();
   const app = createXuiApp({
     redis: new FakeRedis(),
     store,
     token: "internal-test-token",
     baseUrl: "https://panel.test",
     apiToken: "panel-token",
+    logger,
     fetchImpl: async (url, options) => {
       calls.push({ url, options });
       return new Response(JSON.stringify({ success: true, obj: { status: "ok" } }), {
@@ -118,8 +128,53 @@ async function main() {
       }),
       /Unauthorized/
     );
+    const logsResponse = await fetch(`http://127.0.0.1:${port}/internal/logs`, { headers: { authorization: "Bearer internal-test-token" } });
+    const logs = await logsResponse.json();
+    assert.strictEqual(logsResponse.status, 200);
+    assert.strictEqual(logs.data.total, logger.records.length);
+    assert.ok(logs.data.items.every(item => item.requestId && !JSON.stringify(item).includes("panel-token")));
   } finally {
     await new Promise(resolve => server.close(resolve));
+  }
+
+  const readOnlyCalls = [];
+  const readOnlyLogger = new FakeLogger();
+  const readOnlyServer = http.createServer(createXuiApp({
+    redis: new FakeRedis(),
+    store: new FakeStore(),
+    token: "read-only-token",
+    baseUrl: "https://panel.test",
+    apiToken: "panel-token",
+    readOnly: true,
+    logger: readOnlyLogger,
+    fetchImpl: async (url, options) => {
+      readOnlyCalls.push({ url, options });
+      return new Response(JSON.stringify({ success: true, obj: [] }), { status: 200 });
+    }
+  }));
+  const readOnlyPort = await listen(readOnlyServer);
+  const readOnlyRequest = (apiPath, method = "GET") => fetch(`http://127.0.0.1:${readOnlyPort}/internal/request`, {
+    method: "POST",
+    headers: { authorization: "Bearer read-only-token", "content-type": "application/json" },
+    body: JSON.stringify({ apiPath, method })
+  });
+  try {
+    assert.strictEqual((await readOnlyRequest("/panel/api/server/status")).status, 200);
+    assert.strictEqual((await readOnlyRequest("/panel/api/clients/onlinesByGuid", "POST")).status, 200);
+    const blocked = await readOnlyRequest("/panel/api/clients/add", "POST");
+    assert.strictEqual(blocked.status, 403);
+    assert.strictEqual((await blocked.json()).code, "XUI_READ_ONLY");
+    assert.strictEqual(readOnlyCalls.length, 2);
+    const reset = await fetch(`http://127.0.0.1:${readOnlyPort}/internal/clients/user-1/traffic-reset`, {
+      method: "POST",
+      headers: { authorization: "Bearer read-only-token", "content-type": "application/json" },
+      body: JSON.stringify({ reason: "calendar_month", month: "2026-08" })
+    });
+    assert.strictEqual(reset.status, 403);
+    assert.strictEqual(readOnlyLogger.records.filter(record => record.data.allowed === false).length, 2);
+    assert.ok(readOnlyLogger.records.every(record => !JSON.stringify(record).includes("panel-token")));
+  } finally {
+    await new Promise(resolve => readOnlyServer.close(resolve));
   }
 
   const mainServer = http.createServer(createMainApp((req, res) => {

@@ -84,7 +84,9 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
       onOpenChange(false)
       toast.success(mode === "link" ? "已关联3x-ui Client并切换线路" : "已导入3x-ui并切换线路")
     } catch (error) {
-      setError(error instanceof Error ? error.message : "3x-ui操作失败")
+      const message = error instanceof Error ? error.message : "3x-ui操作失败"
+      setError(message)
+      toast.error(message)
     } finally {
       setSaving(false)
     }

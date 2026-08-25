@@ -12,6 +12,7 @@ import { AppShell } from "@/components/features/app-shell"
 
 const DashboardPage = lazy(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
 const XuiMonitorPage = lazy(() => import("@/components/features/xui-monitor").then(module => ({ default: module.XuiMonitorPage })))
+const XuiLogsPage = lazy(() => import("@/components/features/xui-logs").then(module => ({ default: module.XuiLogsPage })))
 const XuiInboundsPage = lazy(() => import("@/components/features/xui-inbounds").then(module => ({ default: module.XuiInboundsPage })))
 const SubscriptionsPage = lazy(() => import("@/components/features/subscriptions").then(module => ({ default: module.SubscriptionsPage })))
 const UsersPage = lazy(() => import("@/components/features/users").then(module => ({ default: module.UsersPage })))
@@ -23,6 +24,7 @@ const EmbyPage = lazy(() => import("@/components/features/emby").then(module => 
 const PricingSettingsPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingSettingsPage })))
 const PricingDetailPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingDetailPage })))
 const SalesSettingsPage = lazy(() => import("@/components/features/sales-settings").then(module => ({ default: module.SalesSettingsPage })))
+const GeneralSettingsPage = lazy(() => import("@/components/features/general-settings").then(module => ({ default: module.GeneralSettingsPage })))
 const PaymentSettingsPage = lazy(() => import("@/components/features/payment-settings").then(module => ({ default: module.PaymentSettingsPage })))
 const StatusPage = lazy(() => import("@/components/features/status-page").then(module => ({ default: module.StatusPage })))
 const SubconverterPage = lazy(() => import("@/components/features/subconverter").then(module => ({ default: module.SubconverterPage })))
@@ -120,6 +122,7 @@ function App() {
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="xui-monitor" element={<XuiMonitorPage />} />
+              <Route path="xui-logs" element={<XuiLogsPage />} />
               <Route path="xui-inbounds" element={<XuiInboundsPage />} />
               <Route path="urls" element={<SubscriptionsPage />} />
               <Route path="urls/detail/:id" element={<SubscriptionDetailPage />} />
@@ -133,6 +136,7 @@ function App() {
               <Route path="pricing-settings/:group/:serviceType" element={<PricingDetailPage />} />
               <Route path="pricing-settings/:group" element={<PricingDetailPage />} />
               <Route path="sales-settings" element={<SalesSettingsPage />} />
+              <Route path="general-settings" element={<GeneralSettingsPage />} />
               <Route path="payment-settings" element={<PaymentSettingsPage />} />
               <Route path="emby" element={<EmbyPage />} />
               <Route path="subconverter" element={<SubconverterPage />} />
