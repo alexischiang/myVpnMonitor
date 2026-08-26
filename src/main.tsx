@@ -10,6 +10,11 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { DataProvider } from "@/components/features/data-provider"
 import { AppShell } from "@/components/features/app-shell"
 
+window.addEventListener("vite:preloadError", event => {
+  event.preventDefault()
+  window.location.reload()
+})
+
 const DashboardPage = lazy(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
 const XuiMonitorPage = lazy(() => import("@/components/features/xui-monitor").then(module => ({ default: module.XuiMonitorPage })))
 const XuiLogsPage = lazy(() => import("@/components/features/xui-logs").then(module => ({ default: module.XuiLogsPage })))

@@ -34,13 +34,16 @@ import { formatDate, formatDateTime, formatMoney, purchasedPlanName } from "@/ut
 type OrderAddOn = { id: string; optionId: string; name: string; regionName?: string; amount: number; durationDays?: number; deliveryMode?: string; deliveryDescription?: string }
 type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge" | "traffic_pack" | "addon"; planName: string; optionLabel: string; amount: number; totalAmount?: number; baseAmount?: number; originalAmount?: number; discountAmount?: number; vipDiscountAmount?: number; subtotal?: number; taxAmount?: number; addOnAmount?: number; addOnSnapshots?: OrderAddOn[]; trafficTier?: number; trafficBaseGb?: number; trafficGb?: number | null; trafficTierMarkupPercent?: number; walletAmount?: number; walletCashAmount?: number; walletGiftAmount?: number; walletReferralAmount?: number; realCashAmount?: number; virtualCashAmount?: number; status: string; statusText: string; paymentProvider?: string; channelCode?: string; couponCode?: string; purchaseAction?: string; fulfillmentStatus?: string; fulfillmentStartedAt?: string; fulfilledAt?: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; updatedAt?: string; expiresAt: string; paidAt?: string }
 type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; unlimited?: boolean; trafficTier?: number; purchasedTrafficGb?: number; currentProductSnapshot?: Record<string, unknown>; devices: number | string; subscriptionUrl: string; vipLevel?: string }
-type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; stale?: boolean; error?: string }
+type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; dailyUsage: Array<{ date: string; usedBytes: number }>; stale?: boolean; error?: string }
+type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type AccountService = { id: string; orderId: string; name: string; regionName?: string; amount: number; durationDays?: number; startedAt: string; expiresAt?: string; status: "pending" | "processing" | "active" | "expired"; deliveryNote?: string }
 type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
 type WalletData = { balance: number; cashBalance: number; giftBalance: number; referralBalance: number; realCashBalance?: number; virtualCashBalance?: number; availableRealCashBalance?: number; availableVirtualCashBalance?: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
 type ImportClient = "shadowrocket" | "sparkle" | "clash-meta" | "clash-verge"
+
+const AccountTrafficChart = React.lazy(() => import("@/components/features/account-traffic-chart").then(module => ({ default: module.AccountTrafficChart })))
 
 const importClients: Record<ImportClient, { name: string; app: string; scheme: string }> = {
   shadowrocket: { name: "Shadowrocket", app: "小火箭", scheme: "shadowrocket://add/" },
@@ -96,21 +99,12 @@ function CopySubscription({ value }: { value: string }) {
   return <Button className="min-h-11" variant={copied ? "success" : "outline"} aria-label={copied ? "订阅链接已复制" : "复制订阅链接"} onClick={copySubscription}><span className={copied ? "motion-safe:animate-[copy-success_180ms_ease-out]" : ""}>{copied ? <Check /> : <Copy />}</span>{copied ? "复制订阅成功" : "复制订阅链接"}</Button>
 }
 
-function PlanStatusCard({ account, subscription, traffic, trafficLoading, trafficError }: { account: Overview; subscription: Subscription | null; traffic: SelfHostedTraffic | null; trafficLoading: boolean; trafficError: string }) {
-  const usagePercent = subscription?.lineType === "self_hosted" ? traffic?.usagePercent : null
-  const remainingPercent = usagePercent == null ? null : Math.max(0, 100 - usagePercent)
-  const trafficTotal = traffic ? `${(traffic.totalBytes / 1024 ** 3).toFixed(0)} GB` : subscription?.traffic || "-"
-  const trafficUsed = traffic ? `${(traffic.usedBytes / 1024 ** 3).toFixed(2)} GB` : "-"
-  const status = !subscription ? "inactive" : subscription.status === "expired" ? "expired" : traffic?.status === "depleted" ? "depleted" : "active"
-  const canBuyHomeIp = account.homeIp?.enabled && status === "active" && subscription?.duration !== "lifetime"
-  const homeIpStartingPrice = Math.min(...(account.homeIp?.regions || []).map(region => Number(region.price)).filter(Number.isFinite))
-  const expiresAtTime = Date.parse(subscription?.expiresAt || "")
-  const remainingDays = Number.isFinite(expiresAtTime) ? Math.max(0, Math.ceil((expiresAtTime - Date.now()) / 86400000)) : null
+function PersonalInfoCard({ account }: { account: Overview }) {
   const accountType = account.isSuperAccount ? "super" : account.isBusiness ? "business" : account.isFamilyFriend ? "family" : "regular"
   const vipTarget = account.vipSpend < 360 ? { level: "VIP 2", start: 0, amount: 360 } : account.vipSpend < 900 ? { level: "VIP 3", start: 360, amount: 900 } : null
   const vipProgress = vipTarget ? Math.min(100, Math.max(0, (account.vipSpend - vipTarget.start) / (vipTarget.amount - vipTarget.start) * 100)) : 100
 
-  return <Card id="subscription" className="scroll-mt-16">
+  return <Card>
     <CardHeader><CardTitle className="flex items-center gap-2">个人信息<Badge variant="outline" className="tabular-nums">ID #{account.customerID}</Badge></CardTitle></CardHeader>
     <CardContent className="grid gap-4">
       <div className="flex min-w-0 items-center gap-4">
@@ -122,7 +116,39 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
       </div>
       <div className="grid gap-1.5"><div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground"><span>{vipTarget ? `距离 ${vipTarget.level}` : "已达到最高等级"}</span><span>{vipTarget ? `还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "100%"}</span></div><Progress value={vipProgress} aria-label={`VIP 消费进度 ${Math.round(vipProgress)}%`} /></div>
     </CardContent>
-    <Separator />
+  </Card>
+}
+
+function NodeStatusCard({ status, error }: { status: NodeStatusSummary | null; error: string }) {
+  const available = Boolean(status?.configured && status.checkedAt)
+  const value = (count: number | undefined) => available ? count : !status && !error ? <Skeleton className="h-7 w-8" /> : "-"
+  return <Card>
+    <CardHeader>
+      <CardTitle>节点状态</CardTitle>
+      <CardDescription>{error ? "状态暂不可用" : !status ? "正在获取检测结果" : !status.configured ? "节点监控未配置" : status.checkedAt ? `最近检测 ${formatDateTime(status.checkedAt)}` : "等待首次检测"}</CardDescription>
+    </CardHeader>
+    <CardContent>
+      <ItemGroup className="grid-cols-3">
+        <Item variant="muted"><ItemContent><ItemDescription>总节点</ItemDescription><ItemTitle className="text-xl tabular-nums">{value(status?.totalNodes)}</ItemTitle></ItemContent></Item>
+        <Item variant="muted"><ItemContent><ItemDescription>在线节点</ItemDescription><ItemTitle className="text-xl tabular-nums">{value(status?.onlineNodes)}</ItemTitle></ItemContent></Item>
+        <Item variant="muted"><ItemContent><ItemDescription>离线节点</ItemDescription><ItemTitle className="text-xl tabular-nums">{value(status?.offlineNodes)}</ItemTitle></ItemContent></Item>
+      </ItemGroup>
+    </CardContent>
+  </Card>
+}
+
+function PlanStatusCard({ account, subscription, traffic, trafficLoading, trafficError, onImportClient }: { account: Overview; subscription: Subscription | null; traffic: SelfHostedTraffic | null; trafficLoading: boolean; trafficError: string; onImportClient: (client: ImportClient) => void }) {
+  const usagePercent = subscription?.lineType === "self_hosted" ? traffic?.usagePercent : null
+  const remainingPercent = usagePercent == null ? null : Math.max(0, 100 - usagePercent)
+  const trafficTotal = traffic ? `${(traffic.totalBytes / 1024 ** 3).toFixed(0)} GB` : subscription?.traffic || "-"
+  const trafficUsed = traffic ? `${(traffic.usedBytes / 1024 ** 3).toFixed(2)} GB` : "-"
+  const status = !subscription ? "inactive" : subscription.status === "expired" ? "expired" : traffic?.status === "depleted" ? "depleted" : "active"
+  const canBuyHomeIp = account.homeIp?.enabled && status === "active" && subscription?.duration !== "lifetime"
+  const homeIpStartingPrice = Math.min(...(account.homeIp?.regions || []).map(region => Number(region.price)).filter(Number.isFinite))
+  const expiresAtTime = Date.parse(subscription?.expiresAt || "")
+  const remainingDays = Number.isFinite(expiresAtTime) ? Math.max(0, Math.ceil((expiresAtTime - Date.now()) / 86400000)) : null
+
+  return <Card id="subscription" className="scroll-mt-16 xl:col-span-8">
     <CardHeader>
       <div className="flex min-w-0 items-center gap-3">
         <Avatar size="lg"><AvatarFallback><Zap className="size-5" /></AvatarFallback></Avatar>
@@ -159,6 +185,7 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
         </div>
       </section>
     </CardContent>
+    {subscription ? <><Separator /><CardHeader><CardTitle>订阅链接</CardTitle><CardDescription>请勿将订阅链接分享给其他人。</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:min-h-11 [&_[data-slot=button]]:text-base [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => onImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => onImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button variant="outline" onClick={() => onImportClient("clash-meta")}><ExternalLink />导入 Clash Meta</Button><Button variant="outline" onClick={() => onImportClient("clash-verge")}><ExternalLink />导入 Clash Verge</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></CardContent></> : null}
   </Card>
 }
 
@@ -174,6 +201,8 @@ export function AccountOverviewPage() {
   const [selfHostedTraffic, setSelfHostedTraffic] = React.useState<SelfHostedTraffic | null>(null)
   const [trafficLoading, setTrafficLoading] = React.useState(false)
   const [trafficError, setTrafficError] = React.useState("")
+  const [nodeStatus, setNodeStatus] = React.useState<NodeStatusSummary | null>(null)
+  const [nodeStatusError, setNodeStatusError] = React.useState("")
   const latestAnnouncement = data?.announcements[0]
   const currentAnnouncement = data?.announcements[carouselIndex] || latestAnnouncement
 
@@ -217,6 +246,16 @@ export function AccountOverviewPage() {
     return () => { active = false }
   }, [data?.subscription?.lineType])
 
+  React.useEffect(() => {
+    let active = true
+    const refresh = () => fetchJson<NodeStatusSummary>("/api/account/node-status")
+      .then(value => { if (active) { setNodeStatus(value); setNodeStatusError("") } })
+      .catch(error => { if (active) setNodeStatusError(error instanceof Error ? error.message : "节点状态获取失败") })
+    void refresh()
+    const timer = window.setInterval(refresh, 30000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [])
+
   function changeAnnouncementOpen(open: boolean) {
     if (!open && reminderDialog && muteToday && data) localStorage.setItem(`account-announcement-muted:${data.email}`, todayKey())
     if (!open) setReminderDialog(false)
@@ -232,16 +271,19 @@ export function AccountOverviewPage() {
 
   if (!data) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
   const subscription = data.subscription
+  const hasTrafficDetails = subscription?.lineType === "self_hosted"
   const importConfig = importClient ? importClients[importClient] : null
   const importUrl = subscription && importConfig ? `${importConfig.scheme}${encodeURIComponent(subscription.subscriptionUrl)}` : ""
   return (
     <>
-      <div className="grid gap-4 px-4 lg:px-6">
-        <Alert variant="warning"><CircleHelp /><AlertDescription className="flex w-full flex-row items-center justify-between gap-3"><span>遇到问题？发送工单联系客服吧！</span><Button asChild variant="link" size="sm" className="h-auto shrink-0 p-0 underline underline-offset-4"><Link to="/account/tickets/new">发送工单</Link></Button></AlertDescription></Alert>
-        <PlanStatusCard account={data} subscription={subscription} traffic={selfHostedTraffic} trafficLoading={trafficLoading} trafficError={trafficError} />
-        {data.services?.length ? <Card><CardHeader><CardTitle>附加服务</CardTitle><CardDescription>已购买的地区规格、交付进度和有效期。</CardDescription></CardHeader><CardContent><ItemGroup>{data.services.map(service => <Item key={service.id} variant="muted"><ItemContent><ItemTitle>{service.name}{service.regionName ? ` · ${service.regionName}` : ""}</ItemTitle><ItemDescription>{service.status === "pending" ? "等待人工交付" : service.status === "active" ? `服务中${service.expiresAt ? ` · ${formatDate(service.expiresAt)} 到期` : ""}` : service.status === "expired" ? "已到期" : "处理中"}</ItemDescription>{service.deliveryNote ? <ItemDescription>{service.deliveryNote}</ItemDescription> : null}</ItemContent><Badge variant={service.status === "active" ? "success" : service.status === "pending" ? "warning" : "secondary"}>{service.status === "active" ? "生效中" : service.status === "pending" ? "待交付" : service.status === "expired" ? "已到期" : "处理中"}</Badge></Item>)}</ItemGroup></CardContent></Card> : null}
-         {subscription ? <Card><CardHeader><CardTitle>订阅链接</CardTitle><CardDescription>请勿将订阅链接分享给其他人。</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:min-h-11 [&_[data-slot=button]]:text-base [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => setImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => setImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button variant="outline" onClick={() => setImportClient("clash-meta")}><ExternalLink />导入 Clash Meta</Button><Button variant="outline" onClick={() => setImportClient("clash-verge")}><ExternalLink />导入 Clash Verge</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></CardContent></Card> : null}
-        {data.announcements.length ? <Card>
+      <div className="grid gap-4 px-4 lg:px-6 xl:grid-cols-12">
+        <Alert variant="warning" className="xl:col-span-12"><CircleHelp /><AlertDescription className="flex w-full flex-row items-center justify-between gap-3"><span>遇到问题？发送工单联系客服吧！</span><Button asChild variant="link" size="sm" className="h-auto shrink-0 p-0 underline underline-offset-4"><Link to="/account/tickets/new">发送工单</Link></Button></AlertDescription></Alert>
+        <PlanStatusCard account={data} subscription={subscription} traffic={selfHostedTraffic} trafficLoading={trafficLoading} trafficError={trafficError} onImportClient={setImportClient} />
+        <section className="grid content-start gap-4 xl:col-span-4" aria-label="账户与节点概览">
+          <PersonalInfoCard account={data} />
+          <NodeStatusCard status={nodeStatus} error={nodeStatusError} />
+        </section>
+        {data.announcements.length ? <Card className={hasTrafficDetails ? "xl:col-span-6" : "xl:col-span-12"}>
           <CardHeader><CardTitle>网站公告</CardTitle><CardDescription>最新服务动态与使用提醒</CardDescription></CardHeader>
           <CardContent>
             <Carousel opts={{ loop: data.announcements.length > 1 }} setApi={setCarouselApi} aria-label="网站公告">
@@ -255,6 +297,7 @@ export function AccountOverviewPage() {
             </Carousel>
           </CardContent>
         </Card> : null}
+        {hasTrafficDetails ? selfHostedTraffic ? <React.Suspense fallback={<Skeleton className={`h-72 ${data.announcements.length ? "xl:col-span-6" : "xl:col-span-12"}`} />}><AccountTrafficChart className={data.announcements.length ? "xl:col-span-6" : "xl:col-span-12"} data={selfHostedTraffic.dailyUsage} /></React.Suspense> : <Skeleton className={`h-72 ${data.announcements.length ? "xl:col-span-6" : "xl:col-span-12"}`} /> : null}
       </div>
       <Dialog open={announcementOpen} onOpenChange={changeAnnouncementOpen}>
         <DialogContent>

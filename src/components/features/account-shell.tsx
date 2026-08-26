@@ -112,7 +112,7 @@ export function AccountShell() {
       </Sidebar>
       <SidebarInset className="min-w-0 overflow-x-clip">
         <SiteHeader title={current.title} dark={dark} onToggleTheme={() => setTheme(dark ? "light" : "dark")} onLogout={logout} />
-        <div className="flex min-w-0 flex-1 flex-col pt-6 pb-4 md:pt-8 md:pb-6">
+        <div className="mx-auto flex w-full max-w-[1440px] min-w-0 flex-1 flex-col pt-6 pb-4 md:pt-8 md:pb-6">
           {pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <div className="px-4 pb-4 lg:px-6"><Alert variant="warning"><AlertCircle /><AlertDescription className="flex w-full items-center justify-between gap-4"><span>你有一笔订单等待付款。</span><Button asChild variant="link" size="sm"><Link to={`/account/orders/${encodeURIComponent(pendingOrderId)}`}>去支付<ArrowRight /></Link></Button></AlertDescription></Alert></div> : null}
           {email ? <Outlet context={{ email }} /> : <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-36" /><Skeleton className="h-72" /></div>}
         </div>

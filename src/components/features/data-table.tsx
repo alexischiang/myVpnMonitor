@@ -115,6 +115,7 @@ export function DataTable<TData, TValue>({
   stateKey,
 }: DataTableProps<TData, TValue>) {
   const [searchParams, setSearchParams] = useSearchParams()
+  const storesSearchInUrl = !onSearchChange
   const defaultPageSize = window.matchMedia("(min-width: 768px)").matches ? pageSize : Math.min(pageSize, 10)
   const [sorting, setSorting] = React.useState<SortingState>(() => sortingFromParam(stateKey ? searchParams.get(`${stateKey}-sort`) : null))
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
@@ -137,7 +138,7 @@ export function DataTable<TData, TValue>({
   React.useEffect(() => {
     if (!stateKey) return
     const sort = sorting.map(item => `${item.id}:${item.desc ? "desc" : "asc"}`).join(",")
-    const query = searchKey && !onSearchChange ? String(columnFilters.find(item => item.id === searchKey)?.value || "") : ""
+    const query = searchKey && storesSearchInUrl ? String(columnFilters.find(item => item.id === searchKey)?.value || "") : ""
     setSearchParams(current => {
       const next = new URLSearchParams(current)
       if (sort) next.set(`${stateKey}-sort`, sort); else next.delete(`${stateKey}-sort`)
@@ -146,7 +147,7 @@ export function DataTable<TData, TValue>({
       if (pagination.pageSize !== defaultPageSize) next.set(`${stateKey}-size`, String(pagination.pageSize)); else next.delete(`${stateKey}-size`)
       return next.toString() === current.toString() ? current : next
     }, { replace: true })
-  }, [columnFilters, defaultPageSize, onSearchChange, pagination.pageIndex, pagination.pageSize, searchKey, setSearchParams, sorting, stateKey])
+  }, [columnFilters, defaultPageSize, pagination.pageIndex, pagination.pageSize, searchKey, setSearchParams, sorting, stateKey, storesSearchInUrl])
 
   const table = useReactTable({
     data,

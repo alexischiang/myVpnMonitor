@@ -1,4 +1,5 @@
 const assert = require("assert");
+const net = require("net");
 const zlib = require("zlib");
 const {
   parseSubscriptionUserInfo,
@@ -44,9 +45,13 @@ const {
   normalizeXuiInboundMetadata,
   normalizeXuiInboundEnable,
   xuiActiveInboundKeys,
+  probeTcpEndpoint,
+  summarizeXuiInboundProbes,
   normalizeXuiPresence,
   xuiTrafficByUser,
   xuiDailyNodeTraffic,
+  appendXuiDailyTrafficHistory,
+  xuiUserDailyTraffic,
   calculateXuiBillingLedger,
   createXuiBillingBaseline,
   xuiClientCycleKey,
@@ -64,6 +69,13 @@ const {
 } = require("./server");
 
 const gib = 1024 ** 3;
+assert.deepStrictEqual(summarizeXuiInboundProbes([{ status: "online" }, { status: "offline" }, { status: "disabled" }], "2026-08-26T00:00:00.000Z"), {
+  configured: true,
+  totalNodes: 3,
+  onlineNodes: 1,
+  offlineNodes: 2,
+  checkedAt: "2026-08-26T00:00:00.000Z"
+});
 const missingXuiUser = { xuiClientPresent: true, xuiLastError: "" };
 assert.deepStrictEqual(markMissingXuiClients(new Map([["missing@example.com", missingXuiUser]]), new Set(), "2026-08-22T00:00:00.000Z"), [missingXuiUser]);
 assert.deepStrictEqual(missingXuiUser, { xuiClientPresent: false, xuiClientMissingAt: "2026-08-22T00:00:00.000Z", xuiLastError: "3x-ui Client 已被删除或不存在。" });
@@ -262,6 +274,16 @@ assert.deepStrictEqual(trafficByUser, { "user@test.com": { hk: 150, jp: 50 } });
 const dailyTraffic = xuiDailyNodeTraffic({ user: { hk: 150 } }, xuiDailyNodeTraffic({ user: { hk: 100 } }));
 const resetDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 20 } }, dailyTraffic);
 assert.deepStrictEqual([resetDailyTraffic.nodes.hk.usedBytes, resetDailyTraffic.users.user.usedBytes], [70, 70]);
+const partialDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 110 } }, xuiDailyNodeTraffic({ user: { hk: 100, jp: 100 } }));
+const restoredDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 120, jp: 120 } }, partialDailyTraffic);
+assert.strictEqual(restoredDailyTraffic.users.user.usedBytes, 40);
+assert.strictEqual(xuiDailyNodeTraffic({ user: { hk: 120 } }, { date: dailyTraffic.date, users: { user: { baselineBytes: 100, usedBytes: 100 } } }).users.user.usedBytes, 0);
+let trafficHistory = {};
+for (let day = 18; day <= 25; day += 1) trafficHistory = appendXuiDailyTrafficHistory(trafficHistory, { date: `2026-08-${day}`, users: { user: { usedBytes: day } } });
+assert.deepStrictEqual(trafficHistory.days.map(item => item.date), ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23", "2026-08-24", "2026-08-25"]);
+const sevenDayTraffic = xuiUserDailyTraffic(trafficHistory, { date: "2026-08-26", users: { user: { usedBytes: 26 } } }, "USER", Date.UTC(2026, 7, 26, 4));
+assert.deepStrictEqual(sevenDayTraffic.map(item => [item.date, item.usedBytes]), [["2026-08-20", 20], ["2026-08-21", 21], ["2026-08-22", 22], ["2026-08-23", 23], ["2026-08-24", 24], ["2026-08-25", 25], ["2026-08-26", 26]]);
+assert.deepStrictEqual(xuiUserDailyTraffic(null, null, "user", Date.UTC(2026, 7, 26, 4)).map(item => item.usedBytes), [0, 0, 0, 0, 0, 0, 0]);
 const firstLedger = calculateXuiBillingLedger(null, trafficByUser["user@test.com"], { hk: 2, jp: 0.5 }, "cycle-1");
 assert.deepStrictEqual([firstLedger.rawBytes, firstLedger.weightedBytes], [200, 325]);
 const linkedBaseline = createXuiBillingBaseline(trafficByUser["user@test.com"], "linked-cycle", { hk: 2, jp: 0.5 });
@@ -496,10 +518,26 @@ assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chr
 
 let migrationRuns = 0;
 Promise.all([
-  withXuiUserMigrationLock("user-1", async () => { migrationRuns += 1; await new Promise(resolve => setImmediate(resolve)); return "done"; }),
-  withXuiUserMigrationLock("user-1", async () => { migrationRuns += 1; return "duplicate"; })
-]).then(results => {
-  assert.deepStrictEqual(results, ["done", "done"]);
-  assert.strictEqual(migrationRuns, 1);
+  (async () => {
+    const results = await Promise.all([
+      withXuiUserMigrationLock("user-1", async () => { migrationRuns += 1; await new Promise(resolve => setImmediate(resolve)); return "done"; }),
+      withXuiUserMigrationLock("user-1", async () => { migrationRuns += 1; return "duplicate"; })
+    ]);
+    assert.deepStrictEqual(results, ["done", "done"]);
+    assert.strictEqual(migrationRuns, 1);
+  })(),
+  (async () => {
+    const server = net.createServer(socket => socket.end());
+    await new Promise((resolve, reject) => server.once("error", reject).listen(0, "127.0.0.1", resolve));
+    try {
+      const result = await probeTcpEndpoint("127.0.0.1", server.address().port, 500);
+      assert.strictEqual(result.status, "online");
+      assert.ok(result.latencyMs >= 0);
+      assert.strictEqual((await probeTcpEndpoint("", 443, 500)).status, "unknown");
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  })()
+]).then(() => {
   console.log("All checks passed.");
 }).catch(error => { console.error(error); process.exitCode = 1; });
