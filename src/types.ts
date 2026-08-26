@@ -323,6 +323,10 @@ export type XuiInboundManagement = {
     port: number | null
     enabled: boolean
     recentlyActive: boolean | null
+    probeStatus: "online" | "offline" | "unknown" | "disabled"
+    probeLatencyMs: number | null
+    probeCheckedAt: string
+    probeError: string
     nodeGuid: string
     nodeName: string
     clientCount: number
@@ -338,6 +342,7 @@ export type XuiPresence = {
   onlineByGuid: Record<string, string[]>
   lastOnline: Record<string, number>
   nodeNames: Record<string, string>
+  dailyTraffic?: { date: string; users?: Record<string, { usedBytes: number }> }
 }
 
 export type CouponSetting = {

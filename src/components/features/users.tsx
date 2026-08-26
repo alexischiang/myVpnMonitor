@@ -25,7 +25,7 @@ import { UserFormDialog, type UserFormValues } from "@/components/features/user-
 import { UsersSummaryCard } from "@/components/features/users-summary-card"
 import { VipBadge } from "@/components/features/vip-badge"
 import type { User, XuiPresence } from "@/types"
-import { absoluteUrl, formatDate, formatDateTime, formatMoney, userStatus } from "@/utils"
+import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, userStatus } from "@/utils"
 
 type GiftPreview = {
   expiresAt: string
@@ -288,6 +288,7 @@ export function UsersPage() {
       online: guids.length > 0,
       nodes: guids.map(guid => presence?.nodeNames[guid] || guid),
       lastOnline: email ? presence?.lastOnline[email] || 0 : 0,
+      dailyUsedBytes: email && presence?.configured ? presence.dailyTraffic?.users?.[email]?.usedBytes ?? 0 : -1,
     }
   }
 
@@ -323,6 +324,13 @@ export function UsersPage() {
       cell: ({ row }) => row.original.xuiWeightedTraffic?.totalBytes
         ? <TrafficProgress remaining={row.original.xuiWeightedTraffic.remainingBytes ?? 0} total={row.original.xuiWeightedTraffic.totalBytes} />
         : row.original.unlimited ? "不限" : "-",
+    },
+    {
+      id: "dailyTraffic",
+      accessorFn: item => xuiPresenceFor(item).dailyUsedBytes,
+      header: DataTableColumnHeader({ title: "今日流量" }),
+      meta: { label: "今日流量" },
+      cell: ({ row }) => { const value = row.getValue<number>("dailyTraffic"); return value < 0 ? "-" : formatBytes(value) },
     },
     {
       accessorKey: "activeGroup",

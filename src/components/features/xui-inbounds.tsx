@@ -40,6 +40,12 @@ type InboundDraft = {
 
 type XuiInbound = XuiInboundManagement["inbounds"][number]
 
+function InboundProbeBadge({ inbound }: { inbound: XuiInbound }) {
+  const online = inbound.probeStatus === "online"
+  const label = online ? `正常 · ${inbound.probeLatencyMs ?? 0} ms` : inbound.probeStatus === "offline" ? "异常" : inbound.probeStatus === "disabled" ? "未检测" : "未知"
+  return <Badge variant={online ? "success" : inbound.probeStatus === "offline" ? "destructive" : "secondary"} title={inbound.probeError || `检测时间：${inbound.probeCheckedAt}`}>{label}</Badge>
+}
+
 export function XuiInboundsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [data, setData] = React.useState<XuiInboundManagement | null>(null)
@@ -86,7 +92,11 @@ export function XuiInboundsPage() {
     }
   }, [])
 
-  React.useEffect(() => { void refresh() }, [refresh])
+  React.useEffect(() => {
+    void refresh()
+    const timer = window.setInterval(refresh, 30_000)
+    return () => window.clearInterval(timer)
+  }, [refresh])
 
   const openEditor = React.useCallback((inbound: XuiInbound) => {
     const item = metadata[inbound.key]
@@ -163,12 +173,12 @@ export function XuiInboundsPage() {
   const renderMobileInbound = React.useCallback((inbound: XuiInbound) => {
     const level = networkLevels.find(item => item.value === inbound.networkLevel)?.label || "未设置"
     const availableGroups = planGroups.filter(group => (groups[group] || []).includes(inbound.id)).map(group => planLabels[group]).join(" / ") || "未分配"
-    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="min-w-0 truncate">{inbound.name}</span><Badge variant={inbound.enabled ? "success" : "secondary"}>{inbound.enabled ? "启用" : "停用"}</Badge><Badge variant={inbound.recentlyActive ? "success" : "secondary"}>{inbound.recentlyActive === null ? "状态未知" : inbound.recentlyActive ? "近期活跃" : "近期无流量"}</Badge></ItemTitle><ItemDescription>{inbound.nodeName} · {level} · {inbound.region || "未设置"}</ItemDescription><ItemDescription>{availableGroups} · {inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</ItemDescription></ItemContent><ItemActions><Button variant="ghost" size="icon" onClick={() => openEditor(inbound)} aria-label={`编辑 ${inbound.name}`}><Pencil /></Button></ItemActions></Item>
+    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full flex-wrap items-center gap-2"><span className="min-w-0 truncate">{inbound.name}</span><Badge variant={inbound.enabled ? "success" : "secondary"}>{inbound.enabled ? "启用" : "停用"}</Badge><InboundProbeBadge inbound={inbound} /></ItemTitle><ItemDescription>{inbound.nodeName} · {level} · {inbound.region || "未设置"}</ItemDescription><ItemDescription>{availableGroups} · {inbound.protocol.toUpperCase()} / {inbound.port ?? "-"} · {inbound.recentlyActive === null ? "连接活动未知" : inbound.recentlyActive ? "近期活跃" : "近期无流量"}</ItemDescription></ItemContent><ItemActions><Button variant="ghost" size="icon" onClick={() => openEditor(inbound)} aria-label={`编辑 ${inbound.name}`}><Pencil /></Button></ItemActions></Item>
   }, [groups, openEditor])
 
   const columns = React.useMemo<ColumnDef<XuiInbound>[]>(() => [
     { id: "inbound", accessorFn: inbound => `${inbound.name} ${inbound.tag} ${inbound.nodeName} ${inbound.region} ${inbound.protocol} ${networkLevels.find(item => item.value === inbound.networkLevel)?.label || ""}`, header: DataTableColumnHeader({ title: "入站" }), meta: { label: "入站" }, cell: ({ row }) => <div className="grid min-w-0"><span className="truncate font-medium">{row.original.name}</span>{row.original.tag ? <span className="truncate text-xs text-muted-foreground">{row.original.tag}</span> : null}</div> },
-    { id: "status", accessorFn: inbound => `${inbound.enabled ? "启用" : "停用"} ${inbound.recentlyActive === null ? "状态未知" : inbound.recentlyActive ? "近期活跃" : "近期无流量"}`, header: DataTableColumnHeader({ title: "状态" }), meta: { label: "状态" }, cell: ({ row }) => <div className="grid justify-items-start gap-1"><Badge variant={row.original.enabled ? "success" : "secondary"}>{row.original.enabled ? "启用" : "停用"}</Badge><Badge variant={row.original.recentlyActive ? "success" : "secondary"}>{row.original.recentlyActive === null ? "状态未知" : row.original.recentlyActive ? "近期活跃" : "近期无流量"}</Badge></div> },
+    { id: "status", accessorFn: inbound => `${inbound.enabled ? "启用" : "停用"} ${inbound.probeStatus} ${inbound.probeLatencyMs ?? ""} ${inbound.recentlyActive === null ? "状态未知" : inbound.recentlyActive ? "近期活跃" : "近期无流量"}`, header: DataTableColumnHeader({ title: "状态 / 延迟" }), meta: { label: "状态 / 延迟" }, cell: ({ row }) => <div className="grid justify-items-start gap-1"><Badge variant={row.original.enabled ? "success" : "secondary"}>{row.original.enabled ? "启用" : "停用"}</Badge><InboundProbeBadge inbound={row.original} /><span className="text-xs text-muted-foreground">{row.original.recentlyActive === null ? "连接活动未知" : row.original.recentlyActive ? "近期活跃" : "近期无流量"}</span></div> },
     { accessorKey: "clientCount", header: DataTableColumnHeader({ title: "客户端" }), meta: { label: "客户端" }, cell: ({ row }) => <span className="tabular-nums">{row.original.clientCount}</span> },
     { accessorKey: "networkLevel", header: DataTableColumnHeader({ title: "网络级别" }), meta: { label: "网络级别" }, cell: ({ row }) => { const label = networkLevels.find(item => item.value === row.original.networkLevel)?.label; return label ? <Badge variant="outline">{label}</Badge> : <span className="text-muted-foreground">未设置</span> } },
     { accessorKey: "region", header: DataTableColumnHeader({ title: "地区" }), meta: { label: "地区" }, cell: ({ row }) => row.original.region || <span className="text-muted-foreground">未设置</span> },

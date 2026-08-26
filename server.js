@@ -1,4 +1,5 @@
 const http = require("http");
+const net = require("net");
 const { execFileSync } = require("child_process");
 const fsSync = require("fs");
 const fs = require("fs/promises");
@@ -39,6 +40,8 @@ const XUI_API_TOKEN = String(process.env.XUI_API_TOKEN || "").trim();
 const XUI_PANEL_NAME = String(process.env.XUI_PANEL_NAME || "主面板").trim();
 const XUI_SUBSCRIPTION_BASE_URL = (process.env.XUI_SUBSCRIPTION_BASE_URL || "https://panel.webprovider.top:2096").replace(/\/+$/, "");
 const XUI_TIMEOUT_MS = Math.max(1000, Number(process.env.XUI_TIMEOUT_MS || 15000));
+const XUI_INBOUND_PROBE_TIMEOUT_MS = Math.max(500, Number(process.env.XUI_INBOUND_PROBE_TIMEOUT_MS || 3000));
+const XUI_INBOUND_PROBE_INTERVAL_MS = Math.max(10000, Number(process.env.XUI_INBOUND_PROBE_INTERVAL_MS || 30000));
 const XUI_METADATA_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const XUI_SERVICE_URL = (process.env.XUI_SERVICE_URL || "").replace(/\/+$/, "");
 const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
@@ -3650,19 +3653,63 @@ function xuiDailyNodeTraffic(traffic = {}, previous = {}) {
   const baseline = previous.date === date ? previous.nodes || {} : {};
   const userBaseline = previous.date === date ? previous.users || {} : {};
   const nodes = {};
-  const users = {};
+  const users = Object.fromEntries(Object.entries(userBaseline).filter(([, item]) => item?.nodes));
   for (const [guid, current] of Object.entries(currentByNode)) {
     const prior = baseline[guid] || { baselineBytes: current, usedBytes: 0 };
     const delta = current >= Number(prior.baselineBytes) ? current - Number(prior.baselineBytes) : current;
     nodes[guid] = { baselineBytes: current, usedBytes: Math.max(0, Number(prior.usedBytes) || 0) + delta };
   }
   for (const [email, byNode] of Object.entries(traffic)) {
-    const current = Object.values(byNode || {}).reduce((sum, bytes) => sum + Math.max(0, Number(bytes) || 0), 0);
-    const prior = userBaseline[email] || { baselineBytes: current, usedBytes: 0 };
-    const delta = current >= Number(prior.baselineBytes) ? current - Number(prior.baselineBytes) : current;
-    users[email] = { baselineBytes: current, usedBytes: Math.max(0, Number(prior.usedBytes) || 0) + delta };
+    const priorNodes = userBaseline[email]?.nodes || {};
+    const userNodes = { ...priorNodes };
+    for (const [guid, bytes] of Object.entries(byNode || {})) {
+      const current = Math.max(0, Number(bytes) || 0);
+      const prior = priorNodes[guid] || { baselineBytes: current, usedBytes: 0 };
+      const delta = current >= Number(prior.baselineBytes) ? current - Number(prior.baselineBytes) : current;
+      userNodes[guid] = { baselineBytes: current, usedBytes: Math.max(0, Number(prior.usedBytes) || 0) + delta };
+    }
+    users[email] = { nodes: userNodes, usedBytes: Object.values(userNodes).reduce((sum, item) => sum + Math.max(0, Number(item.usedBytes) || 0), 0) };
   }
   return { date, nodes, users };
+}
+
+function probeTcpEndpoint(host, port, timeoutMs = XUI_INBOUND_PROBE_TIMEOUT_MS) {
+  const checkedAt = new Date().toISOString();
+  const targetHost = String(host || "").trim().replace(/^\[|\]$/g, "");
+  const targetPort = Number(port);
+  if (!targetHost || !Number.isSafeInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
+    return Promise.resolve({ status: "unknown", latencyMs: null, checkedAt, error: "缺少有效的节点地址或入站端口。" });
+  }
+  return new Promise(resolve => {
+    const startedAt = Date.now();
+    let settled = false;
+    const socket = net.createConnection({ host: targetHost, port: targetPort });
+    const finish = (status, error = "") => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve({ status, latencyMs: status === "online" ? Date.now() - startedAt : null, checkedAt, error });
+    };
+    socket.setTimeout(Math.max(500, Number(timeoutMs) || XUI_INBOUND_PROBE_TIMEOUT_MS));
+    socket.once("connect", () => finish("online"));
+    socket.once("timeout", () => finish("offline", "连接超时。"));
+    socket.once("error", error => finish("offline", String(error.code || error.message || "连接失败。")));
+  });
+}
+
+function appendXuiDailyTrafficHistory(history = {}, snapshot = {}) {
+  if (!snapshot?.date) return { days: Array.isArray(history?.days) ? history.days.slice(-7) : [] };
+  const day = { date: snapshot.date, users: Object.fromEntries(Object.entries(snapshot.users || {}).map(([email, item]) => [email, Math.max(0, Number(item?.usedBytes) || 0)])) };
+  return { days: [...(Array.isArray(history?.days) ? history.days : []).filter(item => item?.date !== day.date), day].sort((left, right) => String(left.date).localeCompare(String(right.date))).slice(-7) };
+}
+
+function xuiUserDailyTraffic(history = {}, current = {}, email = "", now = Date.now()) {
+  const currentDay = appendXuiDailyTrafficHistory({}, current).days[0];
+  const byDate = new Map([...(Array.isArray(history?.days) ? history.days : []), ...(currentDay ? [currentDay] : [])].map(item => [item.date, item]));
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = chinaDateKey(now - (6 - index) * 86400000);
+    return { date, usedBytes: Math.max(0, Number(byDate.get(date)?.users?.[String(email).toLowerCase()]) || 0) };
+  });
 }
 
 function xuiMultiplier(value) {
@@ -3871,7 +3918,12 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     ]);
     const state = await getXuiBillingState();
     const { traffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, state);
-    state.dailyTraffic = xuiDailyNodeTraffic(traffic, state.dailyTraffic);
+    const dailyTraffic = xuiDailyNodeTraffic(traffic, state.dailyTraffic);
+    if (state.dailyTraffic?.date && state.dailyTraffic.date !== dailyTraffic.date) {
+      const history = appendXuiDailyTrafficHistory(await getXuiState("traffic-history", "xuiTrafficHistory"), state.dailyTraffic);
+      await setXuiState("traffic-history", "xuiTrafficHistory", history);
+    }
+    state.dailyTraffic = dailyTraffic;
     const localGuid = String(status?.panelGuid || "node:local");
     const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
     const nodeMultipliers = state.multipliers || {};
@@ -4027,6 +4079,15 @@ async function xuiInboundIdsForGroup(group) {
   return (await getXuiInboundGroups())[normalizeUserGroup(group, "")] || [];
 }
 
+let xuiInboundProbeSummary = { configured: Boolean(XUI_BASE_URL && XUI_API_TOKEN), totalNodes: 0, onlineNodes: 0, offlineNodes: 0, checkedAt: "" };
+let xuiInboundManagementRefresh = null;
+
+function summarizeXuiInboundProbes(probes, checkedAt = new Date().toISOString()) {
+  const totalNodes = probes.length;
+  const onlineNodes = probes.filter(probe => probe.status === "online").length;
+  return { configured: true, totalNodes, onlineNodes, offlineNodes: totalNodes - onlineNodes, checkedAt };
+}
+
 async function xuiInboundManagementData() {
   if (!XUI_BASE_URL || !XUI_API_TOKEN) return { configured: false, groups: normalizeXuiInboundGroups(), metadata: {}, inbounds: [] };
   const [status, nodes, inbounds, settings, activeInbounds] = await Promise.all([
@@ -4040,33 +4101,47 @@ async function xuiInboundManagementData() {
   const metadata = normalizeXuiInboundMetadata(settings || {});
   const localGuid = String(status?.panelGuid || "node:local");
   const nodeNames = Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(node => [String(node?.guid || `node:${node?.id}`), String(node?.remark || node?.name || node?.address || node?.guid || node?.id)]));
+  const nodeHosts = Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(node => [String(node?.guid || `node:${node?.id}`), String(node?.address || "")]));
   nodeNames[localGuid] = XUI_PANEL_NAME;
+  nodeHosts[localGuid] = new URL(XUI_BASE_URL).hostname;
   const activeInboundKeys = activeInbounds === null ? null : xuiActiveInboundKeys(activeInbounds);
+  const rows = (Array.isArray(inbounds) ? inbounds : []).map(inbound => {
+    const nodeGuid = String(inbound?.originNodeGuid || `node:${inbound?.nodeId || "local"}`);
+    const key = `${nodeGuid}:${inbound.id}`;
+    const activityReported = activeInbounds !== null && Object.prototype.hasOwnProperty.call(activeInbounds, nodeGuid);
+    return {
+      id: Number(inbound.id),
+      key,
+      name: String(inbound.remark || inbound.name || inbound.tag || `Inbound ${inbound.id}`),
+      tag: String(inbound.tag || ""),
+      protocol: String(inbound.protocol || ""),
+      port: Number(inbound.port) || null,
+      enabled: inbound.enable !== false,
+      recentlyActive: activityReported ? activeInboundKeys.has(`${nodeGuid}:${String(inbound.tag || "")}`) : null,
+      nodeGuid,
+      nodeName: nodeNames[nodeGuid] || nodeGuid,
+      clientCount: Array.isArray(inbound.clientStats) ? inbound.clientStats.length : 0,
+      networkLevel: metadata[key]?.networkLevel || "",
+      region: metadata[key]?.region || ""
+    };
+  }).filter(inbound => Number.isSafeInteger(inbound.id) && inbound.id > 0);
+  const probes = await Promise.all(rows.map(inbound => inbound.enabled
+    ? probeTcpEndpoint(nodeHosts[inbound.nodeGuid], inbound.port)
+    : Promise.resolve({ status: "disabled", latencyMs: null, checkedAt: new Date().toISOString(), error: "" })));
+  xuiInboundProbeSummary = summarizeXuiInboundProbes(probes);
   return {
     configured: true,
     groups,
     metadata,
-    inbounds: (Array.isArray(inbounds) ? inbounds : []).map(inbound => {
-      const nodeGuid = String(inbound?.originNodeGuid || `node:${inbound?.nodeId || "local"}`);
-      const key = `${nodeGuid}:${inbound.id}`;
-      const activityReported = activeInbounds !== null && Object.prototype.hasOwnProperty.call(activeInbounds, nodeGuid);
-      return {
-        id: Number(inbound.id),
-        key,
-        name: String(inbound.remark || inbound.name || inbound.tag || `Inbound ${inbound.id}`),
-        tag: String(inbound.tag || ""),
-        protocol: String(inbound.protocol || ""),
-        port: Number(inbound.port) || null,
-        enabled: inbound.enable !== false,
-        recentlyActive: activityReported ? activeInboundKeys.has(`${nodeGuid}:${String(inbound.tag || "")}`) : null,
-        nodeGuid,
-        nodeName: nodeNames[nodeGuid] || nodeGuid,
-        clientCount: Array.isArray(inbound.clientStats) ? inbound.clientStats.length : 0,
-        networkLevel: metadata[key]?.networkLevel || "",
-        region: metadata[key]?.region || ""
-      };
-    }).filter(inbound => Number.isSafeInteger(inbound.id) && inbound.id > 0)
+    inbounds: rows.map((inbound, index) => ({ ...inbound, probeStatus: probes[index].status, probeLatencyMs: probes[index].latencyMs, probeCheckedAt: probes[index].checkedAt, probeError: probes[index].error }))
   };
+}
+
+function refreshXuiInboundManagementData() {
+  if (!xuiInboundManagementRefresh) {
+    xuiInboundManagementRefresh = xuiInboundManagementData().finally(() => { xuiInboundManagementRefresh = null; });
+  }
+  return xuiInboundManagementRefresh;
 }
 
 async function syncXuiInboundGroup(group, inboundIds, allInboundIds) {
@@ -7612,22 +7687,7 @@ async function handleApi(req, res, pathname) {
   if (accountTicketMatch && req.method === "PUT") {
     const session = requireUser(req, res);
     if (!session) return;
-    try {
-      await loadLatestData();
-      const ticket = ticketById(decodeURIComponent(accountTicketMatch[1]));
-      if (!ticket || ticket.accountId !== session.accountId) return sendJson(res, 404, { error: "工单不存在。" });
-      const payload = await readJson(req);
-      const now = new Date().toISOString();
-      if (payload.action === "close" && ticket.status !== "closed") {
-        ticket.status = "closed";
-        ticket.closedAt = now;
-      } else throw new Error("不支持的工单操作。");
-      ticket.updatedAt = now;
-      await saveTicket(ticket);
-      sendJson(res, 200, publicTicket(ticket));
-    } catch (error) {
-      sendJson(res, 400, { error: error.message });
-    }
+    sendJson(res, 403, { error: "只有管理员可以结束工单。" });
     return;
   }
 
@@ -7711,8 +7771,17 @@ async function handleApi(req, res, pathname) {
       sendJson(res, 404, { error: "当前用户不是自研线路套餐。" });
       return;
     }
-    if (user.xuiLastTraffic) sendJson(res, 200, user.xuiLastTraffic);
+    if (user.xuiLastTraffic) {
+      const [billing, history] = await Promise.all([getXuiBillingState(), getXuiState("traffic-history", "xuiTrafficHistory")]);
+      sendJson(res, 200, { ...user.xuiLastTraffic, dailyUsage: xuiUserDailyTraffic(history, billing.dailyTraffic, xuiClientEmail(user)) });
+    }
     else sendJson(res, 503, { error: "流量数据正在进行首次同步，请稍后查看。" });
+    return;
+  }
+
+  if (pathname === "/api/account/node-status" && req.method === "GET") {
+    if (!requireUser(req, res)) return;
+    sendJson(res, 200, xuiInboundProbeSummary);
     return;
   }
 
@@ -8262,7 +8331,7 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/xui-inbounds" && req.method === "GET") {
     try {
-      sendJson(res, 200, await xuiInboundManagementData());
+      sendJson(res, 200, await refreshXuiInboundManagementData());
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }
@@ -8286,7 +8355,7 @@ async function handleApi(req, res, pathname) {
     try {
       const payload = await readJson(req);
       const next = normalizeXuiInboundGroups(payload);
-      const management = await xuiInboundManagementData();
+      const management = await refreshXuiInboundManagementData();
       const allInboundIds = management.inbounds.map(inbound => inbound.id);
       const validIds = new Set(allInboundIds);
       const validKeys = new Set(management.inbounds.map(inbound => inbound.key));
@@ -10029,6 +10098,10 @@ async function main() {
     settleReferralRewards().catch(error => console.error("Referral settlement failed:", error));
   }, 60 * 1000);
   if (XUI_BASE_URL && XUI_API_TOKEN) {
+    refreshXuiInboundManagementData().catch(error => console.error("3x-ui inbound probe failed:", error));
+    setInterval(() => {
+      refreshXuiInboundManagementData().catch(error => console.error("3x-ui inbound probe failed:", error));
+    }, XUI_INBOUND_PROBE_INTERVAL_MS);
     syncXuiWeightedTraffic().catch(error => console.error("3x-ui traffic billing sync failed:", error));
     setInterval(() => {
       syncXuiWeightedTraffic().catch(error => console.error("3x-ui traffic billing sync failed:", error));
@@ -10110,9 +10183,13 @@ module.exports = Object.assign(requestHandler, {
   normalizeXuiInboundMetadata,
   normalizeXuiInboundEnable,
   xuiActiveInboundKeys,
+  probeTcpEndpoint,
+  summarizeXuiInboundProbes,
   normalizeXuiPresence,
   xuiTrafficByUser,
   xuiDailyNodeTraffic,
+  appendXuiDailyTrafficHistory,
+  xuiUserDailyTraffic,
   calculateXuiBillingLedger,
   createXuiBillingBaseline,
   xuiClientCycleKey,

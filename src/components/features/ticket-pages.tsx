@@ -168,12 +168,14 @@ export function AccountTicketCreatePage() {
     } catch (error) { toast.error(error instanceof Error ? error.message : "提交失败") } finally { setSaving(false) }
   }
   return (
-    <section className="grid gap-4 px-4 lg:px-6">
+    <section className="mx-auto grid w-full max-w-5xl gap-4 px-4 lg:px-6">
       <BackButton fallback="/account/tickets" className="w-fit" />
-      <Card className="max-w-3xl"><CardHeader><CardTitle>创建工单</CardTitle><CardDescription>请提供具体错误和发生时间，客服能更快定位问题。</CardDescription></CardHeader><CardContent>
+      <Card><CardHeader><CardTitle>创建工单</CardTitle><CardDescription>请提供具体错误和发生时间，客服能更快定位问题。</CardDescription></CardHeader><CardContent>
         <form id="create-ticket" onSubmit={submit} noValidate><FieldGroup>
-          <Field><FieldLabel htmlFor="ticket-subject">工单主题</FieldLabel><Input id="ticket-subject" value={subject} onChange={event => setSubject(event.target.value)} minLength={4} maxLength={80} placeholder="例如：付款成功但套餐仍未开通" required /></Field>
-          <Field><FieldLabel htmlFor="ticket-order">关联订单（可选）</FieldLabel><Select value={relatedOrderId} onValueChange={setRelatedOrderId}><SelectTrigger id="ticket-order" className="w-full"><SelectValue placeholder="不关联订单" /></SelectTrigger><SelectContent><SelectItem value="none">不关联订单</SelectItem>{orders.slice(0, 20).map(order => <SelectItem key={order.id} value={order.id}>{formatDateTime(order.createdAt)} · {formatMoney(order.totalAmount ?? order.amount)} · {order.planName} · {order.statusText}</SelectItem>)}</SelectContent></Select><FieldDescription>付款或套餐发放问题建议关联对应订单。</FieldDescription></Field>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Field><FieldLabel htmlFor="ticket-subject">工单主题</FieldLabel><Input id="ticket-subject" value={subject} onChange={event => setSubject(event.target.value)} minLength={4} maxLength={80} placeholder="例如：付款成功但套餐仍未开通" required /></Field>
+            <Field><FieldLabel htmlFor="ticket-order">关联订单（可选）</FieldLabel><Select value={relatedOrderId} onValueChange={setRelatedOrderId}><SelectTrigger id="ticket-order" className="w-full"><SelectValue placeholder="不关联订单" /></SelectTrigger><SelectContent><SelectItem value="none">不关联订单</SelectItem>{orders.slice(0, 20).map(order => <SelectItem key={order.id} value={order.id}>{formatDateTime(order.createdAt)} · {formatMoney(order.totalAmount ?? order.amount)} · {order.planName} · {order.statusText}</SelectItem>)}</SelectContent></Select><FieldDescription>付款或套餐发放问题建议关联对应订单。</FieldDescription></Field>
+          </div>
           <Field><FieldLabel htmlFor="ticket-message">问题描述</FieldLabel><Textarea id="ticket-message" value={message} onChange={event => setMessage(event.target.value)} minLength={10} maxLength={5000} rows={11} placeholder="请说明使用的客户端、发生时间、错误信息，以及已经尝试的处理方式。" required /><FieldDescription>{message.length} / 5000</FieldDescription></Field>
           <Field><FieldLabel>问题截图（可选）</FieldLabel><Button type="button" variant="outline" className="w-fit" onClick={() => screenshotInput.current?.click()} disabled={saving || screenshots.length >= 3}><ImageUp />选择截图</Button><input ref={screenshotInput} className="sr-only" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.some(file => !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type) || file.size > 8 * 1024 * 1024)) return toast.error("仅支持 PNG、JPEG、WebP、GIF，单张不超过 8MB"); if (screenshots.length + files.length > 3) return toast.error("最多上传 3 张截图"); setScreenshots(current => [...current, ...files]) }} /><FieldDescription>最多 3 张，单张不超过 8MB。</FieldDescription>{screenshots.length ? <ItemGroup>{screenshots.map((file, index) => <Item key={`${file.name}-${file.lastModified}`} variant="outline"><ImageIcon /><ItemContent><ItemTitle>{file.name}</ItemTitle><ItemDescription>{(file.size / 1024 / 1024).toFixed(2)} MB</ItemDescription></ItemContent><ItemActions><Button type="button" variant="ghost" size="icon-sm" aria-label={`移除 ${file.name}`} onClick={() => setScreenshots(current => current.filter((_, itemIndex) => itemIndex !== index))}><X /></Button></ItemActions></Item>)}</ItemGroup> : null}</Field>
         </FieldGroup></form>
@@ -200,22 +202,19 @@ export function AccountTicketDetailPage() {
   const [ticket, setTicket] = React.useState<Ticket | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState("")
-  const [closeOpen, setCloseOpen] = React.useState(false)
   const path = `/api/account/tickets/${encodeURIComponent(id)}`
   const refresh = React.useCallback(() => fetchJson<Ticket>(path).then(setTicket), [path])
   React.useEffect(() => { refresh().catch(error => setError(error.message)).finally(() => setLoading(false)) }, [refresh])
   async function reply(message: string) { try { setTicket(await postJson<Ticket>(`${path}/reply`, { message })); toast.success("回复已发送") } catch (error) { toast.error(error instanceof Error ? error.message : "回复失败"); throw error } }
-  async function closeTicket() { try { setTicket(await putJson<Ticket>(path, { action: "close" })); setCloseOpen(false); toast.success("工单已标记为已解决") } catch (error) { toast.error(error instanceof Error ? error.message : "操作失败") } }
   if (loading) return <LoadingPage />
   if (!ticket) return <section className="px-4 lg:px-6"><ErrorAlert message={error || "工单不存在。"} /></section>
   return (
     <section className="grid gap-4 px-4 lg:px-6">
-      <header className="flex flex-wrap items-center gap-3"><BackButton fallback="/account/tickets" /><span className="ml-auto flex items-center gap-2"><TicketStatusBadge status={ticket.status} />{ticket.status !== "closed" ? <Button variant="outline" size="sm" onClick={() => setCloseOpen(true)}><XCircle />标记已解决</Button> : null}</span></header>
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <header className="flex flex-wrap items-center gap-3"><BackButton fallback="/account/tickets" /><span className="ml-auto"><TicketStatusBadge status={ticket.status} /></span></header>
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
         <Card><CardHeader><CardTitle>{ticket.subject}</CardTitle><CardDescription>{ticket.id} · 创建于 {formatDateTime(ticket.createdAt)}</CardDescription></CardHeader><CardContent className="grid gap-6"><TicketMessageThread ticket={ticket} showAvatar={false} /><Separator />{ticket.status === "closed" ? <Alert><Clock3 /><AlertTitle>此工单已解决</AlertTitle><AlertDescription>已结束工单不能继续回复，如有新问题请创建新工单。</AlertDescription></Alert> : <ReplyComposer onSend={reply} />}</CardContent></Card>
         <Card className="h-fit"><CardHeader><CardTitle>工单信息</CardTitle></CardHeader><CardContent><ItemGroup><Item variant="muted"><ItemContent><ItemDescription>当前状态</ItemDescription><ItemTitle><TicketStatusBadge status={ticket.status} /></ItemTitle></ItemContent></Item><Item variant="muted"><ItemContent><ItemDescription>最后更新</ItemDescription><ItemTitle>{formatDateTime(ticket.updatedAt)}</ItemTitle></ItemContent></Item>{ticket.relatedOrder ? <Item asChild variant="outline"><Link to={`/account/orders/${encodeURIComponent(ticket.relatedOrder.id)}`}><ItemContent><ItemDescription>关联订单</ItemDescription><ItemTitle>{ticket.relatedOrder.merOrderTid}</ItemTitle><ItemDescription>{ticket.relatedOrder.planName} · {formatMoney(ticket.relatedOrder.totalAmount ?? ticket.relatedOrder.amount)}</ItemDescription></ItemContent></Link></Item> : null}</ItemGroup></CardContent></Card>
       </section>
-      <AlertDialog open={closeOpen} onOpenChange={setCloseOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>将工单标记为已解决？</AlertDialogTitle><AlertDialogDescription>结束后不能继续回复或重新打开，请确认问题已经处理完成。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>继续处理</AlertDialogCancel><AlertDialogAction onClick={() => void closeTicket()}>标记已解决</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </section>
   )
 }
@@ -260,7 +259,7 @@ export function AdminTicketDetailPage() {
   return (
     <section className="grid gap-4 px-4 lg:px-6">
       <header className="flex flex-wrap items-center gap-3"><BackButton fallback="/tickets" />{ticket.status !== "closed" ? <Button variant="outline" size="sm" className="ml-auto" onClick={() => setResolveOpen(true)}><XCircle />标记已解决</Button> : null}</header>
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
         <Card><CardHeader><CardTitle>{ticket.subject}</CardTitle><CardDescription>{ticket.id} · {formatDateTime(ticket.createdAt)}</CardDescription><CardAction><TicketStatusBadge status={ticket.status} /></CardAction></CardHeader><CardContent className="grid gap-6"><TicketMessageThread ticket={ticket} showAvatar={false} /><Separator />{ticket.status === "closed" ? <Alert><Clock3 /><AlertTitle>工单已解决</AlertTitle><AlertDescription>已结束工单不能继续回复或重新打开。</AlertDescription></Alert> : <ReplyComposer onSend={reply} />}</CardContent></Card>
         <section className="grid h-fit gap-4">
           <Card><CardHeader><CardTitle>用户信息</CardTitle></CardHeader><CardContent><ItemGroup><Item variant="muted"><UserRound /><ItemContent><ItemDescription>用户邮箱</ItemDescription><ItemTitle>{ticket.user?.email || ticket.email}</ItemTitle>{ticket.user?.customerID ? <ItemDescription>{ticket.user.customerID}</ItemDescription> : null}</ItemContent></Item>{ticket.user?.id ? <Button asChild variant="outline"><Link to={`/users/detail/${encodeURIComponent(ticket.user.id)}`}>查看用户详情</Link></Button> : null}</ItemGroup></CardContent></Card>
