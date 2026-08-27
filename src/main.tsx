@@ -19,11 +19,9 @@ const DashboardPage = lazy(() => import("@/components/features/dashboard").then(
 const XuiMonitorPage = lazy(() => import("@/components/features/xui-monitor").then(module => ({ default: module.XuiMonitorPage })))
 const XuiLogsPage = lazy(() => import("@/components/features/xui-logs").then(module => ({ default: module.XuiLogsPage })))
 const XuiInboundsPage = lazy(() => import("@/components/features/xui-inbounds").then(module => ({ default: module.XuiInboundsPage })))
-const SubscriptionsPage = lazy(() => import("@/components/features/subscriptions").then(module => ({ default: module.SubscriptionsPage })))
 const UsersPage = lazy(() => import("@/components/features/users").then(module => ({ default: module.UsersPage })))
 const OrdersPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrdersPage })))
 const OrderDetailPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrderDetailPage })))
-const SubscriptionDetailPage = lazy(() => import("@/components/features/details").then(module => ({ default: module.SubscriptionDetailPage })))
 const UserDetailPage = lazy(() => import("@/components/features/details").then(module => ({ default: module.UserDetailPage })))
 const EmbyPage = lazy(() => import("@/components/features/emby").then(module => ({ default: module.EmbyPage })))
 const PricingSettingsPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingSettingsPage })))
@@ -137,8 +135,6 @@ function App() {
               <Route path="xui-monitor" element={<XuiMonitorPage />} />
               <Route path="xui-logs" element={<XuiLogsPage />} />
               <Route path="xui-inbounds" element={<XuiInboundsPage />} />
-              <Route path="urls" element={<SubscriptionsPage />} />
-              <Route path="urls/detail/:id" element={<SubscriptionDetailPage />} />
               <Route path="users" element={<UsersPage />} />
               <Route path="users/detail/:id" element={<UserDetailPage />} />
               <Route path="orders" element={<OrdersPage />} />

@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { AlertCircle, ArrowRight, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, UserCog } from "lucide-react"
+import { AlertCircle, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, UserCog } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -15,7 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
+import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
@@ -25,7 +25,6 @@ import { AccountVerificationIcon } from "@/components/features/account-verificat
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
-import { ProviderBadge } from "@/components/features/provider-badge"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserBillsCard } from "@/components/features/user-bills-card"
 import { BackButton } from "@/components/features/back-button"
@@ -47,6 +46,12 @@ type ManualPaymentQuote = {
   vipDiscountAmount: number
   amount: number
   purchaseAction: "initial" | "extend" | "replace"
+}
+
+type ReferralDetails = {
+  invitedUsers: Array<{ id: string; email: string; status: string; createdAt?: string; orderCount: number; totalPaid: number }>
+  orders: Array<{ id: string; number: string; inviteeEmail: string; planName: string; amount: number; status: string; createdAt?: string }>
+  rewards: Array<{ id: string; sourceOrderId: string; orderNumber: string; inviteeEmail: string; baseAmount: number; rate: number; rewardAmount: number; status: string; availableAt?: string }>
 }
 
 const manualPaymentPlans = [{ value: "basic", label: "BASIC" }, { value: "pro", label: "PRO" }, { value: "ultra", label: "ULTRA" }]
@@ -262,6 +267,8 @@ export function UserDetailPage() {
   const [referralRate, setReferralRate] = React.useState(10)
   const [recurringReferral, setRecurringReferral] = React.useState(false)
   const [referralSaving, setReferralSaving] = React.useState(false)
+  const [referralDetails, setReferralDetails] = React.useState<ReferralDetails | null>(null)
+  const [referralDetailsError, setReferralDetailsError] = React.useState("")
   const [giftBalanceOpen, setGiftBalanceOpen] = React.useState(false)
   const [giftBalanceAmount, setGiftBalanceAmount] = React.useState("")
   const [giftBalanceNote, setGiftBalanceNote] = React.useState("")
@@ -306,7 +313,6 @@ export function UserDetailPage() {
   const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const purchaseCount = userBills.filter(item => !item.reversedAt).length
-  const poolLogs = (user?.userLogs || []).filter(log => log.status === "switched" || log.reason === "manual-pool-changed" || log.reason === "user-created")
 
   const productName = React.useMemo(() => {
     return user ? purchasedPlanName(user, pricing) : "-"
@@ -332,6 +338,21 @@ export function UserDetailPage() {
     setReferralRate(user?.referralRate ?? 10)
     setRecurringReferral(user?.recurringReferral === true)
   }, [user?.referralRate, user?.recurringReferral])
+
+  React.useEffect(() => {
+    if (!user?.accountId) {
+      setReferralDetails(null)
+      setReferralDetailsError("")
+      return
+    }
+    let active = true
+    setReferralDetails(null)
+    setReferralDetailsError("")
+    void fetchJson<ReferralDetails>(`/api/referrals/accounts/${user.accountId}`)
+      .then(data => { if (active) setReferralDetails(data) })
+      .catch(error => { if (active) setReferralDetailsError(error instanceof Error ? error.message : "返利明细加载失败") })
+    return () => { active = false }
+  }, [user?.accountId])
 
   React.useEffect(() => {
     if (!user?.id || user.registeredOnly) return
@@ -531,7 +552,7 @@ export function UserDetailPage() {
       await postJson(`/api/users/${user.id}/line`, { lineType: "self_hosted", activeGroup: lineGroup })
       await refreshUserDetails()
       setLineOpen(false)
-      toast.success(user.lineType === "self_hosted" ? "自研套餐分组已更新" : "用户已迁移到自研线路")
+      toast.success(user.lineType === "self_hosted" ? "权限组已更新" : "用户已迁移到自研线路")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "线路迁移失败")
     } finally {
@@ -676,9 +697,9 @@ export function UserDetailPage() {
       </Dialog>
       <Dialog open={lineOpen} onOpenChange={setLineOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{user.lineType === "self_hosted" ? "调整自研套餐分组" : "迁移到自研线路"}</DialogTitle><DialogDescription>系统将按入站管理中的套餐分组关联可用节点。未配置有效入站时不会迁移。</DialogDescription></DialogHeader>
-          <Field><FieldLabel htmlFor="self-hosted-plan">套餐分组</FieldLabel><Select value={lineGroup} onValueChange={setLineGroup} disabled={lineSaving}><SelectTrigger id="self-hosted-plan" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{manualPaymentPlans.map(plan => <SelectItem key={plan.value} value={plan.value}>{plan.label}</SelectItem>)}</SelectContent></Select></Field>
-          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={lineSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void migrateToSelfHosted()} disabled={lineSaving}>{lineSaving ? <Loader2 className="animate-spin" /> : <Network />}{lineSaving ? "同步中..." : "确认迁移"}</Button></DialogFooter>
+          <DialogHeader><DialogTitle>{user.lineType === "self_hosted" ? "调整权限组" : "迁移到自研线路"}</DialogTitle><DialogDescription>系统将按入站管理中的套餐分组关联可用节点。未配置有效入站时不会迁移。</DialogDescription></DialogHeader>
+          <Field><FieldLabel htmlFor="self-hosted-plan">{user.lineType === "self_hosted" ? "权限组" : "套餐分组"}</FieldLabel><Select value={lineGroup} onValueChange={setLineGroup} disabled={lineSaving}><SelectTrigger id="self-hosted-plan" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{manualPaymentPlans.map(plan => <SelectItem key={plan.value} value={plan.value}>{plan.label}</SelectItem>)}</SelectContent></Select></Field>
+          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={lineSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void migrateToSelfHosted()} disabled={lineSaving}>{lineSaving ? <Loader2 className="animate-spin" /> : <Network />}{lineSaving ? "同步中..." : user.lineType === "self_hosted" ? "保存权限组" : "确认迁移"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <XuiClientDialog user={user} open={xuiOpen} onOpenChange={setXuiOpen} onComplete={refreshUserDetails} />
@@ -727,21 +748,11 @@ export function UserDetailPage() {
             </div>
             <Separator />
             <div className="grid gap-3 [&>div]:grid-cols-[5rem_minmax(0,1fr)] [&>div]:items-start [&>div]:gap-3 [&>div>div]:text-right [&>div>div]:text-sm [&>div>div]:font-normal [&>div>p]:text-sm">
-              <Info label="用户名" value={user.userId || "-"} />
               <Info label="ID" value={user.customerID || "-"} />
               <Info label="邮箱" value={user.email || "-"} />
               <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "disabled" ? "已停用" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
               <Info label="用户类型" value={userTypeLabels[userType(user)]} />
-              <Info label="套餐" value={user.registeredOnly ? "未开通" : productName} />
-              <Info label="套餐等级" value={user.registeredOnly ? "-" : (manualPaymentPlans.some(plan => plan.value === user.activeGroup) ? user.activeGroup!.toUpperCase() : "-")} />
               <Info label="钱包余额" value={walletBalance === null ? "-" : formatMoney(walletBalance)} />
-              <Info label="当前到期" value={formatUserExpiry(user)} />
-              <Info label="迁移状态" value={<Badge variant={migrationStatus.variant}>{migrationStatus.label}</Badge>} />
-              <Info label="迁移方式" value={xuiMigrationSource(user)} />
-              <Info label="3x-ui 客户端" value={user.xuiClientEmail || "-"} />
-              <Info label="3x-ui 状态" value={<Badge variant={user.xuiClientPresent === false ? "destructive" : user.xuiClientPresent === true ? "success" : "secondary"}>{user.xuiClientPresent === false ? "客户端缺失" : user.xuiClientPresent === true ? "正常" : "等待检查"}</Badge>} />
-              <Info label="迁移时间" value={user.xuiMigratedAt ? formatDateTime(user.xuiMigratedAt) : "-"} />
-              {user.xuiMigrationError ? <Info label="迁移错误" value={user.xuiMigrationError} /> : null}
             </div>
           </CardContent>
           {user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : (
@@ -749,7 +760,7 @@ export function UserDetailPage() {
               {user.accountStatus === "active" && user.accountId ? <Button variant="outline" className="w-full" onClick={openManualPaymentDialog}><Banknote />人工收款</Button> : null}
               {user.registeredOnly ? null : <>
                 <Button variant="outline" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
-                <Button variant="outline" className="w-full" onClick={user.lineType === "self_hosted" ? openLineDialog : () => setXuiOpen(true)}><Network />{user.lineType === "self_hosted" ? "调整自研套餐" : "切换到自研线路"}</Button>
+                <Button variant="outline" className="w-full" onClick={user.lineType === "self_hosted" ? openLineDialog : () => setXuiOpen(true)}><Network />{user.lineType === "self_hosted" ? "调整权限组" : "切换到自研线路"}</Button>
                 {user.lineType === "self_hosted" && user.xuiClientPresent === false ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)}><RefreshCw />恢复3x-ui客户端</Button> : null}
                 {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
                 <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
@@ -767,24 +778,23 @@ export function UserDetailPage() {
         </Card>
 
         <Tabs defaultValue="overview" className="min-w-0 gap-4">
-          <TabsList className="grid w-full grid-cols-2 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-4">
+          <TabsList className="grid w-full grid-cols-3 group-data-[orientation=horizontal]/tabs:h-auto">
             <TabsTrigger value="overview" className="h-9">基本信息</TabsTrigger>
             <TabsTrigger value="bills" className="h-9">账单记录</TabsTrigger>
             <TabsTrigger value="referral" className="h-9">邀请返利</TabsTrigger>
-            <TabsTrigger value="logs" className="h-9">换池日志</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="grid min-w-0 gap-4">
             <Card>
               <CardHeader>
                 <CardTitle>当前套餐</CardTitle>
                 <CardDescription>{user.registeredOnly ? "尚未开通订阅" : productName}</CardDescription>
+                <CardAction><UserStatusBadge user={user} /></CardAction>
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2">
                 <Info label="当前到期" value={formatUserExpiry(user)} />
                 <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
                 <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
                 <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
-                <Info label="订阅状态" value={<UserStatusBadge user={user} />} />
               </CardContent>
             </Card>
             {user.lineType === "self_hosted" ? <Card>
@@ -857,51 +867,37 @@ export function UserDetailPage() {
               </Card>
             ) : null}
             <Card>
-              <CardHeader><CardTitle>账户信息</CardTitle></CardHeader>
+              <CardHeader><CardTitle>3x-ui 信息</CardTitle></CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2">
-                <Info label="ID" value={user.customerID || "-"} />
-                <Info label="邮箱" value={user.email || "-"} />
-                <Info label="iMessage" value={user.imessage || "-"} />
-                <Info label="VIP 等级" value={user.vipLevel?.toUpperCase() || "-"} />
+                <Info label="迁移状态" value={<Badge variant={migrationStatus.variant}>{migrationStatus.label}</Badge>} />
+                <Info label="迁移方式" value={xuiMigrationSource(user)} />
+                <Info label="客户端" value={user.xuiClientEmail || "-"} />
+                <Info label="客户端状态" value={user.xuiClientPresent === false ? "客户端缺失" : user.xuiClientPresent === true ? "正常" : "等待检查"} />
+                <Info label="迁移时间" value={user.xuiMigratedAt ? formatDateTime(user.xuiMigratedAt) : "-"} />
+                {user.xuiMigrationError ? <Info label="迁移错误" value={user.xuiMigrationError} /> : null}
               </CardContent>
             </Card>
           </TabsContent>
           <TabsContent value="bills" className="min-w-0">
             <UserBillsCard bills={userBills} />
           </TabsContent>
-          <TabsContent value="referral" className="min-w-0">
+          <TabsContent value="referral" className="grid min-w-0 gap-4">
             <Card>
               <CardHeader className="gap-6"><CardTitle>邀请返利设置</CardTitle><Separator /></CardHeader>
               <CardContent>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="referral-rate">收到返利比例（%）</Label><Input id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /></div><div className="flex items-center gap-2 self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} /><Label htmlFor="recurring-referral">享受循环返利</Label></div><Button className="sm:w-fit" onClick={() => void saveReferralSettings()} disabled={referralSaving}>{referralSaving ? <Loader2 className="animate-spin" /> : null}{referralSaving ? "保存中..." : "保存返利设置"}</Button></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</CardContent>
             </Card>
-          </TabsContent>
-          <TabsContent value="logs" className="min-w-0">
-            <Card>
-              <CardHeader className="gap-6"><CardTitle>换池日志</CardTitle><Separator /></CardHeader>
-              <CardContent>
-                {poolLogs.length ? (
-                  <ItemGroup className="gap-0">
-                    {poolLogs.map((log, index) => (
-                      <Item key={log.id} className="items-start gap-4 rounded-none p-0 pb-6 last:pb-0">
-                        <span className="relative flex w-3 shrink-0 justify-center self-stretch pt-1.5">
-                          <span className="size-3 shrink-0 rounded-full bg-primary ring-4 ring-muted" />
-                          {index < poolLogs.length - 1 ? <span className="absolute top-7 -bottom-6 w-px bg-border" /> : null}
-                        </span>
-                        <ItemContent className="gap-2">
-                          <ItemTitle>{log.reason === "user-created" ? "新购绑定" : log.reason === "manual-pool-changed" ? "手动换池" : "自动换池"}</ItemTitle>
-                          <ItemDescription className="flex flex-wrap items-center gap-2 break-all">
-                            {renderPoolLabel(log.fromSubscriptionLabel)}
-                            <ArrowRight className="size-3.5 shrink-0" aria-hidden="true" />
-                            {renderPoolLabel(log.toSubscriptionLabel)}
-                          </ItemDescription>
-                          {log.reasonText || log.message ? <ItemDescription>{log.reasonText || log.message}</ItemDescription> : null}
-                        </ItemContent>
-                        <ItemActions><time className="whitespace-nowrap text-xs text-muted-foreground" dateTime={log.at}>{formatDateTime(log.at)}</time></ItemActions>
-                      </Item>
-                    ))}
-                  </ItemGroup>
-                ) : <EmptyState title="暂无换池日志" />}
-              </CardContent>
+            {referralDetailsError ? <Alert variant="error"><AlertCircle /><AlertDescription>{referralDetailsError}</AlertDescription></Alert> : null}
+            <Card className="gap-0 overflow-hidden py-0">
+              <CardHeader className="border-b py-6"><CardTitle>邀请用户</CardTitle><CardDescription>{referralDetails ? `共 ${referralDetails.invitedUsers.length} 人` : "正在加载"}</CardDescription></CardHeader>
+              <CardContent className="p-0"><Table><TableHeader><TableRow><TableHead className="px-6">邮箱</TableHead><TableHead>状态</TableHead><TableHead>订单数</TableHead><TableHead>消费金额</TableHead><TableHead className="px-6">注册时间</TableHead></TableRow></TableHeader><TableBody>{referralDetails?.invitedUsers.length ? referralDetails.invitedUsers.map(item => <TableRow key={item.id}><TableCell className="px-6 font-medium">{item.email}</TableCell><TableCell><Badge variant={item.status === "active" ? "success" : item.status === "disabled" ? "destructive" : "secondary"}>{item.status === "active" ? "正常" : item.status === "disabled" ? "已停用" : item.status === "invited" ? "待认领" : item.status}</Badge></TableCell><TableCell>{item.orderCount}</TableCell><TableCell>{formatMoney(item.totalPaid)}</TableCell><TableCell className="px-6 text-muted-foreground">{formatDateTime(item.createdAt)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">暂无邀请用户</TableCell></TableRow>}</TableBody></Table></CardContent>
+            </Card>
+            <Card className="gap-0 overflow-hidden py-0">
+              <CardHeader className="border-b py-6"><CardTitle>邀请账单</CardTitle></CardHeader>
+              <CardContent className="p-0"><Table><TableHeader><TableRow><TableHead className="px-6">订单</TableHead><TableHead>邀请用户</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead className="px-6">时间</TableHead></TableRow></TableHeader><TableBody>{referralDetails?.orders.length ? referralDetails.orders.map(item => <TableRow key={item.id}><TableCell className="px-6"><Button asChild variant="link" size="sm" className="h-auto p-0"><Link to={`/orders/${item.id}`}>{item.number}</Link></Button></TableCell><TableCell>{item.inviteeEmail}</TableCell><TableCell>{item.planName}</TableCell><TableCell>{formatMoney(item.amount)}</TableCell><TableCell><Badge variant={item.status === "paid" ? "success" : item.status === "reversed" ? "destructive" : "secondary"}>{item.status === "paid" ? "已支付" : item.status === "pending" ? "待支付" : item.status === "reversed" ? "已撤销" : item.status}</Badge></TableCell><TableCell className="px-6 text-muted-foreground">{formatDateTime(item.createdAt)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">暂无邀请账单</TableCell></TableRow>}</TableBody></Table></CardContent>
+            </Card>
+            <Card className="gap-0 overflow-hidden py-0">
+              <CardHeader className="border-b py-6"><CardTitle>返利明细</CardTitle></CardHeader>
+              <CardContent className="p-0"><Table><TableHeader><TableRow><TableHead className="px-6">来源订单</TableHead><TableHead>邀请用户</TableHead><TableHead>返利基数</TableHead><TableHead>比例</TableHead><TableHead>返利金额</TableHead><TableHead>状态</TableHead><TableHead className="px-6">到账时间</TableHead></TableRow></TableHeader><TableBody>{referralDetails?.rewards.length ? referralDetails.rewards.map(item => <TableRow key={item.id}><TableCell className="px-6"><Button asChild variant="link" size="sm" className="h-auto p-0"><Link to={`/orders/${item.sourceOrderId}`}>{item.orderNumber}</Link></Button></TableCell><TableCell>{item.inviteeEmail}</TableCell><TableCell>{formatMoney(item.baseAmount)}</TableCell><TableCell>{item.rate}%</TableCell><TableCell className="font-medium">{formatMoney(item.rewardAmount)}</TableCell><TableCell><Badge variant={item.status === "available" ? "success" : item.status === "pending" ? "secondary" : "destructive"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "审核中" : item.status === "rejected" ? "已拒绝" : item.status}</Badge></TableCell><TableCell className="px-6 text-muted-foreground">{formatDateTime(item.availableAt)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">暂无返利记录</TableCell></TableRow>}</TableBody></Table></CardContent>
             </Card>
           </TabsContent>
         </Tabs>
@@ -917,11 +913,4 @@ function Info({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="min-w-0 break-words text-sm font-medium">{value}</div>
     </div>
   )
-}
-
-function renderPoolLabel(label?: string) {
-  if (!label || label === "-") return <span>未绑定</span>
-  const separator = label.indexOf(" - ")
-  if (separator < 0) return <span>{label}</span>
-  return <><ProviderBadge name={label.slice(0, separator)} /><span>{label.slice(separator + 3)}</span></>
 }
