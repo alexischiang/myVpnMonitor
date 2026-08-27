@@ -1713,6 +1713,45 @@ async function createReferralReward(order, account) {
   await saveReferralRewards();
 }
 
+function adminReferralDetails(account, accountRows = accounts, orders = paymentOrders, rewards = referralRewards) {
+  const invitedAccounts = accountRows.filter(item => item.referredByAccountId === account.id);
+  const invitedAccountIds = new Set(invitedAccounts.map(item => item.id));
+  const invitedOrders = orders.filter(item => invitedAccountIds.has(item.accountId));
+  return {
+    invitedUsers: invitedAccounts.map(invited => {
+      const paidOrders = invitedOrders.filter(order => order.accountId === invited.id && order.status === "paid" && !order.reversedAt);
+      return {
+        id: invited.id,
+        email: invited.email,
+        status: invited.status,
+        createdAt: invited.createdAt,
+        orderCount: paidOrders.length,
+        totalPaid: paidOrders.reduce((sum, order) => sum + Number(order.totalAmount ?? order.amount ?? 0), 0)
+      };
+    }),
+    orders: invitedOrders.map(order => ({
+      id: order.id,
+      number: order.merOrderTid || order.id,
+      inviteeEmail: invitedAccounts.find(item => item.id === order.accountId)?.email || "-",
+      planName: order.planName || order.optionLabel || "-",
+      amount: Number(order.totalAmount ?? order.amount ?? 0),
+      status: order.reversedAt ? "reversed" : order.status,
+      createdAt: order.paidAt || order.createdAt
+    })),
+    rewards: rewards.filter(item => item.inviterAccountId === account.id).map(reward => ({
+      id: reward.id,
+      sourceOrderId: reward.sourceOrderId,
+      orderNumber: orders.find(order => order.id === reward.sourceOrderId)?.merOrderTid || reward.sourceOrderId,
+      inviteeEmail: accountRows.find(item => item.id === reward.inviteeAccountId)?.email || "-",
+      baseAmount: reward.baseCents / 100,
+      rate: reward.rate,
+      rewardAmount: reward.rewardCents / 100,
+      status: reward.status,
+      availableAt: reward.availableAt
+    }))
+  };
+}
+
 function syncWalletVip(account, wallet) {
   const vipSpend = wallet.vipSpendCents / 100;
   account.vipSpend = vipSpend;
@@ -8817,6 +8856,18 @@ async function handleApi(req, res, pathname) {
   }
 
   const referralAccountMatch = pathname.match(/^\/api\/referrals\/accounts\/([^/]+)$/);
+  if (referralAccountMatch && req.method === "GET") {
+    if (!requireAdmin(req, res)) return;
+    await loadLatestData();
+    await settleReferralRewards();
+    const account = accounts.find(item => item.id === referralAccountMatch[1]);
+    if (!account) {
+      sendJson(res, 404, { error: "账户不存在" });
+      return;
+    }
+    sendJson(res, 200, adminReferralDetails(account));
+    return;
+  }
   if (referralAccountMatch && req.method === "PUT") {
     if (!requireAdmin(req, res)) return;
     try {
@@ -10169,6 +10220,7 @@ module.exports = Object.assign(requestHandler, {
   normalizeSalesSettings,
   normalizePaymentSettings,
   publicInviterLabel,
+  adminReferralDetails,
   batchItems,
   customerIDFromUUID,
   publicRegisteredAccount,

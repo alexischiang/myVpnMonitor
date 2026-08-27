@@ -30,6 +30,7 @@ const {
   normalizeSalesSettings,
   normalizePaymentSettings,
   publicInviterLabel,
+  adminReferralDetails,
   sendJson,
   batchItems,
   classifyCurrentPoolFit,
@@ -69,6 +70,16 @@ const {
 } = require("./server");
 
 const gib = 1024 ** 3;
+assert.deepStrictEqual(adminReferralDetails(
+  { id: "inviter" },
+  [{ id: "invitee", referredByAccountId: "inviter", email: "invitee@example.com", status: "active", createdAt: "2026-08-27T00:00:00.000Z" }],
+  [{ id: "order", accountId: "invitee", merOrderTid: "ORDER-1", planName: "PRO", totalAmount: 50, status: "paid", paidAt: "2026-08-27T01:00:00.000Z" }],
+  [{ id: "reward", sourceOrderId: "order", inviterAccountId: "inviter", inviteeAccountId: "invitee", baseCents: 5000, rate: 10, rewardCents: 500, status: "available", availableAt: "2026-08-29T01:00:00.000Z" }]
+), {
+  invitedUsers: [{ id: "invitee", email: "invitee@example.com", status: "active", createdAt: "2026-08-27T00:00:00.000Z", orderCount: 1, totalPaid: 50 }],
+  orders: [{ id: "order", number: "ORDER-1", inviteeEmail: "invitee@example.com", planName: "PRO", amount: 50, status: "paid", createdAt: "2026-08-27T01:00:00.000Z" }],
+  rewards: [{ id: "reward", sourceOrderId: "order", orderNumber: "ORDER-1", inviteeEmail: "invitee@example.com", baseAmount: 50, rate: 10, rewardAmount: 5, status: "available", availableAt: "2026-08-29T01:00:00.000Z" }]
+});
 assert.deepStrictEqual(summarizeXuiInboundProbes([{ status: "online" }, { status: "offline" }, { status: "disabled" }], "2026-08-26T00:00:00.000Z"), {
   configured: true,
   totalNodes: 3,

@@ -118,9 +118,13 @@ function statusBadgeVariant(status: string) {
   return "secondary" as const
 }
 
+function displayOrderNumber(value: string) {
+  return value.startsWith("family-grant-") ? "family-grant" : value
+}
+
 function renderMobileOrder(order: AdminOrder) {
   const status = orderStatus(order)
-  return <OrderMobileItem amount={formatMoney(order.totalAmount ?? order.amount)} createdAt={order.createdAt} customer={order.email || "-"} customerUrl={order.userId ? `/users/detail/${order.userId}` : undefined} detailUrl={`/orders/${order.id}`} orderNumber={order.merOrderTid} product={`${order.planName} / ${order.optionLabel}`} status={orderStatusLabels[status] || order.statusText} statusVariant={statusBadgeVariant(status)} />
+  return <OrderMobileItem amount={formatMoney(order.totalAmount ?? order.amount)} createdAt={order.createdAt} customer={order.email || "-"} customerUrl={order.userId ? `/users/detail/${order.userId}` : undefined} detailUrl={`/orders/${order.id}`} orderNumber={displayOrderNumber(order.merOrderTid)} product={`${order.planName} / ${order.optionLabel}`} status={orderStatusLabels[status] || order.statusText} statusVariant={statusBadgeVariant(status)} />
 }
 
 export function OrdersPage() {
@@ -149,7 +153,7 @@ export function OrdersPage() {
       accessorKey: "merOrderTid",
       header: DataTableColumnHeader({ title: "订单号" }),
       meta: { label: "订单号" },
-      cell: ({ row }) => <span className="font-mono text-xs">{row.original.merOrderTid}</span>,
+      cell: ({ row }) => <span className="font-mono text-xs">{displayOrderNumber(row.original.merOrderTid)}</span>,
     },
     {
       id: "customer",
