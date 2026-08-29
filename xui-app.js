@@ -23,9 +23,10 @@ function trafficResetKey(userId, reason, reference) {
 
 function validateTrafficReset(payload = {}) {
   const reason = String(payload.reason || "");
-  const reference = String(reason === "calendar_month" ? payload.month || "" : payload.paymentOrderId || "").trim();
-  if (!new Set(["calendar_month", "paid"]).has(reason)) throw Object.assign(new Error("流量重置原因无效。"), { statusCode: 400 });
+  const reference = String(reason === "calendar_month" ? payload.month || "" : reason === "manual" ? payload.resetId || "" : payload.paymentOrderId || "").trim();
+  if (!new Set(["calendar_month", "manual", "paid"]).has(reason)) throw Object.assign(new Error("流量重置原因无效。"), { statusCode: 400 });
   if (reason === "calendar_month" && !/^\d{4}-(0[1-9]|1[0-2])$/.test(reference)) throw Object.assign(new Error("自然月必须使用 YYYY-MM 格式。"), { statusCode: 400 });
+  if (reason === "manual" && (!reference || reference.length > 128)) throw Object.assign(new Error("人工重置必须提供重置编号。"), { statusCode: 400 });
   if (reason === "paid" && (!reference || reference.length > 128)) throw Object.assign(new Error("付费重置必须提供支付订单号。"), { statusCode: 400 });
   return { reason, reference };
 }

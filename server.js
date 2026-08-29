@@ -125,19 +125,19 @@ function normalizeTrafficTier(plan, value) {
   return tier;
 }
 
-function dynamicPaymentPlanOption(optionId) {
+function dynamicPaymentPlanOption(optionId, { allowUnlisted = false } = {}) {
   const id = String(optionId || "");
   const lifetimeMatch = id.match(/^(.+)-lifetime$/);
   if (lifetimeMatch) {
     const plan = pricingProduct(lifetimeMatch[1]);
-    if (!plan || plan.internal === true || !productVariantAvailable(plan, "lifetime") || plan.lifetimeStock === 0 || !Number.isFinite(Number(plan.lifetimePrice))) return null;
-    return { planId: plan.group, planName: plan.lifetimeName || `${plan.name || plan.group} 不限时`, optionLabel: "固定流量 · 不限时", priceKey: "lifetimePrice", duration: "lifetime", group: plan.group, lineType: "self_hosted", lifetime: true, fallbackPrice: Number(plan.lifetimePrice) };
+    if (!plan || (plan.productKind && plan.productKind !== "plan") || plan.lifetimeDeleted === true || (!allowUnlisted && (plan.internal === true || !productVariantAvailable(plan, "lifetime") || plan.lifetimeStock === 0)) || !Number.isFinite(Number(plan.lifetimePrice))) return null;
+    return { planId: plan.group, planName: plan.lifetimeName || `${plan.name || plan.group} 不限时`, optionLabel: plan.lifetimeUnlimited === true ? "不限流量 · 不限时" : "固定流量 · 不限时", priceKey: "lifetimePrice", duration: "lifetime", group: plan.group, lineType: "self_hosted", lifetime: true, ...(plan.lifetimeUnlimited === true ? { unlimited: true } : {}), fallbackPrice: Number(plan.lifetimePrice) };
   }
   const recurringMatch = id.match(/^(.+)-(30|90|180|360)$/);
   if (!recurringMatch) return null;
   const plan = pricingProduct(recurringMatch[1]);
   const period = PRICING_PERIODS[recurringMatch[2]];
-  if (!plan || plan.internal === true || !productVariantAvailable(plan, "recurring") || plan.stock === 0 || !Number.isFinite(Number(plan[period.priceKey]))) return null;
+  if (!plan || (plan.productKind && plan.productKind !== "plan") || plan.recurringDeleted === true || (!allowUnlisted && (plan.internal === true || !productVariantAvailable(plan, "recurring") || plan.stock === 0)) || !Number.isFinite(Number(plan[period.priceKey]))) return null;
   return { planId: plan.group, planName: plan.name || plan.group.toUpperCase(), optionLabel: period.label, priceKey: period.priceKey, duration: period.duration, group: plan.group, lineType: "self_hosted", fallbackPrice: Number(plan[period.priceKey]) };
 }
 
@@ -180,7 +180,7 @@ if (process.env.NODE_ENV === "test") {
   PAYMENT_PLAN_OPTIONS["pro-test-001"] = { planId: "pro", planName: "PRO", optionLabel: "支付测试 1 元", duration: "monthly", group: "pro", fallbackPrice: 1 };
 }
 const DEFAULT_PRICING_FAQS = [
-  { id: "devices", question: "“可绑定设备”是指什么？", answer: "指同一订阅可同时使用的设备数量，手机、电脑和平板等各计为一台；具体数量以所选套餐和计费周期显示为准。", enabled: true },
+  { id: "devices", question: "“可使用设备数”是指什么？", answer: "指同一订阅可同时使用的设备数量，手机、电脑和平板等各计为一台；具体数量以所选套餐和计费周期显示为准。", enabled: true },
   { id: "gpt", question: "哪些套餐支持 GPT 解锁？", answer: "当前 PRO 套餐明确包含稳定 GPT 解锁。其他套餐能力请以套餐卡片的功能列表为准；实际可用性可能受目标平台策略和网络环境影响。", enabled: true },
   { id: "discount", question: "季度、半年和年度套餐如何计算优惠？", answer: "页面折扣以月付价格乘以对应月数作为基准计算，周期价格旁的百分比就是相比连续月付节省的比例。", enabled: true },
   { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "新套餐支付成功后会立即覆盖当前套餐，原套餐剩余有效期和流量不再保留。提交订单前会要求再次确认。", enabled: true },
@@ -847,11 +847,32 @@ function ticketById(id) {
 function publicTicket(ticket, { admin = false } = {}) {
   if (!ticket) return null;
   const account = accounts.find(item => item.id === ticket.accountId);
+  const linkedUser = users.find(item => item.id === account?.linkedUserId);
+  const linkedSubscription = subscriptions.find(item => item.id === linkedUser?.subscriptionId);
+  const linkedTraffic = linkedUser && (isSelfHostedUser(linkedUser) ? linkedUser.xuiLastTraffic || linkedUser.xuiWeightedTraffic : linkedSubscription?.metrics);
   const relatedOrder = paymentOrders.find(item => item.id === ticket.relatedOrderId && item.accountId === ticket.accountId);
   return {
     ...ticket,
     ...(admin ? {
-      user: { id: account?.linkedUserId || "", email: account?.email || ticket.email, customerID: account?.customerID || "" },
+      user: {
+        id: linkedUser?.id || "",
+        email: account?.email || ticket.email,
+        customerID: account?.customerID || "",
+        planName: linkedUser?.currentProductSnapshot?.name || (linkedUser ? activeUserGroup(linkedUser).toUpperCase() : ""),
+        optionLabel: linkedUser?.currentProductSnapshot?.optionLabel || "",
+        duration: linkedUser?.duration || "",
+        expiresAt: linkedUser?.expiresAt || "",
+        traffic: linkedUser ? {
+          usedBytes: linkedTraffic?.usedBytes ?? null,
+          totalBytes: linkedTraffic?.totalBytes ?? null,
+          usagePercent: linkedTraffic?.usagePercent ?? null,
+          lastSyncedAt: linkedTraffic?.lastSyncedAt || linkedSubscription?.lastCheckedAt || ""
+        } : null,
+        devices: linkedUser ? {
+          connected: linkedUser.xuiLastTraffic?.connectedIpCount ?? null,
+          limit: linkedUser.xuiLastTraffic?.ipLimit ?? planDeviceLimit(linkedUser)
+        } : null
+      },
       relatedOrder: relatedOrder ? publicPaymentOrder(relatedOrder) : null
     } : { relatedOrder: relatedOrder ? publicPaymentOrder(relatedOrder) : null })
   };
@@ -1340,15 +1361,33 @@ function normalizePaymentAmountForGateway(value) {
   return amount.toFixed(2);
 }
 
-function resolvePaymentPlanOption(optionId, { allowLegacy = false } = {}) {
+function resolvePaymentPlanOption(optionId, { allowLegacy = false, allowUnlisted = false } = {}) {
   const id = String(optionId || "");
-  const option = dynamicPaymentPlanOption(id)
+  const option = dynamicPaymentPlanOption(id, { allowUnlisted })
     || ((allowLegacy || (process.env.NODE_ENV === "test" && id === "pro-test-001")) ? PAYMENT_PLAN_OPTIONS[id] : null);
   if (!option) throw new Error("Unsupported pricing option.");
   const priceRow = pricingProduct(option.planId);
   const managedPrice = option.priceKey ? Number(priceRow?.[option.priceKey]) : NaN;
   const amount = Number.isFinite(managedPrice) && managedPrice >= 0 ? managedPrice : option.fallbackPrice;
   return { ...option, amount };
+}
+
+function resolvePlanChangeOption(user, optionId) {
+  const option = resolvePaymentPlanOption(optionId, { allowUnlisted: true });
+  const currentDuration = String(user?.duration || "");
+  if (option.duration !== currentDuration && !(currentDuration !== "lifetime" && option.duration === "lifetime")) throw new Error("目标商品必须与当前周期一致，或为不限时规格。");
+  return option;
+}
+
+const PLAN_CHANGE_STATE_FIELDS = ["group", "activeGroup", "unlimited", "trafficTier", "purchasedTrafficGb", "duration", "expiresAt", "planExpiresAt", "currentProductId", "currentOptionId", "currentProductOrderId", "currentProductSource", "currentProductBoundAt", "currentProductSnapshot", "xuiTrafficPackBytes", "xuiTrafficPackCycleKey", "xuiTrafficPackOrderIds", "xuiNextTrafficResetAt"];
+
+function planChangeState(user = {}) {
+  return structuredClone(Object.fromEntries(PLAN_CHANGE_STATE_FIELDS.map(field => [field, user[field] ?? null])));
+}
+
+function restorePlanChangeState(user, state = {}) {
+  for (const field of PLAN_CHANGE_STATE_FIELDS) user[field] = structuredClone(state[field] ?? null);
+  user.updatedAt = new Date().toISOString();
 }
 
 function paymentChannelCode(value) {
@@ -3234,6 +3273,8 @@ function planTrafficBytes(user = {}) {
   if (user.unlimited) return 0;
   const plan = pricingForUser(user);
   const lifetime = user.duration === "lifetime";
+  const purchasedTrafficGb = Number(user.purchasedTrafficGb);
+  if (!lifetime && Number.isFinite(purchasedTrafficGb) && purchasedTrafficGb > 0) return Math.round(purchasedTrafficGb * 1024 ** 3);
   const configured = Number(lifetime ? plan?.lifetimeTrafficBytes : plan?.trafficBytes);
   if (Number.isFinite(configured) && configured >= 0) return Math.round(configured);
   const match = String(lifetime ? plan?.lifetimeTraffic : plan?.traffic || "").match(/(\d+(?:\.\d+)?)\s*(TB|GB|G|MB|M)/i);
@@ -3304,6 +3345,15 @@ function expireUserTrafficPacks(user) {
     user.xuiLastTraffic.usagePercent = totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null;
   }
   return true;
+}
+
+function refreshUserPlanTraffic(user) {
+  const totalBytes = planTrafficBytes(user) + Math.max(0, Number(user.xuiTrafficPackBytes) || 0);
+  const usedBytes = Math.max(0, Number(user.xuiWeightedTraffic?.usedBytes ?? user.xuiLastTraffic?.usedBytes) || 0);
+  const remainingBytes = totalBytes ? Math.max(totalBytes - usedBytes, 0) : null;
+  user.xuiTrafficLimitBytes = totalBytes;
+  if (user.xuiWeightedTraffic) Object.assign(user.xuiWeightedTraffic, { totalBytes, remainingBytes, usagePercent: totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null, depleted: totalBytes > 0 && usedBytes >= totalBytes });
+  if (user.xuiLastTraffic) Object.assign(user.xuiLastTraffic, { totalBytes, remainingBytes, usagePercent: totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null, status: totalBytes > 0 && usedBytes >= totalBytes ? "depleted" : "active", nextResetAt: user.xuiNextTrafficResetAt || "", expiresAt: user.expiresAt });
 }
 
 async function enableXuiClientAfterTrafficPack(user) {
@@ -3862,13 +3912,14 @@ function xuiResetReference(value) {
 
 async function resetXuiClientTraffic(user, reset = {}) {
   const paymentOrderId = typeof reset === "object" ? String(reset.paymentOrderId || "") : "";
+  const manualResetId = typeof reset === "object" ? String(reset.manualResetId || "") : "";
   if (XUI_SERVICE_URL) {
     await requestXuiService({
       serviceUrl: XUI_SERVICE_URL,
       serviceToken: XUI_SERVICE_TOKEN,
       path: `/internal/clients/${encodeURIComponent(user.id)}/traffic-reset`,
       method: "POST",
-      body: paymentOrderId ? { reason: "paid", paymentOrderId } : { reason: "calendar_month", month: xuiResetReference(reset) },
+      body: paymentOrderId ? { reason: "paid", paymentOrderId } : manualResetId ? { reason: "manual", resetId: manualResetId } : { reason: "calendar_month", month: xuiResetReference(reset) },
       timeoutMs: XUI_TIMEOUT_MS
     });
   } else {
@@ -5811,6 +5862,9 @@ const userLogReasonText = {
   "user-gifted": "\u8d60\u9001\u65f6\u957f",
   "purchase-pool-changed": "\u8d2d\u4e70\u540e\u81ea\u52a8\u6362\u6c60",
   "user-updated": "\u7528\u6237\u8d44\u6599\u66f4\u65b0",
+  "plan-changed": "\u5957\u9910\u53d8\u66f4",
+  "plan-change-rolled-back": "\u64a4\u9500\u5957\u9910\u53d8\u66f4",
+  "traffic-reset": "\u6d41\u91cf\u91cd\u7f6e",
   "manual-pool-changed": "\u624b\u52a8\u6362\u6c60",
   "xui-migration-activation-required": "\u7b49\u5f85\u6fc0\u6d3b\u8d26\u6237",
   "xui-migration-completed": "\u65e7\u5957\u9910\u8fc1\u79fb\u5b8c\u6210",
@@ -6015,6 +6069,10 @@ function userSnapshotForLog(user = {}) {
     isSuperAccount: Boolean(user.isSuperAccount),
     purchasedAt: user.purchasedAt || "",
     duration: user.duration || "",
+    unlimited: Boolean(user.unlimited),
+    trafficTier: Number(user.trafficTier || 1),
+    purchasedTrafficGb: user.purchasedTrafficGb ?? null,
+    xuiTrafficLimitBytes: Number(user.xuiTrafficLimitBytes) || 0,
     currentProductId: user.currentProductId || "",
     currentOptionId: user.currentOptionId || "",
     currentProductOrderId: user.currentProductOrderId || "",
@@ -6042,6 +6100,10 @@ function summarizeUserChanges(before = {}, after = {}) {
     isSuperAccount: "\u8d85\u7ea7\u8d26\u6237",
     purchasedAt: "\u8d2d\u4e70\u65e5\u671f",
     duration: "\u5957\u9910\u65f6\u957f",
+    unlimited: "\u65e0\u9650\u6d41\u91cf",
+    trafficTier: "\u6d41\u91cf\u6863\u4f4d",
+    purchasedTrafficGb: "\u5b9a\u5236\u6d41\u91cf",
+    xuiTrafficLimitBytes: "\u6d41\u91cf\u989d\u5ea6",
     currentProductId: "当前商品",
     currentOptionId: "当前商品规格",
     currentProductOrderId: "商品来源订单",
@@ -6074,6 +6136,9 @@ function userActionMessage(reason, details = {}) {
     return `\u7eed\u8d39 ${details.duration || "-"}\uff0c\u91d1\u989d ${Number(details.amount || 0).toFixed(2)}\uff0c\u5230\u671f ${details.beforeExpiresAt || "-"} -> ${details.afterExpiresAt || "-"}`;
   }
   if (reason === "user-gifted") return `\u8d60\u9001 ${details.days || 0} \u5929\uff0c\u5230\u671f ${details.beforeExpiresAt || "-"} -> ${details.afterExpiresAt || "-"}`;
+  if (reason === "plan-changed") return `\u66f4\u6539\u5957\u9910\uff1a${details.beforePlan || "-"} -> ${details.afterPlan || "-"}\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}\uff1b\u5907\u6ce8 ${details.note || "-"}`;
+  if (reason === "plan-change-rolled-back") return `\u64a4\u9500\u5957\u9910\u53d8\u66f4\uff1a${details.beforePlan || "-"} -> ${details.afterPlan || "-"}\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}`;
+  if (reason === "traffic-reset") return `\u624b\u52a8\u91cd\u7f6e\u7528\u6237\u6d41\u91cf\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}`;
   if (reason === "purchase-pool-changed") return `\u7eed\u8d39\u89e6\u53d1\u81ea\u52a8\u6362\u6c60\uff1a${details.fromSubscriptionLabel || "-"} -> ${details.toSubscriptionLabel || "-"}`;
   if (reason === "manual-pool-changed") {
     const changeText = (details.changes || [])
@@ -9471,7 +9536,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|account-status|type|line|xui|xui-recover))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|account-status|type|line|xui|xui-recover|traffic-reset|plan|plan-rollback))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -9688,6 +9753,102 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 200, publicUser(item));
       } catch (error) {
         sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "traffic-reset" && req.method === "POST") {
+      const previous = item ? structuredClone(item) : null;
+      try {
+        if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以重置流量。");
+        if (!item.xuiClientEmail) throw new Error("用户尚未关联3x-ui Client。");
+        const resetId = crypto.randomUUID();
+        await resetXuiClientTraffic(item, { manualResetId: resetId });
+        const now = new Date().toISOString();
+        const totalBytes = xuiTrafficLimitBytes(item);
+        item.xuiLastTrafficResetAt = now;
+        item.xuiWeightedTraffic = { ...(item.xuiWeightedTraffic || {}), rawUsedBytes: 0, usedBytes: 0, totalBytes, remainingBytes: totalBytes || null, usagePercent: totalBytes ? 0 : null, depleted: false, nodes: [], lastSyncedAt: now };
+        item.xuiLastTraffic = { ...(item.xuiLastTraffic || {}), available: true, status: "active", uploadBytes: 0, downloadBytes: 0, rawUsedBytes: 0, usedBytes: 0, totalBytes, remainingBytes: totalBytes || null, usagePercent: totalBytes ? 0 : null, nodes: [], lastSyncedAt: now };
+        await clearXuiBillingLedger(xuiClientEmail(item));
+        const actor = currentSession(req)?.account || "admin";
+        appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "traffic-reset", req, message: userActionMessage("traffic-reset", { actor }), details: { actor, resetId, totalBytes } }));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        if (item && previous) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previous);
+        }
+        sendJson(res, error.statusCode || 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "plan" && req.method === "POST") {
+      const previous = item ? structuredClone(item) : null;
+      try {
+        if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以直接更改套餐。");
+        const payload = await readJson(req);
+        const option = resolvePlanChangeOption(item, payload.optionId);
+        const group = option.group;
+        const unlimited = option.unlimited === true;
+        const plan = pricingProduct(option.planId) || {};
+        const trafficTier = option.lifetime || unlimited ? 1 : normalizeTrafficTier(plan, payload.trafficTier);
+        const baseTrafficGb = unlimited ? 0 : option.lifetime ? planTrafficBytes({ activeGroup: group, duration: "lifetime", unlimited: false }) / 1024 ** 3 : recurringTrafficConfig(plan).baseGb;
+        const purchasedTrafficGb = option.lifetime || unlimited ? null : baseTrafficGb * trafficTier;
+        const note = String(payload.note || "").trim().slice(0, 200);
+        if (!note) throw new Error("请填写套餐变更原因。");
+        const before = userSnapshotForLog(item);
+        const rollbackState = planChangeState(item);
+        const beforePlan = `${activeUserGroup(item).toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
+        Object.assign(item, { group, activeGroup: group, unlimited, trafficTier, purchasedTrafficGb, updatedAt: new Date().toISOString() });
+        if (option.lifetime === true) Object.assign(item, { duration: "lifetime", expiresAt: LIFETIME_EXPIRES_AT, planExpiresAt: LIFETIME_EXPIRES_AT, xuiNextTrafficResetAt: "" });
+        const binding = productBinding(option.planId, String(payload.optionId), item, { name: option.planName, optionLabel: option.optionLabel, lifetime: option.lifetime === true, unlimited });
+        bindUserProduct(item, binding, { source: "admin_plan_change" });
+        expireUserTrafficPacks(item);
+        refreshUserPlanTraffic(item);
+        await provisionXuiClient(item);
+        const actor = currentSession(req)?.account || "admin";
+        const afterPlan = `${activeUserGroup(item).toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
+        const changes = summarizeUserChanges(before, userSnapshotForLog(item));
+        appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "plan-changed", req, message: userActionMessage("plan-changed", { beforePlan, afterPlan, actor, note }), details: { actor, note, beforePlan, afterPlan, changes, before, after: userSnapshotForLog(item), rollbackState, changedState: planChangeState(item) } }));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        if (item && previous) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previous);
+        }
+        sendJson(res, error.statusCode || 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "plan-rollback" && req.method === "POST") {
+      const previous = item ? structuredClone(item) : null;
+      try {
+        if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以撤销套餐变更。");
+        const payload = await readJson(req);
+        const latestPlanEvent = (Array.isArray(item.userLogs) ? item.userLogs : []).find(log => ["plan-changed", "plan-change-rolled-back"].includes(log.reason));
+        if (!latestPlanEvent || latestPlanEvent.reason !== "plan-changed" || latestPlanEvent.id !== String(payload.changeId || "") || !latestPlanEvent.details?.rollbackState) throw new Error("只能撤销最近一次尚未撤销的套餐变更。");
+        if (JSON.stringify(planChangeState(item)) !== JSON.stringify(latestPlanEvent.details.changedState)) throw new Error("套餐权益已发生后续变化，不能直接撤销。");
+        const before = userSnapshotForLog(item);
+        const beforePlan = `${activeUserGroup(item).toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
+        restorePlanChangeState(item, latestPlanEvent.details.rollbackState);
+        refreshUserPlanTraffic(item);
+        await provisionXuiClient(item);
+        const actor = currentSession(req)?.account || "admin";
+        const afterPlan = `${activeUserGroup(item).toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
+        const changes = summarizeUserChanges(before, userSnapshotForLog(item));
+        appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "plan-change-rolled-back", req, message: userActionMessage("plan-change-rolled-back", { beforePlan, afterPlan, actor }), details: { actor, sourceChangeId: latestPlanEvent.id, beforePlan, afterPlan, changes, before, after: userSnapshotForLog(item) } }));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        if (item && previous) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previous);
+        }
+        sendJson(res, error.statusCode || 400, { error: error.message });
       }
       return;
     }
@@ -10200,6 +10361,10 @@ module.exports = Object.assign(requestHandler, {
   startOfUtcDate,
   remainingPlanCashValue,
   inferUserProductBinding,
+  resolvePlanChangeOption,
+  planTrafficBytes,
+  planChangeState,
+  restorePlanChangeState,
   bindUserProduct,
   paymentQuote,
   planQuoteWithAddOns,

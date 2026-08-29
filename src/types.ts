@@ -87,6 +87,7 @@ export type User = {
   xuiRecoveredAt?: string
   xuiIpLimit?: number
   xuiTrafficLimitBytes?: number
+  xuiTrafficPackBytes?: number
   xuiTrafficResetAnchorDay?: number
   xuiTrafficCycleKey?: string
   xuiTrafficBaselinePending?: boolean
@@ -149,6 +150,7 @@ export type UserLog = {
   fromSubscriptionLabel?: string
   toSubscriptionLabel?: string
   message?: string
+  details?: Record<string, unknown>
 }
 
 export type Bill = {
@@ -265,6 +267,7 @@ export type PricingRow = {
   lifetimeDescription?: string
   lifetimeTraffic?: string
   lifetimeTrafficBytes?: number
+  lifetimeUnlimited?: boolean
   lifetimePrice?: number
   lifetimeDevices?: number
   lifetimeEnabled?: boolean

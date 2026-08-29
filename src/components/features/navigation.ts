@@ -3,6 +3,7 @@ import {
   IconDashboard,
   IconCurrencyDollar,
   IconReceiptDollar,
+  IconReportAnalytics,
   IconServer,
   IconNetwork,
   IconLogs,
@@ -23,6 +24,7 @@ export type NavItem = {
 
 export const navItems: NavItem[] = [
   { title: "Dashboard", url: "/dashboard", icon: IconDashboard },
+  { title: "销售统计", url: "/sales-analytics", icon: IconReportAnalytics },
   { title: "3x-ui 监控", url: "/xui-monitor", icon: IconServer },
   { title: "访问日志", url: "/xui-logs", icon: IconLogs },
   { title: "入站管理", url: "/xui-inbounds", icon: IconNetwork },

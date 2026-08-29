@@ -177,7 +177,7 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
         <ItemGroup className="sm:grid-cols-2 lg:grid-cols-3">
           <Item variant="muted"><ItemContent><ItemDescription>到期日期</ItemDescription><ItemTitle>{subscription ? formatDate(subscription.expiresAt) : "-"}</ItemTitle>{subscription?.giftedDays ? <ItemDescription>原到期日 {formatDate(subscription.planExpiresAt)}，已赠送 {subscription.giftedDays} 天</ItemDescription> : null}</ItemContent></Item>
           <Item variant="muted"><ItemContent><ItemDescription>流量配额</ItemDescription><ItemTitle>{subscription?.unlimited ? "不限" : trafficTotal}</ItemTitle></ItemContent></Item>
-          <Item variant="muted"><ItemContent><ItemDescription>{traffic ? "在线IP限制" : "可绑定设备"}</ItemDescription><ItemTitle>{traffic ? `${traffic.connectedIpCount ?? "-"} / ${traffic.ipLimit || "不限"}` : subscription ? `${subscription.devices} 台` : "-"}</ItemTitle></ItemContent></Item>
+          <Item variant="muted"><ItemContent><ItemDescription>可使用设备数</ItemDescription><ItemTitle>{traffic ? `${traffic.connectedIpCount ?? "-"} / ${traffic.ipLimit || "不限"}` : subscription ? `${subscription.devices} 台` : "-"}</ItemTitle></ItemContent></Item>
         </ItemGroup>
         <div className="grid gap-2 sm:grid-cols-2">
           {canBuyHomeIp ? <Button asChild className="min-h-11 text-sm sm:col-span-2"><Link to="/account/plans/checkout?product=home-ip"><HousePlug />AI被降智？定制纯净家宽 IP{Number.isFinite(homeIpStartingPrice) ? ` · ${formatMoney(homeIpStartingPrice)} 起` : ""}</Link></Button> : null}

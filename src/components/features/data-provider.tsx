@@ -62,6 +62,7 @@ const pageCollections: [string, Collection[]][] = [
   ["/urls/detail/", ["subscriptions", "users"]],
   ["/urls", ["subscriptions", "vendors"]],
   ["/dashboard", ["users", "bills"]],
+  ["/sales-analytics", ["users", "bills"]],
   ["/pricing-settings", ["pricing"]],
   ["/emby", ["embyUsers", "embyVendors"]],
   ["/subconverter", ["presets", "subscriptions", "vendors", "placeholderNodes"]],
