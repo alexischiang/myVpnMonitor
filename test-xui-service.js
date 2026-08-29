@@ -54,6 +54,8 @@ async function main() {
   assert.throws(() => validateRequest({ baseUrl: "file:///tmp", apiToken: "x", apiPath: "/status" }, {}), /HTTP/);
   assert.throws(() => validateRequest({ baseUrl: "https://panel.test", apiToken: "x", apiPath: "https://evil.test" }, {}), /路径/);
   assert.deepStrictEqual(validateTrafficReset({ reason: "calendar_month", month: "2026-08" }), { reason: "calendar_month", reference: "2026-08" });
+  assert.deepStrictEqual(validateTrafficReset({ reason: "manual", resetId: "reset-1" }), { reason: "manual", reference: "reset-1" });
+  assert.throws(() => validateTrafficReset({ reason: "manual" }), /重置编号/);
   assert.throws(() => validateTrafficReset({ reason: "paid" }), /支付订单号/);
 
   const calls = [];

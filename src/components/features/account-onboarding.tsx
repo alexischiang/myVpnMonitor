@@ -46,14 +46,14 @@ function StepPreview({ step }: { step: number }) {
       </CardHeader>
       <CardContent className="grid gap-4 px-4 sm:px-6">
         <Item variant="muted">
-          <ItemContent><ItemTitle>PRO · 高级套餐</ItemTitle><ItemDescription>每月 200G 流量 · 可绑定 5 台设备</ItemDescription></ItemContent>
+          <ItemContent><ItemTitle>PRO · 高级套餐</ItemTitle><ItemDescription>每月 200G 流量 · 可使用设备数：5 台</ItemDescription></ItemContent>
           <Badge>推荐</Badge>
         </Item>
         <Separator />
         <CardDescription>选择计费周期</CardDescription>
         <ItemGroup>
-          <Item variant="outline"><ItemContent><ItemTitle>月付 30 天</ItemTitle><ItemDescription>¥49.00 · 可绑定 3 台设备</ItemDescription></ItemContent><Badge variant="outline">已选择</Badge></Item>
-          <Item variant="outline"><ItemContent><ItemTitle>年付 360 天</ItemTitle><ItemDescription>¥429.00 · 可绑定 5 台设备</ItemDescription></ItemContent><Badge variant="destructive">-27%</Badge></Item>
+          <Item variant="outline"><ItemContent><ItemTitle>月付 30 天</ItemTitle><ItemDescription>¥49.00 · 可使用设备数：3 台</ItemDescription></ItemContent><Badge variant="outline">已选择</Badge></Item>
+          <Item variant="outline"><ItemContent><ItemTitle>年付 360 天</ItemTitle><ItemDescription>¥429.00 · 可使用设备数：5 台</ItemDescription></ItemContent><Badge variant="destructive">-27%</Badge></Item>
         </ItemGroup>
       </CardContent>
     </Card>
@@ -105,7 +105,7 @@ function StepPreview({ step }: { step: number }) {
       <CardContent className="grid gap-4 px-4 sm:px-6">
         <div className="grid grid-cols-2 gap-4 text-sm">
           <Item variant="muted"><ItemContent><ItemDescription>当前到期</ItemDescription><ItemTitle>2026-12-31</ItemTitle></ItemContent></Item>
-          <Item variant="muted"><ItemContent><ItemDescription>可绑定设备</ItemDescription><ItemTitle>5 台</ItemTitle></ItemContent></Item>
+          <Item variant="muted"><ItemContent><ItemDescription>可使用设备数</ItemDescription><ItemTitle>5 台</ItemTitle></ItemContent></Item>
         </div>
         <Input readOnly value="https://example.com/subscription/..." tabIndex={-1} aria-label="订阅链接示例" />
         <Button variant="outline" className="w-full" tabIndex={-1}><Link2 />复制订阅链接</Button>

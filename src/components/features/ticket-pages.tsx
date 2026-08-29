@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, Clock3, Image as ImageIcon, ImageUp, LifeBuoy, Loader2, Plus, Search, Send, UserRound, X, XCircle } from "lucide-react"
+import { AlertCircle, Clock3, HardDrive, Image as ImageIcon, ImageUp, LifeBuoy, Loader2, MonitorSmartphone, Plus, Search, Send, UserRound, X, XCircle } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -11,17 +11,19 @@ import { Badge } from "@/components/ui/badge"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Message, MessageAvatar, MessageContent, MessageFooter, MessageGroup, MessageHeader } from "@/components/ui/message"
+import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { formatDateTime, formatMoney } from "@/utils"
+import { formatBytes, formatDate, formatDateTime, formatMoney } from "@/utils"
 import { BackButton } from "@/components/features/back-button"
 
 type TicketStatus = "pending_support" | "pending_user" | "closed"
@@ -38,7 +40,7 @@ type Ticket = {
   relatedOrderId?: string
   relatedOrder?: TicketOrder | null
   messages: TicketMessage[]
-  user?: { id: string; email: string; customerID?: string }
+  user?: { id: string; email: string; customerID?: string; planName?: string; optionLabel?: string; duration?: string; expiresAt?: string; traffic?: { usedBytes: number | null; totalBytes: number | null; usagePercent: number | null; lastSyncedAt: string } | null; devices?: { connected: number | null; limit: number } | null }
   createdAt: string
   updatedAt: string
   closedAt?: string
@@ -75,7 +77,7 @@ function TicketMessageThread({ ticket, showAvatar = true }: { ticket: Ticket; sh
               <Bubble variant={fromUser ? "default" : "muted"} align={fromUser ? "end" : "start"}>
                 <BubbleContent className="whitespace-pre-wrap">{message.message}</BubbleContent>
               </Bubble>
-              {message.attachments?.map(attachment => <Bubble key={attachment.url} variant="outline" align={fromUser ? "end" : "start"}><BubbleContent asChild className="p-0"><a href={attachment.url} target="_blank" rel="noreferrer" aria-label={`打开截图：${attachment.name}`}><img src={attachment.url} alt={attachment.name} loading="lazy" decoding="async" className="max-h-64 w-auto max-w-full object-contain" /></a></BubbleContent></Bubble>)}
+              {message.attachments?.map(attachment => <Dialog key={attachment.url}><Bubble variant="outline" align={fromUser ? "end" : "start"}><BubbleContent asChild className="p-0"><DialogTrigger aria-label={`放大查看截图：${attachment.name}`}><img src={attachment.url} alt={attachment.name} loading="lazy" decoding="async" className="max-h-64 w-auto max-w-full object-contain" /></DialogTrigger></BubbleContent></Bubble><DialogContent showCloseButton={false} className="w-auto max-w-[calc(100vw-2rem)] border-0 bg-transparent p-0 shadow-none sm:max-w-[calc(100vw-2rem)]"><DialogTitle className="sr-only">{attachment.name}</DialogTitle><DialogDescription className="sr-only">工单附件图片预览</DialogDescription><img src={attachment.url} alt={attachment.name} className="max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] object-contain" /></DialogContent></Dialog>)}
               <MessageFooter><time>{formatDateTime(message.createdAt)}</time></MessageFooter>
             </MessageContent>
           </Message>
@@ -256,13 +258,34 @@ export function AdminTicketDetailPage() {
   async function reply(message: string) { try { setTicket(await postJson<Ticket>(`${path}/reply`, { message })); toast.success("回复已发送") } catch (error) { toast.error(error instanceof Error ? error.message : "回复失败"); throw error } }
   if (loading) return <LoadingPage />
   if (!ticket) return <section className="px-4 lg:px-6"><ErrorAlert message={error || "工单不存在。"} /></section>
+  const user = ticket.user
+  const traffic = user?.traffic
+  const trafficReady = traffic?.usedBytes != null
+  const usagePercent = traffic?.usagePercent ?? (traffic?.totalBytes ? Math.min(100, traffic.usedBytes! / traffic.totalBytes * 100) : 0)
   return (
     <section className="grid gap-4 px-4 lg:px-6">
       <header className="flex flex-wrap items-center gap-3"><BackButton fallback="/tickets" />{ticket.status !== "closed" ? <Button variant="outline" size="sm" className="ml-auto" onClick={() => setResolveOpen(true)}><XCircle />标记已解决</Button> : null}</header>
       <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
         <Card><CardHeader><CardTitle>{ticket.subject}</CardTitle><CardDescription>{ticket.id} · {formatDateTime(ticket.createdAt)}</CardDescription><CardAction><TicketStatusBadge status={ticket.status} /></CardAction></CardHeader><CardContent className="grid gap-6"><TicketMessageThread ticket={ticket} showAvatar={false} /><Separator />{ticket.status === "closed" ? <Alert><Clock3 /><AlertTitle>工单已解决</AlertTitle><AlertDescription>已结束工单不能继续回复或重新打开。</AlertDescription></Alert> : <ReplyComposer onSend={reply} />}</CardContent></Card>
         <section className="grid h-fit gap-4">
-          <Card><CardHeader><CardTitle>用户信息</CardTitle></CardHeader><CardContent><ItemGroup><Item variant="muted"><UserRound /><ItemContent><ItemDescription>用户邮箱</ItemDescription><ItemTitle>{ticket.user?.email || ticket.email}</ItemTitle>{ticket.user?.customerID ? <ItemDescription>{ticket.user.customerID}</ItemDescription> : null}</ItemContent></Item>{ticket.user?.id ? <Button asChild variant="outline"><Link to={`/users/detail/${encodeURIComponent(ticket.user.id)}`}>查看用户详情</Link></Button> : null}</ItemGroup></CardContent></Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="break-all text-base">{user?.email || ticket.email}</CardTitle>
+              <CardDescription>{user?.customerID ? `客户编号 #${user.customerID}` : "用户信息"}</CardDescription>
+              <CardAction><Avatar><AvatarFallback><UserRound /></AvatarFallback></Avatar></CardAction>
+            </CardHeader>
+            {user?.id ? <>
+              <CardContent>
+                <ItemGroup className="sm:grid-cols-2">
+                  <Item variant="outline" className="sm:col-span-2"><ItemContent><ItemDescription>当前套餐</ItemDescription><ItemTitle className="text-base">{user.planName || "未设置"}</ItemTitle><ItemDescription>{user.optionLabel || "未设置套餐周期"}</ItemDescription></ItemContent></Item>
+                  <Item variant="muted" className="sm:col-span-2"><HardDrive /><ItemContent><ItemDescription>流量使用</ItemDescription><ItemTitle className="tabular-nums">{trafficReady ? `${formatBytes(traffic.usedBytes)} / ${traffic.totalBytes ? formatBytes(traffic.totalBytes) : "不限"}` : "待同步"}</ItemTitle>{traffic?.totalBytes ? <Progress value={usagePercent} aria-label={`已使用流量 ${Math.round(usagePercent)}%`} /> : null}{traffic?.lastSyncedAt ? <ItemDescription>同步于 {formatDateTime(traffic.lastSyncedAt)}</ItemDescription> : null}</ItemContent></Item>
+                  <Item variant="muted"><MonitorSmartphone /><ItemContent><ItemDescription>设备连接</ItemDescription><ItemTitle className="tabular-nums">{user.devices?.connected ?? "-"} / {user.devices?.limit || "不限"}</ItemTitle><ItemDescription>当前 / 上限</ItemDescription></ItemContent></Item>
+                  <Item variant="muted"><Clock3 /><ItemContent><ItemDescription>有效期</ItemDescription><ItemTitle>{user.duration === "lifetime" ? "永久有效" : user.expiresAt ? formatDate(user.expiresAt) : "未设置"}</ItemTitle></ItemContent></Item>
+                </ItemGroup>
+              </CardContent>
+              <CardFooter><Button asChild variant="outline" className="w-full"><Link to={`/users/detail/${encodeURIComponent(user.id)}`}>查看用户详情</Link></Button></CardFooter>
+            </> : null}
+          </Card>
           {ticket.relatedOrder ? <Card><CardHeader><CardTitle>关联订单</CardTitle></CardHeader><CardContent><ItemGroup><Item variant="muted"><ItemContent><ItemDescription>{ticket.relatedOrder.merOrderTid}</ItemDescription><ItemTitle>{ticket.relatedOrder.planName} / {ticket.relatedOrder.optionLabel}</ItemTitle><ItemDescription>{formatMoney(ticket.relatedOrder.totalAmount ?? ticket.relatedOrder.amount)} · {ticket.relatedOrder.statusText}</ItemDescription></ItemContent></Item><Button asChild variant="outline"><Link to={`/orders/${encodeURIComponent(ticket.relatedOrder.id)}`}>查看订单详情</Link></Button></ItemGroup></CardContent></Card> : null}
         </section>
       </section>

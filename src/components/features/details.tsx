@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { AlertCircle, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, UserCog } from "lucide-react"
+import { AlertCircle, ArrowRightLeft, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, UserCog } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -30,7 +30,7 @@ import { UserBillsCard } from "@/components/features/user-bills-card"
 import { BackButton } from "@/components/features/back-button"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
 import type { User } from "@/types"
-import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, purchasedPlanName, userStatus } from "@/utils"
+import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, purchasedPlanName, userStatus } from "@/utils"
 
 type GiftPreview = {
   expiresAt: string
@@ -56,6 +56,13 @@ type ReferralDetails = {
 
 const manualPaymentPlans = [{ value: "basic", label: "BASIC" }, { value: "pro", label: "PRO" }, { value: "ultra", label: "ULTRA" }]
 const manualPaymentDurations = [{ value: "30", label: "月付 30 天" }, { value: "90", label: "季付 90 天" }, { value: "180", label: "半年付 180 天" }, { value: "360", label: "年付 360 天" }]
+const planChangePeriods = {
+  monthly: { suffix: "30", label: "月付 30 天", priceKey: "monthly", devicesKey: "monthlyDevices", variant: "recurring" },
+  quarterly: { suffix: "90", label: "季付 90 天", priceKey: "quarterly", devicesKey: "quarterlyDevices", variant: "recurring" },
+  half_yearly: { suffix: "180", label: "半年付 180 天", priceKey: "half_yearly", devicesKey: "half_yearlyDevices", variant: "recurring" },
+  yearly: { suffix: "360", label: "年付 360 天", priceKey: "yearly", devicesKey: "yearlyDevices", variant: "recurring" },
+  lifetime: { suffix: "lifetime", label: "固定流量 · 不限时", priceKey: "lifetimePrice", devicesKey: "lifetimeDevices", variant: "lifetime" },
+} as const
 function manualPaymentOptionId(plan: string, traffic: string, duration: string) {
   return `${plan}${traffic === "unlimited" ? "-unlimited" : ""}-${duration}`
 }
@@ -309,6 +316,17 @@ export function UserDetailPage() {
   const [xuiOpen, setXuiOpen] = React.useState(false)
   const [lineGroup, setLineGroup] = React.useState("pro")
   const [lineSaving, setLineSaving] = React.useState(false)
+  const [planOpen, setPlanOpen] = React.useState(false)
+  const [planConfirmOpen, setPlanConfirmOpen] = React.useState(false)
+  const [planOptionId, setPlanOptionId] = React.useState("")
+  const [planTrafficTier, setPlanTrafficTier] = React.useState("1")
+  const [planNote, setPlanNote] = React.useState("")
+  const [planError, setPlanError] = React.useState("")
+  const [planSaving, setPlanSaving] = React.useState(false)
+  const [planRollbackId, setPlanRollbackId] = React.useState("")
+  const [planRollbackSaving, setPlanRollbackSaving] = React.useState(false)
+  const [trafficResetOpen, setTrafficResetOpen] = React.useState(false)
+  const [trafficResetSaving, setTrafficResetSaving] = React.useState(false)
   const [walletBalance, setWalletBalance] = React.useState<number | null>(null)
   const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
@@ -317,6 +335,52 @@ export function UserDetailPage() {
   const productName = React.useMemo(() => {
     return user ? purchasedPlanName(user, pricing) : "-"
   }, [pricing, user])
+  const planOptions = React.useMemo(() => {
+    const currentPeriod = planChangePeriods[user?.duration as keyof typeof planChangePeriods]
+    const periods = currentPeriod ? [currentPeriod, ...(currentPeriod.variant === "lifetime" ? [] : [planChangePeriods.lifetime])] : []
+    return pricing.flatMap(plan => periods.flatMap(period => (plan.productKind && plan.productKind !== "plan") || (period.variant === "lifetime" ? plan.lifetimeDeleted : plan.recurringDeleted) === true || !Number.isFinite(Number(plan[period.priceKey]))
+      ? []
+      : [{ value: `${plan.group}-${period.suffix}`, label: `${period.variant === "lifetime" ? plan.lifetimeName || plan.name || plan.group : plan.name || plan.group} · ${period.variant === "lifetime" && plan.lifetimeUnlimited ? "不限流量 · 不限时" : period.label}${plan.availability?.[period.variant] ? "" : "（未上架）"}` }]))
+  }, [pricing, user?.duration])
+  const selectedPlanConfig = React.useMemo(() => {
+    const option = planOptions.find(item => item.value === planOptionId)
+    const period = planOptionId.endsWith("-lifetime") ? planChangePeriods.lifetime : planChangePeriods[user?.duration as keyof typeof planChangePeriods]
+    const plan = period && pricing.find(item => `${item.group}-${period.suffix}` === planOptionId)
+    if (!option || !period || !plan) return null
+    const lifetime = period.variant === "lifetime"
+    const unlimited = lifetime && plan.lifetimeUnlimited === true
+    const baseTrafficMatch = String(plan.traffic || "").match(/(\d+(?:\.\d+)?)\s*(?:GB|G)/i)
+    const lifetimeTrafficMatch = String(plan.lifetimeTraffic || "").match(/(\d+(?:\.\d+)?)\s*(TB|GB|G|MB|M)/i)
+    const lifetimeFactors: Record<string, number> = { TB: 1024, GB: 1, G: 1, MB: 1 / 1024, M: 1 / 1024 }
+    const baseGb = lifetime
+      ? Number.isFinite(Number(plan.lifetimeTrafficBytes)) ? Number(plan.lifetimeTrafficBytes) / 1024 ** 3 : lifetimeTrafficMatch ? Number(lifetimeTrafficMatch[1]) * lifetimeFactors[lifetimeTrafficMatch[2].toUpperCase()] : 0
+      : Number(plan.trafficBaseGb ?? baseTrafficMatch?.[1]) || 0
+    const configuredMaxTier = Number(plan.trafficMaxTier ?? 10)
+    const maxTier = Number.isSafeInteger(configuredMaxTier) && configuredMaxTier > 0 ? Math.min(configuredMaxTier, 50) : 1
+    return { option, period, plan, lifetime, unlimited, baseGb, maxTier }
+  }, [planOptionId, planOptions, pricing, user?.duration])
+  const planPreview = React.useMemo(() => {
+    if (!user || !selectedPlanConfig) return null
+    const { option, period, plan, lifetime, unlimited, baseGb } = selectedPlanConfig
+    const trafficTier = lifetime || unlimited ? 1 : Number(planTrafficTier)
+    const targetBytes = unlimited ? 0 : baseGb * trafficTier * 1024 ** 3
+    const targetDevices = Number(plan[period.devicesKey]) || 0
+    const usedBytes = Math.max(0, Number(user.xuiWeightedTraffic?.usedBytes) || 0)
+    const changes = [
+      ...(user.currentOptionId !== planOptionId ? [{ label: "商品规格", before: productName, after: option.label }] : []),
+      ...(lifetime && user.duration !== "lifetime" ? [{ label: "到期日", before: formatDate(user.expiresAt), after: "永久有效" }] : []),
+      ...((user.unlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0)) !== (unlimited ? "不限流量" : formatBytes(targetBytes)) ? [{ label: "流量配额", before: user.unlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0), after: unlimited ? "不限流量" : formatBytes(targetBytes) }] : []),
+      ...(Number(user.deviceLimit || 0) !== targetDevices ? [{ label: "可使用设备数", before: `${user.deviceLimit || 0} 台`, after: `${targetDevices} 台` }] : []),
+    ]
+    const impacts = [
+      `已用流量 ${formatBytes(usedBytes)} 保留，不会清零`,
+      "本次后台调整不生成账单，不退款，也不抵扣剩余期限",
+      "套餐权限、可使用设备数和流量配额会立即同步到 3x-ui",
+      ...(targetBytes > 0 && usedBytes >= targetBytes ? ["目标额度不高于已用流量，变更后用户将进入流量耗尽状态"] : []),
+    ]
+    return { changes, impacts }
+  }, [planTrafficTier, productName, selectedPlanConfig, user])
+  const latestPlanEvent = user?.userLogs?.find(log => ["plan-changed", "plan-change-rolled-back"].includes(log.reason || ""))
 
   React.useEffect(() => {
     if (!id || id.startsWith("account:")) return
@@ -324,6 +388,11 @@ export function UserDetailPage() {
     void fetchJson<User>(`/api/users/${id}`).then(data => { if (active) setLoadedUser(data) }).catch(() => undefined)
     return () => { active = false }
   }, [id])
+
+  React.useEffect(() => {
+    if (!planOpen || !selectedPlanConfig || selectedPlanConfig.lifetime || selectedPlanConfig.unlimited) return
+    setPlanTrafficTier(value => String(Math.min(selectedPlanConfig.maxTier, Math.max(1, Number(value) || 1))))
+  }, [planOpen, selectedPlanConfig])
 
   async function refreshUserDetails() {
     if (!id || id.startsWith("account:")) return
@@ -527,6 +596,75 @@ export function UserDetailPage() {
     }
   }
 
+  function openPlanDialog() {
+    const optionId = planOptions.find(option => option.value === user.currentOptionId)?.value
+      || planOptions.find(option => option.value.startsWith(`${user.activeGroup}-`))?.value
+      || planOptions[0]?.value
+      || ""
+    setPlanOptionId(optionId)
+    setPlanTrafficTier(String(user.trafficTier || 1))
+    setPlanNote("")
+    setPlanError("")
+    setPlanOpen(true)
+  }
+
+  function previewPlanChange(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!planOptionId) {
+      setPlanError("请选择目标商品规格")
+      return
+    }
+    if (!planNote.trim()) {
+      setPlanError("请填写套餐变更原因")
+      return
+    }
+    setPlanConfirmOpen(true)
+  }
+
+  async function changePlan() {
+    setPlanSaving(true)
+    setPlanError("")
+    try {
+      await postJson(`/api/users/${user.id}/plan`, { optionId: planOptionId, trafficTier: Number(planTrafficTier), note: planNote })
+      await refreshUserDetails()
+      setPlanConfirmOpen(false)
+      setPlanOpen(false)
+      toast.success("套餐已更改并记录")
+    } catch (error) {
+      setPlanError(error instanceof Error ? error.message : "套餐更改失败")
+    } finally {
+      setPlanSaving(false)
+    }
+  }
+
+  async function rollbackPlanChange() {
+    setPlanRollbackSaving(true)
+    try {
+      await postJson(`/api/users/${user.id}/plan-rollback`, { changeId: planRollbackId })
+      await refreshUserDetails()
+      setPlanRollbackId("")
+      toast.success("已撤销最近一次套餐变更")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "撤销套餐变更失败")
+    } finally {
+      setPlanRollbackSaving(false)
+    }
+  }
+
+  async function resetTraffic() {
+    setTrafficResetSaving(true)
+    try {
+      await postJson(`/api/users/${user.id}/traffic-reset`, {})
+      await refreshUserDetails()
+      setTrafficResetOpen(false)
+      toast.success("用户流量已重置")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "流量重置失败")
+    } finally {
+      setTrafficResetSaving(false)
+    }
+  }
+
   async function recoverXuiClient() {
     setXuiRecoverSaving(true)
     try {
@@ -702,7 +840,40 @@ export function UserDetailPage() {
           <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={lineSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void migrateToSelfHosted()} disabled={lineSaving}>{lineSaving ? <Loader2 className="animate-spin" /> : <Network />}{lineSaving ? "同步中..." : user.lineType === "self_hosted" ? "保存权限组" : "确认迁移"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={planOpen} onOpenChange={open => { setPlanOpen(open); if (!open) setPlanConfirmOpen(false) }}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+          <form className="grid gap-4" onSubmit={previewPlanChange}>
+            <DialogHeader><DialogTitle>更改套餐</DialogTitle><DialogDescription>可选择商品库中的套餐规格，包括未上架商品；附加商品和旧版规格不可选择。操作原因会写入用户记录。</DialogDescription></DialogHeader>
+            <FieldGroup>
+              <Field><FieldLabel htmlFor="plan-option">目标商品规格</FieldLabel><Select value={planOptionId} onValueChange={setPlanOptionId} disabled={planSaving || !planOptions.length}><SelectTrigger id="plan-option" className="w-full"><SelectValue placeholder="当前周期没有可用商品规格" /></SelectTrigger><SelectContent>{planOptions.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select><FieldDescription>切换至不限时规格后，到期日将改为永久有效。</FieldDescription></Field>
+              {selectedPlanConfig && !selectedPlanConfig.lifetime && !selectedPlanConfig.unlimited ? <Field><FieldLabel htmlFor="plan-traffic-tier">定制流量</FieldLabel><Select value={planTrafficTier} onValueChange={setPlanTrafficTier} disabled={planSaving}><SelectTrigger id="plan-traffic-tier" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: selectedPlanConfig.maxTier }, (_, index) => index + 1).map(tier => <SelectItem key={tier} value={String(tier)}>第 {tier} 档 · {selectedPlanConfig.baseGb * tier} GB</SelectItem>)}</SelectContent></Select><FieldDescription>后台调整不计算价格，所选流量配额会直接同步到 3x-ui。</FieldDescription></Field> : null}
+              <Field><FieldLabel htmlFor="plan-note">变更原因</FieldLabel><Input id="plan-note" maxLength={200} value={planNote} onChange={event => { setPlanNote(event.target.value); setPlanError("") }} placeholder="例如：客服补偿、套餐升级" aria-invalid={Boolean(planError)} autoFocus required /><FieldError>{planError}</FieldError></Field>
+            </FieldGroup>
+            {planPreview?.changes.length ? <Item variant="muted"><ItemContent><ItemTitle>变更预览</ItemTitle><Table><TableHeader><TableRow><TableHead>项目</TableHead><TableHead>当前</TableHead><TableHead>变更后</TableHead></TableRow></TableHeader><TableBody>{planPreview.changes.map(change => <TableRow key={change.label}><TableCell className="font-medium">{change.label}</TableCell><TableCell className="whitespace-normal text-muted-foreground">{change.before}</TableCell><TableCell className="whitespace-normal">{change.after}</TableCell></TableRow>)}</TableBody></Table></ItemContent></Item> : null}
+            {planPreview ? <Alert variant="warning"><AlertCircle /><AlertTitle>执行影响</AlertTitle><AlertDescription>{planPreview.impacts.join("；")}。</AlertDescription></Alert> : null}
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={planSaving}>取消</Button></DialogClose><Button type="submit" disabled={planSaving || !planPreview?.changes.length}><ArrowRightLeft />查看变更确认</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={planConfirmOpen} onOpenChange={setPlanConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>确认执行套餐变更？</AlertDialogTitle><AlertDialogDescription>更改将立即同步到 3x-ui，当前流量包会失效。操作完成后可从用户日志撤销最近一次变更。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={planSaving}>返回修改</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void changePlan() }} disabled={planSaving}>{planSaving ? <Loader2 className="animate-spin" /> : <ArrowRightLeft />}{planSaving ? "同步中..." : "确认更改套餐"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={Boolean(planRollbackId)} onOpenChange={open => { if (!open) setPlanRollbackId("") }}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>撤销最近一次套餐变更？</AlertDialogTitle><AlertDialogDescription>将恢复变更前的套餐周期、到期日、商品绑定和流量包权益，并重新同步 3x-ui。撤销操作本身也会写入用户日志。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={planRollbackSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void rollbackPlanChange() }} disabled={planRollbackSaving}>{planRollbackSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{planRollbackSaving ? "恢复中..." : "确认撤销变更"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <XuiClientDialog user={user} open={xuiOpen} onOpenChange={setXuiOpen} onComplete={refreshUserDetails} />
+      <AlertDialog open={trafficResetOpen} onOpenChange={setTrafficResetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>确认重置用户流量？</AlertDialogTitle><AlertDialogDescription>将清零 {user.userId || user.email || "该用户"} 当前已使用流量，套餐额度、流量包和下次自动重置日期保持不变。操作完成后无法恢复。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={trafficResetSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void resetTraffic() }} disabled={trafficResetSaving}>{trafficResetSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{trafficResetSaving ? "重置中..." : "确认重置流量"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={accountStatusOpen} onOpenChange={setAccountStatusOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>{user.accountStatus === "active" ? "确认停用账户？" : "确认恢复账户？"}</AlertDialogTitle><AlertDialogDescription>{user.accountStatus === "active" ? "停用后用户将无法登录，当前登录状态也会失效；订阅链接将返回停用提示，3x-ui 客户端也会停用。" : "恢复后用户可以重新登录账户；有效期内的自研线路 3x-ui 客户端也会恢复，原有订阅和余额保持不变。"}</AlertDialogDescription></AlertDialogHeader>
@@ -761,6 +932,8 @@ export function UserDetailPage() {
               {user.registeredOnly ? null : <>
                 <Button variant="outline" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
                 <Button variant="outline" className="w-full" onClick={user.lineType === "self_hosted" ? openLineDialog : () => setXuiOpen(true)}><Network />{user.lineType === "self_hosted" ? "调整权限组" : "切换到自研线路"}</Button>
+                {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={openPlanDialog}><ArrowRightLeft />更改套餐</Button> : null}
+                {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => setTrafficResetOpen(true)}><RotateCcw />重置流量</Button> : null}
                 {user.lineType === "self_hosted" && user.xuiClientPresent === false ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)}><RefreshCw />恢复3x-ui客户端</Button> : null}
                 {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
                 <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
@@ -780,7 +953,7 @@ export function UserDetailPage() {
         <Tabs defaultValue="overview" className="min-w-0 gap-4">
           <TabsList className="grid w-full grid-cols-3 group-data-[orientation=horizontal]/tabs:h-auto">
             <TabsTrigger value="overview" className="h-9">基本信息</TabsTrigger>
-            <TabsTrigger value="bills" className="h-9">账单记录</TabsTrigger>
+            <TabsTrigger value="bills" className="h-9">用户日志</TabsTrigger>
             <TabsTrigger value="referral" className="h-9">邀请返利</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="grid min-w-0 gap-4">
@@ -878,8 +1051,17 @@ export function UserDetailPage() {
               </CardContent>
             </Card>
           </TabsContent>
-          <TabsContent value="bills" className="min-w-0">
+          <TabsContent value="bills" className="grid min-w-0 gap-4">
             <UserBillsCard bills={userBills} />
+            <Card className="gap-0 overflow-hidden py-0">
+              <CardHeader className="border-b py-6"><CardTitle>用户日志</CardTitle><CardDescription>共 {user.userLogs?.length || 0} 条</CardDescription></CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader><TableRow><TableHead className="px-6">时间</TableHead><TableHead>类型</TableHead><TableHead>状态</TableHead><TableHead>内容</TableHead><TableHead className="px-6 text-right">操作</TableHead></TableRow></TableHeader>
+                  <TableBody>{user.userLogs?.length ? user.userLogs.map(log => <TableRow key={log.id}><TableCell className="px-6 text-muted-foreground">{formatDateTime(log.at)}</TableCell><TableCell><Badge variant="secondary">{log.reasonText || log.reason || "用户日志"}</Badge></TableCell><TableCell><Badge variant={["failed", "blocked", "no_usable_pool"].includes(log.status || "") ? "destructive" : "outline"}>{log.statusText || log.status || "已记录"}</Badge></TableCell><TableCell className="min-w-64 whitespace-normal text-muted-foreground">{log.message || [log.fromSubscriptionLabel, log.toSubscriptionLabel].filter(Boolean).join(" → ") || "-"}</TableCell><TableCell className="px-6 text-right">{latestPlanEvent?.id === log.id && log.reason === "plan-changed" && log.details?.rollbackState ? <Button type="button" variant="outline" size="sm" onClick={() => setPlanRollbackId(log.id)}><RotateCcw />撤销变更</Button> : null}</TableCell></TableRow>) : <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">暂无用户日志</TableCell></TableRow>}</TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           </TabsContent>
           <TabsContent value="referral" className="grid min-w-0 gap-4">
             <Card>

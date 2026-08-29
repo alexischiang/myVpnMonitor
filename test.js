@@ -12,6 +12,10 @@ const {
   toBytes,
   remainingPlanCashValue,
   inferUserProductBinding,
+  resolvePlanChangeOption,
+  planTrafficBytes,
+  planChangeState,
+  restorePlanChangeState,
   bindUserProduct,
   grantTrafficPack,
   paymentQuote,
@@ -122,6 +126,18 @@ const recurringBinding = inferUserProductBinding({ activeGroup: "basic", duratio
 assert.deepStrictEqual([recurringBinding.productId, recurringBinding.optionId], ["basic", "basic-90"]);
 assert.strictEqual(inferUserProductBinding({ activeGroup: "basic", duration: "quarterly", unlimited: true }).optionId, "basic-unlimited-90");
 assert.throws(() => paymentQuote("basic-unlimited-90"), /Unsupported pricing option/);
+assert.strictEqual(resolvePlanChangeOption({ duration: "quarterly" }, "basic-90").group, "basic");
+assert.strictEqual(resolvePlanChangeOption({ duration: "quarterly" }, "basic-lifetime").duration, "lifetime");
+assert.strictEqual(resolvePlanChangeOption({ duration: "lifetime" }, "friends-lifetime-unlimited-lifetime").unlimited, true);
+assert.throws(() => resolvePlanChangeOption({ duration: "quarterly" }, "basic-unlimited-90"), /Unsupported pricing option/);
+assert.throws(() => resolvePlanChangeOption({ duration: "lifetime" }, "traffic_pack-lifetime"), /Unsupported pricing option/);
+assert.throws(() => resolvePlanChangeOption({ duration: "monthly" }, "basic-90"), /当前周期一致/);
+assert.throws(() => resolvePlanChangeOption({ duration: "lifetime" }, "basic-30"), /当前周期一致/);
+const rollbackUser = { group: "basic", activeGroup: "basic", duration: "quarterly", expiresAt: "2026-12-01T00:00:00.000Z", currentOptionId: "basic-90", xuiTrafficPackBytes: gib, xuiTrafficPackOrderIds: ["pack-1"] };
+const rollbackState = planChangeState(rollbackUser);
+Object.assign(rollbackUser, { group: "pro", activeGroup: "pro", duration: "lifetime", expiresAt: "9999-12-31T00:00:00.000Z", currentOptionId: "pro-lifetime", xuiTrafficPackBytes: 0, xuiTrafficPackOrderIds: [] });
+restorePlanChangeState(rollbackUser, rollbackState);
+assert.deepStrictEqual([rollbackUser.activeGroup, rollbackUser.duration, rollbackUser.expiresAt, rollbackUser.currentOptionId, rollbackUser.xuiTrafficPackBytes, rollbackUser.xuiTrafficPackOrderIds], ["basic", "quarterly", "2026-12-01T00:00:00.000Z", "basic-90", gib, ["pack-1"]]);
 const familyUser = { activeGroup: "pro", duration: "lifetime", isFamilyFriend: true, unlimited: false, expiresAt: "9999-12-31T00:00:00.000Z" };
 const familyBinding = inferUserProductBinding(familyUser);
 assert.deepStrictEqual([familyBinding.productId, familyBinding.optionId, familyBinding.snapshot.unlimited], ["friends-lifetime-unlimited", "friends-lifetime-unlimited-lifetime", true]);
@@ -251,6 +267,9 @@ assert.strictEqual(paymentQuote("pro-lifetime").trafficGb, 200);
 assert.deepStrictEqual(lifetimeQuote.cycles.map(cycle => cycle.optionId), ["basic-lifetime"]);
 const customTrafficQuote = paymentQuote("basic-30", "", undefined, "vip1", "", 3);
 assert.deepStrictEqual([customTrafficQuote.baseAmount, customTrafficQuote.originalAmount, customTrafficQuote.trafficTier, customTrafficQuote.trafficGb], [39, 78, 3, 150]);
+assert.throws(() => paymentQuote("basic-30", "", undefined, "vip1", "", 11), /1-10/);
+assert.strictEqual(planTrafficBytes({ activeGroup: "basic", duration: "monthly", purchasedTrafficGb: 150 }), 150 * gib);
+assert.strictEqual(planTrafficBytes({ activeGroup: "basic", duration: "lifetime", purchasedTrafficGb: 300 }), 100 * gib);
 const quoteWithHomeIp = planQuoteWithAddOns(discountedQuote, ["home_ip:us"]);
 assert.strictEqual(quoteWithHomeIp.planAmount, discountedQuote.amount);
 assert.strictEqual(quoteWithHomeIp.addOnAmount, 40);
