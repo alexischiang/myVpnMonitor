@@ -145,12 +145,13 @@ async function requestTelegram(method, options = {}) {
   }
 }
 
-async function sendTelegram({ text, chatId }) {
+async function sendTelegram({ text, chatId, parseMode }) {
   const cfg = getTelegramConfig();
   const targetChatId = chatId || cfg.chatId;
   if (!targetChatId) throw new Error("TELEGRAM_CHAT_ID is not configured.");
   const payload = { chat_id: targetChatId, text, disable_web_page_preview: true };
-  if (cfg.parseMode) payload.parse_mode = cfg.parseMode;
+  const resolvedParseMode = parseMode === undefined ? cfg.parseMode : parseMode;
+  if (resolvedParseMode) payload.parse_mode = resolvedParseMode;
   const response = await requestTelegram("sendMessage", {
     method: "POST",
     headers: { "content-type": "application/json" },

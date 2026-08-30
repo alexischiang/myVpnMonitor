@@ -1,4 +1,5 @@
 const assert = require("assert");
+const { salesAmount, salesDateKey, salesDateRange, salesMonthRange, unlinkedSalesBills } = require("./src/components/features/sales-analytics-logic.ts");
 const net = require("net");
 const zlib = require("zlib");
 const {
@@ -12,6 +13,7 @@ const {
   toBytes,
   remainingPlanCashValue,
   inferUserProductBinding,
+  recurringPlanOption,
   resolvePlanChangeOption,
   planTrafficBytes,
   planChangeState,
@@ -70,10 +72,35 @@ const {
   xuiTrafficPayload,
   markMissingXuiClients,
   disabledAccountPlaceholderSubscription,
-  clearSubscriptionSourceState
+  clearSubscriptionSourceState,
+  ticketTelegramText
 } = require("./server");
 
 const gib = 1024 ** 3;
+assert.strictEqual(salesAmount({ realCashAmount: 40, totalAmount: 50, amount: 30 }), 40);
+assert.notStrictEqual(salesDateKey(new Date(2025, 6, 1), true), salesDateKey(new Date(2026, 6, 1), true));
+const ticketAlert = ticketTelegramText({ id: "T1", email: "user@example.com", subject: "连接问题", messages: [{ message: "首次描述" }, { message: "最新追问" }] }, "https://example.com/tickets/T1");
+assert(ticketAlert.includes("正文：\n最新追问"));
+assert(!ticketAlert.includes("首次描述"));
+assert(Array.from(ticketTelegramText({ id: "T1", email: "user@example.com", subject: "连接问题", messages: [{ message: "😀".repeat(5000) }] }, "https://example.com/tickets/T1")).length <= 4096);
+assert.deepStrictEqual(salesMonthRange(2, 2024), { from: new Date(2024, 1, 1), to: new Date(2024, 1, 29) });
+assert.deepStrictEqual(unlinkedSalesBills(
+  [{ userId: "paid", amount: 40, paidAt: "2026-08-01T00:00:00.000Z", status: "paid" }],
+  [
+    { id: "linked", paymentOrderId: "order", amount: 40, occurredAt: "2026-08-01T00:00:00.000Z" },
+    { id: "legacy", userId: "paid", amount: 40, occurredAt: "2026-08-01T00:00:00.000Z" },
+    { id: "manual", userId: "manual", amount: 50, occurredAt: "2026-08-02T00:00:00.000Z" },
+  ]
+), [{ id: "manual", userId: "manual", amount: 50, occurredAt: "2026-08-02T00:00:00.000Z" }]);
+assert.deepStrictEqual(
+  salesDateRange("custom", { from: new Date(2026, 6, 1), to: new Date(2026, 6, 3) }, new Date(2026, 6, 10, 12)),
+  {
+    start: new Date(2026, 6, 1),
+    end: new Date(2026, 6, 3, 23, 59, 59, 999),
+    previousStart: new Date(2026, 5, 28),
+    monthly: false
+  }
+);
 assert.deepStrictEqual(adminReferralDetails(
   { id: "inviter" },
   [{ id: "invitee", referredByAccountId: "inviter", email: "invitee@example.com", status: "active", createdAt: "2026-08-27T00:00:00.000Z" }],
@@ -124,6 +151,7 @@ assert.strictEqual(publicInviterLabel({ customerID: 10001 }, { userId: "alice@ex
 
 const recurringBinding = inferUserProductBinding({ activeGroup: "basic", duration: "quarterly", unlimited: false, expiresAt: "2026-12-01T00:00:00.000Z" });
 assert.deepStrictEqual([recurringBinding.productId, recurringBinding.optionId], ["basic", "basic-90"]);
+assert.deepStrictEqual(recurringPlanOption({ group: "legacy-unlimited", name: "老无限套餐", unlimited: true, permissionGroup: "basic", monthly: 0 }, { label: "月付 30天", priceKey: "monthly", duration: "monthly" }), { planId: "legacy-unlimited", planName: "老无限套餐", optionLabel: "月付 30天 · 无限流量", priceKey: "monthly", duration: "monthly", group: "basic", lineType: "self_hosted", unlimited: true, fallbackPrice: 0 });
 assert.strictEqual(inferUserProductBinding({ activeGroup: "basic", duration: "quarterly", unlimited: true }).optionId, "basic-unlimited-90");
 assert.throws(() => paymentQuote("basic-unlimited-90"), /Unsupported pricing option/);
 assert.strictEqual(resolvePlanChangeOption({ duration: "quarterly" }, "basic-90").group, "basic");

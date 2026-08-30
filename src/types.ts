@@ -258,6 +258,8 @@ export type PricingRow = {
   recommended?: boolean
   traffic?: string
   trafficBytes?: number
+  unlimited?: boolean
+  permissionGroup?: "basic" | "pro" | "ultra"
   lineType?: "upstream" | "self_hosted"
   enabled?: boolean
   stock?: number
@@ -268,6 +270,7 @@ export type PricingRow = {
   lifetimeTraffic?: string
   lifetimeTrafficBytes?: number
   lifetimeUnlimited?: boolean
+  lifetimePermissionGroup?: "basic" | "pro" | "ultra"
   lifetimePrice?: number
   lifetimeDevices?: number
   lifetimeEnabled?: boolean
