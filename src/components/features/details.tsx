@@ -340,7 +340,7 @@ export function UserDetailPage() {
     const periods = currentPeriod ? [currentPeriod, ...(currentPeriod.variant === "lifetime" ? [] : [planChangePeriods.lifetime])] : []
     return pricing.flatMap(plan => periods.flatMap(period => (plan.productKind && plan.productKind !== "plan") || (period.variant === "lifetime" ? plan.lifetimeDeleted : plan.recurringDeleted) === true || !Number.isFinite(Number(plan[period.priceKey]))
       ? []
-      : [{ value: `${plan.group}-${period.suffix}`, label: `${period.variant === "lifetime" ? plan.lifetimeName || plan.name || plan.group : plan.name || plan.group} · ${period.variant === "lifetime" && plan.lifetimeUnlimited ? "不限流量 · 不限时" : period.label}${plan.availability?.[period.variant] ? "" : "（未上架）"}` }]))
+      : [{ value: `${plan.group}-${period.suffix}`, label: `${period.variant === "lifetime" ? plan.lifetimeName || plan.name || plan.group : plan.name || plan.group} · ${period.variant === "lifetime" && plan.lifetimeUnlimited ? "不限流量 · 不限时" : `${period.label}${plan.unlimited ? " · 无限流量" : ""}`}${plan.availability?.[period.variant] ? "" : "（未上架）"}` }]))
   }, [pricing, user?.duration])
   const selectedPlanConfig = React.useMemo(() => {
     const option = planOptions.find(item => item.value === planOptionId)
@@ -348,7 +348,7 @@ export function UserDetailPage() {
     const plan = period && pricing.find(item => `${item.group}-${period.suffix}` === planOptionId)
     if (!option || !period || !plan) return null
     const lifetime = period.variant === "lifetime"
-    const unlimited = lifetime && plan.lifetimeUnlimited === true
+    const unlimited = lifetime ? plan.lifetimeUnlimited === true : plan.unlimited === true
     const baseTrafficMatch = String(plan.traffic || "").match(/(\d+(?:\.\d+)?)\s*(?:GB|G)/i)
     const lifetimeTrafficMatch = String(plan.lifetimeTraffic || "").match(/(\d+(?:\.\d+)?)\s*(TB|GB|G|MB|M)/i)
     const lifetimeFactors: Record<string, number> = { TB: 1024, GB: 1, G: 1, MB: 1 / 1024, M: 1 / 1024 }

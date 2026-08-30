@@ -125,26 +125,31 @@ function normalizeTrafficTier(plan, value) {
   return tier;
 }
 
+function recurringPlanOption(plan, period) {
+  const unlimited = plan.unlimited === true;
+  return { planId: plan.group, planName: plan.name || plan.group.toUpperCase(), optionLabel: `${period.label}${unlimited ? " · 无限流量" : ""}`, priceKey: period.priceKey, duration: period.duration, group: normalizeUserGroup(plan.permissionGroup, normalizeUserGroup(plan.group)), lineType: "self_hosted", ...(unlimited ? { unlimited: true } : {}), fallbackPrice: Number(plan[period.priceKey]) };
+}
+
 function dynamicPaymentPlanOption(optionId, { allowUnlisted = false } = {}) {
   const id = String(optionId || "");
   const lifetimeMatch = id.match(/^(.+)-lifetime$/);
   if (lifetimeMatch) {
     const plan = pricingProduct(lifetimeMatch[1]);
     if (!plan || (plan.productKind && plan.productKind !== "plan") || plan.lifetimeDeleted === true || (!allowUnlisted && (plan.internal === true || !productVariantAvailable(plan, "lifetime") || plan.lifetimeStock === 0)) || !Number.isFinite(Number(plan.lifetimePrice))) return null;
-    return { planId: plan.group, planName: plan.lifetimeName || `${plan.name || plan.group} 不限时`, optionLabel: plan.lifetimeUnlimited === true ? "不限流量 · 不限时" : "固定流量 · 不限时", priceKey: "lifetimePrice", duration: "lifetime", group: plan.group, lineType: "self_hosted", lifetime: true, ...(plan.lifetimeUnlimited === true ? { unlimited: true } : {}), fallbackPrice: Number(plan.lifetimePrice) };
+    return { planId: plan.group, planName: plan.lifetimeName || `${plan.name || plan.group} 不限时`, optionLabel: plan.lifetimeUnlimited === true ? "不限流量 · 不限时" : "固定流量 · 不限时", priceKey: "lifetimePrice", duration: "lifetime", group: normalizeUserGroup(plan.lifetimePermissionGroup, normalizeUserGroup(plan.group)), lineType: "self_hosted", lifetime: true, ...(plan.lifetimeUnlimited === true ? { unlimited: true } : {}), fallbackPrice: Number(plan.lifetimePrice) };
   }
   const recurringMatch = id.match(/^(.+)-(30|90|180|360)$/);
   if (!recurringMatch) return null;
   const plan = pricingProduct(recurringMatch[1]);
   const period = PRICING_PERIODS[recurringMatch[2]];
   if (!plan || (plan.productKind && plan.productKind !== "plan") || plan.recurringDeleted === true || (!allowUnlisted && (plan.internal === true || !productVariantAvailable(plan, "recurring") || plan.stock === 0)) || !Number.isFinite(Number(plan[period.priceKey]))) return null;
-  return { planId: plan.group, planName: plan.name || plan.group.toUpperCase(), optionLabel: period.label, priceKey: period.priceKey, duration: period.duration, group: plan.group, lineType: "self_hosted", fallbackPrice: Number(plan[period.priceKey]) };
+  return recurringPlanOption(plan, period);
 }
 
 function planCycleOptions(plan, selectedOption) {
-  if (selectedOption.lifetime) return [{ optionId: `${plan.group}-lifetime`, label: "固定流量 · 不限时", amount: Number(plan.lifetimePrice), devices: Number(plan.lifetimeDevices || 0) }];
+  if (selectedOption.lifetime) return [{ optionId: `${plan.group}-lifetime`, label: selectedOption.unlimited ? "无限流量 · 不限时" : "固定流量 · 不限时", amount: Number(plan.lifetimePrice), devices: Number(plan.lifetimeDevices || 0) }];
   return Object.entries(PRICING_PERIODS).flatMap(([days, period]) => Number.isFinite(Number(plan[period.priceKey]))
-    ? [{ optionId: `${plan.group}-${days}`, label: period.label, amount: Number(plan[period.priceKey]), devices: Number(plan[`${period.duration}Devices`] || 0) }]
+    ? [{ optionId: `${plan.group}-${days}`, label: `${period.label}${selectedOption.unlimited ? " · 无限流量" : ""}`, amount: Number(plan[period.priceKey]), devices: Number(plan[`${period.duration}Devices`] || 0) }]
     : []);
 }
 const PAYMENT_PLAN_OPTIONS = {
@@ -886,7 +891,17 @@ function makeTicketId() {
 async function notifyTicketAdmin(ticket, req) {
   if (!notifier.isTelegramConfigured()) return;
   const url = `${String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "")}/tickets/${encodeURIComponent(ticket.id)}`;
-  await notifier.sendTelegram({ text: [`📮 工单提醒 #${ticket.id}`, `用户：${ticket.email}`, `主题：${ticket.subject}`, `状态：待客服回复`, url].join("\n") });
+  await notifier.sendTelegram({ text: ticketTelegramText(ticket, url), parseMode: "" });
+}
+
+function ticketTelegramText(ticket, url) {
+  const prefix = [`📮 工单提醒 #${ticket.id}`, `用户：${ticket.email}`, `主题：${ticket.subject}`, "状态：待客服回复", "正文："].join("\n");
+  const suffix = `\n\n${url}`;
+  const message = String(ticket.messages?.[ticket.messages.length - 1]?.message || "（无正文）").trim();
+  const room = 4096 - Array.from(prefix + "\n" + suffix).length;
+  const characters = Array.from(message);
+  const body = characters.length > room ? `${characters.slice(0, Math.max(0, room - 1)).join("")}…` : message;
+  return `${prefix}\n${body}${suffix}`;
 }
 
 async function notifyTicketUser(ticket, message, req) {
@@ -2032,7 +2047,7 @@ const PRODUCT_BINDING_MIGRATION_ID = "user-product-binding-v5";
 const PRODUCT_DURATION_SUFFIX = Object.freeze({ monthly: "30", quarterly: "90", half_yearly: "180", yearly: "360" });
 
 function inferCustomUserDuration(user = {}) {
-  const group = activeUserGroup(user);
+  const group = pricingProduct(user.currentProductId) ? user.currentProductId : activeUserGroup(user);
   const prices = pricingProduct(group) || {};
   const logs = Array.isArray(user.userLogs) ? user.userLogs : [];
   const customLog = logs.find(log => log.details?.duration === "custom" && Number(log.details.amount) > 0);
@@ -2056,7 +2071,7 @@ function inferCustomUserDuration(user = {}) {
 
 function inferUserProductBinding(user = {}) {
   let duration = String(user.duration || "");
-  const group = activeUserGroup(user);
+  const group = pricingProduct(user.currentProductId) ? user.currentProductId : activeUserGroup(user);
   if (duration === "lifetime") {
     return productBinding(FRIENDS_PRODUCT_ID, `${FRIENDS_PRODUCT_ID}-lifetime`, user, {
       name: "亲友永久不限量",
@@ -2077,7 +2092,7 @@ function inferUserProductBinding(user = {}) {
   }
   const suffix = duration === "lifetime" ? "lifetime" : PRODUCT_DURATION_SUFFIX[duration];
   if (!suffix) return { error: `无法识别套餐周期：${duration || "空"}` };
-  const optionId = `${group}${user.unlimited && suffix !== "lifetime" ? "-unlimited" : ""}-${suffix}`;
+  const optionId = `${group}${user.unlimited && suffix !== "lifetime" && pricingProduct(group)?.unlimited !== true ? "-unlimited" : ""}-${suffix}`;
   let option;
   try { option = resolvePaymentPlanOption(optionId, { allowLegacy: true }); } catch { return { error: `找不到匹配商品：${optionId}` }; }
   return productBinding(option.planId, optionId, user, {
@@ -2258,7 +2273,7 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
   const plan = pricingProduct(option.planId) || {};
   const trafficConfig = recurringTrafficConfig(plan);
   const trafficTier = option.lifetime || option.unlimited ? 1 : normalizeTrafficTier(plan, requestedTrafficTier);
-  const trafficGb = option.lifetime ? planTrafficBytes({ activeGroup: option.group, duration: "lifetime", unlimited: Boolean(option.unlimited) }) / 1024 ** 3 : trafficConfig.baseGb * trafficTier;
+  const trafficGb = option.lifetime ? planTrafficBytes({ currentProductId: option.planId, activeGroup: option.group, duration: "lifetime", unlimited: Boolean(option.unlimited) }) / 1024 ** 3 : trafficConfig.baseGb * trafficTier;
   const trafficPriceFactor = option.lifetime || option.unlimited ? 1 : 1 + (trafficTier - 1) * trafficConfig.markupPercent / 100;
   const code = String(couponCode || "").trim().toUpperCase();
   const coupon = code ? paymentCoupons(couponConfig).get(code) : null;
@@ -2279,9 +2294,7 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
   const beforeCreditAmount = Number((subtotal + taxAmount).toFixed(2));
   const account = accounts.find(item => item.id === accountId);
   const terms = paymentPurchaseTerms(userForAccount(account));
-  const cycleSource = option.unlimited
-    ? Object.entries(PAYMENT_PLAN_OPTIONS).filter(([, item]) => item.planId === option.planId && item.unlimited).map(([id, item]) => ({ optionId: id, label: item.optionLabel, amount: resolvePaymentPlanOption(id).amount, devices: Number(plan[`${item.duration}Devices`] || 0) }))
-    : planCycleOptions(plan, option);
+  const cycleSource = planCycleOptions(plan, option);
   const cycles = cycleSource.map(item => ({ ...item, amount: Number((item.amount * trafficPriceFactor).toFixed(2)) }));
   if (!cycles.some(item => item.optionId === String(optionId))) cycles.unshift({ optionId: String(optionId), label: option.optionLabel, amount: originalAmount, devices: 0 });
   return {
@@ -2309,7 +2322,7 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
     discountPercent: percent || 0,
     title: option.lifetime ? plan.lifetimeTitle || option.planName : plan.title || option.planName,
     description: option.lifetime ? plan.lifetimeDescription || "" : plan.description || "",
-    traffic: option.lifetime ? trafficGb ? `${Number.isInteger(trafficGb) ? trafficGb : Number(trafficGb.toFixed(2))}G 固定流量` : plan.lifetimeTraffic || "固定流量" : option.unlimited ? "无限流量" : `每月 ${trafficGb} GB`,
+    traffic: option.unlimited ? "无限流量" : option.lifetime ? trafficGb ? `${Number.isInteger(trafficGb) ? trafficGb : Number(trafficGb.toFixed(2))}G 固定流量` : plan.lifetimeTraffic || "固定流量" : `每月 ${trafficGb} GB`,
     features: option.lifetime ? Array.isArray(plan.lifetimeFeatures) ? plan.lifetimeFeatures : [] : Array.isArray(plan.features) ? plan.features : [],
     devices: Number(option.lifetime ? plan.lifetimeDevices : plan[`${option.duration}Devices`] || 0),
     cycles
@@ -3266,7 +3279,7 @@ function normalizeXuiInboundEnable(idValue, enable) {
 }
 
 function pricingForUser(user = {}) {
-  return publicPricing().find(item => item.group === activeUserGroup(user)) || null;
+  return publicPricing().find(item => item.group === user.currentProductId) || publicPricing().find(item => item.group === activeUserGroup(user)) || null;
 }
 
 function planTrafficBytes(user = {}) {
@@ -9226,6 +9239,9 @@ async function handleApi(req, res, pathname) {
         const row = { ...existing, id: group, group };
         row.productKind = ["addon", "custom"].includes(item.productKind) ? item.productKind : "plan";
         row.lineType = row.productKind === "plan" ? "self_hosted" : undefined;
+        for (const field of ["permissionGroup", "lifetimePermissionGroup"]) {
+          if (item[field] !== undefined && !USER_GROUPS.includes(String(item[field]).trim().toLowerCase())) { sendJson(res, 400, { error: `${group}.${field} 权限组无效。` }); return; }
+        }
         for (const dur of DURATIONS) {
           for (const priceKey of [dur, UNLIMITED_PRICE_KEYS[dur]]) {
             if (item[priceKey] === undefined) continue;
@@ -9243,8 +9259,10 @@ async function handleApi(req, res, pathname) {
         for (const field of TEXT_FIELDS) row[field] = String(item[field] ?? "").trim().slice(0, field === "description" ? 120 : 60);
         row.recommended = Boolean(item.recommended);
         row.enabled = item.enabled !== false;
+        row.unlimited = item.unlimited === true;
+        row.permissionGroup = normalizeUserGroup(item.permissionGroup, normalizeUserGroup(group));
         row.recurringDeleted = Boolean(item.recurringDeleted);
-        if (row.productKind === "plan" && item.recurringDeleted !== true) {
+        if (row.productKind === "plan" && item.recurringDeleted !== true && !row.unlimited) {
           for (const [field, fallback] of [["trafficBaseGb", 0], ["trafficMaxTier", 10], ["trafficTierMarkupPercent", 50]]) {
             const value = Number(item[field] ?? fallback);
             const valid = field === "trafficMaxTier" ? Number.isSafeInteger(value) && value >= 1 && value <= 50 : field === "trafficBaseGb" ? Number.isFinite(value) && value > 0 : Number.isFinite(value) && value >= 0;
@@ -9279,6 +9297,8 @@ async function handleApi(req, res, pathname) {
           row[field] = value;
         }
         row.lifetimeEnabled = item.lifetimeEnabled !== false;
+        row.lifetimeUnlimited = item.lifetimeUnlimited === true;
+        row.lifetimePermissionGroup = normalizeUserGroup(item.lifetimePermissionGroup, normalizeUserGroup(group));
         row.lifetimeRecommended = Boolean(item.lifetimeRecommended);
         row.lifetimeDeleted = Boolean(item.lifetimeDeleted);
         if (item.lifetimeStock === undefined || item.lifetimeStock === null || item.lifetimeStock === "") delete row.lifetimeStock;
@@ -10356,11 +10376,13 @@ module.exports = Object.assign(requestHandler, {
   injectPlaceholderNodes,
   normalizeTicketAttachments,
   ticketStatusForReply,
+  ticketTelegramText,
   validateTicketText,
   liveConfigFromCachedPoolConfig,
   startOfUtcDate,
   remainingPlanCashValue,
   inferUserProductBinding,
+  recurringPlanOption,
   resolvePlanChangeOption,
   planTrafficBytes,
   planChangeState,
