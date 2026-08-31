@@ -889,9 +889,12 @@ function makeTicketId() {
 }
 
 async function notifyTicketAdmin(ticket, req) {
-  if (!notifier.isTelegramConfigured()) return;
   const url = `${String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "")}/tickets/${encodeURIComponent(ticket.id)}`;
-  await notifier.sendTelegram({ text: ticketTelegramText(ticket, url), parseMode: "" });
+  await sendAdminAlert("ticket", {
+    subject: `工单待处理：${ticket.subject}`,
+    text: ticketTelegramText(ticket, url),
+    parseMode: ""
+  });
 }
 
 function ticketTelegramText(ticket, url) {
@@ -902,6 +905,25 @@ function ticketTelegramText(ticket, url) {
   const characters = Array.from(message);
   const body = characters.length > room ? `${characters.slice(0, Math.max(0, room - 1)).join("")}…` : message;
   return `${prefix}\n${body}${suffix}`;
+}
+
+async function sendAdminAlert(category, { subject, text, parseMode }, channels = ["telegram", "mail"]) {
+  if (process.env.NODE_ENV === "test") return [];
+  const scope = currentSalesSettings().alertSettings[category] || {};
+  const tasks = [];
+  if (channels.includes("telegram") && scope.telegram && notifier.isTelegramConfigured()) {
+    tasks.push(notifier.sendTelegram({ text, parseMode }).then(() => "telegram").catch(error => {
+      console.error(`[alerts] ${category} Telegram notification failed:`, error.message);
+      return "";
+    }));
+  }
+  if (channels.includes("mail") && scope.mail && notifier.isMailConfigured()) {
+    tasks.push(notifier.sendMail({ subject, text }).then(() => "mail").catch(error => {
+      console.error(`[alerts] ${category} mail notification failed:`, error.message);
+      return "";
+    }));
+  }
+  return (await Promise.all(tasks)).filter(Boolean);
 }
 
 async function notifyTicketUser(ticket, message, req) {
@@ -1455,8 +1477,36 @@ function legacyPaymentCoupons(value = process.env.PAYMENT_COUPONS || "") {
   return String(value).split(",").map(entry => entry.split(":").map(part => part.trim())).filter(([code, percent]) => code && Number(percent) > 0 && Number(percent) < 100).map(([code, percent]) => ({ id: code.toUpperCase(), code: code.toUpperCase(), percent: Number(percent), enabled: true, validFrom: "", validUntil: "", applicableGroups: [], applicableDurations: [], totalLimit: 0, perAccountLimit: 0 }));
 }
 
+function defaultAlertSettings() {
+  return {
+    payment: { telegram: true, mail: false },
+    ticket: { telegram: true, mail: false },
+    traffic: { telegram: false, mail: false, userMail: false },
+    trafficThresholdPercent: 80
+  };
+}
+
+function normalizeAlertSettings(value, strict = false) {
+  const defaults = defaultAlertSettings();
+  const threshold = Number(value?.trafficThresholdPercent ?? defaults.trafficThresholdPercent);
+  if ((!Number.isInteger(threshold) || threshold < 1 || threshold > 100) && strict) throw new Error("用户流量提醒阈值需为 1-100 的整数。");
+  const channelScope = category => ({
+    telegram: typeof value?.[category]?.telegram === "boolean" ? value[category].telegram : defaults[category].telegram,
+    mail: typeof value?.[category]?.mail === "boolean" ? value[category].mail : defaults[category].mail
+  });
+  return {
+    payment: channelScope("payment"),
+    ticket: channelScope("ticket"),
+    traffic: {
+      ...channelScope("traffic"),
+      userMail: typeof value?.traffic?.userMail === "boolean" ? value.traffic.userMail : defaults.traffic.userMail
+    },
+    trafficThresholdPercent: Number.isInteger(threshold) && threshold >= 1 && threshold <= 100 ? threshold : defaults.trafficThresholdPercent
+  };
+}
+
 function initialSalesSettings() {
-  return { id: "default", registrationMode: "open", onboardingEnabled: true, coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [] };
+  return { id: "default", registrationMode: "open", onboardingEnabled: true, alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [] };
 }
 
 function readBuffer(req, limit) {
@@ -1499,7 +1549,7 @@ async function saveImageUpload(req) {
 
 function currentSalesSettings() {
   const settings = salesSettings[0];
-  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, announcements: settings.announcements || [], advertisements: settings.advertisements || [] } : initialSalesSettings();
+  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [] } : initialSalesSettings();
 }
 
 function paymentCoupons(value) {
@@ -1540,6 +1590,7 @@ function normalizeCouponDate(value, label) {
 function normalizeSalesSettings(payload) {
   const registrationMode = ["open", "invite_only", "disabled"].includes(payload?.registrationMode) ? payload.registrationMode : "open";
   const onboardingEnabled = payload?.onboardingEnabled !== false;
+  const alertSettings = normalizeAlertSettings(payload?.alertSettings, true);
   const coupons = Array.isArray(payload?.coupons) ? payload.coupons.slice(0, 50) : [];
   const seenCodes = new Set();
   const couponGroups = new Set(["basic", "pro", "ultra"]);
@@ -1590,7 +1641,7 @@ function normalizeSalesSettings(payload) {
     if (category.length > 40 || title.length > 80 || description.length > 200 || content.length > 20000) throw new Error("广告分类最多 40 字，标题最多 80 字，简介最多 200 字，正文最多 20000 字。");
     return { id: String(item.id || crypto.randomUUID()), category, title, description, content, enabled: item.enabled !== false };
   });
-  return { id: "default", registrationMode, onboardingEnabled, coupons: normalizedCoupons, faqs, announcements, advertisements };
+  return { id: "default", registrationMode, onboardingEnabled, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements };
 }
 
 function publicAnnouncements() {
@@ -2744,13 +2795,10 @@ async function reversePaymentOrder(order) {
 }
 
 async function notifyPaymentOrder(order) {
-  if (process.env.NODE_ENV === "test") return;
-  if (!notifier.isTelegramConfigured()) return;
-  try {
-    await notifier.sendTelegram({ text: notifier.buildPaymentAlert(order) });
-  } catch (error) {
-    console.error(`Payment notification failed for ${order.merOrderTid}:`, error.message);
-  }
+  await sendAdminAlert("payment", {
+    subject: `用户支付提醒：${order.email || order.merOrderTid || order.id}`,
+    text: notifier.buildPaymentAlert(order)
+  });
 }
 
 function assertPendingPaymentOrderLimit(accountId) {
@@ -3757,9 +3805,13 @@ function xuiDailyNodeTraffic(traffic = {}, previous = {}) {
   const nodes = {};
   const users = Object.fromEntries(Object.entries(userBaseline).filter(([, item]) => item?.nodes));
   for (const [guid, current] of Object.entries(currentByNode)) {
-    const prior = baseline[guid] || { baselineBytes: current, usedBytes: 0 };
-    const delta = current >= Number(prior.baselineBytes) ? current - Number(prior.baselineBytes) : current;
-    nodes[guid] = { baselineBytes: current, usedBytes: Math.max(0, Number(prior.usedBytes) || 0) + delta };
+    nodes[guid] = { baselineBytes: current, usedBytes: 0 };
+  }
+  if (previous.date === date) {
+    for (const [guid, prior] of Object.entries(baseline)) {
+      if (nodes[guid]) continue;
+      nodes[guid] = { baselineBytes: Math.max(0, Number(prior?.baselineBytes) || 0), usedBytes: Math.max(0, Number(prior?.usedBytes) || 0) };
+    }
   }
   for (const [email, byNode] of Object.entries(traffic)) {
     const priorNodes = userBaseline[email]?.nodes || {};
@@ -3771,6 +3823,11 @@ function xuiDailyNodeTraffic(traffic = {}, previous = {}) {
       userNodes[guid] = { baselineBytes: current, usedBytes: Math.max(0, Number(prior.usedBytes) || 0) + delta };
     }
     users[email] = { nodes: userNodes, usedBytes: Object.values(userNodes).reduce((sum, item) => sum + Math.max(0, Number(item.usedBytes) || 0), 0) };
+  }
+  for (const node of Object.values(nodes)) node.usedBytes = 0;
+  for (const user of Object.values(users)) for (const [guid, item] of Object.entries(user.nodes || {})) {
+    nodes[guid] ||= { baselineBytes: Math.max(0, Number(baseline[guid]?.baselineBytes) || 0), usedBytes: 0 };
+    nodes[guid].usedBytes += Math.max(0, Number(item.usedBytes) || 0);
   }
   return { date, nodes, users };
 }
@@ -3850,6 +3907,7 @@ function calculateXuiBillingLedger(previous, currentByNode, multipliers, cycleKe
     cycleKey,
     cycleReset: Boolean(reset),
     disabled: reset ? false : previous?.disabled === true,
+    trafficAlerts: reset ? {} : previous?.trafficAlerts || {},
     carriedRawBytes,
     carriedWeightedBytes,
     nodes,
@@ -3865,7 +3923,39 @@ function createXuiBillingBaseline(currentByNode, cycleKey, multipliers = {}) {
     rawBytes: Math.max(0, Number(value) || 0),
     weightedBytes: Math.round(Math.max(0, Number(value) || 0) * xuiMultiplier(multipliers[key]))
   }]));
-  return { cycleKey, cycleReset: false, disabled: false, carriedRawBytes: 0, carriedWeightedBytes: 0, nodes, rawBytes: Object.values(nodes).reduce((sum, item) => sum + item.rawBytes, 0), weightedBytes: Object.values(nodes).reduce((sum, item) => sum + item.weightedBytes, 0), updatedAt: new Date().toISOString() };
+  return { cycleKey, cycleReset: false, disabled: false, trafficAlerts: {}, carriedRawBytes: 0, carriedWeightedBytes: 0, nodes, rawBytes: Object.values(nodes).reduce((sum, item) => sum + item.rawBytes, 0), weightedBytes: Object.values(nodes).reduce((sum, item) => sum + item.weightedBytes, 0), updatedAt: new Date().toISOString() };
+}
+
+function pendingXuiTrafficAlert(ledger, totalBytes, threshold, scope = {}) {
+  if (!(totalBytes > 0) || !(ledger?.weightedBytes / totalBytes * 100 >= threshold)) return null;
+  const key = `${ledger.cycleKey}:${threshold}`;
+  const sent = new Set(Array.isArray(ledger.trafficAlerts?.[key]) ? ledger.trafficAlerts[key] : []);
+  const channels = ["telegram", "mail", "userMail"].filter(channel => scope[channel] && !sent.has(channel));
+  return channels.length ? { key, channels } : null;
+}
+
+function xuiTrafficAlertText(user, ledger, totalBytes, threshold) {
+  const email = user.email || user.xuiClientEmail || "-";
+  const usagePercent = Math.round(ledger.weightedBytes / totalBytes * 1000) / 10;
+  return [
+    "⚠️ 用户流量提醒",
+    `📧 用户邮箱：${email}`,
+    `📊 当前用量：${notifier.formatBytes(ledger.weightedBytes)} / ${notifier.formatBytes(totalBytes)} (${usagePercent}%)`,
+    `🎯 提醒阈值：${threshold}%`
+  ].join("\n");
+}
+
+function xuiUserTrafficAlertText(ledger, totalBytes, threshold) {
+  const usagePercent = Math.round(ledger.weightedBytes / totalBytes * 1000) / 10;
+  return [
+    `你的流量使用已达到 ${usagePercent}%（提醒阈值 ${threshold}%）。`,
+    "",
+    `已使用：${notifier.formatBytes(ledger.weightedBytes)}`,
+    `总流量：${notifier.formatBytes(totalBytes)}`,
+    `剩余流量：${notifier.formatBytes(Math.max(totalBytes - ledger.weightedBytes, 0))}`,
+    "",
+    "流量用尽后服务将暂停，请及时购买流量包或更新套餐。"
+  ].join("\n");
 }
 
 function xuiClientCycleKey(client = {}, now = Date.now()) {
@@ -3886,14 +3976,37 @@ function withXuiBillingLock(operation) {
 
 async function getXuiBillingState() {
   const value = await getXuiState("billing", "xuiBilling");
-  return { multipliers: {}, nodeTokens: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
+  const state = { multipliers: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
+  if (state.dailyTraffic) state.dailyTraffic = xuiDailyNodeTraffic({}, state.dailyTraffic);
+  return state;
+}
+
+function xuiBillingPayload(state) {
+  const { nodeTokens, ...billing } = state;
+  return billing;
 }
 
 async function saveXuiBillingState(state) {
-  await setXuiState("billing", "xuiBilling", { ...state, updatedAt: new Date().toISOString() });
+  await setXuiState("billing", "xuiBilling", { ...xuiBillingPayload(state), updatedAt: new Date().toISOString() });
 }
 
-async function xuiTrafficFromNodes(status, nodes, centralInbounds, state) {
+async function getXuiNodeTokens(legacyTokens = {}) {
+  const tokens = XUI_SERVICE_URL
+    ? (await getXuiState("node-tokens", "xuiNodeTokens")) || {}
+    : await dataStore.getXuiNodeCredentials();
+  if (Object.keys(tokens).length || !Object.keys(legacyTokens).length) return tokens;
+  if (XUI_SERVICE_URL) await setXuiState("node-tokens", "xuiNodeTokens", legacyTokens);
+  else await Promise.all(Object.entries(legacyTokens).map(([guid, token]) => dataStore.setXuiNodeCredential(guid, token)));
+  return legacyTokens;
+}
+
+async function setXuiNodeToken(guid, token) {
+  if (!XUI_SERVICE_URL) return dataStore.setXuiNodeCredential(guid, token);
+  const tokens = await getXuiNodeTokens();
+  await setXuiState("node-tokens", "xuiNodeTokens", { ...tokens, [guid]: token });
+}
+
+async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
   const localGuid = String(status?.panelGuid || "node:local");
   const inbounds = (Array.isArray(centralInbounds) ? centralInbounds : [])
     .filter(item => String(item?.originNodeGuid || `node:${item?.nodeId || "local"}`) === localGuid)
@@ -3901,7 +4014,7 @@ async function xuiTrafficFromNodes(status, nodes, centralInbounds, state) {
   const nodeResults = { [localGuid]: { configured: true, error: "" } };
   await Promise.all((Array.isArray(nodes) ? nodes : []).map(async node => {
     const guid = String(node?.guid || `node:${node?.id}`);
-    const sealedToken = state.nodeTokens[guid];
+    const sealedToken = nodeTokens[guid];
     if (!sealedToken) {
       nodeResults[guid] = { configured: false, error: "" };
       return;
@@ -4020,7 +4133,8 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       xuiRequest("/panel/api/clients/lastOnline", { method: "POST" }).catch(() => null)
     ]);
     const state = await getXuiBillingState();
-    const { traffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, state);
+    const nodeTokens = await getXuiNodeTokens(state.nodeTokens);
+    const { traffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
     const dailyTraffic = xuiDailyNodeTraffic(traffic, state.dailyTraffic);
     if (state.dailyTraffic?.date && state.dailyTraffic.date !== dailyTraffic.date) {
       const history = appendXuiDailyTrafficHistory(await getXuiState("traffic-history", "xuiTrafficHistory"), state.dailyTraffic);
@@ -4033,6 +4147,8 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     const disableEmails = [];
     const enableEmails = [];
     const changedUsers = [];
+    const trafficAlerts = [];
+    const alertSettings = currentSalesSettings().alertSettings;
     const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
     const remoteEmails = new Set();
 
@@ -4056,6 +4172,8 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       ledger.disabled = ledger.disabled || depleted;
       ledger.totalBytes = totalBytes;
       state.users[email] = ledger;
+      const trafficAlert = user ? pendingXuiTrafficAlert(ledger, totalBytes, alertSettings.trafficThresholdPercent, alertSettings.traffic) : null;
+      if (trafficAlert) trafficAlerts.push({ user, ledger, totalBytes, ...trafficAlert });
       const weightedTraffic = {
         rawUsedBytes: ledger.rawBytes,
         usedBytes: ledger.weightedBytes,
@@ -4100,6 +4218,26 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       for (const email of disableEmails) state.users[email].disabled = true;
     }
     if (!XUI_READ_ONLY && enableEmails.length) await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: enableEmails } });
+    for (const alert of trafficAlerts) {
+      const sent = await sendAdminAlert("traffic", {
+        subject: `用户流量达到 ${alertSettings.trafficThresholdPercent}%：${alert.user.email || alert.user.xuiClientEmail}`,
+        text: xuiTrafficAlertText(alert.user, alert.ledger, alert.totalBytes, alertSettings.trafficThresholdPercent)
+      }, alert.channels);
+      if (alert.channels.includes("userMail") && notifier.isMailConfigured()) {
+        try {
+          await notifier.sendMail({
+            to: alert.user.email || alert.user.xuiClientEmail,
+            subject: `流量使用已达到 ${alertSettings.trafficThresholdPercent}%`,
+            text: xuiUserTrafficAlertText(alert.ledger, alert.totalBytes, alertSettings.trafficThresholdPercent)
+          });
+          sent.push("userMail");
+        } catch (error) {
+          console.error(`[alerts] traffic user mail failed for ${alert.user.email || alert.user.xuiClientEmail}:`, error.message);
+        }
+      }
+      if (!sent.length) continue;
+      alert.ledger.trafficAlerts[alert.key] = [...new Set([...(alert.ledger.trafficAlerts[alert.key] || []), ...sent])];
+    }
     state.nodeResults = nodeResults;
     state.nodeNames = nodeNames;
     state.presence = { ...normalizeXuiPresence(onlinesByGuid, lastOnline, nodes, status), checkedAt: new Date().toISOString() };
@@ -8517,6 +8655,7 @@ async function handleApi(req, res, pathname) {
         })
       ]);
       const billing = await getXuiBillingState();
+      const nodeTokens = await getXuiNodeTokens(billing.nodeTokens);
       const monitor = normalizeXuiMonitor(status, nodes);
       const localGuid = String(status?.panelGuid || "node:local");
       const panelUrl = new URL(XUI_BASE_URL);
@@ -8547,7 +8686,7 @@ async function handleApi(req, res, pathname) {
       monitor.nodes.forEach(node => {
         const trafficStatus = billing.nodeResults[node.guid] || {};
         node.trafficTokenRequired = node.id !== "local";
-        node.trafficConfigured = trafficStatus.configured === true;
+        node.trafficConfigured = Boolean(nodeTokens[node.guid]);
         node.trafficError = String(trafficStatus.error || "");
         node.multiplier = xuiMultiplier(billing.multipliers[node.guid]);
         if (onlinesByGuid && Object.prototype.hasOwnProperty.call(onlinesByGuid, node.guid)) {
@@ -8572,9 +8711,7 @@ async function handleApi(req, res, pathname) {
       const nodes = await xuiRequest("/panel/api/nodes/list");
       if (!(Array.isArray(nodes) ? nodes : []).some(node => String(node?.guid) === guid)) throw new Error("节点不存在。");
       await withXuiBillingLock(async () => {
-        const state = await getXuiBillingState();
-        state.nodeTokens[guid] = sealXuiNodeToken(apiToken);
-        await saveXuiBillingState(state);
+        await setXuiNodeToken(guid, sealXuiNodeToken(apiToken));
       });
       sendJson(res, 200, { ok: true, guid, configured: true });
     } catch (error) {
@@ -8598,7 +8735,7 @@ async function handleApi(req, res, pathname) {
       await withXuiBillingLock(async () => {
         const state = await getXuiBillingState();
         state.multipliers[guid] = multiplier;
-        if (apiToken) state.nodeTokens[guid] = sealXuiNodeToken(apiToken);
+        if (apiToken) await setXuiNodeToken(guid, sealXuiNodeToken(apiToken));
         await saveXuiBillingState(state);
       });
       sendJson(res, 200, { ok: true, guid, multiplier, configured: guid === localGuid || apiToken ? true : undefined });
@@ -10431,7 +10568,9 @@ module.exports = Object.assign(requestHandler, {
   xuiUserDailyTraffic,
   calculateXuiBillingLedger,
   createXuiBillingBaseline,
+  pendingXuiTrafficAlert,
   xuiClientCycleKey,
+  xuiBillingPayload,
   xuiMonthlyResetAt,
   legacyMigrationTrafficLimitBytes,
   withXuiUserMigrationLock,

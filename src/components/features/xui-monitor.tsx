@@ -1,18 +1,17 @@
 import * as React from "react"
-import { Activity, Loader2, RefreshCw, Server, Settings2 } from "lucide-react"
+import { Activity, AlertTriangle, Loader2, RefreshCw, Server, Settings2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, putJson } from "@/api"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatBytes, formatDateTime } from "@/utils"
+import { formatDateTime } from "@/utils"
 
 type MonitorData = {
   configured: boolean
@@ -60,12 +59,6 @@ type MonitorData = {
     trafficError: string
     multiplier: number
   }>
-}
-
-function uptimeLabel(seconds: number) {
-  const days = Math.floor(seconds / 86400)
-  const hours = Math.floor(seconds % 86400 / 3600)
-  return days ? `${days} 天 ${hours} 小时` : `${hours} 小时`
 }
 
 export function XuiMonitorPage() {
@@ -125,6 +118,7 @@ export function XuiMonitorPage() {
   if (!data?.configured) return <div className="px-4 lg:px-6"><Alert><Server /><AlertDescription>尚未配置 3x-ui。请在服务端设置 XUI_BASE_URL 和 XUI_API_TOKEN。</AlertDescription></Alert></div>
 
   const settingsNode = data.nodes.find(node => node.guid === settingsGuid)
+  const missingTokenNodes = data.nodes.filter(node => node.trafficTokenRequired && !node.trafficConfigured)
 
   return (
     <>
@@ -138,6 +132,8 @@ export function XuiMonitorPage() {
 
       {error ? <div className="px-4 lg:px-6"><Alert variant="destructive"><Activity /><AlertDescription>{error}</AlertDescription></Alert></div> : null}
 
+      {missingTokenNodes.length ? <div className="px-4 lg:px-6"><Alert variant="warning"><AlertTriangle /><AlertTitle>{missingTokenNodes.length} 个节点尚未设置 API Token</AlertTitle><AlertDescription>{missingTokenNodes.map(node => node.name).join("、")}。请进入对应节点设置完成配置，否则无法统计该节点流量。</AlertDescription></Alert></div> : null}
+
       <div className="px-4 lg:px-6">
         <Card>
           <CardHeader>
@@ -148,41 +144,28 @@ export function XuiMonitorPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 px-4 md:grid-cols-2 lg:px-6 xl:grid-cols-3">
+      <div className="grid gap-4 px-4 lg:px-6">
         {data.nodes.map(node => {
           const online = node.enabled && node.status.toLowerCase() === "online"
           return (
             <Card key={node.id}>
               <CardHeader>
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="grid gap-1">
-                    <CardTitle className="flex items-center gap-2"><Server className="size-5" />{node.name}</CardTitle>
+                    <CardTitle className="flex flex-wrap items-center gap-2"><Server className="size-5" />{node.name}<Badge variant={online ? "success" : "secondary"}>{node.enabled ? node.status : "disabled"}</Badge>{node.trafficTokenRequired && !node.trafficConfigured ? <Badge variant="destructive">未设置 API</Badge> : null}<Badge variant="outline">× {node.multiplier}</Badge></CardTitle>
                     <CardDescription>{node.address}{node.port ? `:${node.port}` : ""}</CardDescription>
                   </div>
-                  <div className="grid justify-items-end gap-2">
-                    <Badge variant={online ? "success" : "secondary"}>{node.enabled ? node.status : "disabled"}</Badge>
-                    <Badge variant="outline">× {node.multiplier}</Badge>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     <Button variant="outline" size="sm" onClick={() => openNodeSettings(node)}><Settings2 />节点设置</Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="grid gap-4">
-                <div className="grid grid-cols-3 gap-3 text-sm">
+                <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                   <p className="grid gap-1 text-muted-foreground">延迟<span className="font-medium text-foreground">{node.latencyMs ? `${node.latencyMs} ms` : "-"}</span></p>
                   <p className="grid gap-1 text-muted-foreground">入站<span className="font-medium text-foreground">{node.inboundCount}</span></p>
-                  <p className="grid gap-1 text-muted-foreground">客户端<span className="font-medium text-foreground">{node.onlineCount} / {node.clientCount}</span></p>
-                </div>
-                <div className="grid gap-2">
-                  <p className="flex justify-between text-sm"><span>CPU</span><span>{node.cpu.toFixed(1)}%</span></p>
-                  <Progress value={node.cpu} />
-                  <p className="flex justify-between text-sm"><span>内存</span><span>{node.memory.toFixed(1)}%</span></p>
-                  <Progress value={node.memory} />
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <p className="grid gap-1 text-muted-foreground">网络<span className="text-foreground">↑ {formatBytes(node.uploadBytes)} · ↓ {formatBytes(node.downloadBytes)}</span></p>
-                  <p className="grid gap-1 text-muted-foreground">运行时间<span className="text-foreground">{uptimeLabel(node.uptime)}</span></p>
-                  <p className="grid gap-1 text-muted-foreground">Panel<span className="text-foreground">{node.panelVersion || "-"}</span></p>
-                  <p className="grid gap-1 text-muted-foreground">Xray<span className="text-foreground">{node.xrayVersion || "-"} · {node.xrayState}</span></p>
+                  <p className="grid gap-1 text-muted-foreground">客户端<span className="font-medium text-foreground">{node.clientCount}</span></p>
+                  <p className="grid gap-1 text-muted-foreground">当前使用<span className="font-medium text-foreground">{node.onlineCount}</span></p>
                 </div>
                 <p className="text-xs text-muted-foreground">最后心跳：{node.lastHeartbeat ? formatDateTime(node.lastHeartbeat) : "-"}</p>
                 {node.trafficError ? <Alert variant="destructive"><Activity /><AlertDescription>节点流量读取失败：{node.trafficError}</AlertDescription></Alert> : null}

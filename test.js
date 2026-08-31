@@ -61,7 +61,9 @@ const {
   xuiUserDailyTraffic,
   calculateXuiBillingLedger,
   createXuiBillingBaseline,
+  pendingXuiTrafficAlert,
   xuiClientCycleKey,
+  xuiBillingPayload,
   xuiMonthlyResetAt,
   legacyMigrationTrafficLimitBytes,
   withXuiUserMigrationLock,
@@ -335,6 +337,11 @@ assert.deepStrictEqual([resetDailyTraffic.nodes.hk.usedBytes, resetDailyTraffic.
 const partialDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 110 } }, xuiDailyNodeTraffic({ user: { hk: 100, jp: 100 } }));
 const restoredDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 120, jp: 120 } }, partialDailyTraffic);
 assert.strictEqual(restoredDailyTraffic.users.user.usedBytes, 40);
+  const retainedNodeTraffic = xuiDailyNodeTraffic({ user: { hk: 120 } }, partialDailyTraffic);
+  assert.strictEqual(retainedNodeTraffic.nodes.jp.usedBytes, 0);
+  const sharedNodeTraffic = xuiDailyNodeTraffic({ first: { hk: 110 }, second: { hk: 110 } }, xuiDailyNodeTraffic({ first: { hk: 100 }, second: { hk: 100 } }));
+  assert.strictEqual(xuiDailyNodeTraffic({ first: { hk: 120 } }, sharedNodeTraffic).nodes.hk.usedBytes, 30);
+assert.deepStrictEqual(xuiBillingPayload({ users: { user: {} }, nodeTokens: { hk: "secret" } }), { users: { user: {} } });
 assert.strictEqual(xuiDailyNodeTraffic({ user: { hk: 120 } }, { date: dailyTraffic.date, users: { user: { baselineBytes: 100, usedBytes: 100 } } }).users.user.usedBytes, 0);
 let trafficHistory = {};
 for (let day = 18; day <= 25; day += 1) trafficHistory = appendXuiDailyTrafficHistory(trafficHistory, { date: `2026-08-${day}`, users: { user: { usedBytes: day } } });
@@ -352,6 +359,9 @@ const nextLedger = calculateXuiBillingLedger(firstLedger, { hk: 180, jp: 70 }, {
 assert.deepStrictEqual([nextLedger.rawBytes, nextLedger.weightedBytes], [250, 395]);
 const resetLedger = calculateXuiBillingLedger(nextLedger, { hk: 180, jp: 70 }, { hk: 2, jp: 0.5 }, "cycle-2");
 assert.deepStrictEqual([resetLedger.rawBytes, resetLedger.weightedBytes], [0, 0]);
+assert.deepStrictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 80, trafficAlerts: {} }, 100, 80, { telegram: true, mail: true, userMail: true }), { key: "cycle-1:80", channels: ["telegram", "mail", "userMail"] });
+assert.deepStrictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 90, trafficAlerts: { "cycle-1:80": ["telegram"] } }, 100, 80, { telegram: true, mail: true }), { key: "cycle-1:80", channels: ["mail"] });
+assert.strictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 79 }, 100, 80, { telegram: true }), null);
 const migratedLedger = calculateXuiBillingLedger({ cycleKey: "plan|direct-inbounds-v1", inbounds: { "hk:1": { baselineBytes: 180, rawBytes: 20, weightedBytes: 20 }, "hk:2": { baselineBytes: 180, rawBytes: 20, weightedBytes: 40 } } }, { hk: 200 }, { hk: 2 }, "plan|direct-nodes-v2");
 assert.deepStrictEqual([migratedLedger.rawBytes, migratedLedger.weightedBytes, migratedLedger.nodes.hk.baselineBytes], [40, 80, 200]);
 const clientCreatedAt = Date.UTC(2026, 0, 1);
@@ -399,6 +409,9 @@ assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T0
 const announcementSettings = normalizeSalesSettings({ announcements: [{ title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true }] });
 assert.deepStrictEqual(announcementSettings.announcements[0], { id: announcementSettings.announcements[0].id, title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true });
 assert.strictEqual(normalizeSalesSettings({ onboardingEnabled: false }).onboardingEnabled, false);
+const alertSettings = normalizeSalesSettings({ alertSettings: { payment: { telegram: false, mail: true }, traffic: { telegram: true, mail: true, userMail: true }, trafficThresholdPercent: 85 } }).alertSettings;
+assert.deepStrictEqual(alertSettings, { payment: { telegram: false, mail: true }, ticket: { telegram: true, mail: false }, traffic: { telegram: true, mail: true, userMail: true }, trafficThresholdPercent: 85 });
+assert.throws(() => normalizeSalesSettings({ alertSettings: { trafficThresholdPercent: 0 } }), /1-100/);
 assert.throws(() => normalizeSalesSettings({ announcements: [{ title: "", content: "内容" }] }), /不能为空/);
 const normalizedPaymentSettings = normalizePaymentSettings({
   name: "旧支付平台",

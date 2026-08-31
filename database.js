@@ -82,6 +82,11 @@ class PostgresDataStore {
         data JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (collection, id)
+      );
+      CREATE TABLE IF NOT EXISTS xui_node_credentials (
+        guid TEXT PRIMARY KEY,
+        sealed_token TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
       `), "postgres init");
       await withPgRetry(() => initXuiAudit(pool), "xui audit init");
@@ -473,6 +478,19 @@ class PostgresDataStore {
       `load ${collection}/${id}`
     );
     return result.rows[0]?.data || null;
+  }
+
+  async getXuiNodeCredentials() {
+    const result = await withPgRetry(() => this.pool.query("SELECT guid, sealed_token FROM xui_node_credentials"), "load xui node credentials");
+    return Object.fromEntries(result.rows.map(row => [row.guid, row.sealed_token]));
+  }
+
+  async setXuiNodeCredential(guid, sealedToken) {
+    await withPgRetry(() => this.pool.query(
+      `INSERT INTO xui_node_credentials (guid, sealed_token, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (guid) DO UPDATE SET sealed_token = EXCLUDED.sealed_token, updated_at = NOW()`,
+      [guid, sealedToken]
+    ), `save xui node credential ${guid}`);
   }
 
   async setRecord(collection, id, data) {
