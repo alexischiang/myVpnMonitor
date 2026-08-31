@@ -393,6 +393,12 @@ export type SalesSettings = {
   id: string
   registrationMode: "open" | "invite_only" | "disabled"
   onboardingEnabled: boolean
+  alertSettings: {
+    payment: { telegram: boolean; mail: boolean }
+    ticket: { telegram: boolean; mail: boolean }
+    traffic: { telegram: boolean; mail: boolean; userMail: boolean }
+    trafficThresholdPercent: number
+  }
   coupons: CouponSetting[]
   faqs: FaqSetting[]
   announcements: AnnouncementSetting[]
