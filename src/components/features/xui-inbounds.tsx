@@ -1,7 +1,7 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { useSearchParams } from "react-router-dom"
-import { Loader2, Pencil, RefreshCw, Save, Server, Settings2 } from "lucide-react"
+import { CircleMinus, CirclePlus, Loader2, Pencil, RefreshCw, Save, Server, Settings2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -11,7 +11,6 @@ import { PageHeader } from "@/components/features/shared"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -138,18 +137,10 @@ export function XuiInboundsPage() {
     setGroupOpen(true)
   }
 
-  function toggleGroupInbound(inboundId: number, checked: boolean) {
+  function setGroupInboundAvailability(inboundId: number, available: boolean) {
     setDraftGroups(current => {
       const ids = current[selectedGroup] || []
-      return { ...current, [selectedGroup]: checked ? [...new Set([...ids, inboundId])] : ids.filter(id => id !== inboundId) }
-    })
-  }
-
-  function toggleFilteredGroupInbounds(inboundIds: number[], checked: boolean) {
-    setDraftGroups(current => {
-      const selected = new Set(current[selectedGroup] || [])
-      inboundIds.forEach(id => checked ? selected.add(id) : selected.delete(id))
-      return { ...current, [selectedGroup]: [...selected] }
+      return { ...current, [selectedGroup]: available ? [...new Set([...ids, inboundId])] : ids.filter(id => id !== inboundId) }
     })
   }
 
@@ -194,8 +185,8 @@ export function XuiInboundsPage() {
     return allInbounds.filter(inbound => (groupNodeFilter === "all" || inbound.nodeGuid === groupNodeFilter) && (!query || `${inbound.nodeName} ${inbound.name} ${inbound.tag} ${inbound.region} ${inbound.protocol}`.toLocaleLowerCase().includes(query)))
   }, [allInbounds, groupNodeFilter, groupSearch])
   const selectedGroupIds = React.useMemo(() => new Set(draftGroups[selectedGroup] || []), [draftGroups, selectedGroup])
-  const allFilteredSelected = groupFilteredInbounds.length > 0 && groupFilteredInbounds.every(inbound => selectedGroupIds.has(inbound.id))
-  const someFilteredSelected = groupFilteredInbounds.some(inbound => selectedGroupIds.has(inbound.id))
+  const availableInbounds = groupFilteredInbounds.filter(inbound => selectedGroupIds.has(inbound.id))
+  const unavailableInbounds = groupFilteredInbounds.filter(inbound => !selectedGroupIds.has(inbound.id))
   const sortedInbounds = React.useMemo(() => allInbounds.filter(inbound => {
     const availableGroups = planGroups.filter(group => (groups[group] || []).includes(inbound.id))
     return (nodeFilter === "all" || inbound.nodeGuid === nodeFilter)
@@ -224,7 +215,7 @@ export function XuiInboundsPage() {
       </>}><DataTable columns={columns} data={sortedInbounds} searchKey="inbound" initialSearchValue={searchQuery} onSearchChange={value => updateSearchParam("q", value, "")} searchPlaceholder="搜索节点、入站、地区或协议" emptyTitle="暂无入站" emptyDescription="没有符合当前筛选条件的入站" pageSize={30} frame="card" columnLayout="content" renderMobileItem={renderMobileInbound} toolbar={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={openGroupSettings} disabled={saving}><Settings2 />套餐分组</Button><Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading || saving}>{loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新</Button></div>} /></DataTableCard>
 
       <Dialog open={groupOpen} onOpenChange={open => { if (!saving) setGroupOpen(open) }}>
-        <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_auto_auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-4xl">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_auto_auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-6xl">
           <DialogHeader><DialogTitle>套餐分组可用入站</DialogTitle><DialogDescription>选择套餐后设置其可用入站，保存后会同步对应套餐用户。</DialogDescription></DialogHeader>
           <Tabs value={selectedGroup} onValueChange={setSelectedGroup}>
             <TabsList className="max-w-full overflow-x-auto">{planGroups.map(group => <TabsTrigger key={group} value={group}>{planLabels[group]}<Badge variant="secondary">{(draftGroups[group] || []).length}</Badge></TabsTrigger>)}</TabsList>
@@ -233,11 +224,21 @@ export function XuiInboundsPage() {
             <Field><FieldLabel htmlFor="group-inbound-search">搜索入站</FieldLabel><Input id="group-inbound-search" value={groupSearch} onChange={event => setGroupSearch(event.target.value)} placeholder="节点、入站、地区或协议" /></Field>
             <Field><FieldLabel htmlFor="group-node-filter">节点</FieldLabel><Select value={groupNodeFilter} onValueChange={setGroupNodeFilter}><SelectTrigger id="group-node-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部节点</SelectItem>{nodeOptions.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></Field>
           </div>
-          <div className="min-h-0 overflow-auto rounded-md border">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-background"><TableRow><TableHead><label className="flex items-center gap-2"><Checkbox checked={allFilteredSelected ? true : someFilteredSelected ? "indeterminate" : false} onCheckedChange={checked => toggleFilteredGroupInbounds(groupFilteredInbounds.map(inbound => inbound.id), checked === true)} disabled={!groupFilteredInbounds.length} aria-label="全选当前筛选结果" /><span>全选</span></label></TableHead><TableHead>节点</TableHead><TableHead>入站</TableHead><TableHead>线路属性</TableHead><TableHead>协议 / 端口</TableHead></TableRow></TableHeader>
-              <TableBody>{groupFilteredInbounds.map(inbound => <TableRow key={inbound.key} data-state={selectedGroupIds.has(inbound.id) ? "selected" : undefined}><TableCell><Checkbox checked={selectedGroupIds.has(inbound.id)} onCheckedChange={checked => toggleGroupInbound(inbound.id, checked === true)} aria-label={`选择 ${inbound.name}`} /></TableCell><TableCell className="font-medium">{inbound.nodeName}</TableCell><TableCell><div className="grid"><span className="font-medium">{inbound.name}</span>{inbound.tag ? <span className="text-xs text-muted-foreground">{inbound.tag}</span> : null}</div></TableCell><TableCell>{networkLevels.find(item => item.value === inbound.networkLevel)?.label || "未设置"} · {inbound.region || "未设置"}</TableCell><TableCell>{inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</TableCell></TableRow>)}</TableBody>
-            </Table>
+          <div className="grid min-h-0 gap-3 overflow-auto sm:grid-cols-2 sm:overflow-hidden">
+            <div className="min-h-0 overflow-auto rounded-md border">
+              <div className="border-b px-4 py-3"><h3 className="font-semibold">可用入站 ({availableInbounds.length})</h3></div>
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-background"><TableRow><TableHead>入站</TableHead><TableHead>线路</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+                  <TableBody>{availableInbounds.length ? availableInbounds.map(inbound => <TableRow key={inbound.key}><TableCell><div className="grid"><span className="font-medium">{inbound.name}</span><span className="text-xs text-muted-foreground">{inbound.nodeName}{inbound.tag ? ` · ${inbound.tag}` : ""}</span></div></TableCell><TableCell>{inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</TableCell><TableCell className="text-right"><Button variant="destructive" size="icon" onClick={() => setGroupInboundAvailability(inbound.id, false)} aria-label={`剔除 ${inbound.name}`} title={`剔除 ${inbound.name}`}><CircleMinus /></Button></TableCell></TableRow>) : <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground">没有符合筛选条件的可用入站</TableCell></TableRow>}</TableBody>
+                </Table>
+            </div>
+            <div className="min-h-0 overflow-auto rounded-md border">
+              <div className="border-b px-4 py-3"><h3 className="font-semibold">不可用入站 ({unavailableInbounds.length})</h3></div>
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-background"><TableRow><TableHead>入站</TableHead><TableHead>线路</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+                  <TableBody>{unavailableInbounds.length ? unavailableInbounds.map(inbound => <TableRow key={inbound.key}><TableCell><div className="grid"><span className="font-medium">{inbound.name}</span><span className="text-xs text-muted-foreground">{inbound.nodeName}{inbound.tag ? ` · ${inbound.tag}` : ""}</span></div></TableCell><TableCell>{inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</TableCell><TableCell className="text-right"><Button variant="outline" size="icon" onClick={() => setGroupInboundAvailability(inbound.id, true)} aria-label={`新增 ${inbound.name}`} title={`新增 ${inbound.name}`}><CirclePlus /></Button></TableCell></TableRow>) : <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground">没有符合筛选条件的不可用入站</TableCell></TableRow>}</TableBody>
+                </Table>
+            </div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><Button onClick={() => void saveGroupSettings()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存套餐分组</Button></DialogFooter>
         </DialogContent>

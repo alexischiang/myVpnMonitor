@@ -244,7 +244,7 @@ async function main() {
     assert.strictEqual(savedSettings.response.status, 200);
     assert.strictEqual(savedSettings.data.coupons[0].code, "SAVE20");
     const publicSettings = await request("/api/public/sales-settings");
-    assert.deepStrictEqual(publicSettings.data, { registrationMode: "open", onboardingEnabled: true, faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }] });
+    assert.deepStrictEqual(publicSettings.data, { registrationMode: "open", onboardingEnabled: true, faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }], userAlerts: [] });
     const adminPricing = await request("/api/pricing", { cookie: adminCookie });
     const shopperPricing = await request("/api/public/pricing");
     assert.ok(adminPricing.data.some(item => item.group === "friends-lifetime-unlimited" && item.internal === true));
@@ -365,6 +365,7 @@ async function main() {
     status = await request(`/api/payments/orders/${paidOrder.data.id}`, { cookie });
     assert.strictEqual(status.data.status, "paid");
     assert.strictEqual(status.data.fulfillmentStatus, "fulfilled");
+    assert.strictEqual(status.data.purchaseCountBefore, 0);
     assert.strictEqual(status.data.vipSpendBefore, 0);
     assert.strictEqual(status.data.vipSpendAfter, status.data.vipSpendAmount);
     assert.ok(status.data.deliveryUrl);
@@ -397,6 +398,7 @@ async function main() {
     status = await request(`/api/payments/orders/${polledOrder.data.id}`, { cookie });
     assert.strictEqual(status.data.status, "paid");
     assert.strictEqual(status.data.fulfillmentStatus, "fulfilled");
+    assert.strictEqual(status.data.purchaseCountBefore, 1);
     const adminUsers = await request("/api/users", { cookie: adminCookie });
     const purchaseLogs = adminUsers.data[0].userLogs;
     const managedUser = adminUsers.data[0];
@@ -456,6 +458,7 @@ async function main() {
     assert.strictEqual(replacementQuote.data.cashCredit, 0);
     const replacementOrder = await createOrder({ optionId: "basic-30" });
     assert.strictEqual(replacementOrder.response.status, 201);
+    assert.strictEqual(replacementOrder.data.purchaseCountBefore, 2);
     await callback(replacementOrder.data, 1, String(replacementOrder.data.amount), true);
     const replacedUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
     assert.strictEqual(replacedUser.activeGroup, "basic");

@@ -4,11 +4,13 @@ import { AlertCircle, ArrowRight, BookOpen, CreditCard, Gauge, Gift, LifeBuoy, R
 import { useTheme } from "next-themes"
 
 import { apiFetch, clearJsonCache, fetchJson, setCachedJson } from "@/api"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AppLayout } from "@/components/features/app-layout"
 import { AppSidebar } from "@/components/features/app-sidebar"
+import { UserAlert } from "@/components/features/shared"
+import type { UserAlertSetting } from "@/types"
 
 const accountNav = [
   { title: "总览", url: "/account", icon: Gauge, exact: true },
@@ -27,6 +29,7 @@ export function AccountShell() {
   const { resolvedTheme, setTheme, theme } = useTheme()
   const [email, setEmail] = React.useState("")
   const [pendingOrderId, setPendingOrderId] = React.useState("")
+  const [userAlerts, setUserAlerts] = React.useState<UserAlertSetting[]>([])
   const dark = (theme ?? resolvedTheme) === "dark"
   const current = accountNav.find(item => item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)) || accountNav[0]
 
@@ -35,6 +38,8 @@ export function AccountShell() {
       .then(me => me.role === "user" ? setEmail(me.email || "") : navigate("/dashboard", { replace: true }))
       .catch(() => navigate("/login", { replace: true }))
   }, [navigate])
+
+  React.useEffect(() => { fetchJson<{ userAlerts: UserAlertSetting[] }>("/api/public/sales-settings").then(data => setUserAlerts(data.userAlerts || [])).catch(() => undefined) }, [])
 
   React.useEffect(() => {
     if (!email) return
@@ -89,7 +94,7 @@ export function AccountShell() {
       onLogout={logout}
       sidebar={<AppSidebar variant="inset" items={accountNav.map(item => item.url === "/account/docs" ? { ...item, href: "/docs/", external: true } : item)} homeUrl="/account" accountName={email || "加载中"} accountDescription="User account" accountUrl="/account/settings" accountLabel="账户设置" onLogout={logout} />}
     >
-            {pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <div className="px-4 pb-4 lg:px-6"><Alert variant="warning"><AlertCircle /><AlertDescription className="flex w-full items-center justify-between gap-4"><span>你有一笔订单等待付款。</span><Button asChild variant="link" size="sm"><Link to={`/account/orders/${encodeURIComponent(pendingOrderId)}`}>去支付<ArrowRight /></Link></Button></AlertDescription></Alert></div> : null}
+            <div className="grid gap-3 px-4 pb-4 lg:px-6">{userAlerts.filter(item => item.page === (location.pathname.includes("/plans/checkout") ? "checkout" : location.pathname === "/account" ? "account" : "")).map(item => <UserAlert key={item.id} item={item} />)}{pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <Alert variant="warning"><AlertCircle /><AlertDescription className="flex w-full items-center justify-between gap-4"><span>你有一笔订单等待付款。</span><Button asChild variant="link" size="sm"><Link to={`/account/orders/${encodeURIComponent(pendingOrderId)}`}>去支付<ArrowRight /></Link></Button></AlertDescription></Alert> : null}</div>
             {email ? <Outlet context={{ email }} /> : <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-36" /><Skeleton className="h-72" /></div>}
     </AppLayout>
   )

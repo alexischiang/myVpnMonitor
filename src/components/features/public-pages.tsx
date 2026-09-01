@@ -6,7 +6,7 @@ import { toast } from "sonner"
 
 import { clearJsonCache, fetchJson, postJson } from "@/api"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -20,8 +20,8 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CopyButton, EmptyState } from "@/components/features/shared"
-import type { FaqSetting, PricingRow } from "@/types"
+import { CopyButton, EmptyState, UserAlert } from "@/components/features/shared"
+import type { FaqSetting, PricingRow, UserAlertSetting } from "@/types"
 import { formatDate, formatMoney } from "@/utils"
 
 const periods = [
@@ -73,6 +73,7 @@ export function PricingPage() {
   const [plans, setPlans] = React.useState(defaultPlans)
   const [addOnProducts, setAddOnProducts] = React.useState<PricingRow[]>([])
   const [pricingFaqs, setPricingFaqs] = React.useState(defaultPricingFaqs)
+  const [userAlerts, setUserAlerts] = React.useState<UserAlertSetting[]>([])
   const [periodIndex, setPeriodIndex] = React.useState(0)
   const [planMode, setPlanMode] = React.useState<"recurring" | "lifetime">("recurring")
 
@@ -107,7 +108,7 @@ export function PricingPage() {
         }
       }))
     }).catch(() => undefined)
-    fetchJson<{ faqs: FaqSetting[] }>("/api/public/sales-settings").then(data => setPricingFaqs(data.faqs)).catch(() => undefined)
+    fetchJson<{ faqs: FaqSetting[]; userAlerts: UserAlertSetting[] }>("/api/public/sales-settings").then(data => { setPricingFaqs(data.faqs); setUserAlerts(data.userAlerts || []) }).catch(() => undefined)
   }, [])
 
   React.useEffect(() => {
@@ -127,6 +128,7 @@ export function PricingPage() {
   return (
     <main className={inAccount ? "px-4 lg:px-6" : "min-h-svh bg-background px-4 py-8 text-foreground md:py-20"}>
       <section className="mx-auto grid min-w-0 max-w-6xl gap-8">
+        {userAlerts.filter(item => item.page === "pricing").map(item => <UserAlert key={item.id} item={item} />)}
         <header className="grid min-w-0 justify-items-center gap-4 text-center">
           <h1 className="text-2xl font-semibold sm:text-3xl md:text-4xl">{inAccount ? "购买套餐" : "定制您的套餐"}</h1>
           <p className="text-sm text-muted-foreground sm:text-base">{inAccount ? "选择基础套餐或按需购买附加服务。" : "选择流量版本与计费周期，支付成功后立即生效。"}</p>

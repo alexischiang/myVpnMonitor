@@ -356,6 +356,10 @@ async function initializeDataFile() {
   referralRewards = state.referralRewards || [];
   tickets = state.tickets || [];
   if (ensureReferralAccountFields()) await saveAccounts();
+  if (ensurePurchaseCountFields()) {
+    await saveAccounts();
+    await savePaymentOrders();
+  }
   lastLoadedAt = Date.now();
   await ensureProductCatalog();
   if (!salesSettings.length) { salesSettings = [initialSalesSettings()]; await saveSalesSettings(); }
@@ -418,6 +422,28 @@ async function initializeDataFile() {
     }
   }
   if (userMigrated) await saveUsers();
+}
+
+function ensurePurchaseCountFields() {
+  let changed = false;
+  for (const account of accounts) {
+    let purchaseCount = 0;
+    const orders = paymentOrders
+      .filter(order => order.accountId === account.id && (!order.purpose || order.purpose === "plan"))
+      .sort((left, right) => new Date(left.paidAt || left.createdAt || 0) - new Date(right.paidAt || right.createdAt || 0));
+    for (const order of orders) {
+      if (order.purchaseCountBefore !== purchaseCount) {
+        order.purchaseCountBefore = purchaseCount;
+        changed = true;
+      }
+      if (order.status === "paid" && !order.reversedAt && ["fulfilled", "manual_pending"].includes(order.fulfillmentStatus)) purchaseCount++;
+    }
+    if (account.purchaseCount !== purchaseCount) {
+      account.purchaseCount = purchaseCount;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 async function ensureDataFile() {
@@ -1214,6 +1240,7 @@ function publicPaymentOrder(order) {
     beforeCreditAmount: order.beforeCreditAmount ?? order.amount,
     cashCredit: order.cashCredit || 0,
     purchaseAction: order.purchaseAction || "initial",
+    purchaseCountBefore: Number(order.purchaseCountBefore) || 0,
     channelCode: order.channelCode || "",
     paymentProvider: order.paymentProvider || "",
     couponCode: order.couponCode || "",
@@ -1506,7 +1533,7 @@ function normalizeAlertSettings(value, strict = false) {
 }
 
 function initialSalesSettings() {
-  return { id: "default", registrationMode: "open", onboardingEnabled: true, alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [] };
+  return { id: "default", registrationMode: "open", onboardingEnabled: true, alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [], userAlerts: [] };
 }
 
 function readBuffer(req, limit) {
@@ -1549,7 +1576,7 @@ async function saveImageUpload(req) {
 
 function currentSalesSettings() {
   const settings = salesSettings[0];
-  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [] } : initialSalesSettings();
+  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], userAlerts: settings.userAlerts || [] } : initialSalesSettings();
 }
 
 function paymentCoupons(value) {
@@ -1641,7 +1668,15 @@ function normalizeSalesSettings(payload) {
     if (category.length > 40 || title.length > 80 || description.length > 200 || content.length > 20000) throw new Error("广告分类最多 40 字，标题最多 80 字，简介最多 200 字，正文最多 20000 字。");
     return { id: String(item.id || crypto.randomUUID()), category, title, description, content, enabled: item.enabled !== false };
   });
-  return { id: "default", registrationMode, onboardingEnabled, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements };
+  const userAlerts = (Array.isArray(payload?.userAlerts) ? payload.userAlerts : []).slice(0, 50).map(item => {
+    const page = ["pricing", "checkout", "account"].includes(item.page) ? item.page : "pricing";
+    const variant = ["default", "success", "warning", "error"].includes(item.variant) ? item.variant : "default";
+    const title = String(item.title || "").trim().slice(0, 120);
+    const message = String(item.message || "").trim().slice(0, 500);
+    if (!title && !message) throw new Error("Alert 标题和内容不能同时为空。");
+    return { id: String(item.id || crypto.randomUUID()), page, variant, title, message, enabled: item.enabled !== false };
+  });
+  return { id: "default", registrationMode, onboardingEnabled, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, userAlerts };
 }
 
 function publicAnnouncements() {
@@ -2491,6 +2526,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       purpose: "plan",
       capturedAt: new Date().toISOString(),
       accountLinkedUserId: account?.linkedUserId || "",
+      accountPurchaseCount: Number(account?.purchaseCount) || 0,
       userId: user?.id || "",
       user: user ? structuredClone(user) : null
     };
@@ -2657,6 +2693,7 @@ async function fulfillPaymentOrderOnce(order, req) {
   }
 
   order.userId = user.id;
+  account.purchaseCount = (Number(order.purchaseCountBefore) || 0) + 1;
   order.vipSpendBefore = vipSpendBefore;
   user.vipSpend = wallet.vipSpendCents / 100;
   user.level = vipLevelForSpend(user.vipSpend);
@@ -2766,6 +2803,7 @@ async function reversePaymentOrderOnce(order) {
       users.splice(currentIndex, 1);
     }
     account.linkedUserId = snapshot.accountLinkedUserId || "";
+    account.purchaseCount = Number(snapshot.accountPurchaseCount) || 0;
     account.updatedAt = new Date().toISOString();
     syncWalletVip(account, wallet);
     await saveBills();
@@ -2903,6 +2941,7 @@ async function createPaymentOrder(payload, req, account, paymentSource = "online
     beforeCreditAmount: manualPayment ? payableCents / 100 : selectedOption.beforeCreditAmount,
     cashCredit: manualPayment ? 0 : selectedOption.cashCredit,
     purchaseAction: selectedOption.purchaseAction,
+    purchaseCountBefore: addOnPurchase ? undefined : Number(account.purchaseCount) || 0,
     addOns: selectedOption.selectedAddOns || [],
     addOnSnapshots: selectedOption.selectedAddOnSnapshots || [],
     addOnAmount: selectedOption.addOnAmount || 0,
@@ -3876,7 +3915,7 @@ function xuiMultiplier(value) {
   return Number.isFinite(number) && number >= 0 ? number : 1;
 }
 
-function calculateXuiBillingLedger(previous, currentByNode, multipliers, cycleKey) {
+function calculateXuiBillingLedger(previous, currentByNode, multipliers, cycleKey, nodeNames = {}) {
   const cycleBase = value => String(value || "").replace(/\|direct-(?:nodes|inbounds)-v\d+$/, "");
   const reset = Boolean(previous?.cycleKey && cycleBase(previous.cycleKey) !== cycleBase(cycleKey));
   const inboundMigration = !reset && previous?.inbounds && !previous?.nodes;
@@ -3889,7 +3928,8 @@ function calculateXuiBillingLedger(previous, currentByNode, multipliers, cycleKe
     nodes[nodeGuid] = {
       baselineBytes: Math.max(Number(prior.baselineBytes) || 0, Number(item.baselineBytes) || 0),
       rawBytes: Math.max(Number(prior.rawBytes) || 0, Number(item.rawBytes) || 0),
-      weightedBytes: Math.max(Number(prior.weightedBytes) || 0, Number(item.weightedBytes) || 0)
+      weightedBytes: Math.max(Number(prior.weightedBytes) || 0, Number(item.weightedBytes) || 0),
+      ...(item.name ? { name: String(item.name) } : {})
     };
   }
   for (const [nodeGuid, currentBytes] of Object.entries(currentByNode || {})) {
@@ -3900,7 +3940,8 @@ function calculateXuiBillingLedger(previous, currentByNode, multipliers, cycleKe
     nodes[nodeGuid] = {
       baselineBytes: current,
       rawBytes: Math.max(0, Number(prior?.rawBytes) || 0) + delta,
-      weightedBytes: Math.max(0, Number(prior?.weightedBytes) || 0) + Math.round(delta * multiplier)
+      weightedBytes: Math.max(0, Number(prior?.weightedBytes) || 0) + Math.round(delta * multiplier),
+      ...(nodeNames[nodeGuid] ? { name: String(nodeNames[nodeGuid]) } : prior?.name ? { name: String(prior.name) } : {})
     };
   }
   return {
@@ -3917,11 +3958,12 @@ function calculateXuiBillingLedger(previous, currentByNode, multipliers, cycleKe
   };
 }
 
-function createXuiBillingBaseline(currentByNode, cycleKey, multipliers = {}) {
+function createXuiBillingBaseline(currentByNode, cycleKey, multipliers = {}, nodeNames = {}) {
   const nodes = Object.fromEntries(Object.entries(currentByNode || {}).map(([key, value]) => [key, {
     baselineBytes: Math.max(0, Number(value) || 0),
     rawBytes: Math.max(0, Number(value) || 0),
-    weightedBytes: Math.round(Math.max(0, Number(value) || 0) * xuiMultiplier(multipliers[key]))
+    weightedBytes: Math.round(Math.max(0, Number(value) || 0) * xuiMultiplier(multipliers[key])),
+    ...(nodeNames[key] ? { name: String(nodeNames[key]) } : {})
   }]));
   return { cycleKey, cycleReset: false, disabled: false, trafficAlerts: {}, carriedRawBytes: 0, carriedWeightedBytes: 0, nodes, rawBytes: Object.values(nodes).reduce((sum, item) => sum + item.rawBytes, 0), weightedBytes: Object.values(nodes).reduce((sum, item) => sum + item.weightedBytes, 0), updatedAt: new Date().toISOString() };
 }
@@ -4162,8 +4204,8 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       const cycleKey = `${user ? user.xuiTrafficCycleKey || `legacy:${user.purchasedAt || user.createdAt || user.id}` : xuiClientCycleKey(remote)}|direct-nodes-v2`;
       const baselinePending = user?.xuiTrafficBaselinePending || (user?.xuiManagementMode === "link" && user.xuiTrafficBaselineVersion !== 2);
       const ledger = baselinePending
-        ? createXuiBillingBaseline(traffic[email] || {}, cycleKey, nodeMultipliers)
-        : calculateXuiBillingLedger(state.users[email], traffic[email] || {}, nodeMultipliers, cycleKey);
+        ? createXuiBillingBaseline(traffic[email] || {}, cycleKey, nodeMultipliers, nodeNames)
+        : calculateXuiBillingLedger(state.users[email], traffic[email] || {}, nodeMultipliers, cycleKey, nodeNames);
       const totalBytes = planBytes;
       const expired = user ? isUserExpired(user) : Number(remote.expiryTime) > 0 && Number(remote.expiryTime) < Date.now();
       const depleted = totalBytes > 0 && ledger.weightedBytes >= totalBytes;
@@ -4183,7 +4225,7 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
         depleted,
         nodes: [
           ...(ledger.carriedRawBytes || ledger.carriedWeightedBytes ? [{ key: "legacy", name: "历史节点统计结转", multiplier: 1, rawBytes: ledger.carriedRawBytes, weightedBytes: ledger.carriedWeightedBytes }] : []),
-          ...Object.entries(ledger.nodes).map(([key, item]) => ({ key, name: nodeNames[key] || key, multiplier: xuiMultiplier(nodeMultipliers[key]), rawBytes: item.rawBytes, weightedBytes: item.weightedBytes }))
+          ...Object.entries(ledger.nodes).map(([key, item]) => ({ key, name: nodeNames[key] || (item.name ? `${item.name}（已删除节点）` : "（已删除节点）"), multiplier: xuiMultiplier(nodeMultipliers[key]), rawBytes: item.rawBytes, weightedBytes: item.weightedBytes }))
         ],
         lastSyncedAt: ledger.updatedAt
       };
@@ -8266,7 +8308,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/public/sales-settings" && req.method === "GET") {
     await loadLatestData();
     const settings = currentSalesSettings();
-    sendJson(res, 200, { registrationMode: settings.registrationMode, onboardingEnabled: settings.onboardingEnabled, faqs: settings.faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })) });
+    sendJson(res, 200, { registrationMode: settings.registrationMode, onboardingEnabled: settings.onboardingEnabled, faqs: settings.faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })), userAlerts: settings.userAlerts.filter(item => item.enabled !== false) });
     return;
   }
 
