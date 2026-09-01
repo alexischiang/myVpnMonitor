@@ -25,6 +25,7 @@ type SalesOrder = {
   optionLabel?: string
   purpose?: string
   purchaseAction?: string
+  purchaseCountBefore?: number
   status: string
   amount?: number
   totalAmount?: number
@@ -130,13 +131,6 @@ export function SalesAnalyticsPage() {
     const now = new Date()
     const { start, end, previousStart, monthly } = salesDateRange(period, dateRange, now)
     const usersById = new Map(users.map(user => [user.id, user]))
-    const paidBillsByUser = new Map<string, number[]>()
-    bills.filter(item => !item.reversedAt && item.userId && item.occurredAt).forEach(item => {
-      const entries = paidBillsByUser.get(item.userId!) || []
-      entries.push(new Date(item.occurredAt!).getTime())
-      paidBillsByUser.set(item.userId!, entries)
-    })
-
     const manualSales = unlinkedSalesBills(orders, bills).map(bill => {
       // ponytail: legacy bills lack product snapshots; use the current group until the ledger stores historical product IDs.
       const group = usersById.get(bill.userId || "")?.activeGroup || ""
@@ -147,6 +141,7 @@ export function SalesAnalyticsPage() {
         planName: group ? group.toUpperCase() : "人工销售",
         purpose: "plan",
         purchaseAction: bill.type === "initial" ? "initial" : "extend",
+        purchaseCountBefore: bill.type === "initial" ? 0 : 1,
         status: "paid",
         amount: Number(bill.amount),
         totalAmount: Number(bill.amount),
@@ -160,10 +155,7 @@ export function SalesAnalyticsPage() {
     const inPlan = (order: SalesOrder) => plan === "all" || (order.planId || order.planName || "").toLowerCase().includes(plan)
     const current = commercial.filter(order => inPlan(order) && (!start || orderDate(order) >= start) && orderDate(order) <= end)
     const previous = previousStart && start ? commercial.filter(order => inPlan(order) && orderDate(order) >= previousStart && orderDate(order) < start) : []
-    const isReturning = (order: SalesOrder) => {
-      const paidAt = orderDate(order).getTime()
-      return Boolean(order.userId && paidBillsByUser.get(order.userId)?.some(time => time < paidAt - 60_000))
-    }
+    const isReturning = (order: SalesOrder) => Number(order.purchaseCountBefore) >= 1
     const sum = (items: SalesOrder[]) => items.reduce((total, order) => total + money(order), 0)
     const sales = sum(current)
     const previousSales = sum(previous)

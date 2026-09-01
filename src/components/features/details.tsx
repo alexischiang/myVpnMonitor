@@ -981,7 +981,7 @@ export function UserDetailPage() {
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Info label="原始流量" value={formatBytes(weightedTraffic.rawUsedBytes)} />
                     <Info label="折算流量" value={formatBytes(weightedTraffic.usedBytes)} />
-                    <Info label="套餐额度" value={weightedTraffic.totalBytes ? `${formatBytes(weightedTraffic.usedBytes)} / ${formatBytes(weightedTraffic.totalBytes)}` : "不限"} />
+                    <Info label="套餐额度" value={weightedTraffic.totalBytes ? `${formatBytes(weightedTraffic.remainingBytes)} / ${formatBytes(weightedTraffic.totalBytes)}` : "不限"} />
                   </div>
                   {weightedTraffic.totalBytes ? <TrafficProgress remaining={weightedTraffic.remainingBytes} total={weightedTraffic.totalBytes} /> : null}
                   <Separator />

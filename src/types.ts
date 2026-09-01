@@ -389,6 +389,15 @@ export type MarkdownDocumentSetting = {
   enabled: boolean
 }
 
+export type UserAlertSetting = {
+  id: string
+  page: "pricing" | "checkout" | "account"
+  variant: "default" | "success" | "warning" | "error"
+  title: string
+  message: string
+  enabled: boolean
+}
+
 export type SalesSettings = {
   id: string
   registrationMode: "open" | "invite_only" | "disabled"
@@ -403,6 +412,7 @@ export type SalesSettings = {
   faqs: FaqSetting[]
   announcements: AnnouncementSetting[]
   advertisements: MarkdownDocumentSetting[]
+  userAlerts: UserAlertSetting[]
 }
 
 export type PaymentSettings = {

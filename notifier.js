@@ -194,17 +194,20 @@ function buildPaymentAlert(order) {
   const channel = { "100": "支付宝", alipay: "支付宝", "200": "微信支付", wxpay: "微信支付", manual: "人工收款", wallet: "账户余额", "cash-credit": "现金价值全额抵扣" }[order.channelCode] || order.channelCode || "-";
   const platform = order.paymentPlatformName || { manual: "人工收款", wallet: "站内钱包" }[order.paymentProvider] || order.paymentProvider || "-";
   const paidAt = new Date(order.paidAt || Date.now()).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
-  return [
+  const lines = [
     "🔔 用户消费提醒",
     `📧 用户邮箱：${order.email || "-"}`,
     `🛒 消费类型：${recharge ? "余额充值" : trafficPack ? "流量包购买" : "套餐购买"}`,
+  ];
+  if (!recharge && !trafficPack && order.purpose !== "addon") lines.push(`👤 客户类型：${Number(order.purchaseCountBefore) >= 1 ? "老客复购" : "新客购买"}`);
+  return lines.concat([
     `📦 消费详情：${recharge ? `充值 ¥${total}` : `${order.planName || "-"} / ${order.optionLabel || "-"}`}`,
     `💰 消费金额：¥${total}`,
     `💳 付款渠道：${channel}`,
     `🏦 支付平台：${platform}`,
     `🧾 订单编号：${order.merOrderTid || order.id || "-"}`,
     `🕒 消费时间：${paidAt}`
-  ].join("\n");
+  ]).join("\n");
 }
 
 module.exports = {

@@ -1,15 +1,21 @@
 import * as React from "react"
-import { Copy, ExternalLink } from "lucide-react"
+import { CheckCircle, CircleX, Copy, ExternalLink, Info, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import type { User } from "@/types"
+import type { User, UserAlertSetting } from "@/types"
 import { copyText, formatBytes, statusLabels, userStatus } from "@/utils"
 
 export function PageHeader({ actions }: { title: string; description?: string; actions?: React.ReactNode }) {
   return actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null
+}
+
+export function UserAlert({ item }: { item: UserAlertSetting }) {
+  const Icon = item.variant === "success" ? CheckCircle : item.variant === "warning" ? TriangleAlert : item.variant === "error" ? CircleX : Info
+  return <Alert variant={item.variant}><Icon /><div className="col-start-2 grid min-w-0 gap-1 text-left">{item.title ? <AlertTitle className="col-start-1 w-full font-bold text-left">{item.title}</AlertTitle> : null}{item.message ? <AlertDescription className="col-start-1 w-full text-left">{item.message}</AlertDescription> : null}</div></Alert>
 }
 
 export function StatusBadge({ status, children, className = "", style }: { status?: string; children?: React.ReactNode; className?: string; style?: React.CSSProperties }) {

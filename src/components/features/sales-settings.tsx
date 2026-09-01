@@ -22,13 +22,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PageHeader } from "@/components/features/shared"
 import { MarkdownEditor } from "@/components/features/markdown-editor"
 import { useData } from "@/components/features/data-provider"
-import type { AnnouncementSetting, CouponSetting, FaqSetting, MarkdownDocumentSetting, SalesSettings } from "@/types"
+import type { AnnouncementSetting, CouponSetting, FaqSetting, MarkdownDocumentSetting, SalesSettings, UserAlertSetting } from "@/types"
 
 type Editor =
   | { type: "coupon"; value: CouponSetting; isNew: boolean }
   | { type: "faq"; value: FaqSetting; isNew: boolean }
   | { type: "announcement"; value: AnnouncementSetting; isNew: boolean }
   | { type: "advertisement"; value: MarkdownDocumentSetting; isNew: boolean }
+  | { type: "alert"; value: UserAlertSetting; isNew: boolean }
 
 const couponGroups = [
   { value: "basic", label: "BASIC" },
@@ -131,7 +132,8 @@ export function SalesSettingsPage() {
         ? { ...settings, faqs: editor.isNew ? [...settings.faqs, editor.value] : settings.faqs.map(item => item.id === editor.value.id ? editor.value : item) }
         : editor.type === "announcement"
           ? { ...settings, announcements: editor.isNew ? [...settings.announcements, editor.value] : settings.announcements.map(item => item.id === editor.value.id ? editor.value : item) }
-          : { ...settings, advertisements: editor.isNew ? [...settings.advertisements, editor.value] : settings.advertisements.map(item => item.id === editor.value.id ? editor.value : item) }
+          : editor.type === "advertisement" ? { ...settings, advertisements: editor.isNew ? [...settings.advertisements, editor.value] : settings.advertisements.map(item => item.id === editor.value.id ? editor.value : item) }
+            : { ...settings, userAlerts: editor.isNew ? [...settings.userAlerts, editor.value] : settings.userAlerts.map(item => item.id === editor.value.id ? editor.value : item) }
     setSavingAction("save")
     try {
       if (await persist(next, editor.isNew ? "已添加" : "修改已保存")) setEditor(null)
@@ -148,7 +150,7 @@ export function SalesSettingsPage() {
         ? { ...settings, faqs: settings.faqs.filter(item => item.id !== editor.value.id) }
         : editor.type === "announcement"
           ? { ...settings, announcements: settings.announcements.filter(item => item.id !== editor.value.id) }
-          : { ...settings, advertisements: settings.advertisements.filter(item => item.id !== editor.value.id) }
+          : editor.type === "advertisement" ? { ...settings, advertisements: settings.advertisements.filter(item => item.id !== editor.value.id) } : { ...settings, userAlerts: settings.userAlerts.filter(item => item.id !== editor.value.id) }
     setSavingAction("delete")
     try {
       if (await persist(next, "已删除")) setEditor(null)
@@ -168,6 +170,7 @@ export function SalesSettingsPage() {
           <TabsTrigger value="faqs">价格页 FAQ</TabsTrigger>
           <TabsTrigger value="announcements">网站公告</TabsTrigger>
           <TabsTrigger value="advertisements">广告草稿</TabsTrigger>
+          <TabsTrigger value="alerts">Alert 管理</TabsTrigger>
         </TabsList>
         <TabsContent value="coupons">
           <section className="grid gap-4">
@@ -175,6 +178,7 @@ export function SalesSettingsPage() {
             {settings.coupons.length ? <ItemGroup>{settings.coupons.map(coupon => <Item key={coupon.id} variant="outline"><ItemContent><ItemTitle>{coupon.code}<Badge variant={coupon.enabled ? "default" : "secondary"}>{coupon.enabled ? "已启用" : "已停用"}</Badge></ItemTitle><ItemDescription>优惠 {coupon.percent}% · {couponValidity(coupon)} · {couponScope(coupon)} · {couponLimit(coupon)}</ItemDescription></ItemContent><ItemActions><Button variant="link" size="sm" onClick={() => setEditor({ type: "coupon", value: { ...coupon, applicableGroups: coupon.applicableGroups?.length ? coupon.applicableGroups : couponGroups.map(item => item.value), applicableDurations: coupon.applicableDurations?.length ? coupon.applicableDurations : couponDurations.map(item => item.value) }, isNew: false })}>编辑</Button></ItemActions></Item>)}</ItemGroup> : <p className="py-6 text-sm text-muted-foreground">暂无优惠码</p>}
           </section>
         </TabsContent>
+        <TabsContent value="alerts"><section className="grid gap-4"><header className="flex flex-wrap items-end justify-between gap-3"><div className="grid gap-1"><h2 className="text-lg font-semibold">Alert 管理</h2><p className="text-sm text-muted-foreground">在用户端页面顶部常驻显示提醒。</p></div><Button variant="outline" size="sm" onClick={() => setEditor({ type: "alert", value: { id: crypto.randomUUID(), page: "pricing", variant: "warning", title: "", message: "", enabled: true }, isNew: true })}><Plus />添加 Alert</Button></header>{settings.userAlerts.length ? <ItemGroup>{settings.userAlerts.map(item => <Item key={item.id} variant="outline"><ItemContent><ItemTitle>{item.title}<Badge variant={item.enabled ? "default" : "secondary"}>{item.enabled ? "已启用" : "已停用"}</Badge></ItemTitle><ItemDescription>{item.page === "pricing" ? "购买套餐页" : item.page === "checkout" ? "确认订单页" : "总览"} · {item.variant} · {item.message}</ItemDescription></ItemContent><ItemActions><Button variant="link" size="sm" onClick={() => setEditor({ type: "alert", value: { ...item }, isNew: false })}>编辑</Button></ItemActions></Item>)}</ItemGroup> : <p className="py-6 text-sm text-muted-foreground">暂无 Alert</p>}</section></TabsContent>
         <TabsContent value="faqs">
           <section className="grid gap-4">
             <header className="flex flex-wrap items-end justify-between gap-3"><div className="grid gap-1"><h2 className="text-lg font-semibold">价格页 FAQ</h2><p className="text-sm text-muted-foreground">启用的问题会按当前顺序显示在套餐价格页面底部。</p></div><Button variant="outline" size="sm" onClick={() => setEditor({ type: "faq", value: { id: crypto.randomUUID(), question: "", answer: "", enabled: true }, isNew: true })}><Plus />添加 FAQ</Button></header>
@@ -201,9 +205,9 @@ export function SalesSettingsPage() {
       <Sheet open={Boolean(editor)} onOpenChange={open => { if (!open && !saving) setEditor(null) }}>
         <SheetContent className="w-full sm:max-w-4xl">
           {editor ? <>
-            <SheetHeader><SheetTitle>{editor.isNew ? "添加" : "编辑"}{editor.type === "coupon" ? "优惠码" : editor.type === "faq" ? " FAQ" : editor.type === "announcement" ? "公告" : "广告"}</SheetTitle><SheetDescription>{editor.type === "coupon" ? "设置折扣、适用范围、使用限制、有效期和状态。" : editor.type === "faq" ? "设置价格页显示的问题、回答和状态。" : "使用 Markdown 编写正文，可在编辑器中实时预览。"}</SheetDescription></SheetHeader>
+            <SheetHeader><SheetTitle>{editor.isNew ? "添加" : "编辑"}{editor.type === "coupon" ? "优惠码" : editor.type === "faq" ? " FAQ" : editor.type === "announcement" ? "公告" : editor.type === "advertisement" ? "广告" : "Alert"}</SheetTitle><SheetDescription>{editor.type === "coupon" ? "设置折扣、适用范围、使用限制、有效期和状态。" : editor.type === "faq" ? "设置价格页显示的问题、回答和状态。" : editor.type === "alert" ? "选择显示页面、类型并填写提醒内容。" : "使用 Markdown 编写正文，可在编辑器中实时预览。"}</SheetDescription></SheetHeader>
             <div className="grid gap-4 overflow-y-auto px-4">
-              {editor.type === "coupon" ? <FieldGroup>
+               {editor.type === "alert" ? <FieldGroup><Field><FieldLabel>显示页面</FieldLabel><Select value={editor.value.page} onValueChange={page => setEditor({ ...editor, value: { ...editor.value, page: page as UserAlertSetting["page"] } })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pricing">购买套餐页</SelectItem><SelectItem value="checkout">确认订单页</SelectItem><SelectItem value="account">总览</SelectItem></SelectContent></Select></Field><Field><FieldLabel>Alert 类型</FieldLabel><Select value={editor.value.variant} onValueChange={variant => setEditor({ ...editor, value: { ...editor.value, variant: variant as UserAlertSetting["variant"] } })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">默认</SelectItem><SelectItem value="success">成功</SelectItem><SelectItem value="warning">警告</SelectItem><SelectItem value="error">错误</SelectItem></SelectContent></Select></Field><Field><FieldLabel htmlFor="sales-alert-title">标题</FieldLabel><Input id="sales-alert-title" autoFocus maxLength={120} value={editor.value.title} onChange={event => setEditor({ ...editor, value: { ...editor.value, title: event.target.value } })} /></Field><Field><FieldLabel htmlFor="sales-alert-message">内容</FieldLabel><Textarea id="sales-alert-message" maxLength={500} rows={4} value={editor.value.message} onChange={event => setEditor({ ...editor, value: { ...editor.value, message: event.target.value } })} /></Field><label className="flex items-center gap-2 text-sm"><Checkbox checked={editor.value.enabled} onCheckedChange={checked => setEditor({ ...editor, value: { ...editor.value, enabled: checked === true } })} />启用</label></FieldGroup> : editor.type === "coupon" ? <FieldGroup>
                 <Field><FieldLabel htmlFor="sales-coupon-code">优惠码</FieldLabel><Input id="sales-coupon-code" autoFocus value={editor.value.code} onChange={event => setEditor({ ...editor, value: { ...editor.value, code: event.target.value.toUpperCase() } })} /></Field>
                 <Field><FieldLabel htmlFor="sales-coupon-percent">优惠百分比</FieldLabel><Input id="sales-coupon-percent" type="number" min="1" max="99" value={editor.value.percent} onChange={event => setEditor({ ...editor, value: { ...editor.value, percent: Number(event.target.value) } })} /></Field>
                 <Field><FieldLabel>适用套餐</FieldLabel><div className="grid grid-cols-3 gap-2">{couponGroups.map(item => <label key={item.value} className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(editor.value.applicableGroups?.includes(item.value))} onCheckedChange={checked => toggleCouponScope("applicableGroups", item.value, checked === true, couponGroups)} />{item.label}</label>)}</div></Field>
