@@ -76,6 +76,8 @@ export type User = {
   lineType?: "upstream" | "self_hosted"
   xuiClientEmail?: string
   xuiSubId?: string
+  xuiInboundIds?: number[]
+  xuiExtraInboundIds?: number[]
   xuiManagementMode?: "import" | "link"
   xuiMigrationStatus?: "completed" | "activation_required" | "failed"
   xuiMigrationSource?: "linked_existing" | "created"
@@ -314,6 +316,7 @@ export type XuiInboundGroups = Record<string, number[]>
 export type XuiInboundMetadata = Record<string, {
   networkLevel: "premium" | "optimized" | "standard" | ""
   region: string
+  inboundType: "package" | "custom"
 }>
 
 export type XuiInboundManagement = {
@@ -338,7 +341,16 @@ export type XuiInboundManagement = {
     clientCount: number
     networkLevel: "premium" | "optimized" | "standard" | ""
     region: string
+    inboundType: "package" | "custom"
   }>
+}
+
+export type XuiCustomInboundManagement = XuiInboundManagement & {
+  inheritedInboundIds: number[]
+  extraInboundIds: number[]
+  effectiveInboundIds: number[]
+  staleExtraInboundIds: number[]
+  inbounds: Array<XuiInboundManagement["inbounds"][number] & { customAssignmentCount: number }>
 }
 
 export type XuiPresence = {

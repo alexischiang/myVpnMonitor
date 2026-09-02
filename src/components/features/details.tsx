@@ -29,7 +29,7 @@ import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-
 import { UserBillsCard } from "@/components/features/user-bills-card"
 import { BackButton } from "@/components/features/back-button"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
-import type { User } from "@/types"
+import type { User, XuiCustomInboundManagement } from "@/types"
 import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, purchasedPlanName, userStatus } from "@/utils"
 
 type GiftPreview = {
@@ -327,6 +327,12 @@ export function UserDetailPage() {
   const [planRollbackSaving, setPlanRollbackSaving] = React.useState(false)
   const [trafficResetOpen, setTrafficResetOpen] = React.useState(false)
   const [trafficResetSaving, setTrafficResetSaving] = React.useState(false)
+  const [customInboundOpen, setCustomInboundOpen] = React.useState(false)
+  const [customInboundData, setCustomInboundData] = React.useState<XuiCustomInboundManagement | null>(null)
+  const [customInboundDraft, setCustomInboundDraft] = React.useState<number[]>([])
+  const [customInboundSearch, setCustomInboundSearch] = React.useState("")
+  const [customInboundLoading, setCustomInboundLoading] = React.useState(false)
+  const [customInboundSaving, setCustomInboundSaving] = React.useState(false)
   const [walletBalance, setWalletBalance] = React.useState<number | null>(null)
   const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
@@ -381,6 +387,18 @@ export function UserDetailPage() {
     return { changes, impacts }
   }, [planTrafficTier, productName, selectedPlanConfig, user])
   const latestPlanEvent = user?.userLogs?.find(log => ["plan-changed", "plan-change-rolled-back"].includes(log.reason || ""))
+  const customInboundRows = React.useMemo(() => {
+    const query = customInboundSearch.trim().toLocaleLowerCase()
+    return (customInboundData?.inbounds || [])
+      .filter(inbound => !query || `${inbound.name} ${inbound.tag} ${inbound.nodeName} ${inbound.region} ${inbound.protocol}`.toLocaleLowerCase().includes(query))
+      .toSorted((left, right) => left.nodeName.localeCompare(right.nodeName) || left.name.localeCompare(right.name))
+  }, [customInboundData, customInboundSearch])
+  const offlineCustomInbounds = React.useMemo(() => (customInboundData?.inbounds || []).filter(inbound => customInboundDraft.includes(inbound.id) && inbound.probeStatus === "offline"), [customInboundData, customInboundDraft])
+  const customInboundChanged = React.useMemo(() => {
+    const current = [...(customInboundData?.extraInboundIds || [])].sort((left, right) => left - right)
+    const draft = [...customInboundDraft].sort((left, right) => left - right)
+    return JSON.stringify(current) !== JSON.stringify(draft)
+  }, [customInboundData, customInboundDraft])
 
   React.useEffect(() => {
     if (!id || id.startsWith("account:")) return
@@ -401,6 +419,43 @@ export function UserDetailPage() {
       reload(["users", "subscriptions"])
     ])
     setLoadedUser(detail)
+  }
+
+  async function openCustomInbounds() {
+    if (!user) return
+    setCustomInboundOpen(true)
+    setCustomInboundLoading(true)
+    setCustomInboundData(null)
+    setCustomInboundSearch("")
+    try {
+      const result = await fetchJson<XuiCustomInboundManagement>(`/api/users/${user.id}/custom-inbounds`)
+      setCustomInboundData(result)
+      setCustomInboundDraft(result.extraInboundIds)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "个人定制入站读取失败")
+      setCustomInboundOpen(false)
+    } finally {
+      setCustomInboundLoading(false)
+    }
+  }
+
+  function setCustomInboundSelected(inboundId: number, selected: boolean) {
+    setCustomInboundDraft(current => selected ? [...new Set([...current, inboundId])] : current.filter(id => id !== inboundId))
+  }
+
+  async function saveCustomInbounds() {
+    if (!user || !customInboundData) return
+    setCustomInboundSaving(true)
+    try {
+      await putJson(`/api/users/${user.id}/custom-inbounds`, { inboundIds: customInboundDraft })
+      await refreshUserDetails()
+      setCustomInboundOpen(false)
+      toast.success("个人定制入站已同步")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "个人定制入站保存失败")
+    } finally {
+      setCustomInboundSaving(false)
+    }
   }
 
   React.useEffect(() => {
@@ -840,6 +895,32 @@ export function UserDetailPage() {
           <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={lineSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void migrateToSelfHosted()} disabled={lineSaving}>{lineSaving ? <Loader2 className="animate-spin" /> : <Network />}{lineSaving ? "同步中..." : user.lineType === "self_hosted" ? "保存权限组" : "确认迁移"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={customInboundOpen} onOpenChange={setCustomInboundOpen}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader><DialogTitle>管理个人定制入站</DialogTitle><DialogDescription>个人定制授权不随套餐变更或到期清除。用户到期时仍只显示占位节点，重新购买套餐后自动恢复授权。</DialogDescription></DialogHeader>
+          {customInboundLoading ? <Item variant="muted"><ItemContent><ItemTitle>正在读取可用入站</ItemTitle><ItemDescription>请稍候…</ItemDescription></ItemContent><Loader2 className="animate-spin" /></Item> : customInboundData ? <>
+            {customInboundData.staleExtraInboundIds.length ? <Alert variant="warning"><AlertCircle /><AlertTitle>存在已删除的授权入站</AlertTitle><AlertDescription className="grid gap-2"><span>这些授权当前不会提供给用户，可以取消以清理记录。</span>{customInboundData.staleExtraInboundIds.map(inboundId => <Label key={inboundId} className="flex items-center gap-2"><Checkbox checked={customInboundDraft.includes(inboundId)} onCheckedChange={checked => setCustomInboundSelected(inboundId, checked === true)} disabled={customInboundSaving} />入站 #{inboundId}（已删除）</Label>)}</AlertDescription></Alert> : null}
+            {offlineCustomInbounds.length ? <Alert variant="warning"><AlertCircle /><AlertTitle>所选入站当前离线</AlertTitle><AlertDescription>{offlineCustomInbounds.map(inbound => inbound.name).join("、")} 当前无法连接，授权仍会保存并同步。</AlertDescription></Alert> : null}
+            <Field><FieldLabel htmlFor="custom-inbound-search">筛选入站</FieldLabel><Input id="custom-inbound-search" value={customInboundSearch} onChange={event => setCustomInboundSearch(event.target.value)} placeholder="搜索名称、节点、地区或协议" /></Field>
+            <Table>
+              <TableHeader><TableRow><TableHead className="w-12">选择</TableHead><TableHead>入站</TableHead><TableHead>状态</TableHead><TableHead>授权来源</TableHead><TableHead className="text-right">定制用户</TableHead></TableRow></TableHeader>
+              <TableBody>{customInboundRows.length ? customInboundRows.map(inbound => {
+                const inherited = customInboundData.inheritedInboundIds.includes(inbound.id)
+                const selected = customInboundDraft.includes(inbound.id)
+                const cannotAdd = !inbound.enabled && !selected
+                return <TableRow key={inbound.key}>
+                  <TableCell><Checkbox checked={selected ? true : inherited ? "indeterminate" : false} onCheckedChange={checked => setCustomInboundSelected(inbound.id, checked === true)} disabled={inherited && !selected || cannotAdd || customInboundSaving} aria-label={`${selected ? "取消个人定制" : inherited ? "套餐已包含" : "选择"} ${inbound.name}`} /></TableCell>
+                  <TableCell><span className="font-medium">{inbound.name}</span><p className="text-xs text-muted-foreground">{inbound.nodeName}{inbound.region ? ` · ${inbound.region}` : ""} · {inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</p></TableCell>
+                  <TableCell><span className="flex flex-wrap gap-1"><Badge variant={inbound.enabled ? "success" : "secondary"}>{inbound.enabled ? "启用" : "停用"}</Badge><Badge variant={inbound.probeStatus === "online" ? "success" : inbound.probeStatus === "offline" ? "destructive" : "secondary"}>{inbound.probeStatus === "online" ? "正常" : inbound.probeStatus === "offline" ? "离线" : inbound.probeStatus === "disabled" ? "未检测" : "未知"}</Badge></span></TableCell>
+                  <TableCell><span className="flex flex-wrap gap-1">{inherited ? <Badge variant="outline">套餐包含</Badge> : null}{selected ? <Badge>个人定制</Badge> : null}{!inherited && !selected ? <span className="text-muted-foreground">未授权</span> : null}</span></TableCell>
+                  <TableCell className="text-right tabular-nums">{inbound.customAssignmentCount}</TableCell>
+                </TableRow>
+              }) : <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">没有符合条件的入站</TableCell></TableRow>}</TableBody>
+            </Table>
+          </> : null}
+          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={customInboundSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void saveCustomInbounds()} disabled={customInboundLoading || customInboundSaving || !customInboundData || !customInboundChanged}>{customInboundSaving ? <Loader2 className="animate-spin" /> : <Network />}{customInboundSaving ? "同步中..." : "保存并同步"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={planOpen} onOpenChange={open => { setPlanOpen(open); if (!open) setPlanConfirmOpen(false) }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
           <form className="grid gap-4" onSubmit={previewPlanChange}>
@@ -932,6 +1013,7 @@ export function UserDetailPage() {
               {user.registeredOnly ? null : <>
                 <Button variant="outline" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
                 <Button variant="outline" className="w-full" onClick={user.lineType === "self_hosted" ? openLineDialog : () => setXuiOpen(true)}><Network />{user.lineType === "self_hosted" ? "调整权限组" : "切换到自研线路"}</Button>
+                {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => void openCustomInbounds()}><Network />管理个人定制入站</Button> : null}
                 {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={openPlanDialog}><ArrowRightLeft />更改套餐</Button> : null}
                 {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => setTrafficResetOpen(true)}><RotateCcw />重置流量</Button> : null}
                 {user.lineType === "self_hosted" && user.xuiClientPresent === false ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)}><RefreshCw />恢复3x-ui客户端</Button> : null}

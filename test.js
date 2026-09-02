@@ -49,6 +49,8 @@ const {
   normalizeXuiMonitor,
   normalizeXuiInbounds,
   normalizeXuiInboundGroups,
+  normalizeXuiInboundIdList,
+  effectiveXuiInboundIds,
   normalizeXuiInboundMetadata,
   normalizeXuiInboundEnable,
   xuiActiveInboundKeys,
@@ -313,6 +315,10 @@ assert.deepStrictEqual(normalizeXuiClientResult({ client: { email: "nested@test"
 assert.deepStrictEqual(normalizeXuiConnectedIps({ hk: { "SELF@test": [{ ip: "1.2.3.4" }, { ip: "1.2.3.4" }] }, jp: { "self@test": [{ ip: "5.6.7.8" }] } }, "self@test"), ["1.2.3.4", "5.6.7.8"]);
 assert.match(disabledAccountPlaceholderSubscription({}).body, /该账户已停用，请联系官网客服。/);
 assert.deepStrictEqual(xuiClient.inboundIds, [3]);
+assert.deepStrictEqual(normalizeXuiInboundIdList([3, "2", 3, 0, "bad"]), [3, 2]);
+assert.deepStrictEqual(effectiveXuiInboundIds([1, 2], [2, 3, 9], [1, 2, 3]), [1, 2, 3]);
+assert.deepStrictEqual(normalizeXuiInboundMetadata({ "node:1": { inboundType: "custom" } }), { "node:1": { networkLevel: "", region: "", inboundType: "custom" } });
+assert.deepStrictEqual(normalizeXuiInboundMetadata({ "node:1": { inboundType: "invalid" } }), {});
 assert.deepStrictEqual(xuiClientWritePayload({ uuid: "keep", createdAt: "readonly" }, { email: "self@test", totalGB: 1000 }), { email: "self@test", totalGB: 1000, uuid: "keep" });
 assert.strictEqual(xuiClientWritePayload({}, { flow: "xtls-rprx-vision" }).flow, "xtls-rprx-vision");
 assert.strictEqual(xuiClientWritePayload({ id: 123 }, {}).id, undefined);
@@ -383,7 +389,7 @@ assert.deepStrictEqual([xuiMonitor.system.cpu, xuiMonitor.system.memoryUsed, xui
   const xuiInbounds = normalizeXuiInbounds([{ id: 2, remark: "VLESS", protocol: "vless", port: 443, up: 10, down: 20, total: 100, clientStats: [{}, {}] }]);
   assert.deepStrictEqual([xuiInbounds[0].clients, xuiInbounds[0].uploadBytes, xuiInbounds[0].downloadBytes], [2, 10, 20]);
 assert.deepStrictEqual(normalizeXuiInboundGroups({ groups: { basic: [2, "3", 2, -1], pro: [7] } }), { basic: [2, 3], pro: [7], ultra: [] });
-assert.deepStrictEqual(normalizeXuiInboundMetadata({ metadata: { "node-a:2": { networkLevel: "premium", region: " 香港 ", multiplier: 2 }, bad: { networkLevel: "vip" } } }), { "node-a:2": { networkLevel: "premium", region: "香港" } });
+assert.deepStrictEqual(normalizeXuiInboundMetadata({ metadata: { "node-a:2": { networkLevel: "premium", region: " 香港 ", multiplier: 2 }, bad: { networkLevel: "vip" } } }), { "node-a:2": { networkLevel: "premium", region: "香港", inboundType: "package" } });
 assert.deepStrictEqual(normalizeXuiInboundEnable("7", true), { id: 7, enable: true });
 assert.throws(() => normalizeXuiInboundEnable("0", true), /ID 无效/);
 assert.throws(() => normalizeXuiInboundEnable("7", "true"), /布尔值/);

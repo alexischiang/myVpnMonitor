@@ -76,7 +76,11 @@ async function main() {
       return sendJson(response, client ? 200 : 404, client ? { success: true, obj: client } : { success: false, msg: "not found" });
     }
     if (request.url === "/panel/api/clients/list") return sendJson(response, 200, { success: true, obj: [...xuiClients.values()] });
-    if (request.url === "/panel/api/inbounds/list") return sendJson(response, 200, { success: true, obj: [{ id: 1 }] });
+    if (request.url === "/panel/api/inbounds/list") return sendJson(response, 200, { success: true, obj: [
+      { id: 1, remark: "套餐节点", protocol: "vless", enable: true },
+      { id: 2, remark: "个人家宽", protocol: "vless", enable: true },
+      { id: 3, remark: "停用家宽", protocol: "vless", enable: false }
+    ] });
     if (request.url === "/panel/api/clients/add") {
       const client = { ...body.client, subId: body.client.subId || crypto.randomUUID(), inboundIds: body.inboundIds || [] };
       xuiClients.set(client.email, client);
@@ -89,6 +93,20 @@ async function main() {
       xuiClients.delete(oldEmail);
       xuiClients.set(client.email, client);
       return sendJson(response, 200, { success: true, obj: client });
+    }
+    if (request.url === "/panel/api/clients/bulkAttach") {
+      for (const email of body.emails || []) {
+        const client = xuiClients.get(email);
+        if (client) client.inboundIds = [...new Set([...(client.inboundIds || []), ...(body.inboundIds || [])])];
+      }
+      return sendJson(response, 200, { success: true, obj: {} });
+    }
+    if (request.url === "/panel/api/clients/bulkDetach") {
+      for (const email of body.emails || []) {
+        const client = xuiClients.get(email);
+        if (client) client.inboundIds = (client.inboundIds || []).filter(id => !(body.inboundIds || []).includes(id));
+      }
+      return sendJson(response, 200, { success: true, obj: {} });
     }
     return sendJson(response, 200, { success: true, obj: {} });
   });
@@ -403,6 +421,16 @@ async function main() {
     const purchaseLogs = adminUsers.data[0].userLogs;
     const managedUser = adminUsers.data[0];
     assert.strictEqual(managedUser.lineType, "self_hosted", "new purchases must use self-hosted delivery");
+    const customInboundOptions = await request(`/api/users/${managedUser.id}/custom-inbounds`, { cookie: adminCookie });
+    assert.strictEqual(customInboundOptions.status, 200);
+    assert.deepStrictEqual(customInboundOptions.data.inheritedInboundIds, [1]);
+    const customInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2] } });
+    assert.strictEqual(customInboundUpdate.status, 200);
+    assert.deepStrictEqual(customInboundUpdate.data.xuiExtraInboundIds, [2]);
+    assert.deepStrictEqual(customInboundUpdate.data.xuiInboundIds, [1, 2]);
+    const blockedDisabledInbound = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2, 3] } });
+    assert.strictEqual(blockedDisabledInbound.status, 400);
+    assert.match(blockedDisabledInbound.data.error, /已停用/);
     const protectedUpdate = await request(`/api/users/${managedUser.id}`, { method: "PUT", cookie: adminCookie, body: { actualPaid: 999, duration: "yearly", expiresAt: "2030-01-01" } });
     assert.strictEqual(protectedUpdate.response.status, 400);
     const blockedRenewal = await request(`/api/users/${managedUser.id}/renew`, { method: "POST", cookie: adminCookie, body: { actualPaid: 1, duration: "monthly" } });
@@ -462,6 +490,8 @@ async function main() {
     await callback(replacementOrder.data, 1, String(replacementOrder.data.amount), true);
     const replacedUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
     assert.strictEqual(replacedUser.activeGroup, "basic");
+    assert.deepStrictEqual(replacedUser.xuiExtraInboundIds, [2], "custom inbound grants must survive plan replacement");
+    assert.deepStrictEqual(replacedUser.xuiInboundIds, [1, 2], "effective inbounds must merge plan and custom grants");
     assert.deepStrictEqual([replacedUser.currentProductId, replacedUser.currentOptionId, replacedUser.currentProductOrderId], ["basic", "basic-30", replacementOrder.data.id]);
     assert.strictEqual(replacedUser.unlimited, false);
     assert.strictEqual(replacedUser.cashValue, replacementOrder.data.amount, "replacement cash value must only include the new payment");

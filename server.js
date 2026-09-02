@@ -3334,10 +3334,19 @@ function isSelfHostedUser(user = {}) {
   return user.lineType === "self_hosted";
 }
 
+function normalizeXuiInboundIdList(value = []) {
+  return [...new Set((Array.isArray(value) ? value : []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0))];
+}
+
+function effectiveXuiInboundIds(groupInboundIds = [], extraInboundIds = [], validInboundIds = null) {
+  const valid = Array.isArray(validInboundIds) ? new Set(normalizeXuiInboundIdList(validInboundIds)) : null;
+  return [...new Set([...normalizeXuiInboundIdList(groupInboundIds), ...normalizeXuiInboundIdList(extraInboundIds)])]
+    .filter(id => !valid || valid.has(id));
+}
+
 function normalizeXuiInboundGroups(value = {}) {
   const source = value.groups || value;
-  return Object.fromEntries(USER_GROUPS.map(group => [group, [...new Set((Array.isArray(source?.[group]) ? source[group] : [])
-    .map(Number).filter(id => Number.isSafeInteger(id) && id > 0))]]));
+  return Object.fromEntries(USER_GROUPS.map(group => [group, normalizeXuiInboundIdList(source?.[group])]));
 }
 
 function normalizeXuiInboundMetadata(value = {}) {
@@ -3346,7 +3355,8 @@ function normalizeXuiInboundMetadata(value = {}) {
   return Object.fromEntries(Object.entries(source || {}).flatMap(([key, item]) => {
     const networkLevel = levels.has(item?.networkLevel) ? item.networkLevel : "";
     const region = String(item?.region || "").trim().slice(0, 64);
-    return key && key.length <= 256 && (networkLevel || region) ? [[key, { networkLevel, region }]] : [];
+    const inboundType = item?.inboundType === "custom" ? "custom" : "package";
+    return key && key.length <= 256 && (networkLevel || region || inboundType === "custom") ? [[key, { networkLevel, region, inboundType }]] : [];
   }));
 }
 
@@ -4362,6 +4372,12 @@ async function xuiInboundIdsForGroup(group) {
   return (await getXuiInboundGroups())[normalizeUserGroup(group, "")] || [];
 }
 
+async function xuiInboundIdsForUser(user, groupInboundIds = null, allInboundIds = null) {
+  const inheritedIds = groupInboundIds || await xuiInboundIdsForGroup(activeUserGroup(user));
+  const validIds = allInboundIds || await getAllXuiInboundIds();
+  return effectiveXuiInboundIds(inheritedIds, user.xuiExtraInboundIds, validIds);
+}
+
 let xuiInboundProbeSummary = { configured: Boolean(XUI_BASE_URL && XUI_API_TOKEN), totalNodes: 0, onlineNodes: 0, offlineNodes: 0, checkedAt: "" };
 let xuiInboundManagementRefresh = null;
 
@@ -4405,7 +4421,8 @@ async function xuiInboundManagementData() {
       nodeName: nodeNames[nodeGuid] || nodeGuid,
       clientCount: Array.isArray(inbound.clientStats) ? inbound.clientStats.length : 0,
       networkLevel: metadata[key]?.networkLevel || "",
-      region: metadata[key]?.region || ""
+      region: metadata[key]?.region || "",
+      inboundType: metadata[key]?.inboundType === "custom" ? "custom" : "package"
     };
   }).filter(inbound => Number.isSafeInteger(inbound.id) && inbound.id > 0);
   const probes = await Promise.all(rows.map(inbound => inbound.enabled
@@ -4429,18 +4446,26 @@ function refreshXuiInboundManagementData() {
 
 async function syncXuiInboundGroup(group, inboundIds, allInboundIds) {
   const targets = users.filter(user => isSelfHostedUser(user) && activeUserGroup(user) === group && user.xuiClientEmail);
-  const emails = targets.map(user => String(user.xuiClientEmail).toLowerCase());
-  if (!emails.length) return { group, users: 0 };
-  await syncXuiClientAccess(emails, group, inboundIds, allInboundIds);
+  if (!targets.length) return { group, users: 0 };
+  const accessBuckets = new Map();
+  for (const user of targets) {
+    const effectiveIds = effectiveXuiInboundIds(inboundIds, user.xuiExtraInboundIds, allInboundIds);
+    const key = effectiveIds.join(",");
+    if (!accessBuckets.has(key)) accessBuckets.set(key, { inboundIds: effectiveIds, users: [] });
+    accessBuckets.get(key).users.push(user);
+  }
+  for (const bucket of accessBuckets.values()) {
+    await syncXuiClientAccess(bucket.users.map(user => String(user.xuiClientEmail).toLowerCase()), group, bucket.inboundIds, allInboundIds);
+  }
   const syncedAt = new Date().toISOString();
   for (const user of targets) {
-    user.xuiInboundIds = inboundIds;
+    user.xuiInboundIds = effectiveXuiInboundIds(inboundIds, user.xuiExtraInboundIds, allInboundIds);
     user.xuiLastSyncedAt = syncedAt;
     user.xuiLastError = "";
-    await saveXuiClientProjection(user, true);
+    await saveXuiClientProjection(user, !isUserExpired(user) && !isUserAccountDisabled(user));
   }
   await saveUsers();
-  return { group, users: emails.length };
+  return { group, users: targets.length };
 }
 
 function xuiClientNeedsUpdate(existing, desired) {
@@ -4475,7 +4500,9 @@ async function saveXuiClientProjection(user, enabled) {
 async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
   if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
   const email = xuiClientEmail(user);
-  const inboundIds = await xuiInboundIdsForGroup(activeUserGroup(user));
+  const groupInboundIds = await xuiInboundIdsForGroup(activeUserGroup(user));
+  const allInboundIds = await getAllXuiInboundIds();
+  const inboundIds = await xuiInboundIdsForUser(user, groupInboundIds, allInboundIds);
   let existing = null;
   let existingEmail = email;
   try { existing = await getXuiClientByEmail(email); } catch (error) {
@@ -4514,7 +4541,7 @@ async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
   } else {
     mutationResult = await xuiRequest("/panel/api/clients/add", { method: "POST", body: { client: xuiClientWritePayload(null, desired), inboundIds } });
   }
-  await syncXuiClientAccess([email], activeUserGroup(user), inboundIds, existing?.inboundIds || []);
+  await syncXuiClientAccess([email], activeUserGroup(user), inboundIds, allInboundIds);
   let remote;
   try {
     remote = await getXuiClientAfterMutation({ ...user, xuiClientEmail: email });
@@ -6058,6 +6085,7 @@ const userLogReasonText = {
   "plan-changed": "\u5957\u9910\u53d8\u66f4",
   "plan-change-rolled-back": "\u64a4\u9500\u5957\u9910\u53d8\u66f4",
   "traffic-reset": "\u6d41\u91cf\u91cd\u7f6e",
+  "custom-inbounds-updated": "\u4e2a\u4eba\u5b9a\u5236\u5165\u7ad9\u53d8\u66f4",
   "manual-pool-changed": "\u624b\u52a8\u6362\u6c60",
   "xui-migration-activation-required": "\u7b49\u5f85\u6fc0\u6d3b\u8d26\u6237",
   "xui-migration-completed": "\u65e7\u5957\u9910\u8fc1\u79fb\u5b8c\u6210",
@@ -6332,6 +6360,11 @@ function userActionMessage(reason, details = {}) {
   if (reason === "plan-changed") return `\u66f4\u6539\u5957\u9910\uff1a${details.beforePlan || "-"} -> ${details.afterPlan || "-"}\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}\uff1b\u5907\u6ce8 ${details.note || "-"}`;
   if (reason === "plan-change-rolled-back") return `\u64a4\u9500\u5957\u9910\u53d8\u66f4\uff1a${details.beforePlan || "-"} -> ${details.afterPlan || "-"}\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}`;
   if (reason === "traffic-reset") return `\u624b\u52a8\u91cd\u7f6e\u7528\u6237\u6d41\u91cf\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}`;
+  if (reason === "custom-inbounds-updated") {
+    const added = Array.isArray(details.addedNames) && details.addedNames.length ? `\u65b0\u589e\uff1a${details.addedNames.join("\u3001")}` : "";
+    const removed = Array.isArray(details.removedNames) && details.removedNames.length ? `\u53d6\u6d88\uff1a${details.removedNames.join("\u3001")}` : "";
+    return `\u4e2a\u4eba\u5b9a\u5236\u5165\u7ad9\u53d8\u66f4\uff1a${[added, removed].filter(Boolean).join("\uff1b")}\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}`;
+  }
   if (reason === "purchase-pool-changed") return `\u7eed\u8d39\u89e6\u53d1\u81ea\u52a8\u6362\u6c60\uff1a${details.fromSubscriptionLabel || "-"} -> ${details.toSubscriptionLabel || "-"}`;
   if (reason === "manual-pool-changed") {
     const changeText = (details.changes || [])
@@ -6924,7 +6957,7 @@ async function fetchSelfHostedSubscription(user, remote) {
   }
 }
 
-async function sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc }) {
+async function sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc, converterSourceUrl = "" }) {
   const liveConfigId = registerLivePoolConfig(liveConfig);
   cleanupLivePoolConfigs();
   relayLog("subconverter-live-config-registered", {
@@ -6937,7 +6970,8 @@ async function sendSubconverterSubscription({ req, res, user, relayRequestId, su
     bodyPreview: bodyPreview(liveConfig.body)
   });
   const liveConfigUrl = `http://127.0.0.1:${PORT}/api/internal/pool-live/${liveConfigId}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
-  const params = new URLSearchParams({ target: sc.target, url: liveConfigUrl });
+  const sourceUrl = converterSourceUrl || liveConfigUrl;
+  const params = new URLSearchParams({ target: sc.target, url: sourceUrl });
   if (sc.config) params.set("config", sc.config);
   if (sc.include) params.set("include", sc.include);
   if (sc.exclude) params.set("exclude", sc.exclude);
@@ -6950,7 +6984,7 @@ async function sendSubconverterSubscription({ req, res, user, relayRequestId, su
     relayRequestId,
     userId: user.id,
     url: subUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]"),
-    params: { ...Object.fromEntries(params.entries()), url: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]") },
+    params: { ...Object.fromEntries(params.entries()), url: sourceUrl === liveConfigUrl ? liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]") : "[external-source]" },
     liveConfigUrl: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
   });
   const controller = new AbortController();
@@ -7048,7 +7082,7 @@ async function handleSelfHostedRelay(req, res, user, relayRequestId) {
     }
     const source = { id: `xui:${user.id}`, url: `${XUI_SUBSCRIPTION_BASE_URL}/clash/${encodeURIComponent(remote.subId || user.xuiSubId)}`, sourceType: "url", serviceProvider: "3x-ui", enabled: true };
     const liveConfig = await fetchSelfHostedSubscription(user, remote);
-    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc: relaySubconverterConfig(source) });
+    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc: relaySubconverterConfig(source), converterSourceUrl: source.url });
   } catch (error) {
     relayLog("self-hosted-relay-failed", { relayRequestId, userId: user.id, error: error.message });
     sendSubscriptionMessage(res, 502, `自研线路订阅生成失败：${error.message}`);
@@ -8657,8 +8691,10 @@ async function handleApi(req, res, pathname) {
       const validIds = new Set(allInboundIds);
       const validKeys = new Set(management.inbounds.map(inbound => inbound.key));
       const metadata = Object.fromEntries(Object.entries(normalizeXuiInboundMetadata(payload.metadata === undefined ? management.metadata : payload.metadata)).filter(([key]) => validKeys.has(key)));
+      const packageInboundIds = new Set(management.inbounds.filter(inbound => (metadata[inbound.key]?.inboundType || inbound.inboundType) !== "custom").map(inbound => inbound.id));
       for (const [group, ids] of Object.entries(next)) {
         if (ids.some(id => !validIds.has(id))) throw new Error(`${group.toUpperCase()} 包含不存在的入站。`);
+        if (ids.some(id => !packageInboundIds.has(id))) throw new Error(`${group.toUpperCase()} 包含定制节点；定制节点不能加入套餐分组。`);
       }
       await setXuiState("inbound-groups", "xuiInboundGroups", { groups: next, metadata });
       const synced = [];
@@ -9735,7 +9771,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|account-status|type|line|xui|xui-recover|traffic-reset|plan|plan-rollback))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|account-status|type|line|xui|xui-recover|traffic-reset|plan|plan-rollback|custom-inbounds))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -9762,6 +9798,84 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 200, publicWallet(await walletForAccount(account)));
       } catch (error) {
         sendJson(res, 200, { availableBalance: 0, balance: 0, error: error.message });
+      }
+      return;
+    }
+
+    if (action === "custom-inbounds" && req.method === "GET") {
+      try {
+        if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以管理个人定制入站。");
+        const management = await refreshXuiInboundManagementData();
+        const inheritedInboundIds = effectiveXuiInboundIds(management.groups[activeUserGroup(item)] || [], [], management.inbounds.map(inbound => inbound.id));
+        const extraInboundIds = normalizeXuiInboundIdList(item.xuiExtraInboundIds);
+        const effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, extraInboundIds, management.inbounds.map(inbound => inbound.id));
+        const assignmentCounts = users.reduce((counts, user) => {
+          for (const inboundId of normalizeXuiInboundIdList(user.xuiExtraInboundIds)) counts[inboundId] = (counts[inboundId] || 0) + 1;
+          return counts;
+        }, {});
+        sendJson(res, 200, {
+          ...management,
+          inheritedInboundIds,
+          extraInboundIds,
+          effectiveInboundIds,
+          staleExtraInboundIds: extraInboundIds.filter(id => !management.inbounds.some(inbound => inbound.id === id)),
+          inbounds: management.inbounds.map(inbound => ({ ...inbound, customAssignmentCount: assignmentCounts[inbound.id] || 0 }))
+        });
+      } catch (error) {
+        sendJson(res, error.statusCode || 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "custom-inbounds" && req.method === "PUT") {
+      const previous = item ? structuredClone(item) : null;
+      try {
+        if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以管理个人定制入站。");
+        if (!item.xuiClientEmail) throw new Error("用户尚未关联3x-ui Client。");
+        const payload = await readJson(req);
+        if (!Array.isArray(payload.inboundIds)) throw new Error("个人定制入站格式无效。");
+        const management = await refreshXuiInboundManagementData();
+        const inboundsById = new Map(management.inbounds.map(inbound => [inbound.id, inbound]));
+        const previousIds = normalizeXuiInboundIdList(item.xuiExtraInboundIds);
+        const nextIds = normalizeXuiInboundIdList(payload.inboundIds);
+        const addedIds = nextIds.filter(id => !previousIds.includes(id));
+        const removedIds = previousIds.filter(id => !nextIds.includes(id));
+        for (const id of addedIds) {
+          const inbound = inboundsById.get(id);
+          if (!inbound) throw new Error(`入站 #${id} 不存在，无法新增授权。`);
+          if (!inbound.enabled) throw new Error(`${inbound.name} 已停用，无法新增授权。`);
+        }
+        if (!addedIds.length && !removedIds.length) {
+          sendJson(res, 200, publicUser(item));
+          return;
+        }
+        const allInboundIds = management.inbounds.map(inbound => inbound.id);
+        const inheritedInboundIds = effectiveXuiInboundIds(management.groups[activeUserGroup(item)] || [], [], allInboundIds);
+        const effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, nextIds, allInboundIds);
+        await syncXuiClientAccess([String(item.xuiClientEmail).toLowerCase()], activeUserGroup(item), effectiveInboundIds, allInboundIds);
+        item.xuiExtraInboundIds = nextIds;
+        item.xuiInboundIds = effectiveInboundIds;
+        item.xuiLastSyncedAt = new Date().toISOString();
+        item.xuiLastError = "";
+        const inboundName = id => inboundsById.get(id)?.name || `\u5165\u7ad9 #${id}`;
+        const actor = currentSession(req)?.account || "admin";
+        appendUserLogToUser(item, createUserLog({
+          event: "user-action",
+          status: "recorded",
+          reason: "custom-inbounds-updated",
+          req,
+          message: userActionMessage("custom-inbounds-updated", { actor, addedNames: addedIds.map(inboundName), removedNames: removedIds.map(inboundName) }),
+          details: { actor, addedInboundIds: addedIds, removedInboundIds: removedIds, addedNames: addedIds.map(inboundName), removedNames: removedIds.map(inboundName), effectiveInboundIds }
+        }));
+        await saveXuiClientProjection(item, !isUserExpired(item) && !isUserAccountDisabled(item));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        if (item && previous) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previous);
+        }
+        sendJson(res, error.statusCode || 400, { error: error.message });
       }
       return;
     }
@@ -10598,6 +10712,8 @@ module.exports = Object.assign(requestHandler, {
   normalizeXuiMonitor,
   normalizeXuiInbounds,
   normalizeXuiInboundGroups,
+  normalizeXuiInboundIdList,
+  effectiveXuiInboundIds,
   normalizeXuiInboundMetadata,
   normalizeXuiInboundEnable,
   xuiActiveInboundKeys,
