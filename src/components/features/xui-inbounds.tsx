@@ -35,6 +35,7 @@ type InboundDraft = {
   enabled: boolean
   networkLevel: string
   region: string
+  inboundType: "package" | "custom"
 }
 
 type XuiInbound = XuiInboundManagement["inbounds"][number]
@@ -51,7 +52,7 @@ export function XuiInboundsPage() {
   const [groups, setGroups] = React.useState<XuiInboundGroups>({})
   const [metadata, setMetadata] = React.useState<XuiInboundMetadata>({})
   const [editingKey, setEditingKey] = React.useState("")
-  const [draft, setDraft] = React.useState<InboundDraft>({ enabled: true, networkLevel: "", region: "" })
+  const [draft, setDraft] = React.useState<InboundDraft>({ enabled: true, networkLevel: "", region: "", inboundType: "package" })
   const [groupOpen, setGroupOpen] = React.useState(false)
   const [selectedGroup, setSelectedGroup] = React.useState(planGroups[0])
   const [draftGroups, setDraftGroups] = React.useState<XuiInboundGroups>({})
@@ -65,6 +66,7 @@ export function XuiInboundsPage() {
   const regionFilter = searchParams.get("region") || "all"
   const planFilter = searchParams.get("plan") || "all"
   const statusFilter = searchParams.get("status") || "all"
+  const typeFilter = searchParams.get("type") || "package"
   const searchQuery = searchParams.get("q") || ""
 
   function updateSearchParam(key: string, value: string, defaultValue = "all") {
@@ -103,6 +105,7 @@ export function XuiInboundsPage() {
       enabled: inbound.enabled,
       networkLevel: item?.networkLevel || "",
       region: item?.region || "",
+      inboundType: item?.inboundType || inbound.inboundType || "package",
     })
     setEditingKey(inbound.key)
   }, [metadata])
@@ -110,15 +113,19 @@ export function XuiInboundsPage() {
   async function saveEditor() {
     const inbound = data?.inbounds.find(item => item.key === editingKey)
     if (!inbound) return
-    const nextMetadata = { ...metadata, [inbound.key]: { ...metadata[inbound.key], networkLevel: draft.networkLevel as XuiInboundMetadata[string]["networkLevel"], region: draft.region } }
+    const nextMetadata = { ...metadata, [inbound.key]: { ...metadata[inbound.key], networkLevel: draft.networkLevel as XuiInboundMetadata[string]["networkLevel"], region: draft.region, inboundType: draft.inboundType } }
+    const nextGroups = draft.inboundType === "custom"
+      ? Object.fromEntries(Object.entries(groups).map(([group, ids]) => [group, ids.filter(id => id !== inbound.id)]))
+      : groups
     const statusChanged = draft.enabled !== inbound.enabled
+    const groupMembershipChanged = Object.values(groups).some(ids => ids.includes(inbound.id)) && draft.inboundType === "custom"
     setSaving(true)
     try {
-      const result = await putJson<{ groups: XuiInboundGroups; metadata: XuiInboundMetadata }>("/api/xui-inbound-groups", { groups, metadata: nextMetadata, syncGroups: false })
+      const result = await putJson<{ groups: XuiInboundGroups; metadata: XuiInboundMetadata }>("/api/xui-inbound-groups", { groups: nextGroups, metadata: nextMetadata, syncGroups: groupMembershipChanged })
       if (statusChanged) await postJson(`/api/xui-inbounds/${inbound.id}/set-enable`, { enable: draft.enabled })
       setGroups(result.groups)
       setMetadata(result.metadata)
-      setData(current => current ? { ...current, groups: result.groups, metadata: result.metadata, inbounds: current.inbounds.map(item => item.key === inbound.key ? { ...item, enabled: draft.enabled, networkLevel: nextMetadata[inbound.key].networkLevel, region: nextMetadata[inbound.key].region } : item) } : current)
+      setData(current => current ? { ...current, groups: result.groups, metadata: result.metadata, inbounds: current.inbounds.map(item => item.key === inbound.key ? { ...item, enabled: draft.enabled, networkLevel: nextMetadata[inbound.key].networkLevel, region: nextMetadata[inbound.key].region, inboundType: draft.inboundType } : item) } : current)
       setEditingKey("")
       toast.success("入站设置已保存")
     } catch (saveError) {
@@ -130,7 +137,8 @@ export function XuiInboundsPage() {
   }
 
   function openGroupSettings() {
-    setDraftGroups(Object.fromEntries(planGroups.map(group => [group, [...(groups[group] || [])]])))
+    const packageIds = new Set((data?.inbounds || []).filter(inbound => inbound.inboundType === "package").map(inbound => inbound.id))
+    setDraftGroups(Object.fromEntries(planGroups.map(group => [group, (groups[group] || []).filter(id => packageIds.has(id))])))
     setSelectedGroup(planGroups[0])
     setGroupSearch("")
     setGroupNodeFilter("all")
@@ -164,11 +172,12 @@ export function XuiInboundsPage() {
   const renderMobileInbound = React.useCallback((inbound: XuiInbound) => {
     const level = networkLevels.find(item => item.value === inbound.networkLevel)?.label || "未设置"
     const availableGroups = planGroups.filter(group => (groups[group] || []).includes(inbound.id)).map(group => planLabels[group]).join(" / ") || "未分配"
-    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full flex-wrap items-center gap-2"><span className="min-w-0 truncate">{inbound.name}</span><Badge variant={inbound.enabled ? "success" : "secondary"}>{inbound.enabled ? "启用" : "停用"}</Badge><InboundProbeBadge inbound={inbound} /></ItemTitle><ItemDescription>{inbound.nodeName} · {level} · {inbound.region || "未设置"}</ItemDescription><ItemDescription>{availableGroups} · {inbound.protocol.toUpperCase()} / {inbound.port ?? "-"} · {inbound.recentlyActive === null ? "连接活动未知" : inbound.recentlyActive ? "近期活跃" : "近期无流量"}</ItemDescription></ItemContent><ItemActions><Button variant="ghost" size="icon" onClick={() => openEditor(inbound)} aria-label={`编辑 ${inbound.name}`}><Pencil /></Button></ItemActions></Item>
+    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full flex-wrap items-center gap-2"><span className="min-w-0 truncate">{inbound.name}</span><Badge variant="outline">{inbound.inboundType === "custom" ? "定制节点" : "套餐节点"}</Badge><Badge variant={inbound.enabled ? "success" : "secondary"}>{inbound.enabled ? "启用" : "停用"}</Badge><InboundProbeBadge inbound={inbound} /></ItemTitle><ItemDescription>{inbound.nodeName} · {level} · {inbound.region || "未设置"}</ItemDescription><ItemDescription>{inbound.inboundType === "custom" ? "不参与套餐分组" : availableGroups} · {inbound.protocol.toUpperCase()} / {inbound.port ?? "-"} · {inbound.recentlyActive === null ? "连接活动未知" : inbound.recentlyActive ? "近期活跃" : "近期无流量"}</ItemDescription></ItemContent><ItemActions><Button variant="ghost" size="icon" onClick={() => openEditor(inbound)} aria-label={`编辑 ${inbound.name}`}><Pencil /></Button></ItemActions></Item>
   }, [groups, openEditor])
 
   const columns = React.useMemo<ColumnDef<XuiInbound>[]>(() => [
     { id: "inbound", accessorFn: inbound => `${inbound.name} ${inbound.tag} ${inbound.nodeName} ${inbound.region} ${inbound.protocol} ${networkLevels.find(item => item.value === inbound.networkLevel)?.label || ""}`, header: DataTableColumnHeader({ title: "入站" }), meta: { label: "入站" }, cell: ({ row }) => <div className="grid min-w-0"><span className="truncate font-medium">{row.original.name}</span>{row.original.tag ? <span className="truncate text-xs text-muted-foreground">{row.original.tag}</span> : null}</div> },
+    { accessorKey: "inboundType", header: DataTableColumnHeader({ title: "入站类型" }), meta: { label: "入站类型" }, cell: ({ row }) => <Badge variant="outline">{row.original.inboundType === "custom" ? "定制节点" : "套餐节点"}</Badge> },
     { id: "status", accessorFn: inbound => `${inbound.enabled ? "启用" : "停用"} ${inbound.probeStatus} ${inbound.probeLatencyMs ?? ""} ${inbound.recentlyActive === null ? "状态未知" : inbound.recentlyActive ? "近期活跃" : "近期无流量"}`, header: DataTableColumnHeader({ title: "状态 / 延迟" }), meta: { label: "状态 / 延迟" }, cell: ({ row }) => <div className="grid justify-items-start gap-1"><Badge variant={row.original.enabled ? "success" : "secondary"}>{row.original.enabled ? "启用" : "停用"}</Badge><InboundProbeBadge inbound={row.original} /><span className="text-xs text-muted-foreground">{row.original.recentlyActive === null ? "连接活动未知" : row.original.recentlyActive ? "近期活跃" : "近期无流量"}</span></div> },
     { accessorKey: "clientCount", header: DataTableColumnHeader({ title: "客户端" }), meta: { label: "客户端" }, cell: ({ row }) => <span className="tabular-nums">{row.original.clientCount}</span> },
     { accessorKey: "networkLevel", header: DataTableColumnHeader({ title: "网络级别" }), meta: { label: "网络级别" }, cell: ({ row }) => { const label = networkLevels.find(item => item.value === row.original.networkLevel)?.label; return label ? <Badge variant="outline">{label}</Badge> : <span className="text-muted-foreground">未设置</span> } },
@@ -182,7 +191,7 @@ export function XuiInboundsPage() {
   const allInbounds = React.useMemo(() => (data?.inbounds || []).toSorted((left, right) => left.nodeName.localeCompare(right.nodeName) || left.name.localeCompare(right.name)), [data])
   const groupFilteredInbounds = React.useMemo(() => {
     const query = groupSearch.trim().toLocaleLowerCase()
-    return allInbounds.filter(inbound => (groupNodeFilter === "all" || inbound.nodeGuid === groupNodeFilter) && (!query || `${inbound.nodeName} ${inbound.name} ${inbound.tag} ${inbound.region} ${inbound.protocol}`.toLocaleLowerCase().includes(query)))
+    return allInbounds.filter(inbound => inbound.inboundType === "package" && (groupNodeFilter === "all" || inbound.nodeGuid === groupNodeFilter) && (!query || `${inbound.nodeName} ${inbound.name} ${inbound.tag} ${inbound.region} ${inbound.protocol}`.toLocaleLowerCase().includes(query)))
   }, [allInbounds, groupNodeFilter, groupSearch])
   const selectedGroupIds = React.useMemo(() => new Set(draftGroups[selectedGroup] || []), [draftGroups, selectedGroup])
   const availableInbounds = groupFilteredInbounds.filter(inbound => selectedGroupIds.has(inbound.id))
@@ -194,7 +203,8 @@ export function XuiInboundsPage() {
       && (regionFilter === "all" || regionFilter === "unset" ? regionFilter === "all" || !inbound.region : inbound.region === regionFilter)
       && (planFilter === "all" || planFilter === "unassigned" ? planFilter === "all" || !availableGroups.length : availableGroups.includes(planFilter))
       && (statusFilter === "all" || (statusFilter === "enabled") === inbound.enabled)
-  }), [allInbounds, groups, levelFilter, nodeFilter, planFilter, regionFilter, statusFilter])
+      && (typeFilter === "all" || inbound.inboundType === typeFilter)
+  }), [allInbounds, groups, levelFilter, nodeFilter, planFilter, regionFilter, statusFilter, typeFilter])
 
   if (loading && !data) return <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-20" /><Skeleton className="h-96" /></div>
   if (!data?.configured) return <div className="px-4 lg:px-6"><Alert><Server /><AlertDescription>尚未配置 3x-ui，无法管理入站。</AlertDescription></Alert></div>
@@ -207,6 +217,7 @@ export function XuiInboundsPage() {
       {error ? <Alert variant="destructive"><Server /><AlertDescription>{error}</AlertDescription></Alert> : null}
 
       <DataTableCard filters={<>
+        <Field><FieldLabel htmlFor="inbound-type-filter">入站类型</FieldLabel><Select value={typeFilter} onValueChange={value => updateSearchParam("type", value, "package")}><SelectTrigger id="inbound-type-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="package">套餐节点</SelectItem><SelectItem value="custom">定制节点</SelectItem><SelectItem value="all">全部类型</SelectItem></SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="inbound-node-filter">节点</FieldLabel><Select value={nodeFilter} onValueChange={value => updateSearchParam("node", value)}><SelectTrigger id="inbound-node-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部节点</SelectItem>{nodeOptions.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="inbound-level-filter">网络级别</FieldLabel><Select value={levelFilter} onValueChange={value => updateSearchParam("level", value)}><SelectTrigger id="inbound-level-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部级别</SelectItem>{networkLevels.map(level => <SelectItem key={level.value} value={level.value}>{level.label}</SelectItem>)}<SelectItem value="unset">未设置</SelectItem></SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="inbound-region-filter">地区</FieldLabel><Select value={regionFilter} onValueChange={value => updateSearchParam("region", value)}><SelectTrigger id="inbound-region-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部地区</SelectItem>{regionOptions.map(region => <SelectItem key={region} value={region}>{region}</SelectItem>)}<SelectItem value="unset">未设置</SelectItem></SelectContent></Select></Field>
@@ -216,7 +227,7 @@ export function XuiInboundsPage() {
 
       <Dialog open={groupOpen} onOpenChange={open => { if (!saving) setGroupOpen(open) }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_auto_auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-6xl">
-          <DialogHeader><DialogTitle>套餐分组可用入站</DialogTitle><DialogDescription>选择套餐后设置其可用入站，保存后会同步对应套餐用户。</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>套餐分组可用入站</DialogTitle><DialogDescription>选择套餐后设置其可用入站，保存后会同步对应套餐用户；定制节点不参与套餐分组。</DialogDescription></DialogHeader>
           <Tabs value={selectedGroup} onValueChange={setSelectedGroup}>
             <TabsList className="max-w-full overflow-x-auto">{planGroups.map(group => <TabsTrigger key={group} value={group}>{planLabels[group]}<Badge variant="secondary">{(draftGroups[group] || []).length}</Badge></TabsTrigger>)}</TabsList>
           </Tabs>
@@ -249,6 +260,7 @@ export function XuiInboundsPage() {
           <SheetHeader><SheetTitle>编辑入站</SheetTitle><SheetDescription>{editingInbound ? `${editingInbound.nodeName} · ${editingInbound.name}` : ""}</SheetDescription></SheetHeader>
           <div className="grid flex-1 content-start gap-6 overflow-y-auto px-4">
             <Field orientation="horizontal" className="justify-between"><FieldContent><FieldLabel htmlFor="inbound-enabled">入站状态</FieldLabel><FieldDescription>保存后在 3x-ui 中启用或停用该入站。</FieldDescription></FieldContent><Switch id="inbound-enabled" checked={draft.enabled} onCheckedChange={enabled => setDraft(current => ({ ...current, enabled }))} disabled={saving} /></Field>
+            <Field><FieldLabel htmlFor="inbound-type">入站类型</FieldLabel><Select value={draft.inboundType} onValueChange={(value: "package" | "custom") => setDraft(current => ({ ...current, inboundType: value }))}><SelectTrigger id="inbound-type" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="package">套餐节点</SelectItem><SelectItem value="custom">定制节点</SelectItem></SelectContent></Select><FieldDescription>定制节点只能由管理员单独授权，不参与套餐分组的客户端批量分配。</FieldDescription></Field>
             <Field><FieldLabel>网络级别</FieldLabel><Select value={draft.networkLevel || "unset"} onValueChange={value => setDraft(current => ({ ...current, networkLevel: value === "unset" ? "" : value }))}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unset">未设置</SelectItem>{networkLevels.map(level => <SelectItem key={level.value} value={level.value}>{level.label}</SelectItem>)}</SelectContent></Select></Field>
             <Field><FieldLabel htmlFor="inbound-region">地区</FieldLabel><Input id="inbound-region" value={draft.region} onChange={event => setDraft(current => ({ ...current, region: event.target.value }))} placeholder="例如：香港、美国、台湾" maxLength={64} /></Field>
           </div>
