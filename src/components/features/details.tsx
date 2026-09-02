@@ -968,7 +968,7 @@ export function UserDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
       {user.accountStatus === "disabled" ? <Alert variant="warning"><AlertCircle /><AlertDescription>该用户已停用</AlertDescription></Alert> : null}
-      <main className="grid min-w-0 gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
         <Card className="self-start xl:sticky xl:top-4">
           <CardHeader className="relative justify-items-center text-center">
             <BackButton fallback={`/users${location.search}`} iconOnly size="icon-sm" className="absolute top-4 left-4" />
@@ -1165,7 +1165,7 @@ export function UserDetailPage() {
             </Card>
           </TabsContent>
         </Tabs>
-      </main>
+      </div>
     </div>
   )
 }

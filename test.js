@@ -22,6 +22,7 @@ const {
   grantTrafficPack,
   paymentQuote,
   planQuoteWithAddOns,
+  checkoutTaxAmount,
   paymentChannelCode,
   configuredPaymentChannel,
   paymentMethodForPlatform,
@@ -290,6 +291,7 @@ assert.strictEqual(discountedQuote.discountAmount, 3.9);
 assert.strictEqual(discountedQuote.subtotal, 35.1);
 assert.strictEqual(discountedQuote.taxAmount, 1.05);
 assert.strictEqual(discountedQuote.amount, 36.15);
+assert.strictEqual(checkoutTaxAmount(33.35), 1);
 assert.deepStrictEqual(discountedQuote.cycles.map(cycle => cycle.devices), [1, 2, 3, 3]);
 const lifetimeQuote = paymentQuote("basic-lifetime");
 assert.strictEqual(lifetimeQuote.duration, "lifetime");
@@ -305,7 +307,8 @@ assert.strictEqual(planTrafficBytes({ activeGroup: "basic", duration: "lifetime"
 const quoteWithHomeIp = planQuoteWithAddOns(discountedQuote, ["home_ip:us"]);
 assert.strictEqual(quoteWithHomeIp.planAmount, discountedQuote.amount);
 assert.strictEqual(quoteWithHomeIp.addOnAmount, 40);
-assert.strictEqual(quoteWithHomeIp.amount, Number((discountedQuote.amount + 40).toFixed(2)));
+assert.strictEqual(quoteWithHomeIp.taxAmount, 2.25);
+assert.strictEqual(quoteWithHomeIp.amount, 77.35);
 assert.deepStrictEqual(quoteWithHomeIp.selectedAddOnSnapshots.map(item => [item.name, item.regionName, item.durationDays]), [["家宽 IP 定制", "美国", 30]]);
 assert.strictEqual(quoteWithHomeIp.availableAddOns.some(item => item.id === "traffic_pack"), false);
 assert.throws(() => planQuoteWithAddOns(discountedQuote, ["traffic_pack"]), /家宽 IP 地区无效/);

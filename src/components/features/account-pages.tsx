@@ -269,15 +269,15 @@ export function AccountOverviewPage() {
     setAnnouncementOpen(true)
   }
 
-  if (!data) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
+  if (!data) return error ? <p className="text-sm text-destructive">{error}</p> : <PageLoading />
   const subscription = data.subscription
   const hasTrafficDetails = subscription?.lineType === "self_hosted"
   const importConfig = importClient ? importClients[importClient] : null
   const importUrl = subscription && importConfig ? `${importConfig.scheme}${encodeURIComponent(subscription.subscriptionUrl)}` : ""
   return (
     <>
-      <div className="grid gap-4 px-4 lg:px-6 xl:grid-cols-12">
-        <Alert variant="warning" className="xl:col-span-12"><CircleHelp /><AlertDescription className="flex w-full flex-row items-center justify-between gap-3"><span>遇到问题？发送工单联系客服吧！</span><Button asChild variant="link" size="sm" className="h-auto shrink-0 p-0 underline underline-offset-4"><Link to="/account/tickets/new">发送工单</Link></Button></AlertDescription></Alert>
+      <div className="grid gap-4 xl:grid-cols-12">
+        <Alert variant="warning" className="xl:col-span-12"><CircleHelp /><AlertDescription className="flex w-full flex-row flex-wrap items-center justify-between gap-3"><span>遇到问题？发送工单联系客服吧！</span><Button asChild variant="link" size="sm" className="h-auto shrink-0 p-0 underline underline-offset-4"><Link to="/account/tickets/new">发送工单</Link></Button></AlertDescription></Alert>
         <PlanStatusCard account={data} subscription={subscription} traffic={selfHostedTraffic} trafficLoading={trafficLoading} trafficError={trafficError} onImportClient={setImportClient} />
         <section className="grid content-start gap-4 xl:col-span-4" aria-label="账户与节点概览">
           <PersonalInfoCard account={data} />
@@ -360,7 +360,7 @@ export function AccountWalletPage() {
 
   if (!data) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
   return (
-    <div className="grid gap-4 px-4 lg:px-6">
+    <div className="grid gap-4">
       <section className="grid gap-4 md:grid-cols-3" aria-label="钱包余额">
         <Card><CardHeader><CardDescription className="flex items-center gap-2"><Coins className="size-4" />充值余额<Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="充值余额说明"><CircleHelp /></Button></TooltipTrigger><TooltipContent className="max-w-64">用户主动充值所得；充值时累计 VIP，购买套餐时最后抵扣。</TooltipContent></Tooltip></CardDescription><CardTitle>{formatMoney(data.cashBalance)}</CardTitle></CardHeader></Card>
         <Card><CardHeader><CardDescription className="flex items-center gap-2"><Gift className="size-4" />赠送余额<Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="赠送余额说明"><CircleHelp /></Button></TooltipTrigger><TooltipContent className="max-w-64">后台赠送所得，不累计 VIP 和返利；购买套餐时优先抵扣。</TooltipContent></Tooltip></CardDescription><CardTitle>{formatMoney(data.giftBalance)}</CardTitle></CardHeader></Card>
