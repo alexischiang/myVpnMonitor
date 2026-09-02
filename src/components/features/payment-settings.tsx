@@ -107,7 +107,7 @@ export function PaymentSettingsPage() {
   if (!platforms) return <main className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-16" /><Skeleton className="h-96" /></main>
 
   return (
-    <main className="mx-auto grid w-full max-w-7xl gap-6 px-4 lg:px-6">
+    <div className="mx-auto grid w-full max-w-7xl gap-6 px-4 lg:px-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <section className="grid gap-1">
           <h2 className="text-xl font-semibold tracking-tight">支付平台</h2>
@@ -215,6 +215,6 @@ export function PaymentSettingsPage() {
       <AlertDialog open={Boolean(deleting)} onOpenChange={open => !open && setDeleting(null)}>
         <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>删除支付平台？</AlertDialogTitle><AlertDialogDescription>将删除“{deleting?.name}”的配置。已有订单仍保留记录，但删除后无法再通过该平台主动查单。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void remove()}>确认删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
       </AlertDialog>
-    </main>
+    </div>
   )
 }

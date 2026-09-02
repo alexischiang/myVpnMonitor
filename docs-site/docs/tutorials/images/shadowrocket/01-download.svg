@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title desc">
+  <title id="title">在 App Store 下载 Shadowrocket</title>
+  <desc id="desc">App Store 搜索结果示意图，突出 Shadowrocket 的获取按钮。</desc>
+  <rect width="960" height="560" rx="28" fill="#f5f5f7"/>
+  <text x="64" y="76" font-family="system-ui, sans-serif" font-size="30" font-weight="700" fill="#111827">1. 在 App Store 搜索</text>
+  <rect x="64" y="110" width="832" height="64" rx="18" fill="#e5e7eb"/>
+  <circle cx="98" cy="142" r="12" fill="none" stroke="#6b7280" stroke-width="5"/>
+  <path d="m107 151 13 13" stroke="#6b7280" stroke-width="5" stroke-linecap="round"/>
+  <text x="140" y="151" font-family="system-ui, sans-serif" font-size="25" fill="#111827">Shadowrocket</text>
+  <rect x="64" y="208" width="832" height="246" rx="24" fill="#fff"/>
+  <rect x="96" y="244" width="132" height="132" rx="30" fill="#111827"/>
+  <path d="M124 338c31-9 51-37 54-66 13 27 11 54-8 75-15 16-34 20-56 14 13-4 21-11 27-19-6 1-11 0-17-4z" fill="#fff"/>
+  <text x="260" y="278" font-family="system-ui, sans-serif" font-size="29" font-weight="700" fill="#111827">Shadowrocket</text>
+  <text x="260" y="319" font-family="system-ui, sans-serif" font-size="20" fill="#6b7280">Shadow Launch Technology Limited</text>
+  <text x="260" y="356" font-family="system-ui, sans-serif" font-size="19" fill="#6b7280">规则代理工具 · iPhone / iPad</text>
+  <rect x="736" y="267" width="116" height="54" rx="27" fill="#0a84ff"/>
+  <text x="794" y="301" text-anchor="middle" font-family="system-ui, sans-serif" font-size="22" font-weight="700" fill="#fff">购买</text>
+  <path d="M794 340v70m-14-14 14 14 14-14" fill="none" stroke="#0a84ff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="64" y="512" font-family="system-ui, sans-serif" font-size="21" fill="#4b5563">确认应用名称和开发者后再安装</text>
+</svg>

@@ -20,8 +20,8 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CopyButton, EmptyState, UserAlert } from "@/components/features/shared"
-import type { FaqSetting, PricingRow, UserAlertSetting } from "@/types"
+import { CopyButton, EmptyState } from "@/components/features/shared"
+import type { FaqSetting, PricingRow } from "@/types"
 import { formatDate, formatMoney } from "@/utils"
 
 const periods = [
@@ -73,7 +73,6 @@ export function PricingPage() {
   const [plans, setPlans] = React.useState(defaultPlans)
   const [addOnProducts, setAddOnProducts] = React.useState<PricingRow[]>([])
   const [pricingFaqs, setPricingFaqs] = React.useState(defaultPricingFaqs)
-  const [userAlerts, setUserAlerts] = React.useState<UserAlertSetting[]>([])
   const [periodIndex, setPeriodIndex] = React.useState(0)
   const [planMode, setPlanMode] = React.useState<"recurring" | "lifetime">("recurring")
 
@@ -108,7 +107,7 @@ export function PricingPage() {
         }
       }))
     }).catch(() => undefined)
-    fetchJson<{ faqs: FaqSetting[]; userAlerts: UserAlertSetting[] }>("/api/public/sales-settings").then(data => { setPricingFaqs(data.faqs); setUserAlerts(data.userAlerts || []) }).catch(() => undefined)
+    fetchJson<{ faqs: FaqSetting[] }>("/api/public/sales-settings").then(data => setPricingFaqs(data.faqs)).catch(() => undefined)
   }, [])
 
   React.useEffect(() => {
@@ -124,11 +123,11 @@ export function PricingPage() {
   const homeIpProduct = addOnProducts.find(product => product.addonType === "home_ip")
   const otherServices = addOnProducts.filter(product => !["traffic_pack", "home_ip"].includes(product.addonType || ""))
   const visiblePlans = plans.filter(plan => planMode === "lifetime" ? plan.lifetimeAvailable && Number.isFinite(plan.lifetimePrice) : plan.recurringAvailable && Number.isFinite(plan.prices[periodIndex]))
+  const PageRoot = inAccount ? "div" : "main"
 
   return (
-    <main className={inAccount ? "px-4 lg:px-6" : "min-h-svh bg-background px-4 py-8 text-foreground md:py-20"}>
-      <section className="mx-auto grid min-w-0 max-w-6xl gap-8">
-        {userAlerts.filter(item => item.page === "pricing").map(item => <UserAlert key={item.id} item={item} />)}
+    <PageRoot className={inAccount ? "pt-4" : "min-h-svh bg-background px-4 py-8 text-foreground md:py-20"}>
+      <section className="grid w-full min-w-0 gap-2">
         <header className="grid min-w-0 justify-items-center gap-4 text-center">
           <h1 className="text-2xl font-semibold sm:text-3xl md:text-4xl">{inAccount ? "购买套餐" : "定制您的套餐"}</h1>
           <p className="text-sm text-muted-foreground sm:text-base">{inAccount ? "选择基础套餐或按需购买附加服务。" : "选择流量版本与计费周期，支付成功后立即生效。"}</p>
@@ -179,7 +178,7 @@ export function PricingPage() {
         {pricingFaqs.length ? <><Separator /><section className="grid w-full gap-4"><Accordion type="single" collapsible>{pricingFaqs.map(item => <AccordionItem key={item.id} value={item.id}><AccordionTrigger>{item.question}</AccordionTrigger><AccordionContent>{item.answer}</AccordionContent></AccordionItem>)}</Accordion></section></> : null}
         {!inAccount ? <p className="text-center text-sm text-muted-foreground">所有套餐一经支付不支持退款</p> : null}
       </section>
-    </main>
+    </PageRoot>
   )
 }
 
@@ -244,6 +243,7 @@ export function CheckoutPage() {
   const [loading, setLoading] = React.useState(true)
   const [validatingCoupon, setValidatingCoupon] = React.useState(false)
   const [paying, setPaying] = React.useState("")
+  const paymentStartingRef = React.useRef(false)
   const [useBalance, setUseBalance] = React.useState(true)
   const [addOns, setAddOns] = React.useState<string[]>([])
   const [trafficTier, setTrafficTier] = React.useState(1)
@@ -306,7 +306,8 @@ export function CheckoutPage() {
   }
 
   async function createPayment(selection: PaymentSelection, confirmReplacement = false) {
-    if (!quote) return
+    if (!quote || paymentStartingRef.current) return
+    paymentStartingRef.current = true
     let paymentWindow: Window | null = null
     setPaying(`${selection.platformId}:${selection.method}`)
     try {
@@ -351,6 +352,7 @@ export function CheckoutPage() {
       }
     } catch (error) {
       paymentWindow?.close()
+      paymentStartingRef.current = false
       toast.error(error instanceof Error ? error.message : "创建订单失败")
       setPaying("")
     }
@@ -378,7 +380,7 @@ export function CheckoutPage() {
     : "付款成功后套餐立即生效。"
 
   return (
-    <main className="px-4 lg:px-6">
+    <div className="px-4 lg:px-6">
       <section className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-5">
         <header className="grid gap-1 lg:col-span-5"><h1 className="text-2xl font-semibold tracking-tight">确认订单</h1><p className="text-sm text-muted-foreground">{trafficPack ? "确认流量包信息后完成支付" : homeIp ? "选择服务地区并确认人工交付信息" : "确认商品、计费周期与优惠信息后完成支付"}</p><Separator className="mt-3" /></header>
         {quote.purchaseAction !== "initial" ? <Alert variant={quote.purchaseAction === "replace" ? "warning" : "default"} className="lg:col-span-5"><TriangleAlert /><AlertDescription>{actionMessage}</AlertDescription></Alert> : null}
@@ -415,7 +417,18 @@ export function CheckoutPage() {
           <Card>
             <CardHeader><CardTitle>订单摘要</CardTitle><CardDescription>{quote.optionLabel}</CardDescription></CardHeader>
             <CardContent className="grid gap-4">
-              <div className="grid gap-3 text-sm"><p className="flex justify-between"><span className="text-muted-foreground">{(quote.trafficTier || 1) > 1 ? `套餐基础价（每月 ${quote.trafficBaseGb} GB）` : "商品原价"}</span><span>{formatMoney(quote.baseAmount ?? quote.originalAmount)}</span></p>{(quote.trafficTier || 1) > 1 ? <p className="flex justify-between"><span className="text-muted-foreground">流量定制至每月 {quote.trafficGb} GB</span><span>+{formatMoney(quote.originalAmount - (quote.baseAmount || 0))}</span></p> : null}{quote.discountAmount ? <p className="flex justify-between"><span className="text-muted-foreground">优惠码 {quote.couponCode}（{quote.discountPercent}%）</span><span>-{formatMoney(quote.discountAmount)}</span></p> : null}{standaloneAddOn ? null : <><p className="flex justify-between gap-3"><span className="text-muted-foreground">{quote.vipLevel.replace(/^vip/i, "VIP ")} 专属折扣（{quote.vipDiscountPercent}%）</span><span>-{formatMoney(quote.vipDiscountAmount)}</span></p><p className="flex justify-between"><span className="text-muted-foreground">优惠后小计</span><span>{formatMoney(quote.subtotal)}</span></p><p className="flex justify-between"><span className="text-muted-foreground">税费（{quote.taxRate}%）</span><span>{formatMoney(quote.taxAmount)}</span></p></>}{quote.addOnAmount ? <p className="flex justify-between gap-3"><span className="text-muted-foreground">附加服务：{quote.availableAddOns?.filter(addOn => quote.selectedAddOns?.includes(addOn.id)).map(addOn => addOn.name).join("、")}</span><span>+{formatMoney(quote.addOnAmount)}</span></p> : null}{quote.walletGiftAmount ? <p className="flex justify-between"><span className="text-muted-foreground">赠送余额</span><span>-{formatMoney(quote.walletGiftAmount)}</span></p> : null}{quote.walletReferralAmount ? <p className="flex justify-between"><span className="text-muted-foreground">返利余额</span><span>-{formatMoney(quote.walletReferralAmount)}</span></p> : null}{quote.walletCashAmount ? <p className="flex justify-between"><span className="text-muted-foreground">充值余额</span><span>-{formatMoney(quote.walletCashAmount)}</span></p> : null}</div>
+              <div className="grid gap-3 text-sm">
+                <p className="flex justify-between"><span className="text-muted-foreground">{(quote.trafficTier || 1) > 1 ? `套餐基础价（每月 ${quote.trafficBaseGb} GB）` : "商品原价"}</span><span>{formatMoney(quote.baseAmount ?? quote.originalAmount)}</span></p>
+                {(quote.trafficTier || 1) > 1 ? <p className="flex justify-between"><span className="text-muted-foreground">流量定制至每月 {quote.trafficGb} GB</span><span>+{formatMoney(quote.originalAmount - (quote.baseAmount || 0))}</span></p> : null}
+                {quote.discountAmount ? <p className="flex justify-between"><span className="text-muted-foreground">优惠码 {quote.couponCode}（{quote.discountPercent}%）</span><span>-{formatMoney(quote.discountAmount)}</span></p> : null}
+                {standaloneAddOn ? null : <p className="flex justify-between gap-3"><span className="text-muted-foreground">{quote.vipLevel.replace(/^vip/i, "VIP ")} 专属折扣（{quote.vipDiscountPercent}%）</span><span>-{formatMoney(quote.vipDiscountAmount)}</span></p>}
+                <p className="flex justify-between"><span className="text-muted-foreground">{standaloneAddOn ? "小计" : "优惠后小计"}</span><span>{formatMoney(quote.subtotal)}</span></p>
+                {quote.addOnAmount ? <p className="flex justify-between gap-3"><span className="text-muted-foreground">附加服务：{quote.availableAddOns?.filter(addOn => quote.selectedAddOns?.includes(addOn.id)).map(addOn => addOn.name).join("、")}</span><span>+{formatMoney(quote.addOnAmount)}</span></p> : null}
+                <p className="flex justify-between"><span className="text-muted-foreground">税费（{quote.taxRate}%）</span><span>{formatMoney(quote.taxAmount)}</span></p>
+                {quote.walletGiftAmount ? <p className="flex justify-between"><span className="text-muted-foreground">赠送余额</span><span>-{formatMoney(quote.walletGiftAmount)}</span></p> : null}
+                {quote.walletReferralAmount ? <p className="flex justify-between"><span className="text-muted-foreground">返利余额</span><span>-{formatMoney(quote.walletReferralAmount)}</span></p> : null}
+                {quote.walletCashAmount ? <p className="flex justify-between"><span className="text-muted-foreground">充值余额</span><span>-{formatMoney(quote.walletCashAmount)}</span></p> : null}
+              </div>
               {quote.wallet.availableBalance > 0 ? <FieldLabel htmlFor="use-wallet" className="min-h-10 w-full cursor-pointer justify-between rounded-md border bg-muted/40 px-3 py-2.5 transition-colors hover:bg-muted/60 has-[[data-disabled]]:cursor-not-allowed">使用余额抵扣<Checkbox id="use-wallet" checked={useBalance} onCheckedChange={checked => { const enabled = checked === true; setUseBalance(enabled); void loadQuote(quote.couponCode, optionId, enabled) }} disabled={loading || Boolean(paying)} /></FieldLabel> : null}
               <Separator />
               <p className="flex justify-between text-base font-semibold"><span>支付订单</span><span>{formatMoney(quote.amount)}</span></p>
@@ -440,7 +453,7 @@ export function CheckoutPage() {
           <AlertDialogFooter><AlertDialogCancel disabled={Boolean(paying)}>返回检查</AlertDialogCancel><AlertDialogAction onClick={() => void confirmReplacement()} disabled={Boolean(paying)}>{paying ? <Loader2 className="animate-spin" /> : null}{quote.amount === 0 ? "确认覆盖" : "确认并继续支付"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </main>
+    </div>
   )
 }
 

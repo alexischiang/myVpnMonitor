@@ -238,7 +238,7 @@ export function SalesAnalyticsPage() {
     ? `${dateRange.from.toLocaleDateString("zh-CN", { month: "short", day: "numeric" })} 至 ${dateRange.to.toLocaleDateString("zh-CN", { month: "short", day: "numeric" })}`
     : "日期范围"
 
-  return <main className="grid gap-4 px-4 lg:px-6">
+  return <div className="grid gap-4 px-4 lg:px-6">
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <section>
         <h1 className="text-2xl font-semibold tracking-tight">销售统计</h1>
@@ -380,5 +380,5 @@ export function SalesAnalyticsPage() {
         <CardContent><Table><TableHeader><TableRow><TableHead>渠道</TableHead><TableHead className="text-right">订单</TableHead><TableHead className="text-right">销售额</TableHead><TableHead className="text-right">客单价</TableHead></TableRow></TableHeader><TableBody>{report.channels.map(row => <TableRow key={row.name}><TableCell className="font-medium">{row.name}</TableCell><TableCell className="text-right tabular-nums">{row.orders}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(row.sales)}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(row.sales / row.orders)}</TableCell></TableRow>)}</TableBody></Table></CardContent>
       </Card>
     </section>
-  </main>
+  </div>
 }

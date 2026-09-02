@@ -301,6 +301,10 @@ async function main() {
 
     const pendingCouponOrder = await createOrder({ couponCode: "SAVE20" });
     assert.strictEqual(pendingCouponOrder.response.status, 201);
+    const usersWithPendingOrder = await request("/api/users", { cookie: adminCookie });
+    const pendingOrderLog = usersWithPendingOrder.data.find(item => item.email === "buyer@example.test")?.userLogs
+      .find(log => log.details?.paymentOrderId === pendingCouponOrder.data.id);
+    assert.deepStrictEqual([pendingOrderLog?.reason, pendingOrderLog?.status], ["payment-order-pending", "pending"]);
     const settingsWithPendingCoupon = await request("/api/sales-settings", { cookie: adminCookie });
     assert.strictEqual(settingsWithPendingCoupon.data.coupons.find(item => item.code === "SAVE20").usedCount, 0);
     const cancelledCouponOrder = await request(`/api/payments/orders/${pendingCouponOrder.data.id}`, { method: "DELETE", cookie });
@@ -422,14 +426,14 @@ async function main() {
     const managedUser = adminUsers.data[0];
     assert.strictEqual(managedUser.lineType, "self_hosted", "new purchases must use self-hosted delivery");
     const customInboundOptions = await request(`/api/users/${managedUser.id}/custom-inbounds`, { cookie: adminCookie });
-    assert.strictEqual(customInboundOptions.status, 200);
+    assert.strictEqual(customInboundOptions.response.status, 200);
     assert.deepStrictEqual(customInboundOptions.data.inheritedInboundIds, [1]);
     const customInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2] } });
-    assert.strictEqual(customInboundUpdate.status, 200);
+    assert.strictEqual(customInboundUpdate.response.status, 200);
     assert.deepStrictEqual(customInboundUpdate.data.xuiExtraInboundIds, [2]);
     assert.deepStrictEqual(customInboundUpdate.data.xuiInboundIds, [1, 2]);
     const blockedDisabledInbound = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2, 3] } });
-    assert.strictEqual(blockedDisabledInbound.status, 400);
+    assert.strictEqual(blockedDisabledInbound.response.status, 400);
     assert.match(blockedDisabledInbound.data.error, /已停用/);
     const protectedUpdate = await request(`/api/users/${managedUser.id}`, { method: "PUT", cookie: adminCookie, body: { actualPaid: 999, duration: "yearly", expiresAt: "2030-01-01" } });
     assert.strictEqual(protectedUpdate.response.status, 400);
@@ -724,6 +728,16 @@ async function main() {
     assert.strictEqual(reversedFailedFulfillment.data.fulfillmentStatus, "reversed");
     const buyerUsersAfterFailedReversal = await database.query("SELECT COUNT(*)::int AS count FROM app_records WHERE collection = 'users' AND data->>'email' = 'buyer@example.test'");
     assert.strictEqual(buyerUsersAfterFailedReversal.rows[0].count, 1, "reversing a failed renewal must not duplicate the existing user");
+    const forbiddenManualConfirmation = await request(`/api/admin/orders/${visiblePendingOrder.data.id}/mark-paid`, { method: "POST", cookie });
+    assert.strictEqual(forbiddenManualConfirmation.response.status, 403);
+    const manuallyPaidOrder = await request(`/api/admin/orders/${visiblePendingOrder.data.id}/mark-paid`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(manuallyPaidOrder.response.status, 200);
+    assert.deepStrictEqual([manuallyPaidOrder.data.status, manuallyPaidOrder.data.channelCode, manuallyPaidOrder.data.paymentProvider, manuallyPaidOrder.data.fulfillmentStatus], ["paid", "manual", "manual", "fulfilled"]);
+    await callback(manuallyPaidOrder.data, 2, String(manuallyPaidOrder.data.amount), true);
+    const manuallyPaidOrderAfterLateCallback = await request(`/api/payments/orders/${manuallyPaidOrder.data.id}`, { cookie });
+    assert.deepStrictEqual([manuallyPaidOrderAfterLateCallback.data.status, manuallyPaidOrderAfterLateCallback.data.channelCode], ["paid", "manual"]);
+    const repeatedManualConfirmation = await request(`/api/admin/orders/${visiblePendingOrder.data.id}/mark-paid`, { method: "POST", cookie: adminCookie });
+    assert.strictEqual(repeatedManualConfirmation.response.status, 400);
 
     const passwordChange = await request("/api/auth/password", {
       method: "PUT",

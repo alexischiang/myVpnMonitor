@@ -1,7 +1,7 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useParams } from "react-router-dom"
-import { AlertCircle, Eye, Loader2, Undo2 } from "lucide-react"
+import { AlertCircle, BadgeCheck, Eye, Loader2, Undo2 } from "lucide-react"
 
 import { fetchJson, postJson, putJson } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -226,6 +226,8 @@ export function OrderDetailPage() {
   const [retrying, setRetrying] = React.useState(false)
   const [reverseOpen, setReverseOpen] = React.useState(false)
   const [reversing, setReversing] = React.useState(false)
+  const [markPaidOpen, setMarkPaidOpen] = React.useState(false)
+  const [markingPaid, setMarkingPaid] = React.useState(false)
   const [deliveryNote, setDeliveryNote] = React.useState("")
   const [delivering, setDelivering] = React.useState(false)
 
@@ -266,6 +268,20 @@ export function OrderDetailPage() {
     }
   }
 
+  async function markOrderPaid() {
+    if (!id || markingPaid) return
+    setMarkingPaid(true)
+    setRetryError("")
+    try {
+      setOrder(await postJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}/mark-paid`))
+      setMarkPaidOpen(false)
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "标记付款失败")
+    } finally {
+      setMarkingPaid(false)
+    }
+  }
+
   async function completeDelivery() {
     if (!id || !deliveryNote.trim()) return
     setDelivering(true)
@@ -282,6 +298,15 @@ export function OrderDetailPage() {
   return (
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="订单详情" description={order.merOrderTid} actions={<>
+        {status === "pending" ? <>
+          <Button size="sm" disabled={markingPaid} onClick={() => setMarkPaidOpen(true)}><BadgeCheck />标记已付款</Button>
+          <AlertDialog open={markPaidOpen} onOpenChange={setMarkPaidOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader><AlertDialogTitle>确认已收到转账？</AlertDialogTitle><AlertDialogDescription>订单的第三方实付金额为 {formatMoney(order.amount)}。确认后收款渠道将改为人工收款，并立即按原订单结算余额、发放套餐。请勿在尚未到账时操作。</AlertDialogDescription></AlertDialogHeader>
+              <AlertDialogFooter><AlertDialogCancel disabled={markingPaid}>取消</AlertDialogCancel><AlertDialogAction disabled={markingPaid} onClick={() => void markOrderPaid()}>{markingPaid ? <Loader2 className="animate-spin" /> : null}确认已收款</AlertDialogAction></AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </> : null}
         {order.reversible ? <>
           <Button variant="destructive" size="sm" disabled={reversing || retrying} onClick={() => setReverseOpen(true)}><Undo2 />{reversing ? "正在撤销" : "撤销订单"}</Button>
           <AlertDialog open={reverseOpen} onOpenChange={setReverseOpen}>
@@ -302,7 +327,7 @@ export function OrderDetailPage() {
         </> : null}
         <BackButton fallback="/orders" size="sm" />
       </>} />
-      {retryError ? <Alert variant="error"><AlertCircle /><AlertTitle>重新发放失败</AlertTitle><AlertDescription>{retryError}</AlertDescription></Alert> : null}
+      {retryError ? <Alert variant="error"><AlertCircle /><AlertTitle>订单操作失败</AlertTitle><AlertDescription>{retryError}</AlertDescription></Alert> : null}
       {failure ? <Alert variant="error"><AlertCircle /><AlertTitle>{status === "unfulfilled" ? "已付款但套餐未发放" : "订单处理异常"}</AlertTitle><AlertDescription>{failure}</AlertDescription></Alert> : null}
       <Alert><AlertCircle /><AlertTitle>金额分类</AlertTitle><AlertDescription>realCash 是用户实际支付、充值或获得的返利；virtualCash 是后台赠送余额，不代表用户现金支出。下方钱包明细仍按赠送、返利、充值分别记录。</AlertDescription></Alert>
       <div className="grid gap-4 lg:grid-cols-2">

@@ -52,6 +52,7 @@ const XUI_VISION_FLOW = "xtls-rprx-vision";
 const LEGACY_RECURRING_TRAFFIC_GB = Object.freeze({ basic: 50, pro: 100, ultra: 100 });
 const TRAFFIC_PACK_BYTES = 100 * 1024 ** 3;
 const TRAFFIC_PACK_PRICE = 20;
+const CHECKOUT_TAX_RATE = 3;
 const CHINA_TIME_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const SUBCONVERTER_BOOLEAN_DEFAULTS = Object.freeze({
@@ -1944,10 +1945,16 @@ function trafficPackConfig() {
   };
 }
 
+function checkoutTaxAmount(subtotal) {
+  return Math.round(Math.round(Number(subtotal) * 100) * CHECKOUT_TAX_RATE / 100) / 100;
+}
+
 function trafficPackQuote(account) {
   const user = requireTrafficPackUser(account);
   const { product, trafficGb, price } = trafficPackConfig();
   if (product.enabled === false) throw new Error("流量包暂未开放。");
+  const taxAmount = checkoutTaxAmount(price);
+  const beforeCreditAmount = Number((price + taxAmount).toFixed(2));
   return {
     optionId: "traffic-pack-100g",
     planId: "traffic-pack",
@@ -1966,12 +1973,12 @@ function trafficPackQuote(account) {
     vipDiscountPercent: 0,
     vipDiscountAmount: 0,
     subtotal: price,
-    taxRate: 0,
-    taxAmount: 0,
-    beforeCreditAmount: price,
+    taxRate: CHECKOUT_TAX_RATE,
+    taxAmount,
+    beforeCreditAmount,
     cashCredit: 0,
     purchaseAction: "add_on",
-    amount: price,
+    amount: beforeCreditAmount,
     couponCode: "",
     discountPercent: 0,
     cycles: []
@@ -1995,6 +2002,8 @@ function homeIpQuote(account, requestedOptionId = "") {
   const region = regions.find(item => item.id === requestedRegionId) || (!requestedRegionId ? regions[0] : null);
   if (!region) throw new Error("家宽 IP 地区无效。");
   const amount = Number(region.price);
+  const taxAmount = checkoutTaxAmount(amount);
+  const beforeCreditAmount = Number((amount + taxAmount).toFixed(2));
   const snapshot = { id: "home_ip", optionId: `home_ip:${region.id}`, name: product.name || "家宽 IP 定制", regionId: region.id, regionName: region.name, amount, durationDays: Number(product.addonDurationDays || 30), deliveryMode: "manual", deliveryDescription: product.addonDeliveryDescription || "" };
   return {
     optionId: snapshot.optionId,
@@ -2014,12 +2023,12 @@ function homeIpQuote(account, requestedOptionId = "") {
     vipDiscountPercent: 0,
     vipDiscountAmount: 0,
     subtotal: amount,
-    taxRate: 0,
-    taxAmount: 0,
-    beforeCreditAmount: amount,
+    taxRate: CHECKOUT_TAX_RATE,
+    taxAmount,
+    beforeCreditAmount,
     cashCredit: 0,
     purchaseAction: "add_on",
-    amount,
+    amount: beforeCreditAmount,
     couponCode: "",
     discountPercent: 0,
     selectedAddOns: [snapshot.optionId],
@@ -2041,11 +2050,15 @@ function planQuoteWithAddOns(quote, requestedAddOns) {
     return { id: "home_ip", optionId: id, name: homeIp.name || "家宽 IP 定制", regionId: region.id, regionName: region.name, amount: Number(region.price), durationDays: Number(homeIp.addonDurationDays || 30), deliveryMode: homeIp.addonDeliveryMode || "manual", deliveryDescription: homeIp.addonDeliveryDescription || "" };
   });
   const addOnAmount = selectedAddOnSnapshots.reduce((sum, item) => sum + item.amount, 0);
+  const taxAmount = checkoutTaxAmount(quote.subtotal + addOnAmount);
+  const beforeCreditAmount = Number((quote.subtotal + addOnAmount + taxAmount).toFixed(2));
   return {
     ...quote,
     planAmount: quote.amount,
     addOnAmount,
-    amount: Number((quote.amount + addOnAmount).toFixed(2)),
+    taxAmount,
+    beforeCreditAmount,
+    amount: beforeCreditAmount,
     selectedAddOns,
     selectedAddOnSnapshots,
     availableAddOns: homeIp ? [{ id: "home_ip", name: homeIp.name || "家宽 IP 定制", description: homeIp.description || "按地区定制家庭宽带出口 IP。", available: homeIpAvailable, unavailableReason: homeIpAvailable ? "" : "仅适用于周期性套餐", options: regions.map(region => ({ id: `home_ip:${region.id}`, label: region.name, amount: Number(region.price) })) }] : []
@@ -2376,7 +2389,7 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
   const subtotalCents = Math.round(afterCouponCents * (100 - vipPercent) / 100);
   const vipDiscountAmount = (afterCouponCents - subtotalCents) / 100;
   const subtotal = subtotalCents / 100;
-  const taxAmount = Math.round(subtotalCents * 0.03) / 100;
+  const taxAmount = checkoutTaxAmount(subtotal);
   const beforeCreditAmount = Number((subtotal + taxAmount).toFixed(2));
   const account = accounts.find(item => item.id === accountId);
   const terms = paymentPurchaseTerms(userForAccount(account));
@@ -2398,7 +2411,7 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
     vipDiscountPercent: vipPercent,
     vipDiscountAmount,
     subtotal,
-    taxRate: 3,
+    taxRate: CHECKOUT_TAX_RATE,
     taxAmount,
     beforeCreditAmount,
     cashCredit: terms.cashCredit,
@@ -2641,6 +2654,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       outputMode: "subconverter",
        blockUserinfo: false
     }, item);
+    user.userLogs = dedupeUserLogs(account?.userLogs);
     user.outputMode = "subconverter";
     user.blockUserinfo = false;
     user.trafficTier = order.trafficTier || 1;
@@ -2845,6 +2859,21 @@ function assertPendingPaymentOrderLimit(accountId) {
   }
 }
 
+async function recordPendingPaymentOrderLog(account, order, req) {
+  if (order.status !== "pending") return;
+  const owner = userForAccount(account) || account;
+  appendUserLogToUser(owner, createUserLog({
+    event: "user-action",
+    status: "pending",
+    reason: "payment-order-pending",
+    req,
+    message: `待付款订单：${order.planName} / ${order.optionLabel}`,
+    details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, amount: order.totalAmount ?? order.amount }
+  }));
+  if (owner === account) await saveAccounts();
+  else await saveUsers();
+}
+
 function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
   const base = String(config.returnUrl || fallbackUrl || `${requestOrigin(req)}/pricing`).trim();
   if (!base || !/^https?:\/\//i.test(base)) return "";
@@ -2994,6 +3023,7 @@ async function createPaymentOrder(payload, req, account, paymentSource = "online
     await dataStore.releaseWalletHold(order.id);
     throw error;
   }
+  await recordPendingPaymentOrderLog(account, order, req);
   if (order.status === "paid") {
     order.paidAt ||= now;
     try {
@@ -3066,6 +3096,7 @@ async function createRechargeOrder(payload, req, account) {
     paymentOrders = paymentOrders.filter(item => item.id !== order.id);
     throw error;
   }
+  await recordPendingPaymentOrderLog(account, order, req);
   if (order.status === "paid") {
     order.paidAt = now;
     await fulfillPaymentOrder(order, req);
@@ -3110,10 +3141,36 @@ async function cancelPaymentOrder(order, req) {
   return refreshedOrder;
 }
 
+async function markPaymentOrderPaidManually(order, req) {
+  if (order.status !== "pending" || isPaymentOrderExpired(order)) throw new Error("只有有效的待付款订单可以标记为已付款。");
+  const now = new Date().toISOString();
+  order.status = "paid";
+  order.platformStatus = 1;
+  order.channelCode = "manual";
+  order.paymentProvider = "manual";
+  order.paymentPlatformName = "客服人工收款";
+  order.payUrl = "";
+  order.paymentError = "";
+  order.paidAt = now;
+  order.manualPaidAt = now;
+  order.updatedAt = now;
+  await savePaymentOrders();
+  try {
+    await fulfillPaymentOrder(order, req);
+  } catch (error) {
+    order.fulfillmentStatus = "failed";
+    order.fulfillmentError = error.message;
+    order.updatedAt = new Date().toISOString();
+    await savePaymentOrders();
+  }
+  return order;
+}
+
 async function handlePaymentCallback(req) {
   const payload = await readPaymentCallback(req);
   const merOrderTid = String(payload.out_trade_no || payload.merOrderTid || "").trim();
   const order = paymentOrders.find(item => item.merOrderTid === merOrderTid);
+  if (order?.manualPaidAt) return { ok: true, statusCode: 200, body: "success" };
   let config = order?.paymentPlatformId
     ? paymentConfigs().find(item => item.id === order.paymentPlatformId)
     : paymentConfigs().find(item => item.merchantId === String(payload.pid || payload.mid || ""));
@@ -5468,7 +5525,7 @@ function publicRegisteredAccount(account) {
     subscription: null,
     activeGroup: "",
     expiresAt: null,
-    userLogs: []
+    userLogs: publicUserLogs(account)
   };
 }
 
@@ -6090,6 +6147,7 @@ const userLogReasonText = {
   "xui-migration-activation-required": "\u7b49\u5f85\u6fc0\u6d3b\u8d26\u6237",
   "xui-migration-completed": "\u65e7\u5957\u9910\u8fc1\u79fb\u5b8c\u6210",
   "xui-migration-failed": "\u65e7\u5957\u9910\u8fc1\u79fb\u5931\u8d25",
+  "payment-order-pending": "\u5f85\u4ed8\u6b3e\u8ba2\u5355",
   "bill-reversed": "\u8d26\u5355\u51b2\u9500",
   "bill-deleted": "\u8d26\u5355\u5220\u9664",
   "user-deleted": "\u7528\u6237\u5220\u9664"
@@ -6101,6 +6159,7 @@ const userLogStatusText = {
   blocked: "\u5df2\u62e6\u622a",
   failed: "\u8bf7\u6c42\u5931\u8d25",
   kept_current: "\u7ee7\u7eed\u4f7f\u7528\u539f\u6c60",
+  pending: "\u5f85\u4ed8\u6b3e",
   recorded: "\u5df2\u8bb0\u5f55"
 };
 
@@ -9061,6 +9120,20 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  const adminOrderMarkPaidMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)\/mark-paid$/);
+  if (adminOrderMarkPaidMatch && req.method === "POST") {
+    await loadLatestData({ force: true });
+    const order = paymentOrders.find(item => item.id === adminOrderMarkPaidMatch[1]);
+    if (!order) { sendJson(res, 404, { error: "没有找到这个订单。" }); return; }
+    try {
+      await markPaymentOrderPaidManually(order, req);
+      sendJson(res, 200, adminPaymentOrder(order));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const adminOrderReverseMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)\/reverse$/);
   if (adminOrderReverseMatch && req.method === "POST") {
     await loadLatestData({ force: true });
@@ -10683,6 +10756,7 @@ module.exports = Object.assign(requestHandler, {
   bindUserProduct,
   paymentQuote,
   planQuoteWithAddOns,
+  checkoutTaxAmount,
   vipLevelForSpend,
   vipDiscountPercent,
   paymentChannelCode,
