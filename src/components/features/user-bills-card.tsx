@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Bill } from "@/types"
-import { formatDate, formatMoney } from "@/utils"
+import { billTypeLabels, formatDate, formatMoney, purchasedPlanName } from "@/utils"
 
 export function UserBillsCard({ bills }: { bills: Bill[] }) {
   return (
@@ -15,6 +15,7 @@ export function UserBillsCard({ bills }: { bills: Bill[] }) {
           <TableHeader>
             <TableRow>
               <TableHead className="px-6">账单</TableHead>
+              <TableHead>商品名称</TableHead>
               <TableHead>类型</TableHead>
               <TableHead>金额</TableHead>
               <TableHead>日期</TableHead>
@@ -22,21 +23,23 @@ export function UserBillsCard({ bills }: { bills: Bill[] }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {bills.length ? bills.map(bill => (
-              <TableRow key={bill.id}>
-                <TableCell className="max-w-48 truncate px-6 font-medium" title={bill.payment?.merOrderTid || bill.paymentOrderId || bill.id}>
-                  {bill.payment?.merOrderTid || bill.paymentOrderId || bill.id}
+            {bills.length ? bills.map(bill => {
+              const productName = bill.productSnapshot ? purchasedPlanName({ currentProductSnapshot: bill.productSnapshot }) : "-"
+              return <TableRow key={bill.id}>
+                <TableCell className="max-w-48 truncate px-6 font-medium" title={bill.merOrderTid || "无商户订单号"}>
+                  {bill.merOrderTid || "-"}
                 </TableCell>
-                <TableCell><Badge variant="secondary">{bill.type || "账单"}</Badge></TableCell>
+                <TableCell className="max-w-48 truncate" title={productName}>{productName}</TableCell>
+                <TableCell><Badge variant="secondary">{billTypeLabels[bill.type || ""] || "账单"}</Badge></TableCell>
                 <TableCell className="font-medium">{formatMoney(bill.amount)}</TableCell>
                 <TableCell className="text-muted-foreground">{formatDate(bill.occurredAt)}</TableCell>
                 <TableCell className="max-w-64 truncate px-6 text-muted-foreground" title={bill.description}>
                   {bill.description || "-"}
                 </TableCell>
               </TableRow>
-            )) : (
+            }) : (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">暂无账单</TableCell>
+                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">暂无账单</TableCell>
               </TableRow>
             )}
           </TableBody>
