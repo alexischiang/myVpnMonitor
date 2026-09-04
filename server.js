@@ -2135,6 +2135,10 @@ function paymentPurchaseTerms(user, now = new Date()) {
   return { purchaseAction: "replace", cashCredit: 0 };
 }
 
+function billTypeForPurchaseAction(action) {
+  return action === "extend" ? "renewal" : action === "replace" ? "replacement" : "initial";
+}
+
 function billCashValueAmount(bill) {
   const order = paymentOrders.find(item => item.id === bill.paymentOrderId);
   if (!order) return Math.max(Number(bill.amount) || 0, 0);
@@ -2589,9 +2593,10 @@ async function fulfillPaymentOrderOnce(order, req) {
       Object.assign(user, previousUserState);
       throw error;
     }
+    const billType = billTypeForPurchaseAction(order.purchaseAction);
     bills.unshift(makeBill({
       user,
-      type: order.purchaseAction === "replace" ? "replacement" : "renewal",
+      type: billType,
       paymentOrderId: order.id,
       amount: planCashValueAmount,
       vipSpendAmount: renewal.vipSpendAmount,
@@ -2599,7 +2604,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       duration: user.duration,
       beforeExpiresAt: renewal.beforeExpiresAt,
       afterExpiresAt: renewal.afterExpiresAt,
-      description: order.purchaseAction === "replace" ? "Payment order replacement" : "Payment order renewal"
+      description: billType === "replacement" ? "Payment order replacement" : billType === "renewal" ? "Payment order renewal" : "Payment order purchase"
     }));
     appendUserLogToUser(user, createUserLog({
       event: "user-action",
@@ -5591,8 +5596,11 @@ function publicBill(bill, userMap = null) {
   const user = userMap
     ? userMap.get(bill.userId)
     : users.find(item => item.id === bill.userId);
+  const paymentOrder = paymentOrderForBill(bill);
   return {
     ...bill,
+    merOrderTid: paymentOrder?.merOrderTid || "",
+    productSnapshot: paymentOrder?.productSnapshot || null,
     originalUserLabel: bill.userLabel || bill.userSnapshot?.userId || "",
     userLabel: user ? billUserLabel(user) : (bill.userLabel || bill.userSnapshot?.userId || "未知用户"),
     user: user ? {
@@ -8450,6 +8458,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/payments/orders" && req.method === "POST") {
+    await loadLatestData({ force: true });
     const session = requireUser(req, res);
     if (!session) return;
     try {
@@ -9100,6 +9109,7 @@ async function handleApi(req, res, pathname) {
   if (["/api/admin/manual-payments/quote", "/api/admin/manual-payments"].includes(pathname) && req.method === "POST") {
     try {
       const payload = await readJson(req);
+      if (pathname === "/api/admin/manual-payments") await loadLatestData({ force: true });
       const account = accounts.find(item => item.id === String(payload.accountId || "") && item.status === "active");
       if (!account) throw new Error("只有已启用的认领账户可以人工收款。");
       const input = { ...payload, useBalance: false };
@@ -10747,6 +10757,7 @@ module.exports = Object.assign(requestHandler, {
   liveConfigFromCachedPoolConfig,
   startOfUtcDate,
   remainingPlanCashValue,
+  billTypeForPurchaseAction,
   inferUserProductBinding,
   recurringPlanOption,
   resolvePlanChangeOption,

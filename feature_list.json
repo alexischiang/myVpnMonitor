@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-04",
+  "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
+  "features": [
+    {
+      "id": "harness-minimum-loop",
+      "name": "Minimum agent harness loop",
+      "description": "Make startup, scoped work, verification, and session handoff restartable.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "A single startup command fails fast on baseline errors.",
+        "Feature state and verification evidence are recorded before completion.",
+        "The next session can resume from PROGRESS.md without chat history."
+      ],
+      "verification": [
+        "2026-09-04: Git Bash ./init.sh passed server syntax, core tests, and 3x-ui service tests.",
+        "2026-09-04: validate-harness.mjs scored 96/100; only the optional separate session-handoff.md check is intentionally omitted.",
+        "2026-09-04: git diff --check passed."
+      ]
+    },
+    {
+      "id": "harness-ui-console-gate",
+      "name": "UI browser console verification gate",
+      "description": "Block UI features from passing without clean browser console and page-error evidence.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["harness-minimum-loop"],
+      "done_criteria": [
+        "Passing UI features require structured browser verification evidence.",
+        "Console errors and uncaught page errors block passing status.",
+        "The gate has a runnable self-test and runs during fast verification."
+      ],
+      "verification": [
+        "2026-09-04: npm run verify:harness passed its rejection self-test and real feature state validation.",
+        "2026-09-04: npm run verify:fast passed syntax, harness, core, and 3x-ui service tests.",
+        "2026-09-04: git diff --check passed."
+      ]
+    },
+    {
+      "id": "harness-progress-writer",
+      "name": "Explicit progress handoff writer",
+      "description": "Update PROGRESS.md through one explicit lifecycle command using inferred repository state and supplied handoff context.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["harness-minimum-loop"],
+      "done_criteria": [
+        "One command updates the progress date, objective, active feature, blockers, changed files, next step, and optional evidence.",
+        "Missing required context fails without modifying PROGRESS.md.",
+        "The writer has a runnable self-test and is required by the end-of-session instructions."
+      ],
+      "verification": [
+        "2026-09-04: missing-argument invocation failed without modifying PROGRESS.md.",
+        "2026-09-04: npm run test:harness passed the progress writer and feature-state self-tests.",
+        "2026-09-04: actual agent:handoff invocation updated PROGRESS.md and captured all Git paths correctly.",
+        "2026-09-04: npm run verify:fast and git diff --check passed."
+      ]
+    },
+    {
+      "id": "ui-item-title-overflow",
+      "name": "Wrap long item titles",
+      "description": "Keep unbroken list-item titles inside their cards without obscuring row actions.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Long unbroken titles wrap inside ItemContent.",
+        "Adjacent item actions remain visible and usable."
+      ],
+      "verification": [
+        "2026-09-04: npm run check passed application and documentation builds.",
+        "2026-09-04: Playwright verified the long Alert title at 960x1145 and 390x844 with no horizontal title overflow and a visible edit action."
+      ],
+      "browser_verification": {
+        "routes": ["/sales-settings"],
+        "interactions": [
+          "Logged in as administrator and opened Alert 管理.",
+          "Verified the marked long unbroken title at 960x1145 and 390x844.",
+          "Confirmed the title scroll width equals its client width and the edit action remains visible."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-04"
+      }
+    },
+    {
+      "id": "ui-user-alert-full-text",
+      "name": "Show complete user alerts",
+      "description": "Wrap full UserAlert titles and render message text in the same semantic color.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Long UserAlert titles display in full and wrap within the alert.",
+        "UserAlert message text uses the same color as its title."
+      ],
+      "verification": [
+        "2026-09-05: npm run check passed application and documentation builds.",
+        "2026-09-05: Browser verification confirmed complete wrapping and identical computed title/message colors at desktop and mobile widths."
+      ],
+      "browser_verification": {
+        "routes": ["/account"],
+        "interactions": [
+          "Rendered a UserAlert through the account page with a 194-character unbroken title and message text.",
+          "Verified line clamp is disabled, overflow wrapping is enabled, and no horizontal text overflow occurs at 960x1145 and 390x844.",
+          "Confirmed title and message computed colors are identical."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-05"
+      }
+    },
+    {
+      "id": "billing-purchase-classification",
+      "name": "Classify plan purchases and returning customers",
+      "description": "Derive bill type from the current purchase action and refresh purchase history before creating an order.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Initial, renewal, and replacement bill types follow the order purchase action.",
+        "Expired-plan repurchases remain initial purchases regardless of whether the account already has a user.",
+        "Returning-customer alerts use refreshed successful purchase history.",
+        "User bill records display the three plan bill type labels in Chinese."
+      ],
+      "verification": [
+        "2026-09-05: npm run verify passed application/docs builds, core, payment-chain, and wallet tests.",
+        "2026-09-05: Live data audit found 135 successful plan orders across 123 customers with zero purchase-count mismatches.",
+        "2026-09-05: Browser verification displayed the selected user's initial bill as 新购套餐."
+      ],
+      "browser_verification": {
+        "routes": ["/users/detail/1d2e95e0-7a6f-4e29-bd3c-0ae589a292ee"],
+        "interactions": [
+          "Logged in as administrator and opened the selected user detail page.",
+          "Opened 用户日志 and confirmed the bill badge displays 新购套餐 instead of the raw initial value."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-05"
+      }
+    },
+    {
+      "id": "ui-bill-order-product",
+      "name": "Show merchant order and product on user bills",
+      "description": "Display the merchant order number and purchased product name in the user bill table.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["billing-purchase-classification"],
+      "done_criteria": [
+        "User bill rows show the merchant order number instead of an internal UUID when linked to a payment order.",
+        "User bill rows include the purchased product name.",
+        "Legacy bills without a payment order use a clear fallback.",
+        "Current subscriptions and bill rows share one product-name formatter."
+      ],
+      "verification": [
+        "2026-09-05: npm run verify passed application/docs builds, core, payment-chain, and wallet tests.",
+        "2026-09-05: Browser verification confirmed merchant order 17878378267846290 and product BASIC-30天-50G in the selected user's bill row.",
+        "2026-09-05: Unit coverage confirmed the shared formatter produces BASIC-360天-50G for a yearly 50G snapshot."
+      ],
+      "browser_verification": {
+        "routes": ["/users/detail/1d2e95e0-7a6f-4e29-bd3c-0ae589a292ee"],
+        "interactions": [
+          "Logged in as administrator and opened the selected user detail page.",
+          "Opened 用户日志 and confirmed the bill table contains the 商品名称 column.",
+          "Confirmed the row displays the merchant order number and formatted product name BASIC-30天-50G instead of the internal payment UUID."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-05"
+      }
+    }
+  ]
+}

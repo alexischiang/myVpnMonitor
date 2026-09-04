@@ -15,7 +15,7 @@ export function PageHeader({ actions }: { title: string; description?: string; a
 
 export function UserAlert({ item }: { item: UserAlertSetting }) {
   const Icon = item.variant === "success" ? CheckCircle : item.variant === "warning" ? TriangleAlert : item.variant === "error" ? CircleX : Info
-  return <Alert variant={item.variant}><Icon /><div className="col-start-2 grid min-w-0 gap-1 text-left">{item.title ? <AlertTitle className="col-start-1 w-full font-bold text-left">{item.title}</AlertTitle> : null}{item.message ? <AlertDescription className="col-start-1 w-full text-left">{item.message}</AlertDescription> : null}</div></Alert>
+  return <Alert variant={item.variant}><Icon /><div className="col-start-2 grid min-w-0 gap-1 text-left">{item.title ? <AlertTitle className="col-start-1 w-full line-clamp-none wrap-anywhere text-left font-bold">{item.title}</AlertTitle> : null}{item.message ? <AlertDescription className="col-start-1 w-full !text-current text-left">{item.message}</AlertDescription> : null}</div></Alert>
 }
 
 export function StatusBadge({ status, children, className = "", style }: { status?: string; children?: React.ReactNode; className?: string; style?: React.CSSProperties }) {

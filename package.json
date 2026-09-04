@@ -4,6 +4,12 @@
   "description": "Local dashboard for monitoring sold VPN subscription URLs, traffic usage, and expiry dates.",
   "main": "server.js",
   "scripts": {
+    "agent:init": "npm run verify:fast",
+    "agent:handoff": "node scripts/update-progress.js",
+    "test:harness": "node scripts/update-progress.js --self-test && node scripts/verify-feature-state.js --self-test",
+    "verify:harness": "npm run test:harness && node scripts/verify-feature-state.js",
+    "verify:fast": "node --check server.js && npm run verify:harness && npm test",
+    "verify": "npm run check && npm test && npm run test:payment && npm run test:wallet",
     "start": "node scripts/ensure-dist.js && node server.js",
     "dev": "vite --configLoader runner",
     "dev:all": "node scripts/dev-all.js",

@@ -158,6 +158,8 @@ export type UserLog = {
 export type Bill = {
   id: string
   paymentOrderId?: string
+  merOrderTid?: string
+  productSnapshot?: Record<string, unknown> | null
   userId?: string
   user?: User
   type?: string

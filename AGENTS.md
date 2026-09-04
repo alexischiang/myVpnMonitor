@@ -1,249 +1,95 @@
-# Agent Instructions
+# Agent 指令
 
-## Branch Rules
+## 项目
 
-- Only make code or documentation changes while on the `main` branch.
-- Do not make changes directly on the `production` branch.
-- If the current branch is `production`, switch back to `main` before editing files.
+XELA monitor 是一个基于 Node.js、PostgreSQL、React、Vite 和 Docusaurus 的应用，用于管理 VPN 订阅、客户、账单、支付和 3x-ui 服务。
 
-## Deployment Rules
+## 仓库结构
 
-- Do not merge or push to `production` for every change.
-- Only merge `main` into `production` and push `production` when the user explicitly asks to deploy or go online.
+- `server.js` — 主 API、业务逻辑和后台任务
+- `src/` — React 前端
+- `src/components/ui/` — shadcn/ui 基础组件
+- `src/components/features/` — 产品功能组件
+- `xui-*.js` — 独立的 3x-ui 服务
+- `docs-site/` — Docusaurus 客户文档
+- `scripts/` — 设置、迁移、同步和构建脚本
+- `.github/workflows/deploy.yml` — 生产环境部署
 
-## Git Operation Rules
+## 开始工作（Startup Workflow）
 
-- Do not stage, commit, or push changes after every edit by default.
-- Only run git actions such as `git add`, `git commit`, `git push`, branch merges, or production deployments when the user explicitly asks for that git operation.
-- Normal development work should remain as local working tree changes until the user asks to commit or push.
+1. 运行 `git branch --show-current` 和 `git status --short`。
+2. 如果当前分支是 `production`，编辑前先切换到 `main`。
+3. 阅读 `PROGRESS.md` 和 `feature_list.json`。
+4. 同一时间最多处理一个 `in_progress` 功能。
+5. 仅在依赖缺失或 lockfile 发生变化时运行 `npm ci`。
+6. 进行非简单实现工作前，运行 `npm run agent:init`。
 
-# shadcn/ui Usage Rules
+## 命令
 
-## 核心原则
+- 开发：`npm run dev:all`
+- 测试：`npm test`
+- 快速基线验证：`npm run verify:fast`
+- 完整验证：`npm run verify`
+- 生产构建：`npm run build`
 
-本项目 UI 必须严格基于 shadcn/ui 官方组件。
+## 工作规则
 
-禁止自行通过 div + Tailwind class 创建已有 shadcn 组件可以表达的 UI。
+- 每次只做一个功能点（One feature at a time）
+- 当前功能点端到端验证通过后，才能开始下一个
+- 不要在实现功能 A 时"顺便"重构功能 B
 
-无随意固定宽高
+## 范围规则（Stay in Scope）
 
-所有页面响应式+弹性布局
+- 不要用无关的重构、清理或推测性的基础设施扩大任务范围。
+- 添加新内容前，优先复用现有代码、平台功能和已安装的依赖。
+- 将 `feature_list.json` 视为功能状态跟踪的唯一事实来源。
+- 只有在验证成功并记录证据后，才能将功能状态改为 `passing`。
 
----
+## 分支、Git 和部署
 
-# Component First Rule
+- 仅在 `main` 分支修改代码或文档。
+- 切勿直接修改 `production` 分支。
+- 除非用户明确要求，否则不要暂存、提交、推送、合并或部署。
+- 仅当用户明确要求部署或上线时，才将 `main` 合并到 `production` 并推送 `production`。
 
-在创建任何 UI 前：
+## UI 规则
 
-必须优先检查：
+- 编辑 JSX、组件、布局或样式前，先阅读 `docs/agent/ui-rules.md`。
+- 优先使用 `src/components/ui/` 中已有的组件，并遵循其官方 API。
+- 每次修改 UI 后，都要打开受影响的页面并检查浏览器控制台是否存在未捕获错误；仅构建成功并不足够。
+- UI 功能在 `feature_list.json` 中必须标记 `"ui": true`；完成前按 `docs/agent/ui-rules.md` 记录 `browser_verification`，并运行 `npm run verify:harness`。
 
-src/components/ui
+## 验证
 
-是否存在对应 shadcn 组件。
+- 仅修改文档或改动非常小时：运行 `git diff --check`。
+- 修改后端逻辑时：运行最相关的测试以及 `npm run verify:fast`。
+- 修改 JSX、类型或构建链时：运行 `npm run check`，并在浏览器中验证受影响的页面。
+- 修改支付、钱包、账单或订阅交付逻辑时：运行 `npm run verify`。
+- 浏览器检查使用 `domcontentloaded` 并加上短暂的固定等待；不要默认使用 `networkidle`。
+- 尽可能复用当前浏览器标签页和登录会话。
+- 将临时验证文件放在临时目录中，并在验证后清理。
 
-如果存在：
+## 完成定义（Definition of Done）
 
-必须使用该组件。
+仅当满足以下条件时，任务才算完成：
 
-禁止重新实现。
+- 已实现用户要求的行为，且没有扩大无关范围。
+- 相关自动化检查通过，并已报告结果。
+- UI 改动已经在浏览器中实际验证，且没有相关控制台错误。
+- `ui: true` 的功能只有在 `browser_verification.console_errors` 和 `page_errors` 均为空时才能标记为 `passing`；构建或单元测试不能替代此门槛。
+- 没有无法解释的调试代码、临时产物或未完成的工作。
+- 功能跟踪状态和验证证据准确。
+- 如果工作需要在其他会话继续，已更新 `PROGRESS.md`。
+- 仓库保持可用，下一会话无需手动修复即可继续工作。
 
-例如：
+## 会话收尾（End of Session）
 
-❌ 禁止：
+1. 运行与改动范围匹配的验证。
+2. 仅在验证通过后更新 `feature_list.json` 的状态和证据。
+3. 运行 `npm run agent:handoff -- --objective "当前目标" --next "下一步"`；需要时增加 `--blocker "阻塞"` 和 `--evidence "验证证据"`。命令会自动写入日期、活动功能和 Git 改动文件，确保下一会话可干净重启（restartable）。
 
-<div className="rounded-md border p-4 shadow-sm">
-  content
-</div>
+## Agent 文档
 
-✅ 必须：
-
-<Card>
-  <CardContent>
-    content
-  </CardContent>
-</Card>
-
----
-
-# Layout Rule
-
-允许使用 div 的情况：
-
-只有以下情况：
-
-1. 页面布局容器
-
-例如：
-
-<div className="flex">
-
-<div className="grid">
-
-2. shadcn 组件内部需要 wrapper
-
-除此之外：
-
-禁止创建无意义 div。
-
----
-
-# Styling Rule
-
-禁止：
-
-自行设计组件视觉。
-
-禁止：
-
-大量 Tailwind 样式组合替代 shadcn。
-
-禁止：
-
-以下形式：
-
-rounded-xl
-
-shadow-xl
-
-bg-gradient
-
-custom color
-
-除非 shadcn 默认组件没有提供。
-
----
-
-# Component API Rule
-
-使用 shadcn 时：
-
-必须按照官方 API。
-
-例如：
-
-Button:
-
-<Button variant="outline">
- Save
-</Button>
-
-禁止：
-
-<Button className="border rounded-lg">
- Save
-</Button>
-
-Card:
-
-<Card>
-
-<CardHeader>
-
-<CardTitle />
-
-</CardHeader>
-
-<CardContent />
-
-</Card>
-
-Dialog:
-
-<Dialog>
-
-<DialogTrigger />
-
-<DialogContent>
-
-<DialogHeader />
-
-</DialogContent>
-
-</Dialog>
-
----
-
-# No Custom UI Components
-
-禁止创建：
-
-components/Button.tsx
-
-components/Card.tsx
-
-components/Modal.tsx
-
-替代 shadcn。
-
----
-
-# Business Component Exception
-
-允许创建业务组件。
-
-例如：
-
-NodeStatusBadge
-
-UserTable
-
-TrafficChart
-
-但是内部：
-
-必须组合 shadcn。
-
-例如：
-
-NodeStatusBadge:
-
-<Card>
-<Badge>
-</Card>
-
-而不是：
-
-<div className="status-box">
-
----
-
-# Before Writing JSX
-
-生成 UI 前：
-
-必须先回答：
-
-1. 是否存在对应 shadcn component？
-2. 是否可以通过 shadcn component props 完成？
-3. 是否需要新增业务组件？
-
-如果答案：
-
-1 = yes
-
-必须使用 shadcn。
-
----
-
-# Final Check
-
-每次 UI 修改后：
-
-检查：
-
-- 是否新增无意义 div？
-- 是否重复实现 shadcn？
-- 是否绕过 component API？
-- 是否存在可以替换的 Tailwind 样式？
-- 必须打开受影响页面并检查浏览器控制台是否存在报错，尤其是可能导致白屏的未捕获异常；如有报错必须修复后才能完成任务，不能仅以构建通过作为验证。
-
----
-
-# Execution Efficiency Rules
-
-- 先检查当前分支和工作区，再定位相关文件；避免重复读取同一文件或探测无关工具。
-- 小范围改动优先执行 `git diff --check`；仅在涉及 JSX、类型或构建链时运行前端构建。
-- 浏览器验证使用 `domcontentloaded`，再配合短暂固定等待；禁止默认等待 `networkidle`。
-- 优先复用当前浏览器标签页和登录会话；无法复用时只进行一次最小化登录验证。
-- 不为一次性验证复制完整浏览器 profile；临时脚本和数据放在临时目录，验证结束后清理。
-- 工具调用失败后先修正命令再重试，不重复执行同一失败路径。
+- `docs/agent/ui-rules.md` — 前端和 UI 工作的必读规则
+- `PROGRESS.md` — 当前已验证状态和跨会话交接信息
+- `feature_list.json` — 机器可读的工作状态和验证证据

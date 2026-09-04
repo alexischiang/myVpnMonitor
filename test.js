@@ -1,5 +1,6 @@
 const assert = require("assert");
 const { salesAmount, salesDateKey, salesDateRange, salesMonthRange, unlinkedSalesBills } = require("./src/components/features/sales-analytics-logic.ts");
+const { purchasedPlanName } = require("./src/utils.ts");
 const net = require("net");
 const zlib = require("zlib");
 const {
@@ -12,6 +13,7 @@ const {
   statusFor,
   toBytes,
   remainingPlanCashValue,
+  billTypeForPurchaseAction,
   inferUserProductBinding,
   recurringPlanOption,
   resolvePlanChangeOption,
@@ -82,6 +84,8 @@ const {
 } = require("./server");
 
 const gib = 1024 ** 3;
+assert.strictEqual(purchasedPlanName({ currentProductSnapshot: { planName: "BASIC", duration: "yearly", trafficGb: 50 } }), "BASIC-360天-50G");
+assert.deepStrictEqual(["initial", "extend", "replace"].map(billTypeForPurchaseAction), ["initial", "renewal", "replacement"]);
 assert.strictEqual(salesAmount({ realCashAmount: 40, totalAmount: 50, amount: 30 }), 40);
 assert.notStrictEqual(salesDateKey(new Date(2025, 6, 1), true), salesDateKey(new Date(2026, 6, 1), true));
 const ticketAlert = ticketTelegramText({ id: "T1", email: "user@example.com", subject: "连接问题", messages: [{ message: "首次描述" }, { message: "最新追问" }] }, "https://example.com/tickets/T1");

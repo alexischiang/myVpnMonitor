@@ -405,6 +405,8 @@ async function main() {
     assert.deepStrictEqual([createdUser.currentProductId, createdUser.currentOptionId, createdUser.currentProductOrderId], ["pro", "pro-test-001", paidOrder.data.id]);
     assert.deepStrictEqual([xuiClients.get("buyer@example.test").flow, xuiClients.get("buyer@example.test").totalGB], ["xtls-rprx-vision", 200 * 1024 ** 3]);
     const adminBills = await request("/api/bills", { cookie: adminCookie });
+    const initialBill = adminBills.data.find(item => item.paymentOrderId === paidOrder.data.id);
+    assert.deepStrictEqual([initialBill.type, initialBill.merOrderTid, initialBill.productSnapshot?.planName], ["initial", paidOrder.data.merOrderTid, paidOrder.data.planName]);
     const billDetail = await request(`/api/bills/${adminBills.data[0].id}`, { cookie: adminCookie });
     assert.strictEqual(billDetail.data.payment.channelCode, "100");
     assert.strictEqual(billDetail.data.payment.purchaseAction, "initial");
@@ -421,6 +423,8 @@ async function main() {
     assert.strictEqual(status.data.status, "paid");
     assert.strictEqual(status.data.fulfillmentStatus, "fulfilled");
     assert.strictEqual(status.data.purchaseCountBefore, 1);
+    const billsAfterReplacement = await request("/api/bills", { cookie: adminCookie });
+    assert.strictEqual(billsAfterReplacement.data.find(item => item.paymentOrderId === polledOrder.data.id).type, "replacement");
     const adminUsers = await request("/api/users", { cookie: adminCookie });
     const purchaseLogs = adminUsers.data[0].userLogs;
     const managedUser = adminUsers.data[0];

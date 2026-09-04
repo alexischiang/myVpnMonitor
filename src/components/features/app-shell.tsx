@@ -86,7 +86,7 @@ export function AppShell() {
         onLogout={logout}
         sidebar={<AppSidebar variant="inset" items={navItems} homeUrl="/dashboard" accountName={data.account || "admin"} accountDescription="Administrator" accountUrl="/dashboard" accountLabel="Dashboard" onLogout={logout} />}
       >
-        <div className="flex min-w-0 flex-col gap-4 md:gap-6">
+        <div className="flex min-w-0 flex-col gap-4 md:gap-6 [&>div]:!px-0">
               {showHealthAlerts ? (
                 <div className="grid gap-2 px-4 lg:px-6">
                   {healthError && <Alert variant="error"><AlertCircle /><AlertDescription>服务监控 API 连接异常：{healthError}</AlertDescription></Alert>}
