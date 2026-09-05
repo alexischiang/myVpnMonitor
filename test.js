@@ -341,10 +341,20 @@ assert.strictEqual(xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z" }, 
 const trafficByUser = xuiTrafficByUser([
   { id: 1, originNodeGuid: "hk", clientStats: [{ email: "USER@test.com", up: 100, down: 50 }] },
   { id: 2, originNodeGuid: "hk", clientStats: [{ email: "user@test.com", up: 100, down: 50 }] },
+  { id: 4, originNodeGuid: "la", enable: false, clientStats: [{ email: "user@test.com", up: 999, down: 999 }] },
   { id: 3, originNodeGuid: "jp", clientStats: [{ email: "user@test.com", up: 20, down: 30 }] }
 ]);
 assert.deepStrictEqual(trafficByUser, { "user@test.com": { hk: 150, jp: 50 } });
 const dailyTraffic = xuiDailyNodeTraffic({ user: { hk: 150 } }, xuiDailyNodeTraffic({ user: { hk: 100 } }));
+const trafficBeforeDisable = xuiDailyNodeTraffic(
+  xuiTrafficByUser([{ originNodeGuid: "la", enable: true, clientStats: [{ email: "user", up: 150, down: 0 }] }]),
+  xuiDailyNodeTraffic(xuiTrafficByUser([{ originNodeGuid: "la", enable: true, clientStats: [{ email: "user", up: 100, down: 0 }] }]))
+);
+const trafficAfterDisable = xuiDailyNodeTraffic(
+  xuiTrafficByUser([{ originNodeGuid: "la", enable: false, clientStats: [{ email: "user", up: 999, down: 999 }] }]),
+  trafficBeforeDisable
+);
+assert.deepStrictEqual([trafficBeforeDisable.nodes.la.usedBytes, trafficAfterDisable.nodes.la.usedBytes], [50, 50]);
 const resetDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 20 } }, dailyTraffic);
 assert.deepStrictEqual([resetDailyTraffic.nodes.hk.usedBytes, resetDailyTraffic.users.user.usedBytes], [70, 70]);
 const partialDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 110 } }, xuiDailyNodeTraffic({ user: { hk: 100, jp: 100 } }));

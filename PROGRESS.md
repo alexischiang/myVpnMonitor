@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-05
-- Current Objective: 发布全部本地改动到 main 并部署 production
+- Current Objective: 发布入站停用流量冻结修复到 main 和 production
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -34,8 +34,14 @@
 
 - 2026-09-05: npm run agent:init、npm run verify、git diff --check 通过；既有 UI 功能浏览器证据保持 console_errors/page_errors 为空
 
+- 2026-09-05: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；浏览器确认 LA 错误累计已清除且 console_errors/page_errors 为空
+
+- 2026-09-05: 启用→产生流量→停用回归测试、npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；dashboard 浏览器 console_errors/page_errors 为空
+
+- 2026-09-05: 入站启用到停用回归测试、npm run agent:init、npm run check、npm run verify:harness、git diff --check 通过；dashboard 浏览器记录 console_errors/page_errors 为空
+
 ## Next Session
 
-- Files: `AGENTS.md`, `PRODUCT.md`, `package.json`, `server.js`, `src/components/features/app-shell.tsx`, `src/components/features/shared.tsx`, `src/components/features/user-bills-card.tsx`, `src/components/ui/item.tsx`, `src/types.ts`, `src/utils.ts`, `test-payment.js`, `test.js`, `.agents/`, `PROGRESS.md`, `docs/`, `feature_list.json`, `init.sh`, `scripts/update-progress.js`, `scripts/verify-feature-state.js`, `skills-lock.json`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `test.js`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
 - Recommended Next Step: 部署完成，无需后续操作
