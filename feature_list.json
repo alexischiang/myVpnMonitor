@@ -170,6 +170,35 @@
         "page_errors": [],
         "checked_at": "2026-09-05"
       }
+    },
+    {
+      "id": "dashboard-active-inbound-traffic",
+      "name": "Freeze disabled inbound daily traffic",
+      "description": "Keep traffic recorded before an inbound is disabled while preventing later stale counter changes from being attributed to that node.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Traffic accumulated before an inbound is disabled remains in today's totals.",
+        "Counter changes reported after an inbound is disabled do not increase today's totals.",
+        "Enabled inbound traffic continues to be aggregated.",
+        "The dashboard reflects the corrected daily node traffic without browser errors."
+      ],
+      "verification": [
+        "2026-09-05: npm run check, npm run verify:fast, and git diff --check passed.",
+        "2026-09-05: Regression coverage confirmed traffic accumulated while enabled remains frozen after the inbound is disabled, even if its stale API counter later increases.",
+        "2026-09-05: Browser verification confirmed the dashboard remained healthy with no console or page errors."
+      ],
+      "browser_verification": {
+        "routes": ["/dashboard"],
+        "interactions": [
+          "Logged in as administrator and opened the dashboard.",
+          "Confirmed today's node traffic card rendered after the corrected freeze semantics were applied."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-05"
+      }
     }
   ]
 }

@@ -3891,6 +3891,7 @@ function xuiTrafficByUser(value = []) {
   const rows = Array.isArray(value) ? value : [];
   const result = {};
   for (const inbound of rows) {
+    if (inbound?.enable === false) continue;
     const nodeGuid = String(inbound?.originNodeGuid || `node:${inbound?.nodeId || "local"}`);
     for (const client of Array.isArray(inbound?.clientStats) ? inbound.clientStats : []) {
       const email = String(client?.email || "").trim().toLowerCase();
@@ -3911,14 +3912,15 @@ function xuiDailyNodeTraffic(traffic = {}, previous = {}) {
   const currentByNode = {};
   for (const byNode of Object.values(traffic)) for (const [guid, bytes] of Object.entries(byNode || {})) currentByNode[guid] = (currentByNode[guid] || 0) + Math.max(0, Number(bytes) || 0);
   const date = chinaDateKey();
-  const baseline = previous.date === date ? previous.nodes || {} : {};
-  const userBaseline = previous.date === date ? previous.users || {} : {};
+  const sameDay = previous.date === date;
+  const baseline = sameDay ? previous.nodes || {} : {};
+  const userBaseline = sameDay ? previous.users || {} : {};
   const nodes = {};
   const users = Object.fromEntries(Object.entries(userBaseline).filter(([, item]) => item?.nodes));
   for (const [guid, current] of Object.entries(currentByNode)) {
     nodes[guid] = { baselineBytes: current, usedBytes: 0 };
   }
-  if (previous.date === date) {
+  if (sameDay) {
     for (const [guid, prior] of Object.entries(baseline)) {
       if (nodes[guid]) continue;
       nodes[guid] = { baselineBytes: Math.max(0, Number(prior?.baselineBytes) || 0), usedBytes: Math.max(0, Number(prior?.usedBytes) || 0) };
