@@ -2464,6 +2464,8 @@ async function fulfillTrafficPackOrderOnce(order, req) {
   order.vipSpendAfter = wallet.vipSpendCents / 100;
   order.trafficPackBytes = trafficPackBytes;
   order.trafficCycleKey = user.xuiTrafficCycleKey || "";
+  order.revenueExpiresAt = user.xuiNextTrafficResetAt || "";
+  order.revenuePlanId = activeUserGroup(user);
   order.fulfilledAt = new Date().toISOString();
   order.fulfillmentStatus = "fulfilled";
   order.fulfillmentError = "";
@@ -2549,7 +2551,7 @@ async function fulfillPaymentOrderOnce(order, req) {
     };
     await savePaymentOrders();
   }
-  if (user && !user.email) user.email = email;
+  if (user) user.email = email;
   const planGatewayAmount = Number.isFinite(Number(order.planGatewayAmount)) ? Number(order.planGatewayAmount) : Number(order.amount || 0);
   const planCashValueAmount = Number.isFinite(Number(order.planCashValueAmount)) ? Number(order.planCashValueAmount) : Number(order.amount || 0) + Number(order.walletCashAmount || 0);
   const wallet = await dataStore.settleWalletPurchase({
@@ -2563,12 +2565,8 @@ async function fulfillPaymentOrderOnce(order, req) {
   const vipSpendBefore = (wallet.vipSpendCents - Math.round(planGatewayAmount * 100)) / 100;
   syncWalletVip(account, wallet);
   const expiresAt = nextUserExpiry(user, purchasedAt, selectedOption.duration, order.purchaseAction === "replace");
-  const recommendation = { subscription: null, reason: "商品统一使用自研线路。", details: null };
-
   if (user) {
     const previousUserState = structuredClone(user);
-    const previousSubscription = subscriptions.find(item => item.id === user.subscriptionId) || null;
-    const poolChanged = false;
     let renewal;
     try {
       renewal = renewUser(user, {
@@ -2583,7 +2581,7 @@ async function fulfillPaymentOrderOnce(order, req) {
         trafficTier: order.trafficTier || 1,
         trafficLimitBytes: selectedTrafficBytes,
         replace: order.purchaseAction === "replace",
-        subscriptionId: recommendation.subscription?.id || ""
+        subscriptionId: ""
       });
       bindUserProductFromOrder(user, order);
       await provisionXuiClient(user);
@@ -2608,17 +2606,13 @@ async function fulfillPaymentOrderOnce(order, req) {
     }));
     appendUserLogToUser(user, createUserLog({
       event: "user-action",
-      status: poolChanged ? "switched" : "recorded",
-      reason: poolChanged ? "purchase-pool-changed" : "user-renewed",
-      fromSubscription: poolChanged ? previousSubscription : null,
-      toSubscription: recommendation.subscription || null,
+      status: "recorded",
+      reason: "user-renewed",
       req,
-      message: userActionMessage(poolChanged ? "purchase-pool-changed" : "user-renewed", {
+      message: userActionMessage("user-renewed", {
         amount: renewal.amount,
         duration: user.duration,
-        afterExpiresAt: renewal.afterExpiresAt,
-        fromSubscriptionLabel: subscriptionLogLabel(previousSubscription),
-        toSubscriptionLabel: subscriptionLogLabel(recommendation.subscription)
+        afterExpiresAt: renewal.afterExpiresAt
       }),
       details: {
         paymentOrderId: order.id,
@@ -2629,8 +2623,7 @@ async function fulfillPaymentOrderOnce(order, req) {
         trafficGb: order.trafficGb ?? null,
         addOns: order.addOnSnapshots || [],
         duration: user.duration,
-        afterExpiresAt: renewal.afterExpiresAt,
-        recommendation: recommendation.details || null
+        afterExpiresAt: renewal.afterExpiresAt
       }
     }));
   } else {
@@ -2655,7 +2648,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       xuiTrafficLimitBytes: selectedTrafficBytes || undefined,
       cashValue: planCashValueAmount,
       cashValueAt: purchasedAt,
-      subscriptionId: recommendation.subscription?.id || "",
+      subscriptionId: "",
       outputMode: "subconverter",
        blockUserinfo: false
     }, item);
@@ -2683,7 +2676,6 @@ async function fulfillPaymentOrderOnce(order, req) {
       event: "user-action",
       status: "recorded",
       reason: "user-created",
-      toSubscription: recommendation.subscription,
       req,
       message: userActionMessage("user-created"),
       details: {
@@ -2696,8 +2688,7 @@ async function fulfillPaymentOrderOnce(order, req) {
         addOns: order.addOnSnapshots || [],
         amount: user.actualPaid,
         duration: user.duration,
-        afterExpiresAt: user.expiresAt,
-        recommendation: recommendation.details || null
+        afterExpiresAt: user.expiresAt
       }
     }));
   }
@@ -3887,7 +3878,23 @@ async function setXuiState(key, legacyCollection, value) {
   });
 }
 
+async function getProfitTrafficMonth(month) {
+  if (!XUI_SERVICE_URL) return dataStore.getRecord("xuiProfitTraffic", month);
+  return getXuiState(`profit-traffic:${month}`, "");
+}
+
+async function setProfitTrafficMonth(month, value) {
+  if (!XUI_SERVICE_URL) return dataStore.setRecord("xuiProfitTraffic", month, value);
+  return setXuiState(`profit-traffic:${month}`, "", value);
+}
+
 function xuiTrafficByUser(value = []) {
+  return Object.fromEntries(Object.entries(xuiDirectionalTrafficByUser(value)).map(([email, nodes]) => [email,
+    Object.fromEntries(Object.entries(nodes).map(([guid, traffic]) => [guid, traffic.inBytes + traffic.outBytes]))
+  ]));
+}
+
+function xuiDirectionalTrafficByUser(value = []) {
   const rows = Array.isArray(value) ? value : [];
   const result = {};
   for (const inbound of rows) {
@@ -3897,10 +3904,200 @@ function xuiTrafficByUser(value = []) {
       const email = String(client?.email || "").trim().toLowerCase();
       if (!email) continue;
       result[email] ||= {};
-      result[email][nodeGuid] = Math.max(result[email][nodeGuid] || 0, Math.max(0, Number(client?.up) || 0) + Math.max(0, Number(client?.down) || 0));
+      const previous = result[email][nodeGuid] || { inBytes: 0, outBytes: 0 };
+      result[email][nodeGuid] = {
+        inBytes: Math.max(previous.inBytes, Math.max(0, Number(client?.up) || 0)),
+        outBytes: Math.max(previous.outBytes, Math.max(0, Number(client?.down) || 0))
+      };
     }
   }
   return result;
+}
+
+function updateProfitTrafficMonth(previous = {}, current = {}, date = chinaDateKey(), usersByEmail = new Map(), nodeNames = {}) {
+  const month = String(date).slice(0, 7);
+  const state = previous?.month === month ? structuredClone(previous) : { month, startedAt: new Date().toISOString(), baselines: {}, days: {} };
+  state.baselines ||= {};
+  state.days ||= {};
+  const day = state.days[date] || { users: {} };
+  for (const [email, nodes] of Object.entries(current || {})) {
+    const priorNodes = state.baselines[email] || {};
+    const nextNodes = { ...priorNodes };
+    const user = usersByEmail.get(email);
+    const userKey = user?.id || `unlinked:${email}`;
+    for (const [guid, counters] of Object.entries(nodes || {})) {
+      const prior = priorNodes[guid];
+      const inBytes = Math.max(0, Number(counters?.inBytes) || 0);
+      const outBytes = Math.max(0, Number(counters?.outBytes) || 0);
+      const inDelta = prior ? (inBytes >= prior.inBytes ? inBytes - prior.inBytes : inBytes) : 0;
+      const outDelta = prior ? (outBytes >= prior.outBytes ? outBytes - prior.outBytes : outBytes) : 0;
+      nextNodes[guid] = { inBytes, outBytes };
+      if (!inDelta && !outDelta) continue;
+      const userRow = day.users[userKey] ||= { label: user ? billUserLabel(user) : email, planId: user ? activeUserGroup(user) : "", nodes: {} };
+      const node = userRow.nodes[guid] ||= { name: nodeNames[guid] || guid, inBytes: 0, outBytes: 0 };
+      node.inBytes += inDelta;
+      node.outBytes += outDelta;
+    }
+    state.baselines[email] = nextNodes;
+  }
+  state.days[date] = day;
+  state.updatedAt = new Date().toISOString();
+  return state;
+}
+
+function normalizeNodeCostConfig(value = {}) {
+  const purchaseDate = String(value.purchaseDate || (/^\d{4}-\d{2}$/.test(String(value.effectiveMonth || "")) ? `${value.effectiveMonth}-01` : ""));
+  const monthlyFee = Number(value.monthlyFee);
+  const trafficQuotaGiB = Number(value.trafficQuotaGiB);
+  const trafficMode = String(value.trafficMode || "");
+  if (!Number.isFinite(chinaDayNumber(purchaseDate))) throw new Error("请输入有效的 VPS 购买日期。");
+  if (!Number.isFinite(monthlyFee) || monthlyFee < 0) throw new Error("VPS 月费必须是非负数。");
+  if (!Number.isFinite(trafficQuotaGiB) || trafficQuotaGiB <= 0) throw new Error("VPS 流量额度必须大于 0 GiB。");
+  if (!['in_out', 'out_only'].includes(trafficMode)) throw new Error("请选择有效的 VPS 流量计算方式。");
+  return { purchaseDate, monthlyFee: Math.round(monthlyFee * 100) / 100, trafficQuotaGiB, trafficMode };
+}
+
+function nodeCostConfigDate(value = {}) {
+  return String(value.purchaseDate || (/^\d{4}-\d{2}$/.test(String(value.effectiveMonth || "")) ? `${value.effectiveMonth}-01` : ""));
+}
+
+function nodeCostConfigForDate(configs = [], date = chinaDateKey()) {
+  return [...(Array.isArray(configs) ? configs : [])]
+    .map(item => ({ ...item, purchaseDate: nodeCostConfigDate(item) }))
+    .filter(item => Number.isFinite(chinaDayNumber(item.purchaseDate)) && item.purchaseDate <= date)
+    .sort((left, right) => right.purchaseDate.localeCompare(left.purchaseDate))[0] || null;
+}
+
+function chinaDayNumber(value) {
+  const key = /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) ? String(value) : chinaDateKey(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return Number.NaN;
+  const [year, month, day] = key.split("-").map(Number);
+  const number = Date.UTC(year, month - 1, day) / 86400000;
+  return chinaDateFromDayNumber(number) === key ? number : Number.NaN;
+}
+
+function chinaDateFromDayNumber(value) {
+  return new Date(value * 86400000).toISOString().slice(0, 10);
+}
+
+function nodeBillingCycleDays(purchaseDate, date) {
+  const anchorDay = Number(purchaseDate.slice(8, 10));
+  const [year, month] = date.split("-").map(Number);
+  const boundary = (targetYear, monthIndex) => {
+    const normalized = new Date(Date.UTC(targetYear, monthIndex, 1));
+    const normalizedYear = normalized.getUTCFullYear();
+    const normalizedMonth = normalized.getUTCMonth();
+    const day = Math.min(anchorDay, new Date(Date.UTC(normalizedYear, normalizedMonth + 1, 0)).getUTCDate());
+    return `${normalizedYear}-${String(normalizedMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  };
+  let start = boundary(year, month - 1);
+  if (start > date) start = boundary(year, month - 2);
+  const [startYear, startMonth] = start.split("-").map(Number);
+  return chinaDayNumber(boundary(startYear, startMonth)) - chinaDayNumber(start);
+}
+
+function salesProfitabilityReport({ from, to, plan = "all", trafficMonths = [], costConfigs = {}, nodeNames = {}, reportBills = [], reportOrders = [], reportUsers = [] }) {
+  const fromDay = chinaDayNumber(from);
+  const toDay = chinaDayNumber(to);
+  if (!Number.isFinite(fromDay) || !Number.isFinite(toDay) || fromDay > toDay) throw new Error("请选择有效的统计日期范围。");
+  const usersById = new Map(reportUsers.map(user => [user.id, user]));
+  const ordersById = new Map(reportOrders.map(order => [order.id, order]));
+  const userRows = new Map();
+  const nodeRows = new Map();
+  const rowForUser = (id, label = "") => {
+    const user = usersById.get(id);
+    const row = userRows.get(id) || { userId: id, label: label || (user ? billUserLabel(user) : id.replace(/^unlinked:/, "")), revenue: 0, billingBytes: 0, costBytes: 0, trafficCost: 0 };
+    userRows.set(id, row);
+    return row;
+  };
+  const recognize = (userId, amount, startValue, days) => {
+    const start = chinaDayNumber(startValue);
+    if (!userId || !Number.isFinite(start) || !Number.isFinite(days) || days <= 0 || amount <= 0) return;
+    const overlap = Math.max(0, Math.min(toDay + 1, start + days) - Math.max(fromDay, start));
+    if (overlap) rowForUser(userId).revenue += amount * overlap / days;
+  };
+
+  for (const bill of reportBills) {
+    if (bill.reversedAt || Number(bill.amount) <= 0 || bill.duration === "lifetime") continue;
+    const order = ordersById.get(bill.paymentOrderId);
+    if (order && ((order.purpose || "plan") !== "plan" || order.reversedAt || order.productSnapshot?.unlimited === true || order.unlimited === true)) continue;
+    if (!order && usersById.get(bill.userId)?.unlimited === true) continue;
+    const billPlan = order?.planId || activeUserGroup(usersById.get(bill.userId) || {});
+    if (plan !== "all" && billPlan !== plan) continue;
+    const label = `${order?.planId || ""} ${order?.planName || ""} ${order?.optionLabel || ""}`;
+    if (/test|测试|亲友永久/i.test(label)) continue;
+    const days = durationDays(bill.duration);
+    const startsAt = bill.type === "renewal" && Date.parse(bill.beforeExpiresAt || "") > Date.parse(bill.occurredAt || "") ? bill.beforeExpiresAt : bill.occurredAt;
+    recognize(bill.userId, Number(bill.amount), startsAt, days);
+  }
+  for (const order of reportOrders) {
+    if (order.purpose !== "traffic_pack" || order.status !== "paid" || order.reversedAt || !order.revenueExpiresAt) continue;
+    if (plan !== "all" && (order.revenuePlanId || activeUserGroup(usersById.get(order.userId) || {})) !== plan) continue;
+    const start = chinaDayNumber(order.paidAt || order.createdAt);
+    const end = chinaDayNumber(order.revenueExpiresAt);
+    recognize(order.userId, Math.max(0, Number(order.amount) + Number(order.walletCashAmount)), order.paidAt || order.createdAt, end - start);
+  }
+
+  const missingConfigNodes = new Set();
+  let dataSince = "";
+  for (const monthState of trafficMonths.filter(Boolean)) {
+    for (const [date, day] of Object.entries(monthState.days || {})) {
+      const number = chinaDayNumber(date);
+      if (number < fromDay || number > toDay) continue;
+      if (!dataSince || date < dataSince) dataSince = date;
+      for (const [userId, traffic] of Object.entries(day.users || {})) {
+        if (plan !== "all" && traffic.planId !== plan) continue;
+        const userRow = rowForUser(userId, traffic.label);
+        for (const [guid, node] of Object.entries(traffic.nodes || {})) {
+          const inBytes = Math.max(0, Number(node.inBytes) || 0);
+          const outBytes = Math.max(0, Number(node.outBytes) || 0);
+          const billingBytes = inBytes + outBytes;
+          const config = nodeCostConfigForDate(costConfigs[guid], date);
+          const costBytes = config?.trafficMode === "out_only" ? outBytes : billingBytes;
+          const rate = config ? config.monthlyFee / (config.trafficQuotaGiB * 1024 ** 3) : 0;
+          const trafficCost = costBytes * rate;
+          if (!config && billingBytes) missingConfigNodes.add(guid);
+          userRow.billingBytes += billingBytes;
+          userRow.costBytes += costBytes;
+          userRow.trafficCost += trafficCost;
+          const nodeRow = nodeRows.get(guid) || { guid, name: node.name || nodeNames[guid] || guid, billingBytes: 0, costBytes: 0, trafficCost: 0, fixedCost: 0 };
+          nodeRow.billingBytes += billingBytes;
+          nodeRow.costBytes += costBytes;
+          nodeRow.trafficCost += trafficCost;
+          nodeRows.set(guid, nodeRow);
+        }
+      }
+    }
+  }
+
+  let fixedCost = 0;
+  if (plan === "all") for (const [guid, configs] of Object.entries(costConfigs || {})) for (let day = fromDay; day <= toDay; day += 1) {
+    const date = chinaDateFromDayNumber(day);
+    const config = nodeCostConfigForDate(configs, date);
+    if (!config) continue;
+    const amount = config.monthlyFee / nodeBillingCycleDays(config.purchaseDate, date);
+    fixedCost += amount;
+    const nodeRow = nodeRows.get(guid) || { guid, name: nodeNames[guid] || guid, billingBytes: 0, costBytes: 0, trafficCost: 0, fixedCost: 0 };
+    nodeRow.fixedCost += amount;
+    nodeRows.set(guid, nodeRow);
+  }
+
+  const roundMoney = value => Math.round(value * 100) / 100;
+  const revenue = [...userRows.values()].reduce((sum, row) => sum + row.revenue, 0);
+  const trafficCost = [...userRows.values()].reduce((sum, row) => sum + row.trafficCost, 0);
+  const detailedUsers = [...userRows.values()].map(row => {
+    const contributionProfit = row.revenue - row.trafficCost;
+    return { ...row, revenue: roundMoney(row.revenue), trafficCost: roundMoney(row.trafficCost), contributionProfit: roundMoney(contributionProfit), contributionMargin: row.revenue ? contributionProfit / row.revenue * 100 : null };
+  }).sort((left, right) => right.trafficCost - left.trafficCost);
+  const contributionProfit = revenue - trafficCost;
+  const infrastructureProfit = revenue - fixedCost;
+  return {
+    from: chinaDateFromDayNumber(fromDay), to: chinaDateFromDayNumber(toDay), dataSince,
+    summary: { revenue: roundMoney(revenue), trafficCost: roundMoney(trafficCost), contributionProfit: roundMoney(contributionProfit), contributionMargin: revenue ? contributionProfit / revenue * 100 : null, fixedCost: plan === "all" ? roundMoney(fixedCost) : null, infrastructureProfit: plan === "all" ? roundMoney(infrastructureProfit) : null, infrastructureMargin: plan === "all" && revenue ? infrastructureProfit / revenue * 100 : null },
+    users: detailedUsers,
+    nodes: [...nodeRows.values()].map(row => ({ ...row, trafficCost: roundMoney(row.trafficCost), fixedCost: plan === "all" ? roundMoney(row.fixedCost) : null })).sort((left, right) => right.trafficCost - left.trafficCost),
+    missingConfigNodes: [...missingConfigNodes].map(guid => ({ guid, name: nodeNames[guid] || guid }))
+  };
 }
 
 function chinaDateKey(value = Date.now()) {
@@ -4092,7 +4289,7 @@ function withXuiBillingLock(operation) {
 
 async function getXuiBillingState() {
   const value = await getXuiState("billing", "xuiBilling");
-  const state = { multipliers: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
+  const state = { multipliers: {}, costConfigs: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
   if (state.dailyTraffic) state.dailyTraffic = xuiDailyNodeTraffic({}, state.dailyTraffic);
   return state;
 }
@@ -4144,7 +4341,7 @@ async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
       nodeResults[guid] = { configured: true, error: error.message };
     }
   }));
-  return { traffic: xuiTrafficByUser(inbounds), nodeResults, inbounds };
+  return { traffic: xuiTrafficByUser(inbounds), directionalTraffic: xuiDirectionalTrafficByUser(inbounds), nodeResults, inbounds };
 }
 
 function xuiResetReference(value) {
@@ -4250,7 +4447,7 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     ]);
     const state = await getXuiBillingState();
     const nodeTokens = await getXuiNodeTokens(state.nodeTokens);
-    const { traffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
+    const { traffic, directionalTraffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
     const dailyTraffic = xuiDailyNodeTraffic(traffic, state.dailyTraffic);
     if (state.dailyTraffic?.date && state.dailyTraffic.date !== dailyTraffic.date) {
       const history = appendXuiDailyTrafficHistory(await getXuiState("traffic-history", "xuiTrafficHistory"), state.dailyTraffic);
@@ -4259,13 +4456,16 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     state.dailyTraffic = dailyTraffic;
     const localGuid = String(status?.panelGuid || "node:local");
     const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
+    const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
+    const profitMonth = chinaDateKey().slice(0, 7);
+    const profitTraffic = updateProfitTrafficMonth(await getProfitTrafficMonth(profitMonth), directionalTraffic, chinaDateKey(), appUsersByEmail, nodeNames);
+    await setProfitTrafficMonth(profitMonth, profitTraffic);
     const nodeMultipliers = state.multipliers || {};
     const disableEmails = [];
     const enableEmails = [];
     const changedUsers = [];
     const trafficAlerts = [];
     const alertSettings = currentSalesSettings().alertSettings;
-    const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
     const remoteEmails = new Set();
 
     for (const remote of Array.isArray(clients) ? clients : []) {
@@ -8837,6 +9037,7 @@ async function handleApi(req, res, pathname) {
         node.trafficConfigured = Boolean(nodeTokens[node.guid]);
         node.trafficError = String(trafficStatus.error || "");
         node.multiplier = xuiMultiplier(billing.multipliers[node.guid]);
+        node.costConfig = nodeCostConfigForDate(billing.costConfigs[node.guid]);
         if (onlinesByGuid && Object.prototype.hasOwnProperty.call(onlinesByGuid, node.guid)) {
           node.onlineCount = new Set((Array.isArray(onlinesByGuid[node.guid]) ? onlinesByGuid[node.guid] : []).map(email => String(email).toLowerCase())).size;
         }
@@ -8879,14 +9080,16 @@ async function handleApi(req, res, pathname) {
       const localGuid = String(status?.panelGuid || "node:local");
       if (guid !== localGuid && !(Array.isArray(nodes) ? nodes : []).some(node => String(node?.guid) === guid)) throw new Error("节点不存在。");
       const apiToken = String(payload.apiToken || "").trim();
+      const costConfig = payload.costConfig ? normalizeNodeCostConfig(payload.costConfig) : null;
       if (apiToken.length > 4096) throw new Error("节点 API Token 无效。");
       await withXuiBillingLock(async () => {
         const state = await getXuiBillingState();
         state.multipliers[guid] = multiplier;
+        if (costConfig) state.costConfigs[guid] = [...(state.costConfigs[guid] || []).filter(item => nodeCostConfigDate(item) !== costConfig.purchaseDate), costConfig].sort((left, right) => nodeCostConfigDate(left).localeCompare(nodeCostConfigDate(right)));
         if (apiToken) await setXuiNodeToken(guid, sealXuiNodeToken(apiToken));
         await saveXuiBillingState(state);
       });
-      sendJson(res, 200, { ok: true, guid, multiplier, configured: guid === localGuid || apiToken ? true : undefined });
+      sendJson(res, 200, { ok: true, guid, multiplier, costConfig, configured: guid === localGuid || apiToken ? true : undefined });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -9129,6 +9332,25 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/admin/orders" && req.method === "GET") {
     sendJson(res, 200, paymentOrders.map(adminPaymentOrder).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+    return;
+  }
+
+  if (pathname === "/api/admin/sales-profitability" && req.method === "GET") {
+    try {
+      const requestUrl = new URL(req.url, "http://localhost");
+      const from = requestUrl.searchParams.get("from") || chinaDateKey(Date.now() - 89 * 86400000);
+      const to = requestUrl.searchParams.get("to") || chinaDateKey();
+      const plan = requestUrl.searchParams.get("plan") || "all";
+      if (!['all', ...USER_GROUPS].includes(plan)) throw new Error("请选择有效的套餐。");
+      const fromDay = chinaDayNumber(from);
+      const toDay = chinaDayNumber(to);
+      if (!Number.isFinite(fromDay) || !Number.isFinite(toDay) || fromDay > toDay || toDay - fromDay > 1095) throw new Error("统计日期范围必须在三年以内。");
+      const months = [...new Set(Array.from({ length: toDay - fromDay + 1 }, (_, index) => chinaDateFromDayNumber(fromDay + index).slice(0, 7)))];
+      const [billing, ...trafficMonths] = await Promise.all([getXuiBillingState(), ...months.map(getProfitTrafficMonth)]);
+      sendJson(res, 200, salesProfitabilityReport({ from, to, plan, trafficMonths, costConfigs: billing.costConfigs, nodeNames: billing.nodeNames, reportBills: bills, reportOrders: paymentOrders, reportUsers: users }));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
     return;
   }
 
@@ -10808,7 +11030,12 @@ module.exports = Object.assign(requestHandler, {
   summarizeXuiInboundProbes,
   normalizeXuiPresence,
   xuiTrafficByUser,
+  xuiDirectionalTrafficByUser,
   xuiDailyNodeTraffic,
+  updateProfitTrafficMonth,
+  normalizeNodeCostConfig,
+  nodeCostConfigForDate,
+  salesProfitabilityReport,
   appendXuiDailyTrafficHistory,
   xuiUserDailyTraffic,
   calculateXuiBillingLedger,

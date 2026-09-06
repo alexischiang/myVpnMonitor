@@ -61,7 +61,12 @@ const {
   summarizeXuiInboundProbes,
   normalizeXuiPresence,
   xuiTrafficByUser,
+  xuiDirectionalTrafficByUser,
   xuiDailyNodeTraffic,
+  updateProfitTrafficMonth,
+  normalizeNodeCostConfig,
+  nodeCostConfigForDate,
+  salesProfitabilityReport,
   appendXuiDailyTrafficHistory,
   xuiUserDailyTraffic,
   calculateXuiBillingLedger,
@@ -87,6 +92,26 @@ const gib = 1024 ** 3;
 assert.strictEqual(purchasedPlanName({ currentProductSnapshot: { planName: "BASIC", duration: "yearly", trafficGb: 50 } }), "BASIC-360天-50G");
 assert.deepStrictEqual(["initial", "extend", "replace"].map(billTypeForPurchaseAction), ["initial", "renewal", "replacement"]);
 assert.strictEqual(salesAmount({ realCashAmount: 40, totalAmount: 50, amount: 30 }), 40);
+assert.deepStrictEqual(xuiDirectionalTrafficByUser([{ originNodeGuid: "hk", clientStats: [{ email: "USER", up: 10, down: 20 }] }]), { user: { hk: { inBytes: 10, outBytes: 20 } } });
+const profitBaseline = updateProfitTrafficMonth({}, { user: { hk: { inBytes: 10, outBytes: 20 } } }, "2026-09-01", new Map([["user", { id: "u1", userId: "U1" }]]), { hk: "Hong Kong" });
+const profitTraffic = updateProfitTrafficMonth(profitBaseline, { user: { hk: { inBytes: 20, outBytes: 40 } } }, "2026-09-01", new Map([["user", { id: "u1", userId: "U1" }]]), { hk: "Hong Kong" });
+assert.deepStrictEqual(profitTraffic.days["2026-09-01"].users.u1.nodes.hk, { name: "Hong Kong", inBytes: 10, outBytes: 20 });
+assert.deepStrictEqual(normalizeNodeCostConfig({ purchaseDate: "2026-09-15", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" }), { purchaseDate: "2026-09-15", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" });
+assert.strictEqual(nodeCostConfigForDate([{ effectiveMonth: "2026-08" }, { purchaseDate: "2026-09-15" }], "2026-09-14").purchaseDate, "2026-08-01");
+assert.strictEqual(nodeCostConfigForDate([{ effectiveMonth: "2026-08" }, { purchaseDate: "2026-09-15" }], "2026-09-15").purchaseDate, "2026-09-15");
+const profitReport = salesProfitabilityReport({
+  from: "2026-09-01", to: "2026-09-30",
+  trafficMonths: [{ month: "2026-09", days: { "2026-09-10": { users: { u1: { label: "U1", nodes: { hk: { name: "Hong Kong", inBytes: 10 * gib, outBytes: 20 * gib } } } } } } }],
+  costConfigs: { hk: [{ purchaseDate: "2026-09-01", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" }] },
+  nodeNames: { hk: "Hong Kong" },
+  reportBills: [{ userId: "u1", amount: 90, duration: "quarterly", type: "initial", occurredAt: "2026-08-20T00:00:00+08:00" }],
+  reportOrders: [], reportUsers: [{ id: "u1", userId: "U1" }]
+});
+assert.deepStrictEqual([profitReport.summary.revenue, profitReport.summary.trafficCost, profitReport.summary.fixedCost, profitReport.users[0].billingBytes, profitReport.users[0].costBytes], [30, 20, 100, 30 * gib, 20 * gib]);
+assert.strictEqual(salesProfitabilityReport({ from: "2026-09-15", to: "2026-10-14", costConfigs: { hk: [{ purchaseDate: "2026-09-15", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "in_out" }] } }).summary.fixedCost, 100);
+assert.strictEqual(salesProfitabilityReport({ from: "2026-01-31", to: "2026-02-27", costConfigs: { hk: [{ purchaseDate: "2026-01-31", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "in_out" }] } }).summary.fixedCost, 100);
+assert.strictEqual(salesProfitabilityReport({ from: "2026-09-01", to: "2026-09-30", plan: "basic", costConfigs: { hk: [{ purchaseDate: "2026-09-01", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "in_out" }] } }).summary.fixedCost, null);
+assert.throws(() => salesProfitabilityReport({ from: "2026-02-31", to: "2026-03-01" }), /有效/);
 assert.notStrictEqual(salesDateKey(new Date(2025, 6, 1), true), salesDateKey(new Date(2026, 6, 1), true));
 const ticketAlert = ticketTelegramText({ id: "T1", email: "user@example.com", subject: "连接问题", messages: [{ message: "首次描述" }, { message: "最新追问" }] }, "https://example.com/tickets/T1");
 assert(ticketAlert.includes("正文：\n最新追问"));
