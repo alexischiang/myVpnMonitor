@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-05
-- Current Objective: 发布入站停用流量冻结修复到 main 和 production
+- Last Updated: 2026-09-06
+- Current Objective: 发布 VPS 成本与盈利分析及旧用户购买迁移
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -40,8 +40,18 @@
 
 - 2026-09-05: 入站启用到停用回归测试、npm run agent:init、npm run check、npm run verify:harness、git diff --check 通过；dashboard 浏览器记录 console_errors/page_errors 为空
 
+- 2026-09-06: npm run verify、npm run verify:harness、git diff --check 通过；/xui-monitor 与 /sales-analytics 浏览器验证 console_errors/page_errors 为空
+
+- 2026-09-06: npm run check、npm run verify:harness、git diff --check 通过；两个销售路由桌面与移动端浏览器验证 console_errors/page_errors 为空；筛选控件桌面 36px、移动端 44px
+
+- 2026-09-06: npm run verify、npm run verify:harness、git diff --check通过；test-payment覆盖旧邮箱+旧池绑定+无3x-ui客户端的购买迁移
+
+- 2026-09-06: npm run verify、npm run verify:harness、git diff --check 通过；/xui-monitor 与 /sales-analytics/profitability 浏览器验证 console_errors/page_errors 为空；购买日、月底周期和旧月份配置兼容测试通过
+
+- 2026-09-06: 2026-09-06: npm run agent:init、npm run verify、git diff --check 通过；受影响 UI 路由已有空 console_errors/page_errors 浏览器验证记录
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `test.js`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/sales-analytics.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `test-payment.js`, `test.js`, `PRODUCT.md`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 部署完成，无需后续操作
+- Recommended Next Step: 确认 GitHub Actions 生产部署成功并录入各节点实际 VPS 购买日期与成本

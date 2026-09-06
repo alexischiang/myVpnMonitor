@@ -413,6 +413,10 @@ async function main() {
     assert.strictEqual(billDetail.data.payment.originalAmount, 1);
     assert.strictEqual(billDetail.data.payment.amount, 1.03);
 
+    await database.query(`UPDATE app_records
+      SET data = (data || $2::jsonb) - 'xuiClientEmail' - 'xuiSubId' - 'xuiInboundIds'
+      WHERE collection = 'users' AND id = $1`, [createdUser.id, JSON.stringify({ email: "legacy-address@example.test", lineType: "upstream", subscriptionId: subscription.id })]);
+    xuiClients.delete("buyer@example.test");
     const polledOrder = await createOrder();
     queryResults.set(polledOrder.data.merOrderTid, {
       tid: `query-${polledOrder.data.merOrderTid}`,
@@ -423,6 +427,10 @@ async function main() {
     assert.strictEqual(status.data.status, "paid");
     assert.strictEqual(status.data.fulfillmentStatus, "fulfilled");
     assert.strictEqual(status.data.purchaseCountBefore, 1);
+    const migratedPoolUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' AND id = $1", [createdUser.id])).rows[0].data;
+    assert.deepStrictEqual([migratedPoolUser.email, migratedPoolUser.lineType, migratedPoolUser.subscriptionId], ["buyer@example.test", "self_hosted", ""]);
+    assert.ok(xuiClients.has("buyer@example.test"), "legacy pool users must be provisioned with the authenticated account email");
+    assert.ok(!xuiClients.has("legacy-address@example.test"), "legacy user email must not receive the purchased plan");
     const billsAfterReplacement = await request("/api/bills", { cookie: adminCookie });
     assert.strictEqual(billsAfterReplacement.data.find(item => item.paymentOrderId === polledOrder.data.id).type, "replacement");
     const adminUsers = await request("/api/users", { cookie: adminCookie });

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Activity, AlertTriangle, Loader2, RefreshCw, Server, Settings2 } from "lucide-react"
+import { Activity, AlertTriangle, HelpCircle, Loader2, RefreshCw, Server, Settings2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { fetchJson, putJson } from "@/api"
@@ -10,7 +10,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatDateTime } from "@/utils"
 
 type MonitorData = {
@@ -58,8 +60,11 @@ type MonitorData = {
     trafficConfigured: boolean
     trafficError: string
     multiplier: number
+    costConfig: null | { purchaseDate: string; monthlyFee: number; trafficQuotaGiB: number; trafficMode: "in_out" | "out_only" }
   }>
 }
+
+type NodeCostDraft = { purchaseDate: string; monthlyFee: string; trafficQuotaGiB: string; trafficMode: "in_out" | "out_only" }
 
 export function XuiMonitorPage() {
   const [data, setData] = React.useState<MonitorData | null>(null)
@@ -67,6 +72,7 @@ export function XuiMonitorPage() {
   const [error, setError] = React.useState("")
   const [nodeTokens, setNodeTokens] = React.useState<Record<string, string>>({})
   const [nodeMultipliers, setNodeMultipliers] = React.useState<Record<string, string>>({})
+  const [nodeCosts, setNodeCosts] = React.useState<Record<string, NodeCostDraft>>({})
   const [savingGuid, setSavingGuid] = React.useState("")
   const [settingsGuid, setSettingsGuid] = React.useState("")
 
@@ -92,6 +98,12 @@ export function XuiMonitorPage() {
   function openNodeSettings(node: MonitorData["nodes"][number]) {
     setNodeTokens(current => ({ ...current, [node.guid]: "" }))
     setNodeMultipliers(current => ({ ...current, [node.guid]: String(node.multiplier) }))
+    setNodeCosts(current => ({ ...current, [node.guid]: {
+      purchaseDate: node.costConfig?.purchaseDate || new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" }),
+      monthlyFee: node.costConfig ? String(node.costConfig.monthlyFee) : "",
+      trafficQuotaGiB: node.costConfig ? String(node.costConfig.trafficQuotaGiB) : "",
+      trafficMode: node.costConfig?.trafficMode || "in_out",
+    } }))
     setSettingsGuid(node.guid)
   }
 
@@ -100,8 +112,10 @@ export function XuiMonitorPage() {
     try {
       const apiToken = nodeTokens[guid]?.trim()
       const multiplier = Number(nodeMultipliers[guid])
+      const cost = nodeCosts[guid]
       if (!nodeMultipliers[guid]?.trim() || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw new Error("节点倍率必须在 0 到 100 之间")
-      await putJson(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { apiToken, multiplier })
+      if (!cost?.purchaseDate || cost.monthlyFee === "" || !cost.trafficQuotaGiB) throw new Error("请填写 VPS 购买日期、月费和流量额度")
+      await putJson(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { apiToken, multiplier, costConfig: { ...cost, monthlyFee: Number(cost.monthlyFee), trafficQuotaGiB: Number(cost.trafficQuotaGiB) } })
       setNodeTokens(current => ({ ...current, [guid]: "" }))
       setSettingsGuid("")
       await refresh()
@@ -152,7 +166,7 @@ export function XuiMonitorPage() {
               <CardHeader>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="grid gap-1">
-                    <CardTitle className="flex flex-wrap items-center gap-2"><Server className="size-5" />{node.name}<Badge variant={online ? "success" : "secondary"}>{node.enabled ? node.status : "disabled"}</Badge>{node.trafficTokenRequired && !node.trafficConfigured ? <Badge variant="destructive">未设置 API</Badge> : null}<Badge variant="outline">× {node.multiplier}</Badge></CardTitle>
+                    <CardTitle className="flex flex-wrap items-center gap-2"><Server className="size-5" />{node.name}<Badge variant={online ? "success" : "secondary"}>{node.enabled ? node.status : "disabled"}</Badge>{node.trafficTokenRequired && !node.trafficConfigured ? <Badge variant="destructive">未设置 API</Badge> : null}{!node.costConfig ? <Badge variant="warning">未设置成本</Badge> : null}<Badge variant="outline">× {node.multiplier}</Badge></CardTitle>
                     <CardDescription>{node.address}{node.port ? `:${node.port}` : ""}</CardDescription>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
@@ -188,6 +202,19 @@ export function XuiMonitorPage() {
               <Input id={`settings-multiplier-${settingsNode.id}`} type="number" min="0" max="100" step="0.1" value={nodeMultipliers[settingsNode.guid] ?? "1"} onChange={event => setNodeMultipliers(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
               <FieldDescription>保存后，该节点所有入站新增流量统一按此倍率计算。</FieldDescription>
             </Field>
+            <section className="grid gap-4 border-t pt-4">
+              <div className="flex items-center gap-2">
+                <h3 className="font-medium">VPS 月度成本</h3>
+                <TooltipProvider><Tooltip><TooltipTrigger asChild><button type="button" className="text-muted-foreground" aria-label="说明用户扣量与 VPS 成本计量"><HelpCircle className="size-4" /></button></TooltipTrigger><TooltipContent className="max-w-72">用户扣量始终按 in + out；VPS 成本计量根据此节点设置使用 in + out 或仅 out。</TooltipContent></Tooltip></TooltipProvider>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field><FieldLabel htmlFor={`cost-date-${settingsNode.id}`}>购买日期</FieldLabel><Input id={`cost-date-${settingsNode.id}`} type="date" value={nodeCosts[settingsNode.guid]?.purchaseDate || ""} onChange={event => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], purchaseDate: event.target.value } }))} /></Field>
+                <Field><FieldLabel htmlFor={`cost-fee-${settingsNode.id}`}>月费（¥）</FieldLabel><Input id={`cost-fee-${settingsNode.id}`} type="number" min="0" step="0.01" value={nodeCosts[settingsNode.guid]?.monthlyFee || ""} onChange={event => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], monthlyFee: event.target.value } }))} /></Field>
+                <Field><FieldLabel htmlFor={`cost-quota-${settingsNode.id}`}>流量额度（GiB）</FieldLabel><Input id={`cost-quota-${settingsNode.id}`} type="number" min="0.01" step="0.01" value={nodeCosts[settingsNode.guid]?.trafficQuotaGiB || ""} onChange={event => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], trafficQuotaGiB: event.target.value } }))} /></Field>
+                <Field><FieldLabel htmlFor={`cost-mode-${settingsNode.id}`}>VPS 流量计算方式</FieldLabel><Select value={nodeCosts[settingsNode.guid]?.trafficMode || "in_out"} onValueChange={(trafficMode: "in_out" | "out_only") => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], trafficMode } }))}><SelectTrigger id={`cost-mode-${settingsNode.id}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="in_out">in + out</SelectItem><SelectItem value="out_only">out only</SelectItem></SelectContent></Select></Field>
+              </div>
+              <FieldDescription>购买日期是月度计费周期起点，精确到日；费用、额度或计量方式变化时，按实际变更日期保存。</FieldDescription>
+            </section>
             {settingsNode.trafficTokenRequired ? <Field>
               <FieldLabel htmlFor={`settings-token-${settingsNode.id}`}>节点 API Token <Badge variant={settingsNode.trafficConfigured ? "success" : "secondary"}>{settingsNode.trafficConfigured ? "已配置" : "未配置"}</Badge></FieldLabel>
               <Input id={`settings-token-${settingsNode.id}`} type="password" autoComplete="new-password" placeholder={settingsNode.trafficConfigured ? "留空保持现有 Token" : "输入该节点的 API Token"} value={nodeTokens[settingsNode.guid] ?? ""} onChange={event => setNodeTokens(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />

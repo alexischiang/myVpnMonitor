@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-04",
+  "updated_at": "2026-09-06",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -199,6 +199,61 @@
         "page_errors": [],
         "checked_at": "2026-09-05"
       }
+    },
+    {
+      "id": "sales-traffic-profitability",
+      "name": "Traffic cost and contribution margin analytics",
+      "description": "Persist directional user traffic, configure monthly VPS costs, amortize plan revenue, and report user and infrastructure profitability.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["dashboard-active-inbound-traffic", "billing-purchase-classification"],
+      "done_criteria": [
+        "Each node supports purchase-date VPS fee, quota, and in+out or out-only cost metering settings.",
+        "User quota usage remains in+out while durable daily analytics retain separate inbound and outbound bytes.",
+        "Sales analytics reports amortized revenue, attributed traffic cost, contribution margin, fixed VPS cost, and infrastructure profit for the selected period.",
+        "Ambiguous accounting and traffic concepts are explained with accessible tooltips.",
+        "Unsupported and pre-collection history is clearly excluded instead of estimated.",
+        "Sales overview and cost profitability are available as separate sales subpages with consistent filter control heights."
+      ],
+      "verification": [
+        "2026-09-06: npm run verify passed application/docs builds and core, payment-chain, and wallet tests.",
+        "2026-09-06: Unit coverage confirmed directional traffic parsing, baseline/delta persistence, effective-month node cost settings, amortized revenue, out-only cost metering, plan filtering, and invalid date rejection.",
+        "2026-09-06: npm run verify:harness and git diff --check passed.",
+        "2026-09-06: npm run check passed after splitting sales overview and profitability into separate routes.",
+        "2026-09-06: npm run verify passed after changing VPS cost activation to an exact purchase date; regression coverage includes legacy month settings, exact-day activation, full purchase-date cycles, and month-end purchases."
+      ],
+      "browser_verification": {
+        "routes": ["/xui-monitor", "/sales-analytics", "/sales-analytics/profitability"],
+        "interactions": [
+          "Logged in as administrator and opened node settings; confirmed the exact VPS purchase-date input, monthly fee, quota, metering mode, and purchase-date cycle explanation.",
+          "Switched between the sales overview and cost profitability subpages; confirmed each route only renders its own analytics.",
+          "Opened cost profitability; confirmed contribution and infrastructure metrics, user/node detail tables, the user traffic cost tooltip, and purchase-date fixed-cost wording.",
+          "Filtered to BASIC and confirmed fixed VPS and infrastructure metrics clearly state they are only available for all plans.",
+          "Confirmed all filter controls are 36px high on desktop and 44px high on mobile.",
+          "Verified the affected sales routes at 390px width without horizontal overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-06"
+      }
+    },
+    {
+      "id": "payment-legacy-pool-xui-delivery",
+      "name": "Deliver purchases for legacy pool users",
+      "description": "Provision paid plans to the authenticated account email while retiring pool assignment branches from payment fulfillment.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["billing-purchase-classification"],
+      "done_criteria": [
+        "A linked legacy pool user receives the purchased plan on the authenticated account email.",
+        "Successful delivery clears the legacy pool binding and changes the user to self-hosted delivery.",
+        "Payment fulfillment no longer runs pool recommendation or pool-change logging branches."
+      ],
+      "verification": [
+        "2026-09-06: npm run test:payment passed a legacy pool-user regression with a stale stored email and no existing 3x-ui client.",
+        "2026-09-06: npm run verify passed application/docs builds, core, 3x-ui, payment-chain, and wallet tests.",
+        "2026-09-06: Production data was audited read-only; 147 legacy pool users remain, so legacy read/serve/migration compatibility was retained."
+      ]
     }
   ]
 }

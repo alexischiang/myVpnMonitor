@@ -17,6 +17,7 @@ window.addEventListener("vite:preloadError", event => {
 
 const DashboardPage = lazy(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
 const SalesAnalyticsPage = lazy(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesAnalyticsPage })))
+const SalesProfitabilityPage = lazy(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesProfitabilityPage })))
 const XuiMonitorPage = lazy(() => import("@/components/features/xui-monitor").then(module => ({ default: module.XuiMonitorPage })))
 const XuiLogsPage = lazy(() => import("@/components/features/xui-logs").then(module => ({ default: module.XuiLogsPage })))
 const XuiInboundsPage = lazy(() => import("@/components/features/xui-inbounds").then(module => ({ default: module.XuiInboundsPage })))
@@ -134,6 +135,7 @@ function App() {
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="sales-analytics" element={<SalesAnalyticsPage />} />
+              <Route path="sales-analytics/profitability" element={<SalesProfitabilityPage />} />
               <Route path="xui-monitor" element={<XuiMonitorPage />} />
               <Route path="xui-logs" element={<XuiLogsPage />} />
               <Route path="xui-inbounds" element={<XuiInboundsPage />} />
