@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-06",
+  "updated_at": "2026-09-08",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -254,6 +254,102 @@
         "2026-09-06: npm run verify passed application/docs builds, core, 3x-ui, payment-chain, and wallet tests.",
         "2026-09-06: Production data was audited read-only; 147 legacy pool users remain, so legacy read/serve/migration compatibility was retained."
       ]
+    },
+    {
+      "id": "xui-inbound-subscription-order",
+      "name": "Order inbounds by 3x-ui subscription index",
+      "description": "Use each inbound's subSortIndex for the management table and package-group dialog.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The inbound management API preserves subSortIndex from 3x-ui.",
+        "The main inbound table is ordered by subSortIndex with inbound ID as the tie-breaker.",
+        "Both lists in the package-group dialog use the same order.",
+        "Disabled inbounds in either package-group list display a visible status badge.",
+        "Add actions in the unavailable list use a pale green background and dark green icon matching the remove-action opacity hierarchy."
+      ],
+      "verification": [
+        "2026-09-07: npm run check passed the application and documentation builds.",
+        "2026-09-07: Browser verification matched all 19 main-table rows and both package-group lists (9 available, 10 unavailable) against subSortIndex then inbound ID order.",
+        "2026-09-08: npm run check passed; browser verification confirmed all 4 disabled inbounds across both package-group lists display a status badge with no false positives.",
+        "2026-09-08: Browser verification confirmed all 10 add actions use the green success button treatment.",
+        "2026-09-08: Browser verification confirmed the add actions mirror the remove actions with a 10% background tint and opaque semantic icon color."
+      ],
+      "browser_verification": {
+        "routes": ["/xui-inbounds"],
+        "interactions": [
+          "Logged in as administrator and opened inbound management.",
+          "Compared all 19 main-table rows with the subSortIndex and inbound ID order returned by the management API.",
+          "Opened package groups and compared all 9 available and 10 unavailable BASIC rows with the same order.",
+          "Confirmed all 10 add actions in the unavailable list use a pale green background and dark green icon matching the remove-action opacity hierarchy.",
+          "Confirmed all 4 disabled inbounds across the available and unavailable lists display a 停用 badge and enabled rows do not."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-08"
+      }
+    },
+    {
+      "id": "self-hosted-subscription-fast-path",
+      "name": "Serve self-hosted subscriptions from persisted subId",
+      "description": "Use the PostgreSQL xuiSubId directly and fetch the 3x-ui Clash subscription only once before local conversion.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "A self-hosted subscription request does not query or provision the 3x-ui client.",
+        "The request fetches /clash/:subId once using the persisted xuiSubId.",
+        "Subconverter receives the already-fetched configuration through the local live-config endpoint."
+      ],
+      "verification": [
+        "2026-09-07: Regression coverage confirmed the persisted xuiSubId is URL-encoded for the single 3x-ui Clash fetch and subconverter receives the fetched body through the loopback live-config endpoint.",
+        "2026-09-07: npm test, npm run verify:fast, and git diff --check passed."
+      ]
+    },
+    {
+      "id": "subconverter-template-preservation",
+      "name": "Preserve the complete subconverter Clash template",
+      "description": "Keep clash_rule_base top-level settings while restoring full 3x-ui proxy objects after conversion.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["self-hosted-subscription-fast-path"],
+      "done_criteria": [
+        "The converted Clash document remains the final configuration base.",
+        "Top-level settings from clash_rule_base are preserved.",
+        "Original 3x-ui proxy fields and converted proxy-group references remain intact."
+      ],
+      "verification": [
+        "2026-09-08: Regression coverage confirmed converted port, DNS, sniffer, and external-controller settings are preserved while original 3x-ui proxy fields and converted group references remain intact.",
+        "2026-09-08: npm test, npm run verify:fast, and git diff --check passed."
+      ]
+    },
+    {
+      "id": "sales-analytics-date-filter-persistence",
+      "name": "Preserve sales analytics date filters",
+      "description": "Default sales analytics to the current month and retain the selected time range between its subpages.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["sales-traffic-profitability"],
+      "done_criteria": [
+        "Sales analytics initially displays the current month.",
+        "Switching between sales overview and profitability retains the selected time range."
+      ],
+      "verification": [
+        "2026-09-08: npm run check and git diff --check passed.",
+        "2026-09-08: Browser verification confirmed the current month is selected by default and both a preset period and selected month persist across both sales subpages."
+      ],
+      "browser_verification": {
+        "routes": ["/sales-analytics", "/sales-analytics/profitability"],
+        "interactions": [
+          "Logged in as administrator and confirmed September is selected by default.",
+          "Selected the 30-day preset and confirmed it remained active after navigating to profitability and back.",
+          "Selected August and confirmed it remained selected after navigating to profitability and back."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-08"
+      }
     }
   ]
 }

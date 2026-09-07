@@ -42,7 +42,6 @@ const XUI_SUBSCRIPTION_BASE_URL = (process.env.XUI_SUBSCRIPTION_BASE_URL || "htt
 const XUI_TIMEOUT_MS = Math.max(1000, Number(process.env.XUI_TIMEOUT_MS || 15000));
 const XUI_INBOUND_PROBE_TIMEOUT_MS = Math.max(500, Number(process.env.XUI_INBOUND_PROBE_TIMEOUT_MS || 3000));
 const XUI_INBOUND_PROBE_INTERVAL_MS = Math.max(10000, Number(process.env.XUI_INBOUND_PROBE_INTERVAL_MS || 30000));
-const XUI_METADATA_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const XUI_SERVICE_URL = (process.env.XUI_SERVICE_URL || "").replace(/\/+$/, "");
 const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
 const XUI_READ_ONLY = process.env.XUI_READ_ONLY === "true";
@@ -4679,6 +4678,7 @@ async function xuiInboundManagementData() {
       tag: String(inbound.tag || ""),
       protocol: String(inbound.protocol || ""),
       port: Number(inbound.port) || null,
+      subSortIndex: Math.max(1, Number(inbound.subSortIndex) || 1),
       enabled: inbound.enable !== false,
       recentlyActive: activityReported ? activeInboundKeys.has(`${nodeGuid}:${String(inbound.tag || "")}`) : null,
       nodeGuid,
@@ -6943,7 +6943,7 @@ function restoreUpstreamClashConfig(convertedBody, upstreamBody, { include = "",
       convertedToSourceName.set(item.name, sourceProxies[index].name);
     }
     const filtersActive = Boolean(include || exclude);
-    const restored = { ...upstream };
+    const restored = { ...converted };
     restored.proxies = sourceProxies.length
       ? sourceProxies.filter((_, index) => !filtersActive || used.has(index))
       : convertedProxies;
@@ -6960,9 +6960,6 @@ function restoreUpstreamClashConfig(convertedBody, upstreamBody, { include = "",
           }))]
         } : {})
       }));
-    }
-    for (const key of ["rules", "proxy-providers", "rule-providers"]) {
-      if (key in converted) restored[key] = converted[key];
     }
     return Buffer.from(yaml.dump(restored, { lineWidth: -1, noRefs: true }), "utf8");
   } catch {
@@ -7199,25 +7196,29 @@ async function fallbackToUsableSubscription(user, currentSubscription, reason, r
   return fallback;
 }
 
-function selfHostedUserinfo(user, remote) {
-  const upload = Math.max(0, Number(remote?.traffic?.up) || 0);
-  const download = Math.max(0, Number(remote?.traffic?.down) || 0);
-  const total = Math.max(0, Number(remote?.totalGB) || planTrafficBytes(user));
+function selfHostedUserinfo(user) {
+  const upload = Math.max(0, Number(user?.xuiLastTraffic?.uploadBytes) || 0);
+  const download = Math.max(0, Number(user?.xuiLastTraffic?.downloadBytes) || 0);
+  const total = Math.max(0, Number(user?.xuiLastTraffic?.totalBytes ?? user?.xuiTrafficLimitBytes) || planTrafficBytes(user));
   const expire = Math.floor(new Date(user.expiresAt).getTime() / 1000);
   return `upload=${upload}; download=${download}; total=${total}; expire=${expire}`;
 }
 
-async function fetchSelfHostedSubscription(user, remote) {
-  const subId = String(remote?.subId || user?.xuiSubId || "").trim();
+function selfHostedSubscriptionUrl(user) {
+  const subId = String(user?.xuiSubId || "").trim();
   if (!subId) throw new Error("3x-ui Client 缺少 subId。");
-  const sourceUrl = `${XUI_SUBSCRIPTION_BASE_URL}/clash/${encodeURIComponent(subId)}`;
+  return `${XUI_SUBSCRIPTION_BASE_URL}/clash/${encodeURIComponent(subId)}`;
+}
+
+async function fetchSelfHostedSubscription(user) {
+  const sourceUrl = selfHostedSubscriptionUrl(user);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
   try {
     const response = await fetch(sourceUrl, { signal: controller.signal, redirect: "follow", headers: { "User-Agent": "subconverter", Accept: "text/yaml, text/plain, */*", "Cache-Control": "no-cache" } });
     const body = await response.text();
     if (!response.ok || !body.trim()) throw new Error(`3x-ui Clash 订阅请求失败（HTTP ${response.status}）。`);
-    return { body, status: response.status, client: "3x-ui-clash", sourceUrl, fetchedAt: new Date().toISOString(), contentType: response.headers.get("content-type") || "text/yaml; charset=utf-8", subscriptionUserinfo: selfHostedUserinfo(user, remote), score: body.length, bodyLength: body.length, attempts: [], error: null };
+    return { body, status: response.status, client: "3x-ui-clash", sourceUrl, fetchedAt: new Date().toISOString(), contentType: response.headers.get("content-type") || "text/yaml; charset=utf-8", subscriptionUserinfo: selfHostedUserinfo(user), score: body.length, bodyLength: body.length, attempts: [], error: null };
   } catch (error) {
     if (error.name === "AbortError") throw new Error("3x-ui Clash 订阅请求超时。");
     throw error;
@@ -7226,7 +7227,7 @@ async function fetchSelfHostedSubscription(user, remote) {
   }
 }
 
-async function sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc, converterSourceUrl = "" }) {
+async function sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc }) {
   const liveConfigId = registerLivePoolConfig(liveConfig);
   cleanupLivePoolConfigs();
   relayLog("subconverter-live-config-registered", {
@@ -7239,8 +7240,7 @@ async function sendSubconverterSubscription({ req, res, user, relayRequestId, su
     bodyPreview: bodyPreview(liveConfig.body)
   });
   const liveConfigUrl = `http://127.0.0.1:${PORT}/api/internal/pool-live/${liveConfigId}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
-  const sourceUrl = converterSourceUrl || liveConfigUrl;
-  const params = new URLSearchParams({ target: sc.target, url: sourceUrl });
+  const params = new URLSearchParams({ target: sc.target, url: liveConfigUrl });
   if (sc.config) params.set("config", sc.config);
   if (sc.include) params.set("include", sc.include);
   if (sc.exclude) params.set("exclude", sc.exclude);
@@ -7253,7 +7253,7 @@ async function sendSubconverterSubscription({ req, res, user, relayRequestId, su
     relayRequestId,
     userId: user.id,
     url: subUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]"),
-    params: { ...Object.fromEntries(params.entries()), url: sourceUrl === liveConfigUrl ? liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]") : "[external-source]" },
+    params: { ...Object.fromEntries(params.entries()), url: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]") },
     liveConfigUrl: liveConfigUrl.replace(encodeURIComponent(INTERNAL_TOKEN), "[redacted]")
   });
   const controller = new AbortController();
@@ -7343,15 +7343,9 @@ async function handleSelfHostedRelay(req, res, user, relayRequestId) {
     return;
   }
   try {
-    let remote = await getXuiClient(user);
-    const metadataSyncedAt = Date.parse(user.xuiMetadataSyncedAt || "");
-    if (!user.xuiSubId || remote.enable === false || !Number.isFinite(metadataSyncedAt) || Date.now() - metadataSyncedAt >= XUI_METADATA_SYNC_INTERVAL_MS) {
-      remote = await provisionXuiClient(user);
-      await saveUsers();
-    }
-    const source = { id: `xui:${user.id}`, url: `${XUI_SUBSCRIPTION_BASE_URL}/clash/${encodeURIComponent(remote.subId || user.xuiSubId)}`, sourceType: "url", serviceProvider: "3x-ui", enabled: true };
-    const liveConfig = await fetchSelfHostedSubscription(user, remote);
-    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc: relaySubconverterConfig(source), converterSourceUrl: source.url });
+    const source = { id: `xui:${user.id}`, url: selfHostedSubscriptionUrl(user), sourceType: "url", serviceProvider: "3x-ui", enabled: true };
+    const liveConfig = await fetchSelfHostedSubscription(user);
+    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc: relaySubconverterConfig(source) });
   } catch (error) {
     relayLog("self-hosted-relay-failed", { relayRequestId, userId: user.id, error: error.message });
     sendSubscriptionMessage(res, 502, `自研线路订阅生成失败：${error.message}`);
@@ -11017,6 +11011,9 @@ module.exports = Object.assign(requestHandler, {
   normalizeManualSubscriptionContent,
   normalizeSubscription,
   normalizeXuiClientResult,
+  selfHostedSubscriptionUrl,
+  fetchSelfHostedSubscription,
+  sendSubconverterSubscription,
   normalizeXuiConnectedIps,
   normalizeXuiMonitor,
   normalizeXuiInbounds,
