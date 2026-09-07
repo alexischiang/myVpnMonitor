@@ -48,6 +48,9 @@ const {
   postSubconverter,
   normalizeSubscription,
   normalizeXuiClientResult,
+  selfHostedSubscriptionUrl,
+  fetchSelfHostedSubscription,
+  sendSubconverterSubscription,
   normalizeXuiConnectedIps,
   normalizeXuiMonitor,
   normalizeXuiInbounds,
@@ -514,6 +517,8 @@ assert.strictEqual(extractClashConfigBody("<!doctype html><html><title>403</titl
 
 const restoredConfig = require("js-yaml").load(restoreUpstreamClashConfig(
   Buffer.from(`port: 7890
+sniffer: { enable: false }
+dns: { enable: false, enhanced-mode: redir-host }
 proxies:
   - { name: shared, type: trojan, skip-cert-verify: false, tfo: false }
   - { name: notice, type: ss }
@@ -538,9 +543,10 @@ assert.ok(restoredConfig.proxies.some(item => item.name === "missing"));
 assert.ok(!restoredConfig.proxies.some(item => item.name === "notice"));
 assert.deepStrictEqual(restoredConfig.rules, ["MATCH,Converted"]);
 assert.strictEqual(restoredConfig["proxy-groups"][0].name, "Converted");
-assert.strictEqual(restoredConfig.dns.enable, true);
-assert.strictEqual(restoredConfig.sniffer.enable, true);
-assert.ok(!("port" in restoredConfig));
+assert.strictEqual(restoredConfig.port, 7890);
+assert.strictEqual(restoredConfig.dns.enable, false);
+assert.strictEqual(restoredConfig.dns["enhanced-mode"], "redir-host");
+assert.strictEqual(restoredConfig.sniffer.enable, false);
 
 const filteredConfig = require("js-yaml").load(restoreUpstreamClashConfig(
   Buffer.from(`port: 7890
@@ -566,9 +572,9 @@ assert.strictEqual(filteredConfig.proxies[0]["skip-cert-verify"], true);
 assert.strictEqual(filteredConfig["proxy-groups"][0].name, "Filtered");
 assert.deepStrictEqual(filteredConfig["proxy-groups"][0].proxies, ["shared"]);
 assert.deepStrictEqual(filteredConfig.rules, ["MATCH,Filtered"]);
-assert.strictEqual(filteredConfig.dns.enable, true);
-assert.ok(!("port" in filteredConfig));
-assert.ok(!("external-controller" in filteredConfig));
+assert.strictEqual(filteredConfig.dns, undefined);
+assert.strictEqual(filteredConfig.port, 7890);
+assert.strictEqual(filteredConfig["external-controller"], "127.0.0.1:9090");
 
 const pinnedGroups = require("js-yaml").load(injectPlaceholderNodes(Buffer.from(`proxies:
   - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }
@@ -637,6 +643,27 @@ assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chr
 
 let migrationRuns = 0;
 Promise.all([
+  (async () => {
+    const originalFetch = global.fetch;
+    const calls = [];
+    global.fetch = async url => {
+      calls.push(String(url));
+      return new Response("proxies: []\n", { status: 200, headers: { "content-type": "text/yaml" } });
+    };
+    try {
+      const user = { id: "stored-user", xuiSubId: "stored/sub id", expiresAt: "2099-01-01T00:00:00.000Z", xuiLastTraffic: { uploadBytes: 1, downloadBytes: 2, totalBytes: 3 }, showUserInfo: false };
+      assert.ok(selfHostedSubscriptionUrl(user).endsWith("/clash/stored%2Fsub%20id"));
+      assert.throws(() => selfHostedSubscriptionUrl({}), /subId/);
+      const liveConfig = await fetchSelfHostedSubscription(user);
+      const res = { writeHead() {}, end() {} };
+      await sendSubconverterSubscription({ req: { headers: {} }, res, user, relayRequestId: "test", subscription: { id: "xui:stored-user" }, liveConfig, sc: { target: "clash", postSubconverter: false } });
+      assert.strictEqual(calls.length, 2);
+      assert.ok(calls[0].endsWith("/clash/stored%2Fsub%20id"));
+      assert.ok(new URL(calls[1]).searchParams.get("url").startsWith("http://127.0.0.1:3000/api/internal/pool-live/"));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  })(),
   (async () => {
     const results = await Promise.all([
       withXuiUserMigrationLock("user-1", async () => { migrationRuns += 1; await new Promise(resolve => setImmediate(resolve)); return "done"; }),

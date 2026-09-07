@@ -332,6 +332,7 @@ export type XuiInboundManagement = {
     tag: string
     protocol: string
     port: number | null
+    subSortIndex: number
     enabled: boolean
     recentlyActive: boolean | null
     probeStatus: "online" | "offline" | "unknown" | "disabled"

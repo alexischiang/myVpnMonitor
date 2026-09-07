@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-06
-- Current Objective: 发布 VPS 成本与盈利分析及旧用户购买迁移
+- Last Updated: 2026-09-08
+- Current Objective: 发布订阅直取、转换模板保留、入站排序和销售筛选改动
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -50,8 +50,24 @@
 
 - 2026-09-06: 2026-09-06: npm run agent:init、npm run verify、git diff --check 通过；受影响 UI 路由已有空 console_errors/page_errors 浏览器验证记录
 
+- 2026-09-07: npm run check and npm run verify:fast passed; browser verified 19 main rows plus 9 available and 10 unavailable group rows with no console or page errors
+
+- 2026-09-07: npm test、npm run verify:fast、git diff --check 通过；回归测试确认仅一次 /clash/:subId 外部拉取，subconverter 使用 loopback live-config
+
+- 2026-09-08: npm run check and npm run verify:fast passed; browser verified 4 disabled badges across 19 rows with no false positives, console errors, or page errors
+
+- 2026-09-08: npm test、npm run verify:fast、npm run verify:harness、git diff --check 通过；转换模板作为最终主体，3x-ui 原始节点字段保持完整
+
+- 2026-09-08: npm run check and npm run verify:fast passed; browser verified all 10 add buttons use success green with no console or page errors
+
+- 2026-09-08: npm run check and npm run verify:fast passed; browser verified 10 add buttons with 10 percent pale green backgrounds and opaque deep green icons, no console or page errors
+
+- 2026-09-08: npm run check、npm run verify:fast、git diff --check passed; browser verified current-month default plus 30-day and August filter persistence across both sales routes with empty console/page errors
+
+- 2026-09-08: 2026-09-08: npm run agent:init、npm run verify、git diff --check 通过；相关 UI 路由已有当天空 console_errors/page_errors 浏览器验证记录
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/sales-analytics.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `test-payment.js`, `test.js`, `PRODUCT.md`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/sales-analytics.tsx`, `src/components/features/xui-inbounds.tsx`, `src/types.ts`, `test.js`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 确认 GitHub Actions 生产部署成功并录入各节点实际 VPS 购买日期与成本
+- Recommended Next Step: 确认 GitHub Actions 生产部署成功

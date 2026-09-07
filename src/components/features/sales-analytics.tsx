@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Label, LabelList, Pie, PieChart, XAxis, YAxis } from "recharts"
 import type { DateRange } from "react-day-picker"
-import { Link } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 import { IconArrowDownRight, IconArrowUpRight, IconCalendar, IconCash, IconDiscount, IconInfoCircle, IconReceipt, IconUsers } from "@tabler/icons-react"
 
 import { fetchJson } from "@/api"
@@ -130,12 +130,15 @@ function ExplainedLabel({ label, description }: { label: string; description: st
 }
 
 export function SalesAnalyticsPage({ profitabilityView = false }: { profitabilityView?: boolean }) {
+  const location = useLocation()
+  const savedFilters = (location.state as { salesFilters?: { period: SalesPeriod; dateRange?: DateRange; selectedMonth: string } } | null)?.salesFilters
   const { users, bills } = useData()
   const [orders, setOrders] = React.useState<SalesOrder[]>([])
-  const [period, setPeriod] = React.useState<SalesPeriod>("90")
-  const [dateRange, setDateRange] = React.useState<DateRange>()
+  const currentMonth = new Date().getMonth() + 1
+  const [period, setPeriod] = React.useState<SalesPeriod>(savedFilters?.period || "custom")
+  const [dateRange, setDateRange] = React.useState<DateRange>(savedFilters?.dateRange || salesMonthRange(currentMonth))
   const [calendarOpen, setCalendarOpen] = React.useState(false)
-  const [selectedMonth, setSelectedMonth] = React.useState("")
+  const [selectedMonth, setSelectedMonth] = React.useState(savedFilters?.selectedMonth ?? `${currentMonth}`)
   const [plan, setPlan] = React.useState("all")
   const [profitability, setProfitability] = React.useState<ProfitabilityReport | null>(null)
   const [profitabilityError, setProfitabilityError] = React.useState("")
@@ -281,8 +284,8 @@ export function SalesAnalyticsPage({ profitabilityView = false }: { profitabilit
           <p className="text-sm text-muted-foreground">{profitabilityView ? "收入摊销、节点成本与用户利润率" : "套餐销售、客户复购与优惠表现"}</p>
         </section>
         <nav className="flex items-center gap-1 rounded-lg bg-muted p-1" aria-label="销售统计子页面">
-          <Button asChild size="sm" variant={profitabilityView ? "ghost" : "outline"} className="h-11 border-0 sm:h-8"><Link to="/sales-analytics">销售概览</Link></Button>
-          <Button asChild size="sm" variant={profitabilityView ? "outline" : "ghost"} className="h-11 border-0 sm:h-8"><Link to="/sales-analytics/profitability">成本与利润</Link></Button>
+          <Button asChild size="sm" variant={profitabilityView ? "ghost" : "outline"} className="h-11 border-0 sm:h-8"><Link to="/sales-analytics" state={{ salesFilters: { period, dateRange, selectedMonth } }}>销售概览</Link></Button>
+          <Button asChild size="sm" variant={profitabilityView ? "outline" : "ghost"} className="h-11 border-0 sm:h-8"><Link to="/sales-analytics/profitability" state={{ salesFilters: { period, dateRange, selectedMonth } }}>成本与利润</Link></Button>
         </nav>
       </div>
       <section className="flex flex-wrap items-center gap-2 sm:justify-end" aria-label="统计筛选">
