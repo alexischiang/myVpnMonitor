@@ -30,7 +30,7 @@ Non-obvious principles that will cause bugs if you violate them.
 ```bash
 # Test priority ordering
 cat ~/.claude/CLAUDE.md          # User level
-cat ./CLAUDE.md                   # Project level
+cat ./CLAUDE.md                   # Project level  
 cat ./CLAUDE.local.md             # Local override (WINS)
 ```
 

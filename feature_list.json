@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-08",
+  "updated_at": "2026-09-09",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -367,6 +367,25 @@
       "verification": [
         "2026-09-08: Regression coverage confirmed an AbortError is retried exactly once and the second attempt succeeds.",
         "2026-09-08: Default background inbound polling was reduced from every 30 seconds to every 2 minutes; npm run verify:fast and git diff --check passed."
+      ]
+    },
+    {
+      "id": "xui-inbound-delta-sync",
+      "name": "Synchronize only changed package inbounds",
+      "description": "Apply package-group inbound additions and removals with the matching bulk API while keeping client groups on the single-client update path.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["xui-inbound-subscription-order"],
+      "done_criteria": [
+        "An add-only package change calls only bulkAttach.",
+        "A remove-only package change calls only bulkDetach.",
+        "A mixed change waits for bulkAttach before bulkDetach.",
+        "Package-group synchronization never calls groups/bulkAdd.",
+        "Existing client groupName changes use clients/update/{email}."
+      ],
+      "verification": [
+        "2026-09-09: Payment-chain regression coverage passed add-only, remove-only, mixed ordered synchronization, absence of groups/bulkAdd, and groupName replacement through clients/update/{email}.",
+        "2026-09-09: npm run verify passed application/docs builds and core, 3x-ui, payment-chain, and wallet tests."
       ]
     },
     {

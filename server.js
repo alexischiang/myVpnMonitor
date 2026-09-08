@@ -4580,13 +4580,12 @@ async function getAllXuiInboundIds() {
   throw new Error(lastError ? `无法读取3x-ui入站列表：${lastError.message}` : "3x-ui中没有可关联的入站。");
 }
 
-async function syncXuiClientAccess(emails, group, inboundIds, allInboundIds = null) {
+async function syncXuiClientAccess(emails, inboundIds, allInboundIds = null) {
   if (!emails.length) return;
   const allIds = allInboundIds || await getAllXuiInboundIds();
   const detachIds = allIds.filter(id => !inboundIds.includes(id));
   if (inboundIds.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails, inboundIds } });
   if (detachIds.length) await xuiRequest("/panel/api/clients/bulkDetach", { method: "POST", body: { emails, inboundIds: detachIds } });
-  await xuiRequest("/panel/api/clients/groups/bulkAdd", { method: "POST", body: { emails, group } });
 }
 
 async function getXuiClientByEmail(email) {
@@ -4754,18 +4753,27 @@ function refreshXuiInboundManagementData() {
   return xuiInboundManagementRefresh;
 }
 
-async function syncXuiInboundGroup(group, inboundIds, allInboundIds) {
+async function syncXuiInboundGroup(group, previousInboundIds, inboundIds, allInboundIds) {
+  const addedIds = inboundIds.filter(id => !previousInboundIds.includes(id));
+  const removedIds = previousInboundIds.filter(id => !inboundIds.includes(id));
+  if (!addedIds.length && !removedIds.length) return { group, users: 0 };
   const targets = users.filter(user => isSelfHostedUser(user) && activeUserGroup(user) === group && user.xuiClientEmail);
   if (!targets.length) return { group, users: 0 };
-  const accessBuckets = new Map();
-  for (const user of targets) {
-    const effectiveIds = effectiveXuiInboundIds(inboundIds, user.xuiExtraInboundIds, allInboundIds);
-    const key = effectiveIds.join(",");
-    if (!accessBuckets.has(key)) accessBuckets.set(key, { inboundIds: effectiveIds, users: [] });
-    accessBuckets.get(key).users.push(user);
-  }
-  for (const bucket of accessBuckets.values()) {
-    await syncXuiClientAccess(bucket.users.map(user => String(user.xuiClientEmail).toLowerCase()), group, bucket.inboundIds, allInboundIds);
+  const emails = targets.map(user => String(user.xuiClientEmail).toLowerCase());
+  if (addedIds.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails, inboundIds: addedIds } });
+  if (removedIds.length) {
+    const detachBuckets = new Map();
+    for (const user of targets) {
+      const extraIds = new Set(normalizeXuiInboundIdList(user.xuiExtraInboundIds));
+      const ids = removedIds.filter(id => !extraIds.has(id));
+      if (!ids.length) continue;
+      const key = ids.join(",");
+      if (!detachBuckets.has(key)) detachBuckets.set(key, { inboundIds: ids, emails: [] });
+      detachBuckets.get(key).emails.push(String(user.xuiClientEmail).toLowerCase());
+    }
+    for (const bucket of detachBuckets.values()) {
+      await xuiRequest("/panel/api/clients/bulkDetach", { method: "POST", body: bucket });
+    }
   }
   const syncedAt = new Date().toISOString();
   for (const user of targets) {
@@ -4851,7 +4859,7 @@ async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
   } else {
     mutationResult = await xuiRequest("/panel/api/clients/add", { method: "POST", body: { client: xuiClientWritePayload(null, desired), inboundIds } });
   }
-  await syncXuiClientAccess([email], activeUserGroup(user), inboundIds, allInboundIds);
+  await syncXuiClientAccess([email], inboundIds, allInboundIds);
   let remote;
   try {
     remote = await getXuiClientAfterMutation({ ...user, xuiClientEmail: email });
@@ -6899,9 +6907,13 @@ function buildUserInfoNodes(user) {
   }
   const level = userVipLevel(user);
   const group = activeUserGroup(user).toUpperCase();
-  const remainingBytes = isSelfHostedUser(user) ? user.xuiLastTraffic?.remainingBytes : subscriptions.find(item => item.id === user.subscriptionId)?.metrics?.remainingBytes;
-  const remainingTraffic = Number.isFinite(Number(remainingBytes)) ? `${Number((Math.max(0, Number(remainingBytes)) / 1024 ** 3).toFixed(2))}G` : "未知";
-  nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group} | 剩余流量${remainingTraffic}`);
+  const traffic = isSelfHostedUser(user) ? (user.xuiWeightedTraffic || user.xuiLastTraffic) : null;
+  const usedBytes = Number(traffic?.usedBytes);
+  const totalBytes = Number(traffic?.totalBytes);
+  const depleted = totalBytes > 0 && Number.isFinite(usedBytes) && usedBytes >= totalBytes;
+  const remainingBytes = Number(traffic?.remainingBytes);
+  const remainingTraffic = Number.isFinite(remainingBytes) ? `${Number((Math.max(0, remainingBytes) / 1024 ** 3).toFixed(2))}G` : "未知";
+  nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group} | ${depleted ? "流量已耗尽" : `剩余流量${remainingTraffic}`}`);
   return nodes;
 }
 
@@ -9020,7 +9032,7 @@ async function handleApi(req, res, pathname) {
       }
       await setXuiState("inbound-groups", "xuiInboundGroups", { groups: next, metadata });
       const synced = [];
-      if (payload.syncGroups !== false) for (const group of USER_GROUPS) synced.push(await syncXuiInboundGroup(group, next[group], allInboundIds));
+      if (payload.syncGroups !== false) for (const group of USER_GROUPS) synced.push(await syncXuiInboundGroup(group, management.groups[group] || [], next[group], allInboundIds));
       sendJson(res, 200, { groups: next, metadata, synced });
     } catch (error) {
       sendJson(res, error.statusCode || 400, { error: error.message });
@@ -10211,7 +10223,7 @@ async function handleApi(req, res, pathname) {
         const allInboundIds = management.inbounds.map(inbound => inbound.id);
         const inheritedInboundIds = effectiveXuiInboundIds(management.groups[activeUserGroup(item)] || [], [], allInboundIds);
         const effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, nextIds, allInboundIds);
-        await syncXuiClientAccess([String(item.xuiClientEmail).toLowerCase()], activeUserGroup(item), effectiveInboundIds, allInboundIds);
+        await syncXuiClientAccess([String(item.xuiClientEmail).toLowerCase()], effectiveInboundIds, allInboundIds);
         item.xuiExtraInboundIds = nextIds;
         item.xuiInboundIds = effectiveInboundIds;
         item.xuiLastSyncedAt = new Date().toISOString();
@@ -11117,5 +11129,6 @@ module.exports = Object.assign(requestHandler, {
   restoreUpstreamClashConfig,
   injectPlaceholderNodes,
   postSubconverter,
-  disabledAccountPlaceholderSubscription
+  disabledAccountPlaceholderSubscription,
+  buildUserInfoNodes
 });

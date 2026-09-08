@@ -74,11 +74,11 @@ interface ToolDefinition {
   name: string;
   description: string;
   handler: (args: any) => Promise<any>;
-
+  
   // Safety classification
   isReadOnly: boolean;       // Default: false
   isConcurrentSafe: boolean; // Default: false
-
+  
   // Optional custom permission logic
   permissionCheck?: (args: any, context: ToolContext) => PermissionResult;
 }
@@ -109,23 +109,23 @@ async function evaluatePermission(
   toolCall: ToolCall,
   context: PermissionContext
 ): Promise<PermissionResult> {
-
+  
   // 1. Policy rules (highest priority, org-wide)
   const policyResult = await policyEngine.check(toolCall, context);
   if (policyResult !== 'defer') return policyResult;
-
+  
   // 2. User settings
   const userResult = await userSettings.check(toolCall, context);
   if (userResult !== 'defer') return userResult;
-
+  
   // 3. Project rules
   const projectResult = await projectRules.check(toolCall, context);
   if (projectResult !== 'defer') return projectResult;
-
+  
   // 4. Local overrides
   const localResult = await localOverrides.check(toolCall, context);
   if (localResult !== 'defer') return localResult;
-
+  
   // 5. Session grants (lowest priority)
   return sessionGrants.check(toolCall, context);
 }

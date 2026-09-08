@@ -76,9 +76,12 @@ XELA monitor 是一个基于 Node.js、PostgreSQL、React、Vite 和 Docusaurus 
 - 已实现用户要求的行为，且没有扩大无关范围。
 - 相关自动化检查通过，并已报告结果。
 - UI 改动已经在浏览器中实际验证，且没有相关控制台错误。
-- `ui: true` 的功能只有在 `browser_verification.console_errors` 和 `page_errors` 均为空时才能标记为 `passing`；构建或单元测试不能替代此门槛。
 - 没有无法解释的调试代码、临时产物或未完成的工作。
 - 功能跟踪状态和验证证据准确。
+- 浏览器验证工具不可用时，将功能保持为 in_progress。
+- 不应填写或沿用空的 console_errors、page_errors。
+- 不应在未完成浏览器检查前提交并声称任务完成。
+- 发现控制台错误后，必须先定位修复，再重新验证页面，最后才能标记 passing
 - 如果工作需要在其他会话继续，已更新 `PROGRESS.md`。
 - 仓库保持可用，下一会话无需手动修复即可继续工作。
 

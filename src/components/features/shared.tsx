@@ -29,7 +29,7 @@ export function UserStatusBadge({ user }: { user?: User | null }) {
 }
 
 export function StatusDot({ status, label }: { status: "online" | "offline" | "maintenance"; label?: string }) {
-  const color = status === "online" ? "bg-green-500" : status === "offline" ? "bg-red-500" : "bg-amber-500"
+  const color = status === "online" ? "bg-green-500" : status === "offline" ? "bg-red-500" : "bg-gray-400"
   const text = label || (status === "online" ? "在线" : status === "offline" ? "离线" : "维护中")
   return <span className="relative flex size-2 shrink-0" role="status" aria-label={text} title={text}><span className={`absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:animate-none ${color}`} /><span className={`relative inline-flex size-2 rounded-full ${color}`} /></span>
 }

@@ -45,6 +45,7 @@ const {
   classifyCurrentPoolFit,
   restoreUpstreamClashConfig,
   injectPlaceholderNodes,
+  buildUserInfoNodes,
   postSubconverter,
   normalizeSubscription,
   normalizeXuiClientResult,
@@ -624,6 +625,7 @@ proxy-groups:
 assert.deepStrictEqual(excludedPlaceholderGroups["proxy-groups"].map(group => group.proxies), [["🚀 节点选择"], ["♻️ 自动选择"], ["node"]]);
 const userInfoConfig = require("js-yaml").load(injectPlaceholderNodes(Buffer.from("proxies: []\n"), { lineType: "self_hosted", activeGroup: "pro", vipSpend: 400, xuiLastTraffic: { remainingBytes: 25.5 * gib } }, []).toString("utf8"));
 assert.strictEqual(userInfoConfig.proxies[0].name, "*VIP 2 | PRO | 剩余流量25.5G");
+assert.strictEqual(buildUserInfoNodes({ lineType: "self_hosted", activeGroup: "pro", vipSpend: 0, xuiWeightedTraffic: { usedBytes: 100, totalBytes: 100, remainingBytes: 0 } })[0], "VIP 1 | PRO | 流量已耗尽");
 
 const pinnedWithoutPlaceholders = require("js-yaml").load(injectPlaceholderNodes(Buffer.from(`proxies:
   - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }
