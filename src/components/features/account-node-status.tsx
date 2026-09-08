@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { StatusDot } from "@/components/features/shared"
-import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "@/components/ui/item"
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Skeleton } from "@/components/ui/skeleton"
 
 type AccountNodeStatus = {

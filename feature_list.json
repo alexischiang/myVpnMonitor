@@ -373,7 +373,7 @@
       "id": "account-node-status-page",
       "name": "Show account node status",
       "description": "Let active self-hosted subscribers view real probe status for package inbounds and their private custom inbounds, with upgrade guidance for locked access groups.",
-      "status": "passing",
+      "status": "in_progress",
       "ui": true,
       "dependencies": ["xui-inbound-subscription-order", "xui-timeout-retry"],
       "done_criteria": [
@@ -386,19 +386,7 @@
         "2026-09-08: npm run check, npm run verify:fast, and git diff --check passed.",
         "2026-09-08: Regression coverage confirmed package visibility, current access, private custom-inbound filtering, real probe values, and response-field sanitization.",
         "2026-09-08: Browser verification confirmed desktop and 390px layouts, three status rows, one locked-node action, and the plan-page navigation with no horizontal overflow or runtime errors."
-      ],
-      "browser_verification": {
-        "routes": ["/account", "/account/nodes", "/account/plans"],
-        "interactions": [
-          "Verified the node-status navigation is visible for an active self-hosted subscriber.",
-          "Displayed an available package inbound, a locked package inbound, and the current user's private custom inbound with real probe latency values.",
-          "Verified the locked-node action navigates to the existing plan purchase page.",
-          "Checked the page at 1280x900 and 390x844 without horizontal overflow; mobile action height is at least 44px."
-        ],
-        "console_errors": [],
-        "page_errors": [],
-        "checked_at": "2026-09-08"
-      }
+      ]
     }
   ]
 }

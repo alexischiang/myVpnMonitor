@@ -1,12 +1,12 @@
 # Current State
 
 - Last Updated: 2026-09-08
-- Current Objective: 精简账户节点状态页
+- Current Objective: 修复账户节点页控制台错误
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
-- Active feature: none
+- Active feature: account-node-status-page
 - Blockers: none
 
 ## Verification Evidence
@@ -76,8 +76,10 @@
 
 - 2026-09-08: npm run check、npm run verify:fast、git diff --check 通过；移除重复状态徽标、节点图标、行级探测说明和手动刷新入口
 
+- 2026-09-08: 修复 ItemDescription 缺失导入；npm run check、npm run verify:fast、npm run verify:harness 通过；浏览器复核待完成
+
 ## Next Session
 
-- Files: `src/components/features/account-node-status.tsx`
+- Files: `.agents/skills/harness-creator/references/context-engineering-pattern.md`, `.agents/skills/harness-creator/references/gotchas.md`, `.agents/skills/harness-creator/references/lifecycle-bootstrap-pattern.md`, `.agents/skills/harness-creator/references/multi-agent-pattern.md`, `.agents/skills/harness-creator/references/tool-registry-pattern.md`, `.agents/skills/harness-creator/templates/session-handoff.md`, `AGENTS.md`, `feature_list.json`, `skills-lock.json`, `src/components/features/account-node-status.tsx`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 继续按浏览器反馈迭代节点页
+- Recommended Next Step: 刷新 /account/nodes 并确认 console_errors 与 page_errors 为空后再恢复 passing
