@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-08
-- Current Objective: 节点状态三色呼吸点
+- Current Objective: 精简账户节点状态页
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -74,8 +74,10 @@
 
 - 2026-09-08: npm run check、npm run verify:fast、git diff --check 通过；浏览器验证工具当前不可用
 
+- 2026-09-08: npm run check、npm run verify:fast、git diff --check 通过；移除重复状态徽标、节点图标、行级探测说明和手动刷新入口
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/account-shell.tsx`, `src/components/features/shared.tsx`, `src/components/features/users.tsx`, `src/main.tsx`, `test-xui-service.js`, `test.js`, `xui-app.js`, `xui-client.js`, `src/components/features/account-node-status.tsx`
+- Files: `src/components/features/account-node-status.tsx`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 在浏览器验证 /account/nodes 与用户列表的三态颜色及控制台
+- Recommended Next Step: 继续按浏览器反馈迭代节点页

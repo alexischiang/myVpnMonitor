@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link } from "react-router-dom"
-import { Activity, Clock3, LockKeyhole, RefreshCw, Server } from "lucide-react"
+import { Activity, LockKeyhole, Server } from "lucide-react"
 
 import { fetchJson } from "@/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -8,9 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { StatusDot } from "@/components/features/shared"
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
+import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatDateTime } from "@/utils"
 
 type AccountNodeStatus = {
   configured: boolean
@@ -33,8 +32,6 @@ type AccountNodeStatus = {
     permissionGroups: string[]
   }>
 }
-
-const networkLabels: Record<AccountNodeStatus["inbounds"][number]["networkLevel"], string> = { premium: "精品", optimized: "优化", standard: "标准", "": "" }
 
 export function AccountNodeStatusPage() {
   const [data, setData] = React.useState<AccountNodeStatus | null>(null)
@@ -66,11 +63,6 @@ export function AccountNodeStatusPage() {
   const lockedNodes = data.inbounds.filter(inbound => !inbound.accessible).length
 
   return <div className="grid gap-4 px-4 lg:px-6">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <p className="flex items-center gap-2 text-sm text-muted-foreground"><Clock3 className="size-4" />平台探测，每两分钟更新 · {data.checkedAt ? formatDateTime(data.checkedAt) : "等待首次检测"}</p>
-      <Button variant="outline" size="sm" className="min-h-11 sm:min-h-0" onClick={() => void refresh()} disabled={loading}>{loading ? <RefreshCw className="animate-spin" /> : <RefreshCw />}刷新状态</Button>
-    </div>
-
     {error ? <Alert variant="destructive"><Activity /><AlertDescription>{error}，当前显示上次检测结果。</AlertDescription></Alert> : null}
 
     <Card>
@@ -96,8 +88,7 @@ export function AccountNodeStatusPage() {
           const requiredGroups = inbound.permissionGroups.map(group => group.toUpperCase()).join(" / ")
           return <Item key={inbound.id} variant="outline" className="flex-col items-stretch sm:flex-row sm:items-center">
             <ItemContent>
-              <ItemTitle><StatusDot status={dotStatus} label={statusLabel} /><Server className="size-4 text-muted-foreground" />{inbound.name}<Badge variant={online ? "success" : !inbound.enabled ? "secondary" : inbound.status === "offline" ? "destructive" : "warning"}>{statusLabel}</Badge>{inbound.custom ? <Badge variant="outline">专属节点</Badge> : inbound.accessible ? <Badge variant="outline">当前套餐可用</Badge> : <Badge variant="warning"><LockKeyhole />需 {requiredGroups}</Badge>}</ItemTitle>
-              <ItemDescription className="line-clamp-none">{[inbound.region, networkLabels[inbound.networkLevel]].filter(Boolean).join(" · ") || "套餐节点"} · 平台延迟 <span className="tabular-nums">{online && inbound.latencyMs !== null ? `${inbound.latencyMs} ms` : "-"}</span>{inbound.checkedAt ? ` · ${formatDateTime(inbound.checkedAt)}` : ""}</ItemDescription>
+              <ItemTitle><StatusDot status={dotStatus} label={statusLabel} />{inbound.name}{inbound.custom ? <Badge variant="outline">专属节点</Badge> : inbound.accessible ? <Badge variant="outline">当前套餐可用</Badge> : <Badge variant="warning"><LockKeyhole />需 {requiredGroups}</Badge>}</ItemTitle>
             </ItemContent>
             {!inbound.accessible && inbound.enabled ? <ItemActions className="w-full sm:w-auto"><Button asChild size="sm" className="min-h-11 w-full sm:min-h-0 sm:w-auto"><Link to="/account/plans">解锁节点</Link></Button></ItemActions> : null}
           </Item>
