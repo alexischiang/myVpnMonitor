@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom"
-import { AlertCircle, ArrowRight, BookOpen, CreditCard, Gauge, Gift, LifeBuoy, ReceiptText, UserRound, WalletCards } from "lucide-react"
+import { Activity, AlertCircle, ArrowRight, BookOpen, CreditCard, Gauge, Gift, LifeBuoy, ReceiptText, UserRound, WalletCards } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { apiFetch, clearJsonCache, fetchJson, setCachedJson } from "@/api"
@@ -14,6 +14,7 @@ import type { UserAlertSetting } from "@/types"
 
 const accountNav = [
   { title: "总览", url: "/account", icon: Gauge, exact: true },
+  { title: "节点状态", url: "/account/nodes", icon: Activity, nodeAccess: true },
   { title: "购买服务", url: "/account/plans", icon: CreditCard },
   { title: "使用文档", url: "/account/docs", icon: BookOpen },
   { title: "工单服务", url: "/account/tickets", icon: LifeBuoy },
@@ -28,14 +29,16 @@ export function AccountShell() {
   const location = useLocation()
   const { resolvedTheme, setTheme, theme } = useTheme()
   const [email, setEmail] = React.useState("")
+  const [hasActiveNodeAccess, setHasActiveNodeAccess] = React.useState(false)
   const [pendingOrderId, setPendingOrderId] = React.useState("")
   const [userAlerts, setUserAlerts] = React.useState<UserAlertSetting[]>([])
   const dark = (theme ?? resolvedTheme) === "dark"
-  const current = accountNav.find(item => item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)) || accountNav[0]
+  const navItems = accountNav.filter(item => !("nodeAccess" in item) || !item.nodeAccess || hasActiveNodeAccess)
+  const current = navItems.find(item => item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)) || navItems[0]
 
   React.useEffect(() => {
-    fetchJson<{ role: string; email?: string }>("/api/auth/me")
-      .then(me => me.role === "user" ? setEmail(me.email || "") : navigate("/dashboard", { replace: true }))
+    fetchJson<{ role: string; email?: string; hasActiveNodeAccess?: boolean }>("/api/auth/me")
+      .then(me => { if (me.role === "user") { setEmail(me.email || ""); setHasActiveNodeAccess(Boolean(me.hasActiveNodeAccess)) } else navigate("/dashboard", { replace: true }) })
       .catch(() => navigate("/login", { replace: true }))
   }, [navigate])
 
@@ -92,7 +95,7 @@ export function AccountShell() {
       dark={dark}
       onToggleTheme={() => setTheme(dark ? "light" : "dark")}
       onLogout={logout}
-      sidebar={<AppSidebar variant="inset" items={accountNav.map(item => item.url === "/account/docs" ? { ...item, href: "/docs/", external: true } : item)} homeUrl="/account" accountName={email || "加载中"} accountDescription="User account" accountUrl="/account/settings" accountLabel="账户设置" onLogout={logout} />}
+      sidebar={<AppSidebar variant="inset" items={navItems.map(item => item.url === "/account/docs" ? { ...item, href: "/docs/", external: true } : item)} homeUrl="/account" accountName={email || "加载中"} accountDescription="User account" accountUrl="/account/settings" accountLabel="账户设置" onLogout={logout} />}
     >
             <div className="grid gap-3 pb-2">{userAlerts.filter(item => item.page === (location.pathname.includes("/plans/checkout") ? "checkout" : location.pathname === "/account" ? "account" : location.pathname === "/account/plans" ? "pricing" : "")).map(item => <UserAlert key={item.id} item={item} />)}{pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <Alert variant="warning"><AlertCircle /><AlertDescription className="flex w-full flex-wrap items-center justify-between gap-4"><span>你有一笔订单等待付款。</span><Button asChild variant="link" size="sm"><Link to={`/account/orders/${encodeURIComponent(pendingOrderId)}`}>去支付<ArrowRight /></Link></Button></AlertDescription></Alert> : null}</div>
             {email ? <Outlet context={{ email }} /> : <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-36" /><Skeleton className="h-72" /></div>}

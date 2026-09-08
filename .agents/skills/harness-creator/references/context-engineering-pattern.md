@@ -27,10 +27,10 @@ Three-tier loading:
 ```
 Tier 1: Metadata (always present, cheap)
   → Feature list, memory index, session status
-
+  
 Tier 2: Instructions (loaded on activation)
   → AGENTS.md, skill bodies, style guides
-
+  
 Tier 3: Resources (loaded on demand)
   → Architecture docs, API references, examples
 ```

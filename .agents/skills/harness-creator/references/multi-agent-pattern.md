@@ -70,7 +70,7 @@ Phased workflow:
 ```
 Phase 1: Research
   ↓ (synthesize findings)
-Phase 2: Plan
+Phase 2: Plan  
   ↓ (precise specs)
 Phase 3: Implement
   ↓ (verify)
@@ -92,7 +92,7 @@ await coordinator.synthesize(research.results);
 const implement = await coordinator.spawn({
   role: 'implementer',
   prompt: `Implement token refresh handler using the JWT strategy
-  from [Phase 2 findings].
+  from [Phase 2 findings]. 
   Constraints: Use existing AuthService patterns, add tests.`,
   toolFilter: ['read', 'search', 'edit', 'test'], // Can write
 });

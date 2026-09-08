@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const express = require("express");
 const defaultLogger = require("./logger");
 const { withRedisLock } = require("./redis");
-const { assertXuiRequestAllowed } = require("./xui-client");
+const { assertXuiRequestAllowed, retryXuiTimeout } = require("./xui-client");
 
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
 
@@ -46,32 +46,36 @@ function validateRequest(payload = {}, config) {
 }
 
 async function callPanel(request, fetchImpl, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(`${request.baseUrl}${request.apiPath}`, {
-      method: request.method,
-      signal: controller.signal,
-      headers: {
-        authorization: `Bearer ${request.apiToken}`,
-        ...(request.body === undefined ? {} : { "content-type": "application/json" })
-      },
-      ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) })
+    return await retryXuiTimeout(async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetchImpl(`${request.baseUrl}${request.apiPath}`, {
+          method: request.method,
+          signal: controller.signal,
+          headers: {
+            authorization: `Bearer ${request.apiToken}`,
+            ...(request.body === undefined ? {} : { "content-type": "application/json" })
+          },
+          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) })
+        });
+        const text = await response.text();
+        let payload;
+        try { payload = text ? JSON.parse(text) : {}; } catch { throw new Error(`3x-ui 返回了无效响应（HTTP ${response.status}）。`); }
+        if (!response.ok || payload.success !== true) {
+          const error = new Error(payload.msg || payload.error || `3x-ui 请求失败（HTTP ${response.status}）。`);
+          error.statusCode = response.status;
+          throw error;
+        }
+        return payload.obj;
+      } finally {
+        clearTimeout(timer);
+      }
     });
-    const text = await response.text();
-    let payload;
-    try { payload = text ? JSON.parse(text) : {}; } catch { throw new Error(`3x-ui 返回了无效响应（HTTP ${response.status}）。`); }
-    if (!response.ok || payload.success !== true) {
-      const error = new Error(payload.msg || payload.error || `3x-ui 请求失败（HTTP ${response.status}）。`);
-      error.statusCode = response.status;
-      throw error;
-    }
-    return payload.obj;
   } catch (error) {
-    if (error.name === "AbortError") throw new Error("3x-ui 请求超时。");
+    if (error.name === "AbortError") throw Object.assign(new Error("3x-ui 请求超时。"), { statusCode: 504 });
     throw error;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

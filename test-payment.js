@@ -63,6 +63,7 @@ async function main() {
     return sendJson(response, 200, { status: 0, result });
   });
   const xuiClients = new Map();
+  const xuiRequests = [];
   const xui = http.createServer(async (request, response) => {
     let body = {};
     if (request.method !== "GET") {
@@ -70,6 +71,7 @@ async function main() {
       for await (const chunk of request) raw += chunk;
       if (raw) body = JSON.parse(raw);
     }
+    xuiRequests.push({ url: request.url, body });
     const clientMatch = request.url.match(/^\/panel\/api\/clients\/get\/(.+)$/);
     if (clientMatch) {
       const client = xuiClients.get(decodeURIComponent(clientMatch[1]));
@@ -437,6 +439,31 @@ async function main() {
     const purchaseLogs = adminUsers.data[0].userLogs;
     const managedUser = adminUsers.data[0];
     assert.strictEqual(managedUser.lineType, "self_hosted", "new purchases must use self-hosted delivery");
+    const saveInboundGroups = async groups => {
+      xuiRequests.length = 0;
+      const result = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups, syncGroups: true } });
+      assert.strictEqual(result.response.status, 200);
+      return xuiRequests.filter(entry => entry.url.startsWith("/panel/api/clients/bulk"));
+    };
+    assert.deepStrictEqual(await saveInboundGroups({ basic: [1], pro: [1, 2], ultra: [1] }), [
+      { url: "/panel/api/clients/bulkAttach", body: { emails: ["buyer@example.test"], inboundIds: [2] } }
+    ]);
+    assert.deepStrictEqual(await saveInboundGroups({ basic: [1], pro: [1], ultra: [1] }), [
+      { url: "/panel/api/clients/bulkDetach", body: { emails: ["buyer@example.test"], inboundIds: [2] } }
+    ]);
+    assert.deepStrictEqual(await saveInboundGroups({ basic: [1], pro: [2], ultra: [1] }), [
+      { url: "/panel/api/clients/bulkAttach", body: { emails: ["buyer@example.test"], inboundIds: [2] } },
+      { url: "/panel/api/clients/bulkDetach", body: { emails: ["buyer@example.test"], inboundIds: [1] } }
+    ]);
+    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/groups/bulkAdd"));
+    await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [1], pro: [1], ultra: [1] }, syncGroups: false } });
+    await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
+    xuiClients.get("buyer@example.test").groupName = "basic";
+    xuiRequests.length = 0;
+    const reenabledUser = await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: false } });
+    assert.strictEqual(reenabledUser.response.status, 200);
+    assert.strictEqual(xuiRequests.find(entry => entry.url === "/panel/api/clients/update/buyer%40example.test")?.body.groupName, "pro");
+    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/groups/bulkAdd"));
     const customInboundOptions = await request(`/api/users/${managedUser.id}/custom-inbounds`, { cookie: adminCookie });
     assert.strictEqual(customInboundOptions.response.status, 200);
     assert.deepStrictEqual(customInboundOptions.data.inheritedInboundIds, [1]);

@@ -9,7 +9,7 @@ const zlib = require("zlib");
 const { createDataStore } = require("./database");
 const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const { loadLocalEnv } = require("./env");
-const { assertXuiRequestAllowed, requestXui, requestXuiService } = require("./xui-client");
+const { assertXuiRequestAllowed, requestXui, requestXuiService, retryXuiTimeout } = require("./xui-client");
 const yaml = require("js-yaml");
 const notifier = require("./notifier");
 const packageJson = require("./package.json");
@@ -41,7 +41,7 @@ const XUI_PANEL_NAME = String(process.env.XUI_PANEL_NAME || "主面板").trim();
 const XUI_SUBSCRIPTION_BASE_URL = (process.env.XUI_SUBSCRIPTION_BASE_URL || "https://panel.webprovider.top:2096").replace(/\/+$/, "");
 const XUI_TIMEOUT_MS = Math.max(1000, Number(process.env.XUI_TIMEOUT_MS || 15000));
 const XUI_INBOUND_PROBE_TIMEOUT_MS = Math.max(500, Number(process.env.XUI_INBOUND_PROBE_TIMEOUT_MS || 3000));
-const XUI_INBOUND_PROBE_INTERVAL_MS = Math.max(10000, Number(process.env.XUI_INBOUND_PROBE_INTERVAL_MS || 30000));
+const XUI_INBOUND_PROBE_INTERVAL_MS = Math.max(10000, Number(process.env.XUI_INBOUND_PROBE_INTERVAL_MS || 120000));
 const XUI_SERVICE_URL = (process.env.XUI_SERVICE_URL || "").replace(/\/+$/, "");
 const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
 const XUI_READ_ONLY = process.env.XUI_READ_ONLY === "true";
@@ -3651,40 +3651,45 @@ async function xuiRequestAt(baseUrl, apiToken, apiPath, { method = "GET", body }
     await persistXuiAudit(entry);
     throw error;
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
   let statusCode = 502;
   try {
-    const response = await fetch(`${baseUrl}${apiPath}`, {
-      method,
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        ...(body === undefined ? {} : { "content-type": "application/json" })
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    const result = await retryXuiTimeout(async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), XUI_TIMEOUT_MS);
+      try {
+        const response = await fetch(`${baseUrl}${apiPath}`, {
+          method,
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${apiToken}`,
+            ...(body === undefined ? {} : { "content-type": "application/json" })
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) })
+        });
+        statusCode = response.status;
+        const text = await response.text();
+        let payload;
+        try { payload = text ? JSON.parse(text) : {}; } catch { throw new Error(`3x-ui 返回了无效响应（HTTP ${response.status}）。`); }
+        if (!response.ok || payload.success !== true) {
+          const error = new Error(payload.msg || payload.error || `3x-ui 请求失败（HTTP ${response.status}）。`);
+          error.statusCode = response.status;
+          throw error;
+        }
+        return payload.obj;
+      } finally {
+        clearTimeout(timer);
+      }
     });
-    statusCode = response.status;
-    const text = await response.text();
-    let payload;
-    try { payload = text ? JSON.parse(text) : {}; } catch { throw new Error(`3x-ui 返回了无效响应（HTTP ${response.status}）。`); }
-    if (!response.ok || payload.success !== true) {
-      const error = new Error(payload.msg || payload.error || `3x-ui 请求失败（HTTP ${response.status}）。`);
-      error.statusCode = response.status;
-      throw error;
-    }
     const entry = { ...logContext, level: "info", transport: "direct", allowed: true, statusCode, durationMs: Date.now() - startedAt };
     xuiLogger.info(entry, "3x-ui request completed");
     await persistXuiAudit(entry);
-    return payload.obj;
+    return result;
   } catch (error) {
     const requestError = error.name === "AbortError" ? Object.assign(new Error("3x-ui 请求超时。"), { statusCode: 504 }) : error;
     const entry = { ...logContext, level: "warn", transport: "direct", allowed: true, statusCode: requestError.statusCode || statusCode, durationMs: Date.now() - startedAt, error: requestError.message };
     xuiLogger.warn(entry, "3x-ui request failed");
     await persistXuiAudit(entry);
     throw requestError;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -4575,13 +4580,12 @@ async function getAllXuiInboundIds() {
   throw new Error(lastError ? `无法读取3x-ui入站列表：${lastError.message}` : "3x-ui中没有可关联的入站。");
 }
 
-async function syncXuiClientAccess(emails, group, inboundIds, allInboundIds = null) {
+async function syncXuiClientAccess(emails, inboundIds, allInboundIds = null) {
   if (!emails.length) return;
   const allIds = allInboundIds || await getAllXuiInboundIds();
   const detachIds = allIds.filter(id => !inboundIds.includes(id));
   if (inboundIds.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails, inboundIds } });
   if (detachIds.length) await xuiRequest("/panel/api/clients/bulkDetach", { method: "POST", body: { emails, inboundIds: detachIds } });
-  await xuiRequest("/panel/api/clients/groups/bulkAdd", { method: "POST", body: { emails, group } });
 }
 
 async function getXuiClientByEmail(email) {
@@ -4642,6 +4646,7 @@ async function xuiInboundIdsForUser(user, groupInboundIds = null, allInboundIds 
 }
 
 let xuiInboundProbeSummary = { configured: Boolean(XUI_BASE_URL && XUI_API_TOKEN), totalNodes: 0, onlineNodes: 0, offlineNodes: 0, checkedAt: "" };
+let xuiInboundProbeSnapshot = { configured: Boolean(XUI_BASE_URL && XUI_API_TOKEN), groups: normalizeXuiInboundGroups(), inbounds: [], checkedAt: "" };
 let xuiInboundManagementRefresh = null;
 
 function summarizeXuiInboundProbes(probes, checkedAt = new Date().toISOString()) {
@@ -4650,8 +4655,46 @@ function summarizeXuiInboundProbes(probes, checkedAt = new Date().toISOString())
   return { configured: true, totalNodes, onlineNodes, offlineNodes: totalNodes - onlineNodes, checkedAt };
 }
 
+function publicAccountNodeStatus(user, management = xuiInboundProbeSnapshot) {
+  const currentGroup = activeUserGroup(user);
+  const extraIds = new Set(normalizeXuiInboundIdList(user?.xuiExtraInboundIds));
+  const currentIds = new Set(effectiveXuiInboundIds(management.groups?.[currentGroup] || [], [...extraIds], management.inbounds?.map(inbound => inbound.id) || []));
+  const inbounds = (management.inbounds || []).flatMap(inbound => {
+    const permissionGroups = USER_GROUPS.filter(group => (management.groups?.[group] || []).includes(inbound.id));
+    const custom = inbound.inboundType === "custom";
+    if (custom ? !extraIds.has(inbound.id) : !permissionGroups.length) return [];
+    return [{
+      id: String(inbound.id),
+      name: inbound.name,
+      region: inbound.region,
+      networkLevel: inbound.networkLevel,
+      enabled: inbound.enabled,
+      status: inbound.enabled ? inbound.probeStatus : "disabled",
+      latencyMs: inbound.probeLatencyMs,
+      checkedAt: inbound.probeCheckedAt,
+      subSortIndex: inbound.subSortIndex,
+      custom,
+      accessible: currentIds.has(inbound.id),
+      permissionGroups
+    }];
+  }).sort((left, right) => left.subSortIndex - right.subSortIndex || Number(left.id) - Number(right.id));
+  const accessible = inbounds.filter(inbound => inbound.accessible);
+  return {
+    configured: management.configured !== false,
+    currentGroup,
+    checkedAt: management.checkedAt || "",
+    totalNodes: accessible.length,
+    onlineNodes: accessible.filter(inbound => inbound.status === "online").length,
+    offlineNodes: accessible.filter(inbound => inbound.status === "offline").length,
+    inbounds
+  };
+}
+
 async function xuiInboundManagementData() {
-  if (!XUI_BASE_URL || !XUI_API_TOKEN) return { configured: false, groups: normalizeXuiInboundGroups(), metadata: {}, inbounds: [] };
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) {
+    xuiInboundProbeSnapshot = { configured: false, groups: normalizeXuiInboundGroups(), metadata: {}, inbounds: [], checkedAt: new Date().toISOString() };
+    return xuiInboundProbeSnapshot;
+  }
   const [status, nodes, inbounds, settings, activeInbounds] = await Promise.all([
     xuiRequest("/panel/api/server/status"),
     xuiRequest("/panel/api/nodes/list"),
@@ -4693,12 +4736,14 @@ async function xuiInboundManagementData() {
     ? probeTcpEndpoint(nodeHosts[inbound.nodeGuid], inbound.port)
     : Promise.resolve({ status: "disabled", latencyMs: null, checkedAt: new Date().toISOString(), error: "" })));
   xuiInboundProbeSummary = summarizeXuiInboundProbes(probes);
-  return {
+  xuiInboundProbeSnapshot = {
     configured: true,
     groups,
     metadata,
+    checkedAt: xuiInboundProbeSummary.checkedAt,
     inbounds: rows.map((inbound, index) => ({ ...inbound, probeStatus: probes[index].status, probeLatencyMs: probes[index].latencyMs, probeCheckedAt: probes[index].checkedAt, probeError: probes[index].error }))
   };
+  return xuiInboundProbeSnapshot;
 }
 
 function refreshXuiInboundManagementData() {
@@ -4708,18 +4753,27 @@ function refreshXuiInboundManagementData() {
   return xuiInboundManagementRefresh;
 }
 
-async function syncXuiInboundGroup(group, inboundIds, allInboundIds) {
+async function syncXuiInboundGroup(group, previousInboundIds, inboundIds, allInboundIds) {
+  const addedIds = inboundIds.filter(id => !previousInboundIds.includes(id));
+  const removedIds = previousInboundIds.filter(id => !inboundIds.includes(id));
+  if (!addedIds.length && !removedIds.length) return { group, users: 0 };
   const targets = users.filter(user => isSelfHostedUser(user) && activeUserGroup(user) === group && user.xuiClientEmail);
   if (!targets.length) return { group, users: 0 };
-  const accessBuckets = new Map();
-  for (const user of targets) {
-    const effectiveIds = effectiveXuiInboundIds(inboundIds, user.xuiExtraInboundIds, allInboundIds);
-    const key = effectiveIds.join(",");
-    if (!accessBuckets.has(key)) accessBuckets.set(key, { inboundIds: effectiveIds, users: [] });
-    accessBuckets.get(key).users.push(user);
-  }
-  for (const bucket of accessBuckets.values()) {
-    await syncXuiClientAccess(bucket.users.map(user => String(user.xuiClientEmail).toLowerCase()), group, bucket.inboundIds, allInboundIds);
+  const emails = targets.map(user => String(user.xuiClientEmail).toLowerCase());
+  if (addedIds.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails, inboundIds: addedIds } });
+  if (removedIds.length) {
+    const detachBuckets = new Map();
+    for (const user of targets) {
+      const extraIds = new Set(normalizeXuiInboundIdList(user.xuiExtraInboundIds));
+      const ids = removedIds.filter(id => !extraIds.has(id));
+      if (!ids.length) continue;
+      const key = ids.join(",");
+      if (!detachBuckets.has(key)) detachBuckets.set(key, { inboundIds: ids, emails: [] });
+      detachBuckets.get(key).emails.push(String(user.xuiClientEmail).toLowerCase());
+    }
+    for (const bucket of detachBuckets.values()) {
+      await xuiRequest("/panel/api/clients/bulkDetach", { method: "POST", body: bucket });
+    }
   }
   const syncedAt = new Date().toISOString();
   for (const user of targets) {
@@ -4805,7 +4859,7 @@ async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
   } else {
     mutationResult = await xuiRequest("/panel/api/clients/add", { method: "POST", body: { client: xuiClientWritePayload(null, desired), inboundIds } });
   }
-  await syncXuiClientAccess([email], activeUserGroup(user), inboundIds, allInboundIds);
+  await syncXuiClientAccess([email], inboundIds, allInboundIds);
   let remote;
   try {
     remote = await getXuiClientAfterMutation({ ...user, xuiClientEmail: email });
@@ -6853,9 +6907,13 @@ function buildUserInfoNodes(user) {
   }
   const level = userVipLevel(user);
   const group = activeUserGroup(user).toUpperCase();
-  const remainingBytes = isSelfHostedUser(user) ? user.xuiLastTraffic?.remainingBytes : subscriptions.find(item => item.id === user.subscriptionId)?.metrics?.remainingBytes;
-  const remainingTraffic = Number.isFinite(Number(remainingBytes)) ? `${Number((Math.max(0, Number(remainingBytes)) / 1024 ** 3).toFixed(2))}G` : "未知";
-  nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group} | 剩余流量${remainingTraffic}`);
+  const traffic = isSelfHostedUser(user) ? (user.xuiWeightedTraffic || user.xuiLastTraffic) : null;
+  const usedBytes = Number(traffic?.usedBytes);
+  const totalBytes = Number(traffic?.totalBytes);
+  const depleted = totalBytes > 0 && Number.isFinite(usedBytes) && usedBytes >= totalBytes;
+  const remainingBytes = Number(traffic?.remainingBytes);
+  const remainingTraffic = Number.isFinite(remainingBytes) ? `${Number((Math.max(0, remainingBytes) / 1024 ** 3).toFixed(2))}G` : "未知";
+  nodes.push(`${typeof level === "string" && level.startsWith("vip") ? level.replace("vip", "VIP ") : level} | ${group} | ${depleted ? "流量已耗尽" : `剩余流量${remainingTraffic}`}`);
   return nodes;
 }
 
@@ -8197,11 +8255,14 @@ async function handleApi(req, res, pathname) {
       sendJson(res, 401, { error: "请先登录。", loginUrl: "/login" });
       return;
     }
+    const account = session.role === "user" ? accountBySession(session) : null;
+    const user = account?.linkedUserId ? users.find(item => item.id === account.linkedUserId) : null;
     sendJson(res, 200, {
       ok: true,
       role: session.role,
       account: session.role === "admin" ? session.account : session.email,
-      email: session.email || ""
+      email: session.email || "",
+      hasActiveNodeAccess: Boolean(user && isSelfHostedUser(user) && !isUserExpired(user) && !isUserAccountDisabled(user))
     });
     return;
   }
@@ -8374,8 +8435,17 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/account/node-status" && req.method === "GET") {
-    if (!requireUser(req, res)) return;
-    sendJson(res, 200, xuiInboundProbeSummary);
+    const session = requireUser(req, res);
+    if (!session) return;
+    await loadLatestData();
+    const account = accountBySession(session);
+    const user = account?.linkedUserId ? users.find(item => item.id === account.linkedUserId) : null;
+    if (!user || !isSelfHostedUser(user) || isUserExpired(user) || isUserAccountDisabled(user)) {
+      sendJson(res, 403, { error: "仅有效套餐用户可以查看节点状态。" });
+      return;
+    }
+    const management = xuiInboundProbeSnapshot.checkedAt ? xuiInboundProbeSnapshot : await refreshXuiInboundManagementData();
+    sendJson(res, 200, publicAccountNodeStatus(user, management));
     return;
   }
 
@@ -8962,7 +9032,7 @@ async function handleApi(req, res, pathname) {
       }
       await setXuiState("inbound-groups", "xuiInboundGroups", { groups: next, metadata });
       const synced = [];
-      if (payload.syncGroups !== false) for (const group of USER_GROUPS) synced.push(await syncXuiInboundGroup(group, next[group], allInboundIds));
+      if (payload.syncGroups !== false) for (const group of USER_GROUPS) synced.push(await syncXuiInboundGroup(group, management.groups[group] || [], next[group], allInboundIds));
       sendJson(res, 200, { groups: next, metadata, synced });
     } catch (error) {
       sendJson(res, error.statusCode || 400, { error: error.message });
@@ -10153,7 +10223,7 @@ async function handleApi(req, res, pathname) {
         const allInboundIds = management.inbounds.map(inbound => inbound.id);
         const inheritedInboundIds = effectiveXuiInboundIds(management.groups[activeUserGroup(item)] || [], [], allInboundIds);
         const effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, nextIds, allInboundIds);
-        await syncXuiClientAccess([String(item.xuiClientEmail).toLowerCase()], activeUserGroup(item), effectiveInboundIds, allInboundIds);
+        await syncXuiClientAccess([String(item.xuiClientEmail).toLowerCase()], effectiveInboundIds, allInboundIds);
         item.xuiExtraInboundIds = nextIds;
         item.xuiInboundIds = effectiveInboundIds;
         item.xuiLastSyncedAt = new Date().toISOString();
@@ -11025,6 +11095,7 @@ module.exports = Object.assign(requestHandler, {
   xuiActiveInboundKeys,
   probeTcpEndpoint,
   summarizeXuiInboundProbes,
+  publicAccountNodeStatus,
   normalizeXuiPresence,
   xuiTrafficByUser,
   xuiDirectionalTrafficByUser,
@@ -11058,5 +11129,6 @@ module.exports = Object.assign(requestHandler, {
   restoreUpstreamClashConfig,
   injectPlaceholderNodes,
   postSubconverter,
-  disabledAccountPlaceholderSubscription
+  disabledAccountPlaceholderSubscription,
+  buildUserInfoNodes
 });

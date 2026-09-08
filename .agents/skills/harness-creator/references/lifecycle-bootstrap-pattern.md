@@ -25,17 +25,17 @@ async function dispatchHook(
   hookType: HookType,
   context: HookContext
 ): Promise<HookResult[]> {
-
+  
   // Trust gate: if workspace untrusted, skip ALL hooks
   if (!context.trustBoundary.crossed) {
     logger.warn('Untrusted workspace, skipping hooks');
     return [];
   }
-
+  
   // Session-scoped hooks ephemeral — cleanup on session end
   const sessionHooks = context.hooks.getByScope('session');
   const projectHooks = context.hooks.getByScope('project');
-
+  
   return await Promise.all([
     ...sessionHooks.map(h => h.execute(context)),
     ...projectHooks.map(h => h.execute(context)),
@@ -97,11 +97,11 @@ interface HookRegistry {
   // Session lifecycle
   onSessionStart: (context: SessionContext) => Promise<void>;
   onSessionEnd: (context: SessionContext) => Promise<void>;
-
+  
   // Tool execution
   preToolExecute: (context: ToolContext) => Promise<ToolContext>;
   postToolExecute: (context: ToolResult) => Promise<ToolResult>;
-
+  
   // Prompt submission
   prePromptSubmit: (context: PromptContext) => Promise<PromptContext>;
   postPromptSubmit: (context: ResponseContext) => Promise<ResponseContext>;
@@ -120,14 +120,14 @@ interface TaskRegistry {
     type: 'extraction' | 'benchmark' | 'indexing',
     outputType: 'json' | 'text' | 'file'
   ): string; // Returns typed ID: `extraction-001`
-
+  
   // Strict state machine
   updateState(
     taskId: string,
     state: 'running' | 'completed' | 'failed' | 'killed',
     output?: any
   ): void;
-
+  
   // Two-phase eviction
   evictTask(taskId: string): void;
   // 1. Clean disk output (eager, at terminal state)
@@ -142,9 +142,9 @@ interface TaskRegistry {
 class AgentBootstrap {
   private stages = new Map<string, Stage>();
   private memoizedCallers = new Map<string, any>();
-
+  
   async bootstrap(entryMode: 'cli' | 'server' | 'sdk'): Promise<AgentContext> {
-
+    
     // Stage 1: Minimal context (no trust required)
     await this.runStage('minimal-context', async () => {
       return {
@@ -153,20 +153,20 @@ class AgentBootstrap {
         trustBoundary: { crossed: false },
       };
     });
-
+    
     // Stage 2: Load tools (read-only safe)
     await this.runStage('load-tools', async (context) => {
       context.tools = await this.loadSafeTools();
       return context;
     });
-
+    
     // Stage 3: Trust boundary (user grants consent)
     await this.runStage('trust-boundary', async (context) => {
       const consent = await this.requestConsent();
       context.trustBoundary = { crossed: consent };
       return context;
     });
-
+    
     // Stage 4: Security-sensitive subsystems (requires trust)
     if (context.trustBoundary.crossed) {
       await this.runStage('load-sensitive', async (context) => {
@@ -175,10 +175,10 @@ class AgentBootstrap {
         return context;
       });
     }
-
+    
     return context;
   }
-
+  
   private async runStage(
     name: string,
     fn: (context: AgentContext) => Promise<AgentContext>
@@ -187,11 +187,11 @@ class AgentBootstrap {
     if (this.stages.has(name) && this.stages.get(name).complete) {
       return;
     }
-
+    
     // Run stage
     const stage = { name, complete: false, running: true };
     this.stages.set(name, stage);
-
+    
     try {
       await fn(this.context);
       stage.complete = true;

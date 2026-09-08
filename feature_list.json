@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-08",
+  "updated_at": "2026-09-09",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -350,6 +350,62 @@
         "page_errors": [],
         "checked_at": "2026-09-08"
       }
+    },
+    {
+      "id": "xui-timeout-retry",
+      "name": "Improve 3x-ui request resilience",
+      "description": "Retry a timed-out panel request once and reduce background polling pressure.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "A timed-out 3x-ui request is automatically attempted one more time.",
+        "Non-timeout failures are not retried.",
+        "Direct and standalone 3x-ui service transports share the same retry behavior.",
+        "Background inbound monitoring defaults to a two-minute interval without overlapping an active refresh."
+      ],
+      "verification": [
+        "2026-09-08: Regression coverage confirmed an AbortError is retried exactly once and the second attempt succeeds.",
+        "2026-09-08: Default background inbound polling was reduced from every 30 seconds to every 2 minutes; npm run verify:fast and git diff --check passed."
+      ]
+    },
+    {
+      "id": "xui-inbound-delta-sync",
+      "name": "Synchronize only changed package inbounds",
+      "description": "Apply package-group inbound additions and removals with the matching bulk API while keeping client groups on the single-client update path.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["xui-inbound-subscription-order"],
+      "done_criteria": [
+        "An add-only package change calls only bulkAttach.",
+        "A remove-only package change calls only bulkDetach.",
+        "A mixed change waits for bulkAttach before bulkDetach.",
+        "Package-group synchronization never calls groups/bulkAdd.",
+        "Existing client groupName changes use clients/update/{email}."
+      ],
+      "verification": [
+        "2026-09-09: Payment-chain regression coverage passed add-only, remove-only, mixed ordered synchronization, absence of groups/bulkAdd, and groupName replacement through clients/update/{email}.",
+        "2026-09-09: npm run verify passed application/docs builds and core, 3x-ui, payment-chain, and wallet tests."
+      ]
+    },
+    {
+      "id": "account-node-status-page",
+      "name": "Show account node status",
+      "description": "Let active self-hosted subscribers view real probe status for package inbounds and their private custom inbounds, with upgrade guidance for locked access groups.",
+      "status": "in_progress",
+      "ui": true,
+      "dependencies": ["xui-inbound-subscription-order", "xui-timeout-retry"],
+      "done_criteria": [
+        "Only active self-hosted subscribers see the account node-status navigation and protected data.",
+        "The page shows real status and probe latency for every assigned package-group inbound plus only the current user's custom inbounds.",
+        "Locked package inbounds identify their access group and link to the existing plan purchase flow.",
+        "The API does not expose node hosts, ports, versions, client counts, tokens, or internal errors."
+      ],
+      "verification": [
+        "2026-09-08: npm run check, npm run verify:fast, and git diff --check passed.",
+        "2026-09-08: Regression coverage confirmed package visibility, current access, private custom-inbound filtering, real probe values, and response-field sanitization.",
+        "2026-09-08: Browser verification confirmed desktop and 390px layouts, three status rows, one locked-node action, and the plan-page navigation with no horizontal overflow or runtime errors."
+      ]
     }
   ]
 }

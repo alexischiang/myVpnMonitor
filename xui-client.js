@@ -11,6 +11,15 @@ const XUI_READ_REQUESTS = new Set([
   "POST /panel/api/clients/activeInbounds"
 ]);
 
+async function retryXuiTimeout(operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error.name !== "AbortError") throw error;
+    return operation();
+  }
+}
+
 function assertXuiRequestAllowed(readOnly, method, apiPath) {
   if (!readOnly) return;
   let pathname;
@@ -80,4 +89,4 @@ async function requestXuiService({ serviceUrl, serviceToken, path, method = "GET
   }
 }
 
-module.exports = { assertXuiRequestAllowed, requestXui, requestXuiService };
+module.exports = { assertXuiRequestAllowed, requestXui, requestXuiService, retryXuiTimeout };

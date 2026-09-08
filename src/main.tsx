@@ -42,6 +42,7 @@ const RegisterPage = lazy(() => import("@/components/features/auth-pages").then(
 const ResetPasswordPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.ResetPasswordPage })))
 const AccountShell = lazy(() => import("@/components/features/account-shell").then(module => ({ default: module.AccountShell })))
 const AccountOnboardingPage = lazy(() => import("@/components/features/account-onboarding").then(module => ({ default: module.AccountOnboardingPage })))
+const AccountNodeStatusPage = lazy(() => import("@/components/features/account-node-status").then(module => ({ default: module.AccountNodeStatusPage })))
 const AccountDocsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountDocsPage })))
 const AccountOrderDetailPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrderDetailPage })))
 const AccountOrdersPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrdersPage })))
@@ -115,6 +116,7 @@ function App() {
             <Route path="/onboarding" element={<AccountOnboardingPage />} />
             <Route path="/account" element={<AccountShell />}>
               <Route index element={<AccountOverviewPage />} />
+              <Route path="nodes" element={<AccountNodeStatusPage />} />
               <Route path="subscription" element={<Navigate to="/account" replace />} />
               <Route path="docs" element={<AccountDocsPage />} />
               <Route path="plans" element={<PricingPage />} />
