@@ -19,7 +19,7 @@ import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { useData } from "@/components/features/data-provider"
 import { ProviderBadge } from "@/components/features/provider-badge"
-import { TrafficProgress, UserStatusBadge } from "@/components/features/shared"
+import { StatusDot, TrafficProgress, UserStatusBadge } from "@/components/features/shared"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserFormDialog, type UserFormValues } from "@/components/features/user-form-dialog"
 import { UsersSummaryCard } from "@/components/features/users-summary-card"
@@ -41,7 +41,7 @@ type BatchGiftPreview = {
 }
 
 function OnlineIndicator({ online }: { online: boolean }) {
-  return <span className="relative flex size-1.5 shrink-0" role="status" aria-label={online ? "在线" : "离线"} title={online ? "在线" : "离线"}>{online ? <span className="absolute inline-flex size-full animate-ping rounded-full bg-green-500 opacity-75 motion-reduce:animate-none" /> : null}<span className={`relative inline-flex size-1.5 rounded-full ${online ? "bg-green-500" : "bg-muted-foreground/40"}`} /></span>
+  return <StatusDot status={online ? "online" : "offline"} />
 }
 
 export function UsersPage() {

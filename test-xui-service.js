@@ -1,7 +1,7 @@
 const assert = require("assert");
 const http = require("http");
 const { createXuiApp, validateRequest, validateTrafficReset } = require("./xui-app");
-const { requestXui } = require("./xui-client");
+const { requestXui, retryXuiTimeout } = require("./xui-client");
 const { createMainApp } = require("./main-app");
 const { initializeBillingState } = require("./scripts/migrate-xui-data");
 
@@ -45,6 +45,20 @@ function listen(server) {
 }
 
 async function main() {
+  let timeoutAttempts = 0;
+  assert.deepStrictEqual(await retryXuiTimeout(async () => {
+    timeoutAttempts += 1;
+    if (timeoutAttempts === 1) throw Object.assign(new Error("timeout"), { name: "AbortError" });
+    return { retried: true };
+  }), { retried: true });
+  assert.strictEqual(timeoutAttempts, 2);
+  let failureAttempts = 0;
+  await assert.rejects(retryXuiTimeout(async () => {
+    failureAttempts += 1;
+    throw new Error("request failed");
+  }), /request failed/);
+  assert.strictEqual(failureAttempts, 1);
+
   const migratedState = new FakeStore();
   await migratedState.setState("billing", { nodeTokens: { online: "preserve-me" } });
   assert.strictEqual(await initializeBillingState(migratedState, { nodeTokens: { stale: "do-not-restore" } }), false);

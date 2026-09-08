@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-08
-- Current Objective: 发布订阅直取、转换模板保留、入站排序和销售筛选改动
+- Current Objective: 节点状态三色呼吸点
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -66,8 +66,16 @@
 
 - 2026-09-08: 2026-09-08: npm run agent:init、npm run verify、git diff --check 通过；相关 UI 路由已有当天空 console_errors/page_errors 浏览器验证记录
 
+- 2026-09-08: 超时回归测试、npm run verify:fast 和 git diff --check 通过
+
+- 2026-09-08: 超时自动重试一次，后台探测由 30 秒降至 2 分钟，npm run verify:fast 和 git diff --check 通过
+
+- 2026-09-08: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；浏览器验证 /account/nodes 桌面端与 390px 移动端无横向溢出，解锁按钮跳转正确，console_errors/page_errors 为空
+
+- 2026-09-08: npm run check、npm run verify:fast、git diff --check 通过；浏览器验证工具当前不可用
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/sales-analytics.tsx`, `src/components/features/xui-inbounds.tsx`, `src/types.ts`, `test.js`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/account-shell.tsx`, `src/components/features/shared.tsx`, `src/components/features/users.tsx`, `src/main.tsx`, `test-xui-service.js`, `test.js`, `xui-app.js`, `xui-client.js`, `src/components/features/account-node-status.tsx`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 确认 GitHub Actions 生产部署成功
+- Recommended Next Step: 在浏览器验证 /account/nodes 与用户列表的三态颜色及控制台

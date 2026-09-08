@@ -28,6 +28,12 @@ export function UserStatusBadge({ user }: { user?: User | null }) {
   return <StatusBadge status={status}>{status === "registered" ? "未购买" : status === "ok" ? "Active" : status === "warning" ? "Expiring" : "Expired"}</StatusBadge>
 }
 
+export function StatusDot({ status, label }: { status: "online" | "offline" | "maintenance"; label?: string }) {
+  const color = status === "online" ? "bg-green-500" : status === "offline" ? "bg-red-500" : "bg-amber-500"
+  const text = label || (status === "online" ? "在线" : status === "offline" ? "离线" : "维护中")
+  return <span className="relative flex size-2 shrink-0" role="status" aria-label={text} title={text}><span className={`absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:animate-none ${color}`} /><span className={`relative inline-flex size-2 rounded-full ${color}`} /></span>
+}
+
 export function EmptyState({ title = "暂无数据", description }: { title?: string; description?: string }) {
   return (
     <div className="flex min-h-24 flex-col items-center justify-center gap-1 rounded-lg text-center">
