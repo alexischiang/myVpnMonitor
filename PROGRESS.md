@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-09
-- Current Objective: 提交并部署当前所有改动
+- Last Updated: 2026-09-10
+- Current Objective: 增加套餐分组实际关联重新同步
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -84,8 +84,20 @@
 
 - 2026-09-09: npm run verify通过核心、支付、钱包与构建检查；npm run agent:init通过
 
+- 2026-09-09: npm run verify:fast、git diff --check 通过；中央面板入站 clientStats 兜底与 xui_node_credentials 同步已加入
+
+- 2026-09-09: 修复中心面板 nodeId/node:ID 到节点 guid 的规范化并加入回归覆盖；npm test、npm run verify:fast、git diff --check 通过
+
+- 2026-09-09: 运行接口确认中央面板10节点20入站且20条均带clientStats；快照version=2、今日节点/用户使用量已重置为0；npm test与npm run verify:fast通过
+
+- 2026-09-09: 中央10节点20入站均带clientStats；跳过节点副本并修复空流量读取保留旧基线问题；运行接口返回dailyTraffic version=3、topNode/topUser=0；npm test与npm run verify:fast通过
+
+- 2026-09-10: npm test、npm run verify:fast、git diff --check 通过
+
+- 2026-09-10: npm run check、npm test、npm run verify:fast、git diff --check 通过
+
 ## Next Session
 
-- Files: `.agents/skills/harness-creator/references/context-engineering-pattern.md`, `.agents/skills/harness-creator/references/gotchas.md`, `.agents/skills/harness-creator/references/lifecycle-bootstrap-pattern.md`, `.agents/skills/harness-creator/references/multi-agent-pattern.md`, `.agents/skills/harness-creator/references/tool-registry-pattern.md`, `.agents/skills/harness-creator/templates/session-handoff.md`, `AGENTS.md`, `PROGRESS.md`, `feature_list.json`, `server.js`, `skills-lock.json`, `src/components/features/shared.tsx`, `test-payment.js`, `test.js`
+- Files: `PROGRESS.md`, `server.js`, `src/components/features/xui-inbounds.tsx`, `test.js`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 确认GitHub Actions部署VPS完成
+- Recommended Next Step: 在浏览器打开入站管理，点击重新同步实际关联并核对 3x-ui 三组用户

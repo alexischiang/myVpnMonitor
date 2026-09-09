@@ -4113,7 +4113,7 @@ function xuiDailyNodeTraffic(traffic = {}, previous = {}) {
   const currentByNode = {};
   for (const byNode of Object.values(traffic)) for (const [guid, bytes] of Object.entries(byNode || {})) currentByNode[guid] = (currentByNode[guid] || 0) + Math.max(0, Number(bytes) || 0);
   const date = chinaDateKey();
-  const sameDay = previous.date === date;
+  const sameDay = previous.version === 3 && previous.date === date;
   const baseline = sameDay ? previous.nodes || {} : {};
   const userBaseline = sameDay ? previous.users || {} : {};
   const nodes = {};
@@ -4143,7 +4143,7 @@ function xuiDailyNodeTraffic(traffic = {}, previous = {}) {
     nodes[guid] ||= { baselineBytes: Math.max(0, Number(baseline[guid]?.baselineBytes) || 0), usedBytes: 0 };
     nodes[guid].usedBytes += Math.max(0, Number(item.usedBytes) || 0);
   }
-  return { date, nodes, users };
+  return { version: 3, date, nodes, users };
 }
 
 function probeTcpEndpoint(host, port, timeoutMs = XUI_INBOUND_PROBE_TIMEOUT_MS) {
@@ -4294,7 +4294,7 @@ function withXuiBillingLock(operation) {
 async function getXuiBillingState() {
   const value = await getXuiState("billing", "xuiBilling");
   const state = { multipliers: {}, costConfigs: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
-  if (state.dailyTraffic) state.dailyTraffic = xuiDailyNodeTraffic({}, state.dailyTraffic);
+  if (state.dailyTraffic?.date !== chinaDateKey()) state.dailyTraffic = xuiDailyNodeTraffic({}, state.dailyTraffic);
   return state;
 }
 
@@ -4325,26 +4325,45 @@ async function setXuiNodeToken(guid, token) {
 
 async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
   const localGuid = String(status?.panelGuid || "node:local");
-  const inbounds = (Array.isArray(centralInbounds) ? centralInbounds : [])
-    .filter(item => String(item?.originNodeGuid || `node:${item?.nodeId || "local"}`) === localGuid)
-    .map(item => ({ ...item, originNodeGuid: localGuid }));
+  const nodeGuidsById = new Map((Array.isArray(nodes) ? nodes : []).map(node => [String(node?.id), String(node?.guid || `node:${node?.id}`)]));
+  const inboundOrigin = item => {
+    const origin = String(item?.originNodeGuid || "");
+    const nodeId = String(item?.nodeId || "");
+    if (origin === "node:local") return localGuid;
+    if (origin && nodeGuidsById.has(origin.replace(/^node:/, ""))) return nodeGuidsById.get(origin.replace(/^node:/, ""));
+    if (origin) return origin;
+    return nodeGuidsById.get(nodeId) || localGuid;
+  };
+  const inboundsByKey = new Map();
+  for (const item of Array.isArray(centralInbounds) ? centralInbounds : []) {
+    const originNodeGuid = inboundOrigin(item);
+    inboundsByKey.set(`${originNodeGuid}:${String(item?.id ?? "")}`, { ...item, originNodeGuid });
+  }
   const nodeResults = { [localGuid]: { configured: true, error: "" } };
   await Promise.all((Array.isArray(nodes) ? nodes : []).map(async node => {
     const guid = String(node?.guid || `node:${node?.id}`);
     const sealedToken = nodeTokens[guid];
+    const hasCentralTraffic = [...inboundsByKey.values()].some(item => item.originNodeGuid === guid && Array.isArray(item.clientStats));
+    if (hasCentralTraffic) {
+      nodeResults[guid] = { configured: true, error: "", source: "panel" };
+      return;
+    }
     if (!sealedToken) {
-      nodeResults[guid] = { configured: false, error: "" };
+      nodeResults[guid] = { configured: hasCentralTraffic, error: "", source: hasCentralTraffic ? "panel" : "" };
       return;
     }
     try {
       const token = openXuiNodeToken(sealedToken);
       const rows = await xuiRequestAt(xuiNodeBaseUrl(node), token, "/panel/api/inbounds/list");
-      inbounds.push(...(Array.isArray(rows) ? rows : []).map(item => ({ ...item, originNodeGuid: guid })));
+      for (const item of Array.isArray(rows) ? rows : []) {
+        inboundsByKey.set(`${guid}:${String(item?.id ?? "")}`, { ...item, originNodeGuid: guid });
+      }
       nodeResults[guid] = { configured: true, error: "" };
     } catch (error) {
       nodeResults[guid] = { configured: true, error: error.message };
     }
   }));
+  const inbounds = [...inboundsByKey.values()];
   return { traffic: xuiTrafficByUser(inbounds), directionalTraffic: xuiDirectionalTrafficByUser(inbounds), nodeResults, inbounds };
 }
 
@@ -4757,7 +4776,11 @@ async function syncXuiInboundGroup(group, previousInboundIds, inboundIds, allInb
   const addedIds = inboundIds.filter(id => !previousInboundIds.includes(id));
   const removedIds = previousInboundIds.filter(id => !inboundIds.includes(id));
   if (!addedIds.length && !removedIds.length) return { group, users: 0 };
-  const targets = users.filter(user => isSelfHostedUser(user) && activeUserGroup(user) === group && user.xuiClientEmail);
+  const targets = users.filter(user => {
+    if (!isSelfHostedUser(user) || !user.xuiClientEmail) return false;
+    const productGroup = normalizeUserGroup(user.currentProductId, "");
+    return (productGroup || activeUserGroup(user)) === group;
+  });
   if (!targets.length) return { group, users: 0 };
   const emails = targets.map(user => String(user.xuiClientEmail).toLowerCase());
   if (addedIds.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails, inboundIds: addedIds } });
@@ -4784,6 +4807,39 @@ async function syncXuiInboundGroup(group, previousInboundIds, inboundIds, allInb
   }
   await saveUsers();
   return { group, users: targets.length };
+}
+
+async function resyncXuiInboundGroups(groups, allInboundIds) {
+  const clients = await xuiRequest("/panel/api/clients/list");
+  const clientsByEmail = new Map((Array.isArray(clients) ? clients : []).map(client => [String(client?.email || "").trim().toLowerCase(), client]));
+  const buckets = new Map();
+  const discrepancies = [];
+  for (const user of users) {
+    if (!isSelfHostedUser(user) || !user.xuiClientEmail) continue;
+    const email = String(user.xuiClientEmail).trim().toLowerCase();
+    const group = normalizeUserGroup(user.currentProductId, activeUserGroup(user));
+    const desired = effectiveXuiInboundIds(groups[group] || [], user.xuiExtraInboundIds, allInboundIds);
+    const actual = normalizeXuiInboundIdList(clientsByEmail.get(email)?.inboundIds);
+    const attach = desired.filter(id => !actual.includes(id));
+    const detach = actual.filter(id => !desired.includes(id) && !normalizeXuiInboundIdList(user.xuiExtraInboundIds).includes(id));
+    if (attach.length || detach.length) discrepancies.push({ email, group, attach, detach });
+    if (attach.length) {
+      const key = `attach:${attach.join(",")}`;
+      if (!buckets.has(key)) buckets.set(key, { type: "attach", inboundIds: attach, emails: [] });
+      buckets.get(key).emails.push(email);
+    }
+    if (detach.length) {
+      const key = `detach:${detach.join(",")}`;
+      if (!buckets.has(key)) buckets.set(key, { type: "detach", inboundIds: detach, emails: [] });
+      buckets.get(key).emails.push(email);
+    }
+    user.xuiInboundIds = desired;
+    user.xuiLastSyncedAt = new Date().toISOString();
+    user.xuiLastError = "";
+  }
+  for (const bucket of buckets.values()) await xuiRequest(`/panel/api/clients/${bucket.type === "attach" ? "bulkAttach" : "bulkDetach"}`, { method: "POST", body: { emails: bucket.emails, inboundIds: bucket.inboundIds } });
+  await saveUsers();
+  return { checked: users.filter(user => isSelfHostedUser(user) && user.xuiClientEmail).length, repaired: discrepancies.length, discrepancies };
 }
 
 function xuiClientNeedsUpdate(existing, desired) {
@@ -9016,6 +9072,16 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/xui-inbound-groups/resync" && req.method === "POST") {
+    try {
+      const management = await refreshXuiInboundManagementData();
+      sendJson(res, 200, await resyncXuiInboundGroups(management.groups, management.inbounds.map(inbound => inbound.id)));
+    } catch (error) {
+      sendJson(res, error.statusCode || 502, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/xui-inbound-groups" && req.method === "PUT") {
     try {
       const payload = await readJson(req);
@@ -9097,8 +9163,9 @@ async function handleApi(req, res, pathname) {
       });
       monitor.nodes.forEach(node => {
         const trafficStatus = billing.nodeResults[node.guid] || {};
-        node.trafficTokenRequired = node.id !== "local";
-        node.trafficConfigured = Boolean(nodeTokens[node.guid]);
+        const hasCentralTraffic = node.id === "local" || (Array.isArray(inbounds) && inbounds.some(item => String(item?.originNodeGuid || `node:${item?.nodeId || "local"}`) === node.guid && Array.isArray(item?.clientStats)));
+        node.trafficTokenRequired = node.id !== "local" && !hasCentralTraffic;
+        node.trafficConfigured = Boolean(nodeTokens[node.guid]) || trafficStatus.configured === true || hasCentralTraffic;
         node.trafficError = String(trafficStatus.error || "");
         node.multiplier = xuiMultiplier(billing.multipliers[node.guid]);
         node.costConfig = nodeCostConfigForDate(billing.costConfigs[node.guid]);
@@ -11081,6 +11148,7 @@ module.exports = Object.assign(requestHandler, {
   normalizeManualSubscriptionContent,
   normalizeSubscription,
   normalizeXuiClientResult,
+  xuiTrafficFromNodes,
   selfHostedSubscriptionUrl,
   fetchSelfHostedSubscription,
   sendSubconverterSubscription,
