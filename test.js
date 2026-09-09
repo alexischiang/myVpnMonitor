@@ -54,6 +54,7 @@ const {
   sendSubconverterSubscription,
   normalizeXuiConnectedIps,
   normalizeXuiMonitor,
+  xuiTrafficFromNodes,
   normalizeXuiInbounds,
   normalizeXuiInboundGroups,
   normalizeXuiInboundIdList,
@@ -459,6 +460,15 @@ const xuiMonitor = normalizeXuiMonitor(
   [{ id: 1, remark: "Tokyo", address: "node.example.com", port: 443, status: "online", cpuPct: 10, memPct: 20, netUp: 10, netDown: 20, clientCount: 2, onlineCount: 1 }]
 );
 assert.deepStrictEqual([xuiMonitor.system.cpu, xuiMonitor.system.memoryUsed, xuiMonitor.nodes[0].clientCount, xuiMonitor.nodes[0].downloadBytes], [12.5, 40, 2, 20]);
+const centralTrafficPromise = xuiTrafficFromNodes(
+  { panelGuid: "local" },
+  [{ id: 5, guid: "remote" }],
+  [{ id: 7, originNodeGuid: "remote", clientStats: [{ email: "user@example.com", up: 10, down: 20 }] }],
+  {}
+).then(({ traffic, nodeResults }) => {
+  assert.deepStrictEqual(traffic, { "user@example.com": { remote: 30 } });
+  assert.deepStrictEqual(nodeResults.remote, { configured: true, error: "", source: "panel" });
+});
   const xuiInbounds = normalizeXuiInbounds([{ id: 2, remark: "VLESS", protocol: "vless", port: 443, up: 10, down: 20, total: 100, clientStats: [{}, {}] }]);
   assert.deepStrictEqual([xuiInbounds[0].clients, xuiInbounds[0].uploadBytes, xuiInbounds[0].downloadBytes], [2, 10, 20]);
 assert.deepStrictEqual(normalizeXuiInboundGroups({ groups: { basic: [2, "3", 2, -1], pro: [7] } }), { basic: [2, 3], pro: [7], ultra: [] });
@@ -672,6 +682,7 @@ assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chr
 
 let migrationRuns = 0;
 Promise.all([
+  centralTrafficPromise,
   (async () => {
     const originalFetch = global.fetch;
     const calls = [];
