@@ -463,7 +463,7 @@ assert.deepStrictEqual([xuiMonitor.system.cpu, xuiMonitor.system.memoryUsed, xui
 const centralTrafficPromise = xuiTrafficFromNodes(
   { panelGuid: "local" },
   [{ id: 5, guid: "remote" }],
-  [{ id: 7, originNodeGuid: "remote", clientStats: [{ email: "user@example.com", up: 10, down: 20 }] }],
+  [{ id: 7, nodeId: 5, clientStats: [{ email: "user@example.com", up: 10, down: 20 }] }],
   {}
 ).then(({ traffic, nodeResults }) => {
   assert.deepStrictEqual(traffic, { "user@example.com": { remote: 30 } });

@@ -169,6 +169,19 @@ export function XuiInboundsPage() {
     }
   }
 
+  async function resyncGroups() {
+    setSaving(true)
+    try {
+      const result = await postJson<{ checked: number; repaired: number }>("/api/xui-inbound-groups/resync", {})
+      toast.success(`已检查 ${result.checked} 个用户，修复 ${result.repaired} 个关联`)
+      await refresh()
+    } catch (syncError) {
+      toast.error(syncError instanceof Error ? syncError.message : "重新同步失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const renderMobileInbound = React.useCallback((inbound: XuiInbound) => {
     const level = networkLevels.find(item => item.value === inbound.networkLevel)?.label || "未设置"
     const availableGroups = planGroups.filter(group => (groups[group] || []).includes(inbound.id)).map(group => planLabels[group]).join(" / ") || "未分配"
@@ -251,7 +264,7 @@ export function XuiInboundsPage() {
                 </Table>
             </div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><Button onClick={() => void saveGroupSettings()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存套餐分组</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><Button variant="outline" onClick={() => void resyncGroups()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <RefreshCw />}重新同步实际关联</Button><Button onClick={() => void saveGroupSettings()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存套餐分组</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
