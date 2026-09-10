@@ -4337,7 +4337,13 @@ async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
     }
   }));
   const inbounds = [...inboundsByKey.values()];
-  return { traffic: xuiTrafficByUser(inbounds), directionalTraffic: xuiDirectionalTrafficByUser(inbounds), nodeResults, inbounds };
+  // Central panel gives each client's GLOBAL total on the local node; subtract the remote nodes'
+  // real usage to recover the local node's own usage and avoid double-counting the remotes.
+  const directionalTraffic = xuiTraffic.deductRemotesFromLocalNode(xuiDirectionalTrafficByUser(inbounds), localGuid);
+  const traffic = Object.fromEntries(Object.entries(directionalTraffic).map(([email, nodes]) =>
+    [email, Object.fromEntries(Object.entries(nodes).map(([guid, dir]) => [guid, (Number(dir?.inBytes) || 0) + (Number(dir?.outBytes) || 0)]))]
+  ));
+  return { traffic, directionalTraffic, nodeResults, inbounds };
 }
 
 function xuiResetReference(value) {
