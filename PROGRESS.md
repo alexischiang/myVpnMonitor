@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-10
-- Current Objective: 增加套餐分组实际关联重新同步
+- Current Objective: 修复用户流量翻倍统计
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -96,8 +96,12 @@
 
 - 2026-09-10: npm run check、npm test、npm run verify:fast、git diff --check 通过
 
+- 2026-09-10: npm test; npm run verify:fast; git diff --check
+
+- 2026-09-10: npm run verify、npm run agent:init、git diff --check 全部通过
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `server.js`, `src/components/features/xui-inbounds.tsx`, `test.js`
+- Files: `AGENTS.md`, `PROGRESS.md`, `server.js`, `test-payment.js`, `test.js`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 在浏览器打开入站管理，点击重新同步实际关联并核对 3x-ui 三组用户
+- Recommended Next Step: 部署后观察流量累计并核对节点来源别名
