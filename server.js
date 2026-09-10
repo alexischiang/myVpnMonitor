@@ -47,6 +47,10 @@ const XUI_SERVICE_URL = (process.env.XUI_SERVICE_URL || "").replace(/\/+$/, "");
 const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
 const XUI_READ_ONLY = process.env.XUI_READ_ONLY === "true";
 const XUI_TRAFFIC_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+// Max panel clients to switch to total=0 per sync. clients/update is a per-client panel write
+// that locks the panel's SQLite, so mass updates must be throttled — a few per sync gradually
+// migrates every client to "unlimited on panel" without flooding it.
+const XUI_PANEL_QUOTA_CLEAR_PER_SYNC = Math.max(0, Number(process.env.XUI_PANEL_QUOTA_CLEAR_PER_SYNC || 5));
 const XUI_DEFAULT_TRAFFIC_BYTES = 100 * 1024 ** 3;
 const XUI_VISION_FLOW = "xtls-rprx-vision";
 const LEGACY_RECURRING_TRAFFIC_GB = Object.freeze({ basic: 50, pro: 100, ultra: 100 });
@@ -4490,6 +4494,7 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     } catch (error) {
       console.warn(`[xui-traffic] Failed to load cycle sums: ${error.message}`);
     }
+    let panelQuotaClears = 0;
     const disableEmails = [];
     const enableEmails = [];
     const changedUsers = [];
@@ -4549,9 +4554,10 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       // totalGB=0 (unlimited on the panel) so depletion is enforced solely by our bulkDisable/
       // bulkEnable below. Only fires while the panel still carries a finite total; enable state
       // is left untouched here and driven by the disable/enable batches.
-      if (!XUI_READ_ONLY && user && Number(remote.totalGB) !== 0 && !isUserAccountDisabled(user)) {
+      if (!XUI_READ_ONLY && user && Number(remote.totalGB) !== 0 && !isUserAccountDisabled(user) && panelQuotaClears < XUI_PANEL_QUOTA_CLEAR_PER_SYNC) {
         try {
           await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable: remote.enable !== false }) });
+          panelQuotaClears += 1;
         } catch (error) {
           console.warn(`[xui-billing] Failed to clear panel quota for ${email}: ${error.message}`);
         }
