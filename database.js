@@ -2,7 +2,7 @@ const COLLECTIONS = ["subscriptions", "users", "accounts", "bills", "vendors", "
 const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
 const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
 const { appendXuiAuditLog, initXuiAudit, listXuiAuditLogs } = require("./xui-audit");
-const { directionalDelta } = require("./xui-traffic");
+const { directionalDelta, applyLocalNodeDelta } = require("./xui-traffic");
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -607,7 +607,7 @@ class PostgresDataStore {
   // serialize and can never double-count (the second writer sees the advanced
   // cursor and derives a zero/partial delta). First observation of a pair records
   // no delta — it only seeds the cursor.
-  async recordXuiTrafficSamples(dateKey, samples) {
+  async recordXuiTrafficSamples(dateKey, samples, localGuid = "") {
     const clean = (Array.isArray(samples) ? samples : [])
       .filter(sample => sample && sample.email && sample.nodeGuid)
       .map(sample => ({
@@ -633,20 +633,29 @@ class PostgresDataStore {
         const delta = { emails: [], nodes: [], ups: [], downs: [] };
         const cursor = { emails: [], nodes: [], ups: [], downs: [] };
         let seeded = 0;
+        const deltaByEmail = new Map();
         for (const sample of clean) {
           const stored = cursorByKey.get(`${sample.email} ${sample.nodeGuid}`) || null;
           if (!stored) seeded += 1;
           const change = directionalDelta({ up: sample.up, down: sample.down }, stored);
-          if (change.up > 0 || change.down > 0) {
-            delta.emails.push(sample.email);
-            delta.nodes.push(sample.nodeGuid);
-            delta.ups.push(change.up);
-            delta.downs.push(change.down);
-          }
+          const perNode = deltaByEmail.get(sample.email) || {};
+          perNode[sample.nodeGuid] = change;
+          deltaByEmail.set(sample.email, perNode);
           cursor.emails.push(sample.email);
           cursor.nodes.push(sample.nodeGuid);
           cursor.ups.push(sample.up);
           cursor.downs.push(sample.down);
+        }
+        for (const [email, perNode] of deltaByEmail) {
+          applyLocalNodeDelta(perNode, localGuid);
+          for (const [node, change] of Object.entries(perNode)) {
+            if (change.up > 0 || change.down > 0) {
+              delta.emails.push(email);
+              delta.nodes.push(node);
+              delta.ups.push(change.up);
+              delta.downs.push(change.down);
+            }
+          }
         }
         if (delta.emails.length) {
           await client.query(

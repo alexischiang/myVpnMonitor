@@ -98,4 +98,39 @@ assert.deepStrictEqual(d3["u@x"].LA, { inBytes: 0, outBytes: 0 }, "negative clam
 const d4 = deductRemotesFromLocalNode({ "u@x": { TW: { inBytes: 5, outBytes: 5 } } }, "LA");
 assert.deepStrictEqual(d4["u@x"], { TW: { inBytes: 5, outBytes: 5 } }, "no local → untouched");
 
+// applyLocalNodeDelta (Plan B): derive the local node's per-ROUND usage in delta-space as
+// Δglobal − ΣΔremote, instead of delta-ing the absolute residual (which re-counts on lag dips).
+const { applyLocalNodeDelta } = require("./xui-traffic");
+// normal round: global grew 10/20, remote grew 3/5 → local own growth = 7/15
+assert.deepStrictEqual(
+  applyLocalNodeDelta({ LA: { up: 10, down: 20 }, TW: { up: 3, down: 5 } }, "LA"),
+  { LA: { up: 7, down: 15 }, TW: { up: 3, down: 5 } },
+  "local = Δglobal - Σremote; remote untouched"
+);
+// lag round: remote's fresh counter moved (+5) but central global hasn't caught up (Δglobal=0)
+// → local delta clamps to 0 (NOT re-counted). This is the exact case the old path exploded on.
+assert.deepStrictEqual(
+  applyLocalNodeDelta({ LA: { up: 0, down: 0 }, JP: { up: 5, down: 0 } }, "LA"),
+  { LA: { up: 0, down: 0 }, JP: { up: 5, down: 0 } },
+  "global lag (ΔG=0, ΔR>0) → local 0, no re-count"
+);
+// multiple remotes summed
+assert.deepStrictEqual(
+  applyLocalNodeDelta({ LA: { up: 100, down: 100 }, A: { up: 10, down: 20 }, B: { up: 30, down: 5 } }, "LA").LA,
+  { up: 60, down: 75 },
+  "sum over all remotes"
+);
+// no local guid entry → map untouched
+assert.deepStrictEqual(
+  applyLocalNodeDelta({ TW: { up: 5, down: 5 } }, "LA"),
+  { TW: { up: 5, down: 5 } },
+  "no local entry → untouched"
+);
+// lag dip is suppressed to 0; genuine local growth (global rises while remote flat) still counts
+{
+  const r1 = applyLocalNodeDelta({ LA: { up: 0, down: 0 }, JP: { up: 5, down: 0 } }, "LA").LA;
+  const r2 = applyLocalNodeDelta({ LA: { up: 5, down: 0 }, JP: { up: 0, down: 0 } }, "LA").LA;
+  assert.ok(r1.up === 0 && r2.up === 5, "dip suppressed, genuine local growth still counted");
+}
+
 console.log("xui-traffic pure-function checks passed.");
