@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-10
-- Current Objective: 修复用户流量翻倍统计
+- Current Objective: 将本地测试环境通过 SSH 隧道连接线上 vpn_monitor 数据库
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -100,8 +100,10 @@
 
 - 2026-09-10: npm run verify、npm run agent:init、git diff --check 全部通过
 
+- 2026-09-10: SSH 191.223.40.89:22 可达；本地 127.0.0.1:15432 隧道已建立；PostgreSQL 查询返回 vpn_monitor/vpn_monitor/app_records=1668；npm run verify:fast 通过
+
 ## Next Session
 
-- Files: `AGENTS.md`, `PROGRESS.md`, `server.js`, `test-payment.js`, `test.js`
+- Files: none
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 部署后观察流量累计并核对节点来源别名
+- Recommended Next Step: 启动 SSH 转发 ssh -o ExitOnForwardFailure=yes -N -L 15432:127.0.0.1:5432 root@191.223.40.89，然后运行 npm run dev:all；不要运行会写入线上库的迁移或同步脚本

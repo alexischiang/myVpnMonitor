@@ -25,7 +25,7 @@
     "migrate:xui-data": "node scripts/migrate-xui-data.js",
     "setup:xui-db": "node scripts/setup-local-xui-db.js",
     "sync:neon-to-local": "node scripts/sync-neon-to-postgres.js",
-    "test": "node test.js && node test-xui-service.js",
+    "test": "node test.js && node test-xui-service.js && node test-xui-traffic.js",
     "test:payment": "node test-payment.js",
     "test:wallet": "node test-wallet.js"
   },
