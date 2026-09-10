@@ -68,15 +68,10 @@ const {
   normalizeXuiPresence,
   xuiTrafficByUser,
   xuiDirectionalTrafficByUser,
-  xuiDailyNodeTraffic,
   updateProfitTrafficMonth,
   normalizeNodeCostConfig,
   nodeCostConfigForDate,
   salesProfitabilityReport,
-  appendXuiDailyTrafficHistory,
-  xuiUserDailyTraffic,
-  calculateXuiBillingLedger,
-  createXuiBillingBaseline,
   pendingXuiTrafficAlert,
   xuiClientCycleKey,
   xuiBillingPayload,
@@ -402,48 +397,10 @@ const trafficByUser = xuiTrafficByUser([
   { id: 3, originNodeGuid: "jp", clientStats: [{ email: "user@test.com", up: 20, down: 30 }] }
 ]);
 assert.deepStrictEqual(trafficByUser, { "user@test.com": { hk: 150, jp: 50 } });
-const dailyTraffic = xuiDailyNodeTraffic({ user: { hk: 150 } }, xuiDailyNodeTraffic({ user: { hk: 100 } }));
-const trafficBeforeDisable = xuiDailyNodeTraffic(
-  xuiTrafficByUser([{ originNodeGuid: "la", enable: true, clientStats: [{ email: "user", up: 150, down: 0 }] }]),
-  xuiDailyNodeTraffic(xuiTrafficByUser([{ originNodeGuid: "la", enable: true, clientStats: [{ email: "user", up: 100, down: 0 }] }]))
-);
-const trafficAfterDisable = xuiDailyNodeTraffic(
-  xuiTrafficByUser([{ originNodeGuid: "la", enable: false, clientStats: [{ email: "user", up: 999, down: 999 }] }]),
-  trafficBeforeDisable
-);
-assert.deepStrictEqual([trafficBeforeDisable.nodes.la.usedBytes, trafficAfterDisable.nodes.la.usedBytes], [50, 50]);
-const resetDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 20 } }, dailyTraffic);
-assert.deepStrictEqual([resetDailyTraffic.nodes.hk.usedBytes, resetDailyTraffic.users.user.usedBytes], [70, 70]);
-const partialDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 110 } }, xuiDailyNodeTraffic({ user: { hk: 100, jp: 100 } }));
-const restoredDailyTraffic = xuiDailyNodeTraffic({ user: { hk: 120, jp: 120 } }, partialDailyTraffic);
-assert.strictEqual(restoredDailyTraffic.users.user.usedBytes, 40);
-  const retainedNodeTraffic = xuiDailyNodeTraffic({ user: { hk: 120 } }, partialDailyTraffic);
-  assert.strictEqual(retainedNodeTraffic.nodes.jp.usedBytes, 0);
-  const sharedNodeTraffic = xuiDailyNodeTraffic({ first: { hk: 110 }, second: { hk: 110 } }, xuiDailyNodeTraffic({ first: { hk: 100 }, second: { hk: 100 } }));
-  assert.strictEqual(xuiDailyNodeTraffic({ first: { hk: 120 } }, sharedNodeTraffic).nodes.hk.usedBytes, 30);
 assert.deepStrictEqual(xuiBillingPayload({ users: { user: {} }, nodeTokens: { hk: "secret" } }), { users: { user: {} } });
-assert.strictEqual(xuiDailyNodeTraffic({ user: { hk: 120 } }, { date: dailyTraffic.date, users: { user: { baselineBytes: 100, usedBytes: 100 } } }).users.user.usedBytes, 0);
-let trafficHistory = {};
-for (let day = 18; day <= 25; day += 1) trafficHistory = appendXuiDailyTrafficHistory(trafficHistory, { date: `2026-08-${day}`, users: { user: { usedBytes: day } } });
-assert.deepStrictEqual(trafficHistory.days.map(item => item.date), ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23", "2026-08-24", "2026-08-25"]);
-const sevenDayTraffic = xuiUserDailyTraffic(trafficHistory, { date: "2026-08-26", users: { user: { usedBytes: 26 } } }, "USER", Date.UTC(2026, 7, 26, 4));
-assert.deepStrictEqual(sevenDayTraffic.map(item => [item.date, item.usedBytes]), [["2026-08-20", 20], ["2026-08-21", 21], ["2026-08-22", 22], ["2026-08-23", 23], ["2026-08-24", 24], ["2026-08-25", 25], ["2026-08-26", 26]]);
-assert.deepStrictEqual(xuiUserDailyTraffic(null, null, "user", Date.UTC(2026, 7, 26, 4)).map(item => item.usedBytes), [0, 0, 0, 0, 0, 0, 0]);
-const firstLedger = calculateXuiBillingLedger(null, trafficByUser["user@test.com"], { hk: 2, jp: 0.5 }, "cycle-1");
-assert.deepStrictEqual([firstLedger.rawBytes, firstLedger.weightedBytes], [200, 325]);
-const linkedBaseline = createXuiBillingBaseline(trafficByUser["user@test.com"], "linked-cycle", { hk: 2, jp: 0.5 });
-assert.deepStrictEqual([linkedBaseline.rawBytes, linkedBaseline.weightedBytes, linkedBaseline.nodes.hk.baselineBytes], [200, 325, 150]);
-const linkedUsage = calculateXuiBillingLedger(linkedBaseline, { hk: 180, jp: 70 }, { hk: 2, jp: 0.5 }, "linked-cycle");
-assert.deepStrictEqual([linkedUsage.rawBytes, linkedUsage.weightedBytes], [250, 395]);
-const nextLedger = calculateXuiBillingLedger(firstLedger, { hk: 180, jp: 70 }, { hk: 2, jp: 0.5 }, "cycle-1");
-assert.deepStrictEqual([nextLedger.rawBytes, nextLedger.weightedBytes], [250, 395]);
-const resetLedger = calculateXuiBillingLedger(nextLedger, { hk: 180, jp: 70 }, { hk: 2, jp: 0.5 }, "cycle-2");
-assert.deepStrictEqual([resetLedger.rawBytes, resetLedger.weightedBytes], [0, 0]);
 assert.deepStrictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 80, trafficAlerts: {} }, 100, 80, { telegram: true, mail: true, userMail: true }), { key: "cycle-1:80", channels: ["telegram", "mail", "userMail"] });
 assert.deepStrictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 90, trafficAlerts: { "cycle-1:80": ["telegram"] } }, 100, 80, { telegram: true, mail: true }), { key: "cycle-1:80", channels: ["mail"] });
 assert.strictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 79 }, 100, 80, { telegram: true }), null);
-const migratedLedger = calculateXuiBillingLedger({ cycleKey: "plan|direct-inbounds-v1", inbounds: { "hk:1": { baselineBytes: 180, rawBytes: 20, weightedBytes: 20 }, "hk:2": { baselineBytes: 180, rawBytes: 20, weightedBytes: 40 } } }, { hk: 200 }, { hk: 2 }, "plan|direct-nodes-v2");
-assert.deepStrictEqual([migratedLedger.rawBytes, migratedLedger.weightedBytes, migratedLedger.nodes.hk.baselineBytes], [40, 80, 200]);
 const clientCreatedAt = Date.UTC(2026, 0, 1);
 assert.notStrictEqual(xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 29 * 864e5), xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 31 * 864e5));
 assert.strictEqual(xuiMonthlyResetAt(31, Date.parse("2026-01-01T00:00:00.000Z")), "2026-01-30T16:00:00.000Z");
@@ -460,14 +417,18 @@ const xuiMonitor = normalizeXuiMonitor(
   [{ id: 1, remark: "Tokyo", address: "node.example.com", port: 443, status: "online", cpuPct: 10, memPct: 20, netUp: 10, netDown: 20, clientCount: 2, onlineCount: 1 }]
 );
 assert.deepStrictEqual([xuiMonitor.system.cpu, xuiMonitor.system.memoryUsed, xuiMonitor.nodes[0].clientCount, xuiMonitor.nodes[0].downloadBytes], [12.5, 40, 2, 20]);
+// The central panel mirrors each client's LA-BWH-own total onto inbounds tagged with remote
+// nodes, so a remote-origin central inbound is NOT real per-node usage and must be dropped
+// (that node's real usage is read from its own API, which requires a token).
 const centralTrafficPromise = xuiTrafficFromNodes(
   { panelGuid: "local" },
   [{ id: 5, guid: "remote" }],
   [{ id: 7, nodeId: 5, clientStats: [{ email: "user@example.com", up: 10, down: 20 }] }],
   {}
 ).then(({ traffic, nodeResults }) => {
-  assert.deepStrictEqual(traffic, { "user@example.com": { remote: 30 } });
-  assert.deepStrictEqual(nodeResults.remote, { configured: true, error: "", source: "panel" });
+  assert.deepStrictEqual(traffic, {});
+  assert.strictEqual(nodeResults.remote.configured, false);
+  assert.strictEqual(nodeResults.remote.source, "");
 });
 const aliasedCentralTrafficPromise = xuiTrafficFromNodes(
   { panelGuid: "local" },
@@ -475,8 +436,22 @@ const aliasedCentralTrafficPromise = xuiTrafficFromNodes(
   [{ id: 7, originNodeGuid: "node:remote-guid", clientStats: [{ email: "user@example.com", up: 10, down: 20 }] }],
   {}
 ).then(({ traffic, inbounds }) => {
-  assert.deepStrictEqual(traffic, { "user@example.com": { "remote-guid": 30 } });
-  assert.strictEqual(inbounds.length, 1);
+  assert.deepStrictEqual(traffic, {});
+  assert.strictEqual(inbounds.length, 0);
+});
+// Local/master node traffic IS trusted, and a client mirrored across several local inbounds
+// must be counted once (max per node), not summed: up+down = 300, not 600.
+const localMirrorTrafficPromise = xuiTrafficFromNodes(
+  { panelGuid: "local" },
+  [],
+  [
+    { id: 1, originNodeGuid: "local", clientStats: [{ email: "u@x.com", up: 100, down: 200 }] },
+    { id: 2, originNodeGuid: "local", clientStats: [{ email: "u@x.com", up: 100, down: 200 }] }
+  ],
+  {}
+).then(({ traffic, nodeResults }) => {
+  assert.deepStrictEqual(traffic, { "u@x.com": { local: 300 } });
+  assert.strictEqual(nodeResults.local.source, "panel");
 });
   const xuiInbounds = normalizeXuiInbounds([{ id: 2, remark: "VLESS", protocol: "vless", port: 443, up: 10, down: 20, total: 100, clientStats: [{}, {}] }]);
   assert.deepStrictEqual([xuiInbounds[0].clients, xuiInbounds[0].uploadBytes, xuiInbounds[0].downloadBytes], [2, 10, 20]);
@@ -692,6 +667,8 @@ assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chr
 let migrationRuns = 0;
 Promise.all([
   centralTrafficPromise,
+  aliasedCentralTrafficPromise,
+  localMirrorTrafficPromise,
   (async () => {
     const originalFetch = global.fetch;
     const calls = [];

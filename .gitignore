@@ -8,3 +8,4 @@ design-template/
 data/
 docs-site/.docusaurus/
 docs-site/build/
+tmp-dbsync/

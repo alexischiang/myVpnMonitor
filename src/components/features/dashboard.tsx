@@ -82,8 +82,18 @@ type XuiDashboardData = {
 function XuiUsageMonitor({ users }: { users: ReturnType<typeof useData>["users"] }) {
   const [data, setData] = React.useState<XuiDashboardData | null>(null)
 
+  const [refreshing, setRefreshing] = React.useState(false)
+
   const refresh = React.useCallback(() => {
     void fetchJson<XuiDashboardData>("/api/xui-presence").then(setData).catch(() => undefined)
+  }, [])
+
+  const forceRefresh = React.useCallback(() => {
+    setRefreshing(true)
+    void postJson<XuiDashboardData>("/api/xui-presence/refresh", {})
+      .then(result => { setData(result); toast.success("已立即刷新流量数据") })
+      .catch(() => toast.error("刷新失败，请稍后重试"))
+      .finally(() => setRefreshing(false))
   }, [])
 
   React.useEffect(() => {
@@ -107,7 +117,16 @@ function XuiUsageMonitor({ users }: { users: ReturnType<typeof useData>["users"]
       <CardHeader><CardDescription>当前在线人数</CardDescription><CardTitle className="flex items-center gap-2 text-3xl tabular-nums"><Activity className="size-6 text-emerald-500" />{data?.configured ? data.onlineEmails?.length ?? 0 : "-"}</CardTitle><CardDescription>按当前 3x-ui 在线客户端去重</CardDescription></CardHeader>
     </Card>
     <Card>
-      <CardHeader><CardTitle>今日节点使用流量</CardTitle><CardDescription>{data?.dailyTraffic?.date ? `${data.dailyTraffic.date}（北京时间）` : "等待流量采集"}</CardDescription></CardHeader>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle>今日节点使用流量</CardTitle>
+          <Button variant="outline" size="sm" onClick={forceRefresh} disabled={refreshing} title="立即执行一次流量同步并获取最新数据">
+            {refreshing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            <span className="ml-1">立即刷新</span>
+          </Button>
+        </div>
+        <CardDescription>{data?.dailyTraffic?.date ? `${data.dailyTraffic.date}（北京时间）` : "等待流量采集"}</CardDescription>
+      </CardHeader>
       <CardContent className="grid gap-3">{ranking.length ? ranking.map(([guid, item], index) => <div key={guid} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-sm"><span className="truncate"><span className="mr-2 text-muted-foreground">{index + 1}</span>{data?.nodeNames?.[guid] || guid}</span><span className="tabular-nums text-muted-foreground">{formatBytes(item.usedBytes)}</span></div><Progress value={Math.max(3, item.usedBytes / maxBytes * 100)} /></div>) : <p className="text-sm text-muted-foreground">暂无今日流量数据</p>}</CardContent>
     </Card>
     <Card>

@@ -10,6 +10,7 @@ const { createDataStore } = require("./database");
 const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const { loadLocalEnv } = require("./env");
 const { assertXuiRequestAllowed, requestXui, requestXuiService, retryXuiTimeout } = require("./xui-client");
+const xuiTraffic = require("./xui-traffic");
 const yaml = require("js-yaml");
 const notifier = require("./notifier");
 const packageJson = require("./package.json");
@@ -3461,7 +3462,7 @@ function grantTrafficPack(user, orderId, trafficPackBytes = Math.round(trafficPa
   const totalBytes = usedBytes + remainingBytesBefore + trafficPackBytes;
   user.xuiTrafficLimitBytes = totalBytes;
   user.xuiTrafficPackBytes = Math.max(0, Number(user.xuiTrafficPackBytes) || 0) + trafficPackBytes;
-  user.xuiTrafficPackCycleKey = user.xuiTrafficCycleKey || "";
+  user.xuiTrafficPackCycleKey = currentXuiCycleStartKey(user) || user.xuiTrafficCycleKey || "";
   user.xuiTrafficPackOrderIds = [...appliedOrderIds, orderId];
   if (user.xuiWeightedTraffic) {
     user.xuiWeightedTraffic.totalBytes = totalBytes;
@@ -4109,41 +4110,64 @@ function chinaDateKey(value = Date.now()) {
   return parts ? `${parts.year}-${String(parts.month + 1).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}` : "";
 }
 
-function xuiDailyNodeTraffic(traffic = {}, previous = {}) {
-  const currentByNode = {};
-  for (const byNode of Object.values(traffic)) for (const [guid, bytes] of Object.entries(byNode || {})) currentByNode[guid] = (currentByNode[guid] || 0) + Math.max(0, Number(bytes) || 0);
-  const date = chinaDateKey();
-  const sameDay = previous.version === 3 && previous.date === date;
-  const baseline = sameDay ? previous.nodes || {} : {};
-  const userBaseline = sameDay ? previous.users || {} : {};
-  const nodes = {};
-  const users = Object.fromEntries(Object.entries(userBaseline).filter(([, item]) => item?.nodes));
-  for (const [guid, current] of Object.entries(currentByNode)) {
-    nodes[guid] = { baselineBytes: current, usedBytes: 0 };
-  }
-  if (sameDay) {
-    for (const [guid, prior] of Object.entries(baseline)) {
-      if (nodes[guid]) continue;
-      nodes[guid] = { baselineBytes: Math.max(0, Number(prior?.baselineBytes) || 0), usedBytes: Math.max(0, Number(prior?.usedBytes) || 0) };
+// Current billing-cycle start (China day key) for a user. Periodic plans reset on
+// fixed 30-day steps from purchase; lifetime/unlimited plans accumulate from the
+// purchase day. Empty string when the purchase date is unknown.
+function currentXuiCycleStartKey(user = {}, now = Date.now()) {
+  const purchasedMs = Date.parse(user.purchasedAt || user.createdAt || "");
+  const startMs = xuiTraffic.cycleStartMs(purchasedMs, now, { periodic: xuiTraffic.isPeriodicPlan(user) });
+  return startMs == null ? "" : chinaDateKey(startMs);
+}
+
+// Next cycle reset instant (ISO) for display = current cycle start + 30 days. Empty for
+// lifetime/unlimited plans (they never reset).
+function nextXuiCycleResetAt(user = {}, now = Date.now()) {
+  if (!xuiTraffic.isPeriodicPlan(user)) return "";
+  const purchasedMs = Date.parse(user.purchasedAt || user.createdAt || "");
+  const startMs = xuiTraffic.cycleStartMs(purchasedMs, now, { periodic: true });
+  return startMs == null ? "" : new Date(startMs + xuiTraffic.RESET_INTERVAL_DAYS * 86400000).toISOString();
+}
+
+// N-day per-day usedBytes series for a user (from the daily table), zero-filled for
+// missing days, matching the account chart's { date, usedBytes } shape.
+async function xuiUserDailyUsageSeries(email, days = 7, now = Date.now()) {
+  const to = chinaDateKey(now);
+  const from = chinaDateKey(now - (days - 1) * 86400000);
+  const rows = await dataStore.xuiUserDailySeries(String(email || "").trim().toLowerCase(), from, to);
+  const byDate = new Map(rows.map(row => [row.date, row.up + row.down]));
+  return Array.from({ length: days }, (_, index) => {
+    const date = chinaDateKey(now - (days - 1 - index) * 86400000);
+    return { date, usedBytes: byDate.get(date) || 0 };
+  });
+}
+
+// Build the admin presence + today's per-node/per-user traffic overview from the
+// daily table. Shared by the GET poll and the manual-refresh endpoints.
+async function xuiPresencePayload() {
+  const state = await getXuiBillingState();
+  const today = chinaDateKey();
+  const [nodeTotals, userTotals] = await Promise.all([dataStore.xuiNodeDailyTotals(today), dataStore.xuiUserDailyTotals(today)]);
+  return {
+    configured: true,
+    ...(state.presence || { checkedAt: "", onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} }),
+    dailyTraffic: {
+      date: today,
+      nodes: Object.fromEntries(nodeTotals.map(item => [item.nodeGuid, { usedBytes: item.up + item.down }])),
+      users: Object.fromEntries(userTotals.map(item => [item.email, { usedBytes: item.up + item.down }]))
+    }
+  };
+}
+
+// Flatten the per-(user,node) directional traffic snapshot into cursor samples
+// for the daily table: { email, nodeGuid, up, down } using current counter values.
+function xuiTrafficSamples(directionalTraffic = {}) {
+  const samples = [];
+  for (const [email, byNode] of Object.entries(directionalTraffic || {})) {
+    for (const [nodeGuid, dir] of Object.entries(byNode || {})) {
+      samples.push({ email, nodeGuid, up: Math.max(0, Number(dir?.inBytes) || 0), down: Math.max(0, Number(dir?.outBytes) || 0) });
     }
   }
-  for (const [email, byNode] of Object.entries(traffic)) {
-    const priorNodes = userBaseline[email]?.nodes || {};
-    const userNodes = { ...priorNodes };
-    for (const [guid, bytes] of Object.entries(byNode || {})) {
-      const current = Math.max(0, Number(bytes) || 0);
-      const prior = priorNodes[guid] || { baselineBytes: current, usedBytes: 0 };
-      const delta = current >= Number(prior.baselineBytes) ? current - Number(prior.baselineBytes) : current;
-      userNodes[guid] = { baselineBytes: current, usedBytes: Math.max(0, Number(prior.usedBytes) || 0) + delta };
-    }
-    users[email] = { nodes: userNodes, usedBytes: Object.values(userNodes).reduce((sum, item) => sum + Math.max(0, Number(item.usedBytes) || 0), 0) };
-  }
-  for (const node of Object.values(nodes)) node.usedBytes = 0;
-  for (const user of Object.values(users)) for (const [guid, item] of Object.entries(user.nodes || {})) {
-    nodes[guid] ||= { baselineBytes: Math.max(0, Number(baseline[guid]?.baselineBytes) || 0), usedBytes: 0 };
-    nodes[guid].usedBytes += Math.max(0, Number(item.usedBytes) || 0);
-  }
-  return { version: 3, date, nodes, users };
+  return samples;
 }
 
 function probeTcpEndpoint(host, port, timeoutMs = XUI_INBOUND_PROBE_TIMEOUT_MS) {
@@ -4170,77 +4194,9 @@ function probeTcpEndpoint(host, port, timeoutMs = XUI_INBOUND_PROBE_TIMEOUT_MS) 
   });
 }
 
-function appendXuiDailyTrafficHistory(history = {}, snapshot = {}) {
-  if (!snapshot?.date) return { days: Array.isArray(history?.days) ? history.days.slice(-7) : [] };
-  const day = { date: snapshot.date, users: Object.fromEntries(Object.entries(snapshot.users || {}).map(([email, item]) => [email, Math.max(0, Number(item?.usedBytes) || 0)])) };
-  return { days: [...(Array.isArray(history?.days) ? history.days : []).filter(item => item?.date !== day.date), day].sort((left, right) => String(left.date).localeCompare(String(right.date))).slice(-7) };
-}
-
-function xuiUserDailyTraffic(history = {}, current = {}, email = "", now = Date.now()) {
-  const currentDay = appendXuiDailyTrafficHistory({}, current).days[0];
-  const byDate = new Map([...(Array.isArray(history?.days) ? history.days : []), ...(currentDay ? [currentDay] : [])].map(item => [item.date, item]));
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = chinaDateKey(now - (6 - index) * 86400000);
-    return { date, usedBytes: Math.max(0, Number(byDate.get(date)?.users?.[String(email).toLowerCase()]) || 0) };
-  });
-}
-
 function xuiMultiplier(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : 1;
-}
-
-function calculateXuiBillingLedger(previous, currentByNode, multipliers, cycleKey, nodeNames = {}) {
-  const cycleBase = value => String(value || "").replace(/\|direct-(?:nodes|inbounds)-v\d+$/, "");
-  const reset = Boolean(previous?.cycleKey && cycleBase(previous.cycleKey) !== cycleBase(cycleKey));
-  const inboundMigration = !reset && previous?.inbounds && !previous?.nodes;
-  const carriedRawBytes = reset ? 0 : Math.max(0, Number(previous?.carriedRawBytes) || 0);
-  const carriedWeightedBytes = reset ? 0 : Math.max(0, Number(previous?.carriedWeightedBytes) || 0);
-  const nodes = reset ? {} : structuredClone(previous?.nodes || {});
-  if (inboundMigration) for (const [key, item] of Object.entries(previous.inbounds)) {
-    const nodeGuid = key.slice(0, key.lastIndexOf(":"));
-    const prior = nodes[nodeGuid] || {};
-    nodes[nodeGuid] = {
-      baselineBytes: Math.max(Number(prior.baselineBytes) || 0, Number(item.baselineBytes) || 0),
-      rawBytes: Math.max(Number(prior.rawBytes) || 0, Number(item.rawBytes) || 0),
-      weightedBytes: Math.max(Number(prior.weightedBytes) || 0, Number(item.weightedBytes) || 0),
-      ...(item.name ? { name: String(item.name) } : {})
-    };
-  }
-  for (const [nodeGuid, currentBytes] of Object.entries(currentByNode || {})) {
-    const prior = nodes[nodeGuid];
-    const current = Math.max(0, Number(currentBytes) || 0);
-    const delta = reset ? 0 : prior ? (current >= prior.baselineBytes ? current - prior.baselineBytes : current) : current;
-    const multiplier = xuiMultiplier(multipliers?.[nodeGuid]);
-    nodes[nodeGuid] = {
-      baselineBytes: current,
-      rawBytes: Math.max(0, Number(prior?.rawBytes) || 0) + delta,
-      weightedBytes: Math.max(0, Number(prior?.weightedBytes) || 0) + Math.round(delta * multiplier),
-      ...(nodeNames[nodeGuid] ? { name: String(nodeNames[nodeGuid]) } : prior?.name ? { name: String(prior.name) } : {})
-    };
-  }
-  return {
-    cycleKey,
-    cycleReset: Boolean(reset),
-    disabled: reset ? false : previous?.disabled === true,
-    trafficAlerts: reset ? {} : previous?.trafficAlerts || {},
-    carriedRawBytes,
-    carriedWeightedBytes,
-    nodes,
-    rawBytes: carriedRawBytes + Object.values(nodes).reduce((sum, item) => sum + item.rawBytes, 0),
-    weightedBytes: carriedWeightedBytes + Object.values(nodes).reduce((sum, item) => sum + item.weightedBytes, 0),
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function createXuiBillingBaseline(currentByNode, cycleKey, multipliers = {}, nodeNames = {}) {
-  const nodes = Object.fromEntries(Object.entries(currentByNode || {}).map(([key, value]) => [key, {
-    baselineBytes: Math.max(0, Number(value) || 0),
-    rawBytes: Math.max(0, Number(value) || 0),
-    weightedBytes: Math.round(Math.max(0, Number(value) || 0) * xuiMultiplier(multipliers[key])),
-    ...(nodeNames[key] ? { name: String(nodeNames[key]) } : {})
-  }]));
-  return { cycleKey, cycleReset: false, disabled: false, trafficAlerts: {}, carriedRawBytes: 0, carriedWeightedBytes: 0, nodes, rawBytes: Object.values(nodes).reduce((sum, item) => sum + item.rawBytes, 0), weightedBytes: Object.values(nodes).reduce((sum, item) => sum + item.weightedBytes, 0), updatedAt: new Date().toISOString() };
 }
 
 function pendingXuiTrafficAlert(ledger, totalBytes, threshold, scope = {}) {
@@ -4293,9 +4249,9 @@ function withXuiBillingLock(operation) {
 
 async function getXuiBillingState() {
   const value = await getXuiState("billing", "xuiBilling");
-  const state = { multipliers: {}, costConfigs: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
-  if (state.dailyTraffic?.date !== chinaDateKey()) state.dailyTraffic = xuiDailyNodeTraffic({}, state.dailyTraffic);
-  return state;
+  // Per-day usage now lives in the xui_daily_traffic table; billing state only carries
+  // multipliers, cost configs, node metadata, presence and the per-user ledger.
+  return { multipliers: {}, costConfigs: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
 }
 
 function xuiBillingPayload(state) {
@@ -4343,21 +4299,23 @@ async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
     return nodeGuidsById.get(nodeId) || localGuid;
   };
   const inboundsByKey = new Map();
+  // The central panel reports each client's LA-BWH-own usage mirrored onto every inbound the
+  // client belongs to — including inbounds tagged with remote nodes. Those remote-tagged copies
+  // are NOT real per-node usage, so only the local/master node's own inbounds are trusted here;
+  // every remote node's real usage is read from that node's own API below and summed.
   for (const item of Array.isArray(centralInbounds) ? centralInbounds : []) {
-    const originNodeGuid = inboundOrigin(item);
-    inboundsByKey.set(`${originNodeGuid}:${String(item?.id ?? "")}`, { ...item, originNodeGuid });
+    if (inboundOrigin(item) !== localGuid) continue;
+    inboundsByKey.set(`${localGuid}:${String(item?.id ?? "")}`, { ...item, originNodeGuid: localGuid });
   }
-  const nodeResults = { [localGuid]: { configured: true, error: "" } };
+  const nodeResults = { [localGuid]: { configured: true, error: "", source: "panel" } };
   await Promise.all((Array.isArray(nodes) ? nodes : []).map(async node => {
     const guid = String(node?.guid || `node:${node?.id}`);
+    if (guid === localGuid) return;
     const sealedToken = nodeTokens[guid];
-    const hasCentralTraffic = [...inboundsByKey.values()].some(item => item.originNodeGuid === guid && Array.isArray(item.clientStats));
-    if (hasCentralTraffic) {
-      nodeResults[guid] = { configured: true, error: "", source: "panel" };
-      return;
-    }
     if (!sealedToken) {
-      nodeResults[guid] = { configured: hasCentralTraffic, error: "", source: hasCentralTraffic ? "panel" : "" };
+      // Without the node's own API token we cannot read its real usage; skip it so the previous
+      // ledger value is preserved instead of falling back to the mirrored central figure.
+      nodeResults[guid] = { configured: false, error: "缺少节点 API Token，无法采集该节点真实用量。", source: "" };
       return;
     }
     try {
@@ -4366,9 +4324,11 @@ async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
       for (const item of Array.isArray(rows) ? rows : []) {
         inboundsByKey.set(`${guid}:${String(item?.id ?? "")}`, { ...item, originNodeGuid: guid });
       }
-      nodeResults[guid] = { configured: true, error: "" };
+      nodeResults[guid] = { configured: true, error: "", source: "node" };
     } catch (error) {
-      nodeResults[guid] = { configured: true, error: error.message };
+      // Query failed this cycle: skip so the previous per-node ledger value is preserved.
+      // Adding a zero here would reset the baseline and double-count on recovery.
+      nodeResults[guid] = { configured: true, error: error.message, source: "" };
     }
   }));
   const inbounds = [...inboundsByKey.values()];
@@ -4401,13 +4361,15 @@ async function resetXuiClientTraffic(user, reset = {}) {
 }
 
 async function resetXuiTrafficAfterPlanPurchase(user, order) {
-  await resetXuiClientTraffic(user, { paymentOrderId: order.id });
+  // Decision X: no panel resetTraffic. The purchase re-anchors purchasedAt, so the daily-table
+  // SUM window moves to the new cycle and usage resets automatically. We just re-anchor the
+  // cycle marker, refresh the in-memory display, and clear the ledger's alert/disable state.
   const now = new Date().toISOString();
   const totalBytes = xuiTrafficLimitBytes(user);
-  user.xuiTrafficCycleKey = `purchase:${order.id}`;
+  user.xuiTrafficCycleKey = currentXuiCycleStartKey(user) || `purchase:${order.id}`;
   user.xuiLastTrafficResetAt = now;
-  user.xuiNextTrafficResetAt = user.duration === "lifetime" ? "" : xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay || chinaDateParts(user.purchasedAt)?.day || 1, user.purchasedAt || now);
-  user.xuiWeightedTraffic = { rawUsedBytes: 0, usedBytes: 0, totalBytes, remainingBytes: totalBytes ? totalBytes : null, usagePercent: totalBytes ? 0 : null, depleted: false, nodes: [], lastSyncedAt: now };
+  user.xuiNextTrafficResetAt = nextXuiCycleResetAt(user);
+  user.xuiWeightedTraffic = { rawUsedBytes: 0, usedBytes: 0, uploadBytes: 0, downloadBytes: 0, totalBytes, remainingBytes: totalBytes ? totalBytes : null, usagePercent: totalBytes ? 0 : null, depleted: false, nodes: [], lastSyncedAt: now };
   user.xuiLastTraffic = { ...(user.xuiLastTraffic || {}), available: true, status: "active", uploadBytes: 0, downloadBytes: 0, rawUsedBytes: 0, usedBytes: 0, totalBytes, remainingBytes: totalBytes ? totalBytes : null, usagePercent: totalBytes ? 0 : null, nextResetAt: user.xuiNextTrafficResetAt || "", expiresAt: user.expiresAt, nodes: [], lastSyncedAt: now };
   await clearXuiBillingLedger(xuiClientEmail(user));
 }
@@ -4425,29 +4387,47 @@ async function resetDueXuiTraffic() {
       }
       continue;
     }
-    if (!user.xuiTrafficResetAnchorDay) {
-      user.xuiTrafficResetAnchorDay = chinaDateParts(user.purchasedAt || user.createdAt || now)?.day || 1;
-      user.xuiNextTrafficResetAt = xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
-      user.xuiTrafficCycleKey ||= `legacy:${user.purchasedAt || user.createdAt || user.id}`;
-      user.xuiTrafficLimitBytes = xuiTrafficLimitBytes(user);
+    const cycleKey = currentXuiCycleStartKey(user, now);
+    if (!cycleKey) continue;
+    // Cycle rolled over (fixed 30-day step from purchase): expire any traffic pack and re-anchor.
+    // Decision X — no panel resetTraffic; usage resets automatically via the daily-table window.
+    if (user.xuiTrafficCycleKey !== cycleKey) {
+      // Only expire the pack on a genuine rollover between two 30-day cycles (both keys are
+      // date strings). The one-time migration from the legacy cycle-key format (reset:/legacy:/
+      // purchase:/linked:) keeps any purchased pack, so at launch a user with 50G plan + 100G
+      // pack stays at 150G through the traffic reset.
+      const rolledFromDateCycle = /^\d{4}-\d{2}-\d{2}$/.test(String(user.xuiTrafficCycleKey || ""));
+      if (rolledFromDateCycle) expireUserTrafficPacks(user);
+      else if (Number(user.xuiTrafficPackBytes) > 0) user.xuiTrafficPackCycleKey = cycleKey;
+      user.xuiTrafficCycleKey = cycleKey;
+      user.xuiLastTrafficResetAt = new Date().toISOString();
+      user.xuiLastError = "";
       changed = true;
     }
-    const dueAt = Date.parse(user.xuiNextTrafficResetAt || "");
-    if (!Number.isFinite(dueAt) || dueAt > now) continue;
-    try {
-      await resetXuiClientTraffic(user, dueAt);
-      const trafficPackExpired = expireUserTrafficPacks(user);
-      if (trafficPackExpired) await provisionXuiClient(user);
-      user.xuiTrafficCycleKey = `reset:${user.xuiNextTrafficResetAt}`;
-      user.xuiLastTrafficResetAt = new Date().toISOString();
-      user.xuiNextTrafficResetAt = xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
-      user.xuiLastError = "";
-    } catch (error) {
-      user.xuiLastError = `月度流量重置失败：${error.message}`;
+    const nextReset = nextXuiCycleResetAt(user, now);
+    if (user.xuiNextTrafficResetAt !== nextReset) {
+      user.xuiNextTrafficResetAt = nextReset;
+      changed = true;
     }
-    changed = true;
   }
   if (changed) await saveUsers();
+}
+
+// Retention cleanup: periodic-plan users keep 90 days of daily rows; lifetime/unlimited
+// users are excluded so their history is kept permanently (their billing sums all time).
+const XUI_DAILY_TRAFFIC_RETENTION_DAYS = 90;
+async function pruneXuiDailyTrafficRetention(now = Date.now()) {
+  const cutoff = chinaDateKey(now - XUI_DAILY_TRAFFIC_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const periodicEmails = [...new Set(users
+    .filter(item => isSelfHostedUser(item) && item.xuiClientEmail && xuiTraffic.isPeriodicPlan(item))
+    .map(item => String(item.xuiClientEmail).trim().toLowerCase()))];
+  if (!cutoff || !periodicEmails.length) return;
+  try {
+    const { deleted } = await dataStore.pruneXuiDailyTraffic(cutoff, periodicEmails);
+    if (deleted) console.log(`[xui-traffic] Pruned ${deleted} daily rows older than ${cutoff} (periodic-plan users; lifetime kept).`);
+  } catch (error) {
+    console.warn(`[xui-traffic] Daily traffic prune failed: ${error.message}`);
+  }
 }
 
 function markMissingXuiClients(appUsersByEmail, remoteEmails, checkedAt = new Date().toISOString()) {
@@ -4479,12 +4459,14 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     const state = await getXuiBillingState();
     const nodeTokens = await getXuiNodeTokens(state.nodeTokens);
     const { traffic, directionalTraffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
-    const dailyTraffic = xuiDailyNodeTraffic(traffic, state.dailyTraffic);
-    if (state.dailyTraffic?.date && state.dailyTraffic.date !== dailyTraffic.date) {
-      const history = appendXuiDailyTrafficHistory(await getXuiState("traffic-history", "xuiTrafficHistory"), state.dailyTraffic);
-      await setXuiState("traffic-history", "xuiTrafficHistory", history);
+    // Record this sampling round into the daily traffic table (the source of truth going
+    // forward). recordXuiTrafficSamples diffs against the per-(user,node) cursor, so the
+    // first observation only seeds the cursor and later rounds add per-day growth.
+    try {
+      await dataStore.recordXuiTrafficSamples(chinaDateKey(), xuiTrafficSamples(directionalTraffic));
+    } catch (error) {
+      console.warn(`[xui-traffic] Failed to record daily samples: ${error.message}`);
     }
-    state.dailyTraffic = dailyTraffic;
     const localGuid = String(status?.panelGuid || "node:local");
     const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
     const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
@@ -4492,6 +4474,22 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     const profitTraffic = updateProfitTrafficMonth(await getProfitTrafficMonth(profitMonth), directionalTraffic, chinaDateKey(), appUsersByEmail, nodeNames);
     await setProfitTrafficMonth(profitMonth, profitTraffic);
     const nodeMultipliers = state.multipliers || {};
+    // Current-cycle usage per user comes from the daily table (single source of truth).
+    // Fetch every app user's per-node cycle sums in one query, keyed by email.
+    const cycleStartByEmail = new Map([...appUsersByEmail].map(([email, item]) => [email, currentXuiCycleStartKey(item)]));
+    const cycleByEmail = new Map();
+    try {
+      const cutoffs = [...cycleStartByEmail].map(([email, fromDate]) => ({ email, fromDate: fromDate || "" }));
+      for (const row of await dataStore.sumXuiCyclesByUser(cutoffs)) {
+        const entry = cycleByEmail.get(row.email) || { nodes: {}, up: 0, down: 0 };
+        entry.nodes[row.nodeGuid] = (entry.nodes[row.nodeGuid] || 0) + row.up + row.down;
+        entry.up += row.up;
+        entry.down += row.down;
+        cycleByEmail.set(row.email, entry);
+      }
+    } catch (error) {
+      console.warn(`[xui-traffic] Failed to load cycle sums: ${error.message}`);
+    }
     const disableEmails = [];
     const enableEmails = [];
     const changedUsers = [];
@@ -4505,17 +4503,17 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       remoteEmails.add(email);
       const user = appUsersByEmail.get(email);
       const previous = state.users[email];
-      const planBytes = user ? xuiTrafficLimitBytes(user, remote) : Math.max(0, Number(previous?.totalBytes ?? remote.totalGB) || 0);
-      const cycleKey = `${user ? user.xuiTrafficCycleKey || `legacy:${user.purchasedAt || user.createdAt || user.id}` : xuiClientCycleKey(remote)}|direct-nodes-v2`;
-      const baselinePending = user?.xuiTrafficBaselinePending || (user?.xuiManagementMode === "link" && user.xuiTrafficBaselineVersion !== 2);
-      const ledger = baselinePending
-        ? createXuiBillingBaseline(traffic[email] || {}, cycleKey, nodeMultipliers, nodeNames)
-        : calculateXuiBillingLedger(state.users[email], traffic[email] || {}, nodeMultipliers, cycleKey, nodeNames);
-      const totalBytes = planBytes;
+      const totalBytes = user ? xuiTrafficLimitBytes(user, remote) : Math.max(0, Number(previous?.totalBytes ?? remote.totalGB) || 0);
+      const cycleStartKey = user ? (cycleStartByEmail.get(email) || "") : "";
+      const cycleUsage = cycleByEmail.get(email) || { nodes: {}, up: 0, down: 0 };
+      const ledger = xuiTraffic.xuiLedgerFromCycle(cycleUsage.nodes, nodeMultipliers, { cycleKey: cycleStartKey, nodeNames, updatedAt: new Date().toISOString(), previous });
       const expired = user ? isUserExpired(user) : Number(remote.expiryTime) > 0 && Number(remote.expiryTime) < Date.now();
       const depleted = totalBytes > 0 && ledger.weightedBytes >= totalBytes;
       if (depleted && remote.enable !== false && !expired) disableEmails.push(email);
-      if (baselinePending && remote.enable === false && !expired && !isUserAccountDisabled(user)) enableEmails.push(email);
+      // Self-healing re-enable: if the panel has the client disabled but they are no longer
+      // over quota (traffic pack, cycle reset, or the from-zero launch) and are otherwise
+      // valid, re-enable them. Independent of any stored ledger flag.
+      if (user && remote.enable === false && !depleted && !expired && !isUserAccountDisabled(user)) enableEmails.push(email);
       ledger.disabled = ledger.disabled || depleted;
       ledger.totalBytes = totalBytes;
       state.users[email] = ledger;
@@ -4524,6 +4522,8 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       const weightedTraffic = {
         rawUsedBytes: ledger.rawBytes,
         usedBytes: ledger.weightedBytes,
+        uploadBytes: cycleUsage.up,
+        downloadBytes: cycleUsage.down,
         totalBytes,
         remainingBytes: totalBytes ? Math.max(totalBytes - ledger.weightedBytes, 0) : null,
         usagePercent: totalBytes ? Math.min(100, Math.round(ledger.weightedBytes / totalBytes * 1000) / 10) : null,
@@ -4537,8 +4537,6 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       if (user) {
         user.xuiClientPresent = true;
         delete user.xuiClientMissingAt;
-        user.xuiTrafficBaselinePending = false;
-        if (baselinePending) user.xuiTrafficBaselineVersion = 2;
         user.xuiWeightedTraffic = weightedTraffic;
         user.xuiLastTraffic = xuiTrafficPayload(user, remote, clientIpsByGuid ? normalizeXuiConnectedIps(clientIpsByGuid, email).length : null);
         user.xuiLastSyncedAt = weightedTraffic.lastSyncedAt;
@@ -4546,13 +4544,16 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
         changedUsers.push(user);
       }
 
-      const quotaChanged = Number(remote.totalGB) !== totalBytes;
-      if (!XUI_READ_ONLY && user && (quotaChanged || previous?.disabled) && !depleted && !expired && !isUserAccountDisabled(user)) {
+      // Decision X: the panel must not enforce quota itself — since we never reset its counter,
+      // a finite total would eventually make the panel permanently disable the client. Push
+      // totalGB=0 (unlimited on the panel) so depletion is enforced solely by our bulkDisable/
+      // bulkEnable below. Only fires while the panel still carries a finite total; enable state
+      // is left untouched here and driven by the disable/enable batches.
+      if (!XUI_READ_ONLY && user && Number(remote.totalGB) !== 0 && !isUserAccountDisabled(user)) {
         try {
-          await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: totalBytes, reset: 0, flow: XUI_VISION_FLOW, enable: true }) });
-          ledger.disabled = false;
+          await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable: remote.enable !== false }) });
         } catch (error) {
-          console.warn(`[xui-billing] Failed to re-enable ${email}: ${error.message}`);
+          console.warn(`[xui-billing] Failed to clear panel quota for ${email}: ${error.message}`);
         }
       }
     }
@@ -5079,9 +5080,11 @@ async function disableXuiClient(user) {
 }
 
 function xuiTrafficPayload(user, remote, connectedIpCount = null) {
-  const uploadBytes = remote.traffic.up;
-  const downloadBytes = remote.traffic.down;
   const billing = user.xuiWeightedTraffic;
+  // Upload/download come from the daily table (same source as usedBytes) so the page
+  // is internally consistent; fall back to the panel's clients/list figure if absent.
+  const uploadBytes = billing?.uploadBytes ?? remote.traffic.up;
+  const downloadBytes = billing?.downloadBytes ?? remote.traffic.down;
   const usedBytes = billing ? billing.usedBytes : 0;
   const totalBytes = billing?.totalBytes ?? planTrafficBytes(user);
   return {
@@ -8494,8 +8497,7 @@ async function handleApi(req, res, pathname) {
       return;
     }
     if (user.xuiLastTraffic) {
-      const [billing, history] = await Promise.all([getXuiBillingState(), getXuiState("traffic-history", "xuiTrafficHistory")]);
-      sendJson(res, 200, { ...user.xuiLastTraffic, dailyUsage: xuiUserDailyTraffic(history, billing.dailyTraffic, xuiClientEmail(user)) });
+      sendJson(res, 200, { ...user.xuiLastTraffic, dailyUsage: await xuiUserDailyUsageSeries(xuiClientEmail(user)) });
     }
     else sendJson(res, 503, { error: "流量数据正在进行首次同步，请稍后查看。" });
     return;
@@ -9128,8 +9130,24 @@ async function handleApi(req, res, pathname) {
       sendJson(res, 200, { configured: false, checkedAt: new Date().toISOString(), onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} });
       return;
     }
-    const state = await getXuiBillingState();
-      sendJson(res, 200, { configured: true, ...(state.presence || { checkedAt: "", onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} }), dailyTraffic: state.dailyTraffic || { date: chinaDateKey(), nodes: {} } });
+    sendJson(res, 200, await xuiPresencePayload());
+    return;
+  }
+
+  if (pathname === "/api/xui-presence/refresh" && req.method === "POST") {
+    if (!XUI_BASE_URL || !XUI_API_TOKEN) {
+      sendJson(res, 200, { configured: false, checkedAt: new Date().toISOString(), onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} });
+      return;
+    }
+    try {
+      // Run one full traffic-sync round now (samples every node, updates billing/enforcement),
+      // then return the freshly recorded overview. Serialized with the scheduled run via the
+      // billing lock, so a manual refresh during a scheduled sync just queues.
+      await syncXuiWeightedTraffic();
+      sendJson(res, 200, await xuiPresencePayload());
+    } catch (error) {
+      sendJson(res, 502, { error: `刷新失败：${error.message}` });
+    }
     return;
   }
 
@@ -11086,6 +11104,10 @@ async function main() {
     setInterval(() => {
       syncXuiWeightedTraffic().catch(error => console.error("3x-ui traffic billing sync failed:", error));
     }, XUI_TRAFFIC_SYNC_INTERVAL_MS);
+    pruneXuiDailyTrafficRetention().catch(error => console.error("3x-ui daily traffic prune failed:", error));
+    setInterval(() => {
+      pruneXuiDailyTrafficRetention().catch(error => console.error("3x-ui daily traffic prune failed:", error));
+    }, 24 * 60 * 60 * 1000);
   }
 }
 
@@ -11184,15 +11206,10 @@ module.exports = Object.assign(requestHandler, {
   normalizeXuiPresence,
   xuiTrafficByUser,
   xuiDirectionalTrafficByUser,
-  xuiDailyNodeTraffic,
   updateProfitTrafficMonth,
   normalizeNodeCostConfig,
   nodeCostConfigForDate,
   salesProfitabilityReport,
-  appendXuiDailyTrafficHistory,
-  xuiUserDailyTraffic,
-  calculateXuiBillingLedger,
-  createXuiBillingBaseline,
   pendingXuiTrafficAlert,
   xuiClientCycleKey,
   xuiBillingPayload,

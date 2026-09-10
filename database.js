@@ -2,6 +2,7 @@ const COLLECTIONS = ["subscriptions", "users", "accounts", "bills", "vendors", "
 const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
 const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
 const { appendXuiAuditLog, initXuiAudit, listXuiAuditLogs } = require("./xui-audit");
+const { directionalDelta } = require("./xui-traffic");
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -139,6 +140,27 @@ class PostgresDataStore {
       ALTER TABLE wallet_entries ADD COLUMN IF NOT EXISTS referral_delta_cents BIGINT NOT NULL DEFAULT 0;
       ALTER TABLE wallet_entries ADD COLUMN IF NOT EXISTS referral_balance_cents BIGINT NOT NULL DEFAULT 0;
       `), "wallet init");
+      await withPgRetry(() => pool.query(`
+      CREATE TABLE IF NOT EXISTS xui_daily_traffic (
+        date TEXT NOT NULL,
+        email TEXT NOT NULL,
+        node_guid TEXT NOT NULL,
+        up_bytes BIGINT NOT NULL DEFAULT 0,
+        down_bytes BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (date, email, node_guid)
+      );
+      CREATE INDEX IF NOT EXISTS xui_daily_traffic_email_date_idx ON xui_daily_traffic (email, date);
+      CREATE INDEX IF NOT EXISTS xui_daily_traffic_date_node_idx ON xui_daily_traffic (date, node_guid);
+      CREATE TABLE IF NOT EXISTS xui_traffic_cursor (
+        email TEXT NOT NULL,
+        node_guid TEXT NOT NULL,
+        last_up BIGINT NOT NULL DEFAULT 0,
+        last_down BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (email, node_guid)
+      )
+      `), "xui daily traffic init");
     } catch (error) {
       if (this.pool === pool) this.pool = null;
       await pool.end().catch(() => undefined);
@@ -575,6 +597,177 @@ class PostgresDataStore {
         client.release();
       }
     }, `save ${collection}`);
+  }
+
+  // Apply one sampling round of per-(user,node) cumulative counters to the daily
+  // table. `samples` = [{ email, nodeGuid, up, down }] with the CURRENT counter
+  // values read from each node. Deltas are computed against xui_traffic_cursor and
+  // added to today's row; the cursor advances to the current values. The whole
+  // round runs under a transaction-scoped advisory lock so concurrent processes
+  // serialize and can never double-count (the second writer sees the advanced
+  // cursor and derives a zero/partial delta). First observation of a pair records
+  // no delta — it only seeds the cursor.
+  async recordXuiTrafficSamples(dateKey, samples) {
+    const clean = (Array.isArray(samples) ? samples : [])
+      .filter(sample => sample && sample.email && sample.nodeGuid)
+      .map(sample => ({
+        email: String(sample.email),
+        nodeGuid: String(sample.nodeGuid),
+        up: Math.max(0, Number(sample.up) || 0),
+        down: Math.max(0, Number(sample.down) || 0)
+      }));
+    if (!clean.length) return { applied: 0, seeded: 0 };
+    return withPgRetry(async () => {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["xui_traffic_sync"]);
+        const emails = [...new Set(clean.map(sample => sample.email))];
+        const cursorResult = await client.query(
+          "SELECT email, node_guid, last_up, last_down FROM xui_traffic_cursor WHERE email = ANY($1::text[])",
+          [emails]
+        );
+        const cursorByKey = new Map(
+          cursorResult.rows.map(row => [`${row.email} ${row.node_guid}`, { up: Number(row.last_up), down: Number(row.last_down) }])
+        );
+        const delta = { emails: [], nodes: [], ups: [], downs: [] };
+        const cursor = { emails: [], nodes: [], ups: [], downs: [] };
+        let seeded = 0;
+        for (const sample of clean) {
+          const stored = cursorByKey.get(`${sample.email} ${sample.nodeGuid}`) || null;
+          if (!stored) seeded += 1;
+          const change = directionalDelta({ up: sample.up, down: sample.down }, stored);
+          if (change.up > 0 || change.down > 0) {
+            delta.emails.push(sample.email);
+            delta.nodes.push(sample.nodeGuid);
+            delta.ups.push(change.up);
+            delta.downs.push(change.down);
+          }
+          cursor.emails.push(sample.email);
+          cursor.nodes.push(sample.nodeGuid);
+          cursor.ups.push(sample.up);
+          cursor.downs.push(sample.down);
+        }
+        if (delta.emails.length) {
+          await client.query(
+            `INSERT INTO xui_daily_traffic (date, email, node_guid, up_bytes, down_bytes, updated_at)
+             SELECT $1, u.email, u.node, u.up, u.down, NOW()
+             FROM UNNEST($2::text[], $3::text[], $4::bigint[], $5::bigint[]) AS u(email, node, up, down)
+             ON CONFLICT (date, email, node_guid)
+             DO UPDATE SET up_bytes = xui_daily_traffic.up_bytes + EXCLUDED.up_bytes,
+                           down_bytes = xui_daily_traffic.down_bytes + EXCLUDED.down_bytes,
+                           updated_at = NOW()`,
+            [dateKey, delta.emails, delta.nodes, delta.ups, delta.downs]
+          );
+        }
+        await client.query(
+          `INSERT INTO xui_traffic_cursor (email, node_guid, last_up, last_down, updated_at)
+           SELECT u.email, u.node, u.up, u.down, NOW()
+           FROM UNNEST($1::text[], $2::text[], $3::bigint[], $4::bigint[]) AS u(email, node, up, down)
+           ON CONFLICT (email, node_guid)
+           DO UPDATE SET last_up = EXCLUDED.last_up, last_down = EXCLUDED.last_down, updated_at = NOW()`,
+          [cursor.emails, cursor.nodes, cursor.ups, cursor.downs]
+        );
+        await client.query("COMMIT");
+        return { applied: delta.emails.length, seeded };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch {}
+        throw error;
+      } finally {
+        client.release();
+      }
+    }, "record xui traffic samples");
+  }
+
+  // Per-node totals for one user from `fromDateKey` (inclusive) to now — the
+  // current billing cycle. Returns [{ nodeGuid, up, down }].
+  async sumXuiUserCycle(email, fromDateKey) {
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT node_guid, SUM(up_bytes)::bigint AS up, SUM(down_bytes)::bigint AS down
+         FROM xui_daily_traffic WHERE email = $1 AND date >= $2 GROUP BY node_guid`,
+        [email, fromDateKey]
+      ),
+      `sum xui cycle ${email}`
+    );
+    return result.rows.map(row => ({ nodeGuid: row.node_guid, up: Number(row.up), down: Number(row.down) }));
+  }
+
+  // Batched per-node cycle sums for many users at once: `cutoffs` = [{ email, fromDate }].
+  // Each user's window starts at its own cycle-start date. Returns [{ email, nodeGuid, up, down }].
+  // One query for the whole refresh loop instead of one per user.
+  async sumXuiCyclesByUser(cutoffs) {
+    const list = (Array.isArray(cutoffs) ? cutoffs : []).filter(item => item && item.email && item.fromDate);
+    if (!list.length) return [];
+    const emails = list.map(item => String(item.email));
+    const froms = list.map(item => String(item.fromDate));
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT d.email, d.node_guid, SUM(d.up_bytes)::bigint AS up, SUM(d.down_bytes)::bigint AS down
+         FROM xui_daily_traffic d
+         JOIN UNNEST($1::text[], $2::text[]) AS c(email, from_date)
+           ON d.email = c.email AND d.date >= c.from_date
+         GROUP BY d.email, d.node_guid`,
+        [emails, froms]
+      ),
+      "sum xui cycles by user"
+    );
+    return result.rows.map(row => ({ email: row.email, nodeGuid: row.node_guid, up: Number(row.up), down: Number(row.down) }));
+  }
+
+  // Per-day up/down totals (summed over nodes) for one user in a date range.
+  async xuiUserDailySeries(email, fromDateKey, toDateKey) {
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT date, SUM(up_bytes)::bigint AS up, SUM(down_bytes)::bigint AS down
+         FROM xui_daily_traffic WHERE email = $1 AND date BETWEEN $2 AND $3 GROUP BY date ORDER BY date`,
+        [email, fromDateKey, toDateKey]
+      ),
+      `xui daily series ${email}`
+    );
+    return result.rows.map(row => ({ date: row.date, up: Number(row.up), down: Number(row.down) }));
+  }
+
+  // Per-node up/down totals across all users for one day (admin overview).
+  async xuiNodeDailyTotals(dateKey) {
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT node_guid, SUM(up_bytes)::bigint AS up, SUM(down_bytes)::bigint AS down
+         FROM xui_daily_traffic WHERE date = $1 GROUP BY node_guid`,
+        [dateKey]
+      ),
+      `xui node daily totals ${dateKey}`
+    );
+    return result.rows.map(row => ({ nodeGuid: row.node_guid, up: Number(row.up), down: Number(row.down) }));
+  }
+
+  // Per-user up/down totals across all nodes for one day (admin dashboard Top-N).
+  async xuiUserDailyTotals(dateKey) {
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT email, SUM(up_bytes)::bigint AS up, SUM(down_bytes)::bigint AS down
+         FROM xui_daily_traffic WHERE date = $1 GROUP BY email`,
+        [dateKey]
+      ),
+      `xui user daily totals ${dateKey}`
+    );
+    return result.rows.map(row => ({ email: row.email, up: Number(row.up), down: Number(row.down) }));
+  }
+
+  // Retention cleanup: drop daily rows older than `cutoffDateKey` for the given
+  // emails (periodic-plan users, 90-day retention). Lifetime/unlimited users are
+  // simply never passed in, so their history is kept permanently.
+  async pruneXuiDailyTraffic(cutoffDateKey, emails) {
+    const list = Array.isArray(emails) ? emails.filter(Boolean).map(String) : [];
+    if (!cutoffDateKey || !list.length) return { deleted: 0 };
+    const result = await withPgRetry(
+      () => this.pool.query(
+        "DELETE FROM xui_daily_traffic WHERE date < $1 AND email = ANY($2::text[])",
+        [cutoffDateKey, list]
+      ),
+      "prune xui daily traffic"
+    );
+    return { deleted: result.rowCount || 0 };
   }
 
 }
