@@ -48,9 +48,10 @@ const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
 const XUI_READ_ONLY = process.env.XUI_READ_ONLY === "true";
 const XUI_TRAFFIC_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 // Max panel clients to switch to total=0 per sync. clients/update is a per-client panel write
-// that locks the panel's SQLite, so mass updates must be throttled — a few per sync gradually
-// migrates every client to "unlimited on panel" without flooding it.
-const XUI_PANEL_QUOTA_CLEAR_PER_SYNC = Math.max(0, Number(process.env.XUI_PANEL_QUOTA_CLEAR_PER_SYNC || 5));
+// that locks the panel's SQLite, so mass updates flood it (they caused a production incident).
+// Default OFF (0) — the total=0 migration is opt-in via XUI_PANEL_QUOTA_CLEAR_PER_SYNC>0, and
+// even then only a few per sync so clients migrate to "unlimited on panel" gradually.
+const XUI_PANEL_QUOTA_CLEAR_PER_SYNC = Math.max(0, Number(process.env.XUI_PANEL_QUOTA_CLEAR_PER_SYNC) || 0);
 const XUI_DEFAULT_TRAFFIC_BYTES = 100 * 1024 ** 3;
 const XUI_VISION_FLOW = "xtls-rprx-vision";
 const LEGACY_RECURRING_TRAFFIC_GB = Object.freeze({ basic: 50, pro: 100, ultra: 100 });
@@ -4336,7 +4337,13 @@ async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
     }
   }));
   const inbounds = [...inboundsByKey.values()];
-  return { traffic: xuiTrafficByUser(inbounds), directionalTraffic: xuiDirectionalTrafficByUser(inbounds), nodeResults, inbounds };
+  // Central panel gives each client's GLOBAL total on the local node; subtract the remote nodes'
+  // real usage to recover the local node's own usage and avoid double-counting the remotes.
+  const directionalTraffic = xuiTraffic.deductRemotesFromLocalNode(xuiDirectionalTrafficByUser(inbounds), localGuid);
+  const traffic = Object.fromEntries(Object.entries(directionalTraffic).map(([email, nodes]) =>
+    [email, Object.fromEntries(Object.entries(nodes).map(([guid, dir]) => [guid, (Number(dir?.inBytes) || 0) + (Number(dir?.outBytes) || 0)]))]
+  ));
+  return { traffic, directionalTraffic, nodeResults, inbounds };
 }
 
 function xuiResetReference(value) {

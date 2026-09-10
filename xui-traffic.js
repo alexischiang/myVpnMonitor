@@ -134,9 +134,34 @@ function xuiLedgerFromCycle(perNodeBytes = {}, multipliers = {}, options = {}) {
   };
 }
 
+// The central panel reports each client's GLOBAL total on the local node's inbounds (mirrored on
+// every inbound), NOT the local node's own usage. Remote nodes are read from their own APIs and
+// give real per-node usage. So the collected local-node figure = LA-real + Σremotes; subtract the
+// remotes (per direction) to recover the local node's own usage, otherwise remote traffic is
+// counted twice. Mutates and returns the { email: { guid: { inBytes, outBytes } } } map.
+function deductRemotesFromLocalNode(directionalByUser = {}, localGuid) {
+  for (const byNode of Object.values(directionalByUser)) {
+    const local = byNode?.[localGuid];
+    if (!local) continue;
+    let remoteIn = 0;
+    let remoteOut = 0;
+    for (const [guid, dir] of Object.entries(byNode)) {
+      if (guid === localGuid) continue;
+      remoteIn += Math.max(0, Number(dir?.inBytes) || 0);
+      remoteOut += Math.max(0, Number(dir?.outBytes) || 0);
+    }
+    byNode[localGuid] = {
+      inBytes: Math.max(0, (Number(local.inBytes) || 0) - remoteIn),
+      outBytes: Math.max(0, (Number(local.outBytes) || 0) - remoteOut)
+    };
+  }
+  return directionalByUser;
+}
+
 module.exports = {
   RESET_INTERVAL_DAYS,
   MS_PER_DAY,
+  deductRemotesFromLocalNode,
   counterDelta,
   directionalDelta,
   isPeriodicPlan,

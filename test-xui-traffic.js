@@ -82,4 +82,20 @@ assert.strictEqual(rolled.disabled, false, "new cycle clears disabled");
 assert.deepStrictEqual(rolled.trafficAlerts, {}, "new cycle clears alerts");
 assert.strictEqual(rolled.cycleReset, true);
 
+// deductRemotesFromLocalNode: local node holds the mirrored GLOBAL total → subtract remotes.
+const { deductRemotesFromLocalNode } = require("./xui-traffic");
+// user on TW(2309) only; local(LA) reports global 3022 = LA-real(713)+TW(2309) → LA becomes 713.
+const d1 = deductRemotesFromLocalNode({ "u@x": { LA: { inBytes: 1000, outBytes: 2022 }, TW: { inBytes: 900, outBytes: 1409 } } }, "LA");
+assert.deepStrictEqual(d1["u@x"].LA, { inBytes: 100, outBytes: 613 }, "LA = global - remote per direction");
+assert.deepStrictEqual(d1["u@x"].TW, { inBytes: 900, outBytes: 1409 }, "remote untouched");
+// global == remote (user only on one remote) → LA collapses to 0 (was pure double-count)
+const d2 = deductRemotesFromLocalNode({ "u@x": { LA: { inBytes: 900, outBytes: 1409 }, TW: { inBytes: 900, outBytes: 1409 } } }, "LA");
+assert.deepStrictEqual(d2["u@x"].LA, { inBytes: 0, outBytes: 0 }, "LA=global=remote → LA becomes 0");
+// global < remotes (central lag) → clamp to 0, never negative
+const d3 = deductRemotesFromLocalNode({ "u@x": { LA: { inBytes: 10, outBytes: 10 }, TW: { inBytes: 50, outBytes: 50 } } }, "LA");
+assert.deepStrictEqual(d3["u@x"].LA, { inBytes: 0, outBytes: 0 }, "negative clamped to 0");
+// no local node entry → untouched
+const d4 = deductRemotesFromLocalNode({ "u@x": { TW: { inBytes: 5, outBytes: 5 } } }, "LA");
+assert.deepStrictEqual(d4["u@x"], { TW: { inBytes: 5, outBytes: 5 } }, "no local → untouched");
+
 console.log("xui-traffic pure-function checks passed.");
