@@ -469,6 +469,15 @@ const centralTrafficPromise = xuiTrafficFromNodes(
   assert.deepStrictEqual(traffic, { "user@example.com": { remote: 30 } });
   assert.deepStrictEqual(nodeResults.remote, { configured: true, error: "", source: "panel" });
 });
+const aliasedCentralTrafficPromise = xuiTrafficFromNodes(
+  { panelGuid: "local" },
+  [{ id: 5, guid: "remote-guid" }],
+  [{ id: 7, originNodeGuid: "node:remote-guid", clientStats: [{ email: "user@example.com", up: 10, down: 20 }] }],
+  {}
+).then(({ traffic, inbounds }) => {
+  assert.deepStrictEqual(traffic, { "user@example.com": { "remote-guid": 30 } });
+  assert.strictEqual(inbounds.length, 1);
+});
   const xuiInbounds = normalizeXuiInbounds([{ id: 2, remark: "VLESS", protocol: "vless", port: 443, up: 10, down: 20, total: 100, clientStats: [{}, {}] }]);
   assert.deepStrictEqual([xuiInbounds[0].clients, xuiInbounds[0].uploadBytes, xuiInbounds[0].downloadBytes], [2, 10, 20]);
 assert.deepStrictEqual(normalizeXuiInboundGroups({ groups: { basic: [2, "3", 2, -1], pro: [7] } }), { basic: [2, 3], pro: [7], ultra: [] });

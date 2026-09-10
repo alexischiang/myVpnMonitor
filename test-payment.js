@@ -457,6 +457,14 @@ async function main() {
     ]);
     assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/groups/bulkAdd"));
     await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [1], pro: [1], ultra: [1] }, syncGroups: false } });
+    xuiClients.get("buyer@example.test").inboundIds = [2];
+    xuiRequests.length = 0;
+    const resync = await request("/api/xui-inbound-groups/resync", { method: "POST", cookie: adminCookie, body: {} });
+    assert.strictEqual(resync.response.status, 200);
+    assert.strictEqual(resync.data.checked, 1);
+    assert.strictEqual(resync.data.repaired, 1);
+    assert.deepStrictEqual(xuiClients.get("buyer@example.test").inboundIds, [1]);
+    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/server/status"), "resync should reuse the cached inbound snapshot");
     await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
     xuiClients.get("buyer@example.test").groupName = "basic";
     xuiRequests.length = 0;

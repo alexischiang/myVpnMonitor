@@ -37,6 +37,7 @@ XELA monitor 是一个基于 Node.js、PostgreSQL、React、Vite 和 Docusaurus 
 - 每次只做一个功能点（One feature at a time）
 - 当前功能点端到端验证通过后，才能开始下一个
 - 不要在实现功能 A 时"顺便"重构功能 B
+- 修复提出的bug时，尽量先复现该bug，再从复现的情况为问题的切入点进行修复
 
 ## 范围规则（Stay in Scope）
 

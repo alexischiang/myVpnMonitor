@@ -4325,11 +4325,19 @@ async function setXuiNodeToken(guid, token) {
 
 async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
   const localGuid = String(status?.panelGuid || "node:local");
-  const nodeGuidsById = new Map((Array.isArray(nodes) ? nodes : []).map(node => [String(node?.id), String(node?.guid || `node:${node?.id}`)]));
+  const nodeGuidsById = new Map();
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    const guid = String(node?.guid || `node:${node?.id}`);
+    const id = String(node?.id || "");
+    if (id) nodeGuidsById.set(id, guid);
+    nodeGuidsById.set(guid, guid);
+    nodeGuidsById.set(`node:${guid}`, guid);
+  }
   const inboundOrigin = item => {
     const origin = String(item?.originNodeGuid || "");
     const nodeId = String(item?.nodeId || "");
     if (origin === "node:local") return localGuid;
+    if (origin && nodeGuidsById.has(origin)) return nodeGuidsById.get(origin);
     if (origin && nodeGuidsById.has(origin.replace(/^node:/, ""))) return nodeGuidsById.get(origin.replace(/^node:/, ""));
     if (origin) return origin;
     return nodeGuidsById.get(nodeId) || localGuid;
@@ -4811,7 +4819,10 @@ async function syncXuiInboundGroup(group, previousInboundIds, inboundIds, allInb
 
 async function resyncXuiInboundGroups(groups, allInboundIds) {
   const clients = await xuiRequest("/panel/api/clients/list");
-  const clientsByEmail = new Map((Array.isArray(clients) ? clients : []).map(client => [String(client?.email || "").trim().toLowerCase(), client]));
+  const clientsByEmail = new Map((Array.isArray(clients) ? clients : [])
+    .map(client => normalizeXuiClientResult(client))
+    .filter(client => client.email)
+    .map(client => [client.email.trim().toLowerCase(), client]));
   const buckets = new Map();
   const discrepancies = [];
   for (const user of users) {
@@ -9074,8 +9085,14 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/xui-inbound-groups/resync" && req.method === "POST") {
     try {
-      const management = await refreshXuiInboundManagementData();
-      sendJson(res, 200, await resyncXuiInboundGroups(management.groups, management.inbounds.map(inbound => inbound.id)));
+      // The page has already loaded the management snapshot (including TCP probes).
+      // Reusing it keeps this repair action bounded to the client list and writes.
+      const groups = await getXuiInboundGroups();
+      const cachedInbounds = Array.isArray(xuiInboundProbeSnapshot.inbounds) ? xuiInboundProbeSnapshot.inbounds : [];
+      const allInboundIds = cachedInbounds.length
+        ? cachedInbounds.map(inbound => inbound.id)
+        : await getAllXuiInboundIds();
+      sendJson(res, 200, await resyncXuiInboundGroups(groups, allInboundIds));
     } catch (error) {
       sendJson(res, error.statusCode || 502, { error: error.message });
     }
