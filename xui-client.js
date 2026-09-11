@@ -53,7 +53,7 @@ async function requestXui({ serviceUrl, serviceToken, baseUrl, apiToken, apiPath
     }
     return payload.data;
   } catch (error) {
-    if (error.name === "AbortError") throw new Error("3x-ui 服务请求超时。");
+    if (error.name === "AbortError") throw Object.assign(new Error("3x-ui 服务请求超时。"), { statusCode: 504, code: "XUI_TIMEOUT" });
     throw error;
   } finally {
     clearTimeout(timer);
@@ -82,7 +82,7 @@ async function requestXuiService({ serviceUrl, serviceToken, path, method = "GET
     }
     return payload.data;
   } catch (error) {
-    if (error.name === "AbortError") throw new Error("3x-ui 服务请求超时。");
+    if (error.name === "AbortError") throw Object.assign(new Error("3x-ui 服务请求超时。"), { statusCode: 504, code: "XUI_TIMEOUT" });
     throw error;
   } finally {
     clearTimeout(timer);

@@ -27,7 +27,6 @@ const PUBLIC_DIR = fsSync.existsSync(path.join(DIST_DIR, "index.html")) ? DIST_D
 const MARKDOWN_UPLOAD_DIR = path.resolve(process.env.MARKDOWN_UPLOAD_DIR || path.join(__dirname, "data", "markdown-uploads"));
 const MARKDOWN_IMAGE_MAX_BYTES = Number(process.env.MARKDOWN_IMAGE_MAX_BYTES || 8 * 1024 * 1024);
 const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "build-meta.json");
-const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 24 * 60 * 60 * 1000);
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 10 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
 const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 10);
@@ -47,6 +46,8 @@ const XUI_SERVICE_URL = (process.env.XUI_SERVICE_URL || "").replace(/\/+$/, "");
 const XUI_SERVICE_TOKEN = String(process.env.XUI_SERVICE_TOKEN || "").trim();
 const XUI_READ_ONLY = process.env.XUI_READ_ONLY === "true";
 const XUI_TRAFFIC_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const XUI_PROVISION_MAX_ATTEMPTS = 3;
+const XUI_PROVISION_RETRY_DELAYS_MS = [300, 1000];
 // Max panel clients to switch to total=0 per sync. clients/update is a per-client panel write
 // that locks the panel's SQLite, so mass updates flood it (they caused a production incident).
 // Default OFF (0) — the total=0 migration is opt-in via XUI_PANEL_QUOTA_CLEAR_PER_SYNC>0, and
@@ -3388,6 +3389,10 @@ function activeUserGroup(user = {}) {
   return normalizeUserGroup(user.activeGroup || user.group, "pro");
 }
 
+function strictActiveUserGroup(user = {}) {
+  return normalizeUserGroup(user.activeGroup, normalizeUserGroup(user.group, ""));
+}
+
 function isSelfHostedUser(user = {}) {
   return user.lineType === "self_hosted";
 }
@@ -4453,6 +4458,40 @@ function markMissingXuiClients(appUsersByEmail, remoteEmails, checkedAt = new Da
   return changed;
 }
 
+async function auditXuiClientGroups(clients, allInboundIds, groupInboundIdsByGroup = new Map()) {
+  const activeUsers = users.filter(user => isSelfHostedUser(user) && user.xuiClientEmail && !isUserExpired(user) && !isUserAccountDisabled(user));
+  const actualClientsByEmail = new Map((Array.isArray(clients) ? clients : [])
+    .map(client => normalizeXuiClientResult(client))
+    .filter(client => client.email)
+    .map(client => [String(client.email).trim().toLowerCase(), client]));
+  const repairTargets = [];
+  for (const user of activeUsers) {
+    const email = String(user.xuiClientEmail).trim().toLowerCase();
+    const expected = strictActiveUserGroup(user);
+    if (!expected) {
+      console.warn(`[xui-group] Skipping ${email}: local user has no valid activeGroup or group.`);
+      continue;
+    }
+    const existingClient = actualClientsByEmail.get(email);
+    if (existingClient && normalizeUserGroup(existingClient.groupName, "") !== expected) repairTargets.push({ user, email, expected, existingClient });
+  }
+  const result = { checked: activeUsers.length, mismatched: repairTargets.length, repaired: 0, failed: 0, skipped: XUI_READ_ONLY ? repairTargets.length : 0 };
+  if (XUI_READ_ONLY) return result;
+  for (const target of repairTargets) {
+    try {
+      const groupInboundIds = groupInboundIdsByGroup.get(target.expected)
+        || await xuiInboundIdsForGroup(target.expected);
+      groupInboundIdsByGroup.set(target.expected, groupInboundIds);
+      await provisionXuiClient(target.user, { allInboundIds, groupInboundIds, existingClient: target.existingClient });
+      result.repaired += 1;
+    } catch (error) {
+      result.failed += 1;
+      console.warn(`[xui-group] Failed to repair ${target.email}: ${error.message}`);
+    }
+  }
+  return result;
+}
+
 async function syncXuiWeightedTraffic(snapshot = {}) {
   if (!XUI_BASE_URL || !XUI_API_TOKEN) return getXuiBillingState();
   return withXuiBillingLock(async () => {
@@ -4481,6 +4520,10 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     const localGuid = String(status?.panelGuid || "node:local");
     const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
     const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
+    const allInboundIds = normalizeXuiInboundIds(inbounds);
+    const configuredGroups = await getXuiInboundGroups();
+    const groupAudit = await auditXuiClientGroups(clients, allInboundIds, new Map(Object.entries(configuredGroups)));
+    if (groupAudit.mismatched) console.log(`[xui-group] checked=${groupAudit.checked} mismatched=${groupAudit.mismatched} repaired=${groupAudit.repaired} failed=${groupAudit.failed} skipped=${groupAudit.skipped}`);
     const profitMonth = chinaDateKey().slice(0, 7);
     const profitTraffic = updateProfitTrafficMonth(await getProfitTrafficMonth(profitMonth), directionalTraffic, chinaDateKey(), appUsersByEmail, nodeNames);
     await setProfitTrafficMonth(profitMonth, profitTraffic);
@@ -4800,8 +4843,7 @@ async function syncXuiInboundGroup(group, previousInboundIds, inboundIds, allInb
   if (!addedIds.length && !removedIds.length) return { group, users: 0 };
   const targets = users.filter(user => {
     if (!isSelfHostedUser(user) || !user.xuiClientEmail) return false;
-    const productGroup = normalizeUserGroup(user.currentProductId, "");
-    return (productGroup || activeUserGroup(user)) === group;
+    return strictActiveUserGroup(user) === group;
   });
   if (!targets.length) return { group, users: 0 };
   const emails = targets.map(user => String(user.xuiClientEmail).toLowerCase());
@@ -4842,7 +4884,11 @@ async function resyncXuiInboundGroups(groups, allInboundIds) {
   for (const user of users) {
     if (!isSelfHostedUser(user) || !user.xuiClientEmail) continue;
     const email = String(user.xuiClientEmail).trim().toLowerCase();
-    const group = normalizeUserGroup(user.currentProductId, activeUserGroup(user));
+    const group = strictActiveUserGroup(user);
+    if (!group) {
+      discrepancies.push({ email, group: "", attach: [], detach: [], reason: "missing-active-group" });
+      continue;
+    }
     const desired = effectiveXuiInboundIds(groups[group] || [], user.xuiExtraInboundIds, allInboundIds);
     const actual = normalizeXuiInboundIdList(clientsByEmail.get(email)?.inboundIds);
     const attach = desired.filter(id => !actual.includes(id));
@@ -4896,15 +4942,34 @@ async function saveXuiClientProjection(user, enabled) {
   });
 }
 
-async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
+function isXuiTimeoutError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  return code === "XUI_TIMEOUT"
+    || Number(error?.statusCode) === 504
+    || error?.name === "AbortError"
+    || /tim(?:e|ed)[ -]?out|timeout|超时/i.test(String(error?.message || ""));
+}
+
+async function provisionXuiClientOnce(user, options = {}) {
+  const {
+    allowLegacyEmail = true,
+    allInboundIds: providedAllInboundIds = null,
+    groupInboundIds: providedGroupInboundIds = null,
+    existingClient: providedExistingClient,
+  } = options;
   if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
   const email = xuiClientEmail(user);
-  const groupInboundIds = await xuiInboundIdsForGroup(activeUserGroup(user));
-  const allInboundIds = await getAllXuiInboundIds();
+  const group = strictActiveUserGroup(user);
+  if (!group) throw new Error("Self-hosted user is missing a valid access group.");
+  const groupInboundIds = providedGroupInboundIds || await xuiInboundIdsForGroup(group);
+  const allInboundIds = providedAllInboundIds || await getAllXuiInboundIds();
   const inboundIds = await xuiInboundIdsForUser(user, groupInboundIds, allInboundIds);
-  let existing = null;
+  const existingClientProvided = Object.prototype.hasOwnProperty.call(options, "existingClient");
+  let existing = existingClientProvided
+    ? (providedExistingClient ? normalizeXuiClientResult(providedExistingClient, email) : null)
+    : null;
   let existingEmail = email;
-  try { existing = await getXuiClientByEmail(email); } catch (error) {
+  if (!existingClientProvided) try { existing = await getXuiClientByEmail(email); } catch (error) {
     if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
   }
   if (!existing && allowLegacyEmail) {
@@ -4926,7 +4991,7 @@ async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
     limitIp: Number.isFinite(Number(user.xuiIpLimit)) ? Math.max(0, Number(user.xuiIpLimit)) : planDeviceLimit(user),
     reset: 0,
     flow: XUI_VISION_FLOW,
-    groupName: activeUserGroup(user),
+    groupName: group,
     comment: xuiClientComment(user),
     enable: !isUserExpired(user) && !isUserAccountDisabled(user)
   };
@@ -4959,6 +5024,23 @@ async function provisionXuiClient(user, { allowLegacyEmail = true } = {}) {
   user.xuiMetadataSyncedAt = new Date().toISOString();
   await saveXuiClientProjection(user, desired.enable);
   return remote;
+}
+
+async function provisionXuiClient(user, options = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= XUI_PROVISION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const attemptOptions = attempt === 1 ? options : { ...options };
+      if (attemptOptions.existingClient == null) delete attemptOptions.existingClient;
+      if (attempt > 1) delete attemptOptions.existingClient;
+      return await provisionXuiClientOnce(user, attemptOptions);
+    } catch (error) {
+      lastError = error;
+      if (!isXuiTimeoutError(error) || attempt === XUI_PROVISION_MAX_ATTEMPTS) throw error;
+      await new Promise(resolve => setTimeout(resolve, XUI_PROVISION_RETRY_DELAYS_MS[attempt - 1] || 1000));
+    }
+  }
+  throw lastError;
 }
 
 async function clearXuiBillingLedger(email) {
@@ -5040,7 +5122,9 @@ async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
 async function connectXuiClient(user, { mode, email = "", importedIpLimit } = {}) {
   if (!new Set(["import", "link"]).has(mode)) throw new Error("请选择导入或关联方式。");
   if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
-  await xuiInboundIdsForGroup(activeUserGroup(user));
+  const group = strictActiveUserGroup(user);
+  if (!group) throw new Error("Self-hosted user is missing a valid access group.");
+  await xuiInboundIdsForGroup(group);
   const userEmail = nexoraUserEmail(user);
   if (!userEmail) throw new Error("自研线路用户缺少有效的注册邮箱。");
   user.email = userEmail;
@@ -8704,7 +8788,6 @@ async function handleApi(req, res, pathname) {
       dataStore: dataStore.kind,
       subscriptions: subscriptions.length,
       users: users.length,
-      refreshedEveryMs: REFRESH_INTERVAL_MS,
       services
     });
     return;
@@ -10657,11 +10740,15 @@ async function handleApi(req, res, pathname) {
       try {
         if (!item) throw new Error("未开通订阅的账户不能切换自研线路。");
         const payload = await readJson(req);
-        const group = normalizeUserGroup(payload.activeGroup, "");
+        const requestedGroup = normalizeUserGroup(payload.activeGroup, "");
+        const currentGroup = strictActiveUserGroup(item);
+        if (!requestedGroup || !currentGroup) throw new Error("Self-hosted user is missing a valid access group.");
+        if (requestedGroup !== currentGroup) throw new Error("3x-ui import/link does not change the user's access group.");
+        const group = requestedGroup;
         if (!["basic", "pro", "ultra"].includes(group)) throw new Error("请选择有效的套餐分组。");
         const importedIpLimit = planDeviceLimit(item);
         const before = userSnapshotForLog(item);
-        Object.assign(item, { group, activeGroup: group, updatedAt: new Date().toISOString() });
+        Object.assign(item, { updatedAt: new Date().toISOString() });
         await connectXuiClient(item, { mode: String(payload.mode || ""), email: payload.clientEmail, importedIpLimit });
         const changes = summarizeUserChanges(before, userSnapshotForLog(item));
         appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "user-updated", req, message: payload.mode === "link" ? "关联已有3x-ui Client并切换到自研线路" : "导入3x-ui并切换到自研线路", details: { changes, xuiManagementMode: item.xuiManagementMode, xuiClientEmail: item.xuiClientEmail } }));
@@ -10723,12 +10810,12 @@ async function handleApi(req, res, pathname) {
         if (!["upstream", "self_hosted"].includes(lineType) || !group) throw new Error("请选择有效的线路类型和套餐分组。");
         const before = userSnapshotForLog(item);
         if (lineType === "self_hosted") {
-          Object.assign(item, { lineType, group, activeGroup: group, subscriptionId: "", updatedAt: new Date().toISOString() });
+          Object.assign(item, { lineType, activeGroup: group, subscriptionId: "", updatedAt: new Date().toISOString() });
           await provisionXuiClient(item);
         } else {
           const subscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || ""));
           if (!subscription || !subscriptionAllowsGroup(subscription, group)) throw new Error("请选择允许该套餐使用的订阅池。");
-          Object.assign(item, { lineType, group, activeGroup: group, subscriptionId: subscription.id, updatedAt: new Date().toISOString() });
+          Object.assign(item, { lineType, activeGroup: group, subscriptionId: subscription.id, updatedAt: new Date().toISOString() });
           if (item.xuiClientEmail) await disableXuiClient(item);
         }
         const changes = summarizeUserChanges(before, userSnapshotForLog(item));
@@ -10764,7 +10851,7 @@ async function handleApi(req, res, pathname) {
         const linkedAccount = accounts.find(account => account.linkedUserId === item.id);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
-        const normalized = normalizeUser(payload, item);
+        const normalized = normalizeUser({ ...payload, group: item.group, activeGroup: item.activeGroup }, item);
         const productBinding = inferUserProductBinding(normalized);
         if (productBinding.error) throw new Error(productBinding.error);
         bindUserProduct(normalized, productBinding, { source: "admin_update", orderId: item.currentProductOrderId || "" });
@@ -11103,9 +11190,6 @@ async function main() {
   });
 
   setInterval(() => {
-    refreshAll().catch(error => console.error("Refresh failed:", error));
-  }, REFRESH_INTERVAL_MS);
-  setInterval(() => {
     settleReferralRewards().catch(error => console.error("Referral settlement failed:", error));
   }, 60 * 1000);
   if (XUI_BASE_URL && XUI_API_TOKEN) {
@@ -11228,6 +11312,10 @@ module.exports = Object.assign(requestHandler, {
   xuiBillingPayload,
   xuiMonthlyResetAt,
   legacyMigrationTrafficLimitBytes,
+  strictActiveUserGroup,
+  isXuiTimeoutError,
+  provisionXuiClient,
+  auditXuiClientGroups,
   withXuiUserMigrationLock,
   xuiNodeBaseUrl,
   sealXuiNodeToken,

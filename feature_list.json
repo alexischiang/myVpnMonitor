@@ -389,6 +389,24 @@
       ]
     },
     {
+      "id": "xui-active-group-audit",
+      "name": "Audit active self-hosted client groups",
+      "description": "Use the effective activeGroup to repair mismatched 3x-ui client groupName values during the five-minute traffic task.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["xui-inbound-delta-sync", "xui-timeout-retry"],
+      "done_criteria": [
+        "The legacy daily subscription-pool refresh timer is removed while explicit refresh endpoints remain available.",
+        "Every five-minute traffic sync audits active self-hosted users against the clients/list snapshot and repairs existing groupName mismatches.",
+        "activeGroup is preferred over group; renewals and direct plan changes replace both fields, while the detail-page permission action changes activeGroup only.",
+        "Provisioning retries timeout failures at most three attempts and does not retry ordinary failures."
+      ],
+      "verification": [
+        "2026-09-11: Regression assertions cover activeGroup precedence, group fallback, missing-group rejection, and structured XUI timeout errors.",
+        "2026-09-11: npm test, npm run test:payment, npm run verify:fast, npm run check, and git diff --check passed."
+      ]
+    },
+    {
       "id": "account-node-status-page",
       "name": "Show account node status",
       "description": "Let active self-hosted subscribers view real probe status for package inbounds and their private custom inbounds, with upgrade guidance for locked access groups.",

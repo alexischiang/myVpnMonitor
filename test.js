@@ -84,10 +84,19 @@ const {
   xuiClientWritePayload,
   xuiTrafficPayload,
   markMissingXuiClients,
+  strictActiveUserGroup,
+  isXuiTimeoutError,
   disabledAccountPlaceholderSubscription,
   clearSubscriptionSourceState,
   ticketTelegramText
 } = require("./server");
+
+assert.strictEqual(strictActiveUserGroup({ group: "basic", activeGroup: "ultra" }), "ultra");
+assert.strictEqual(strictActiveUserGroup({ group: "basic" }), "basic");
+assert.strictEqual(strictActiveUserGroup({ group: "invalid", activeGroup: "" }), "");
+assert.strictEqual(isXuiTimeoutError(Object.assign(new Error("request failed"), { code: "XUI_TIMEOUT" })), true);
+assert.strictEqual(isXuiTimeoutError(Object.assign(new Error("request failed"), { statusCode: 504 })), true);
+assert.strictEqual(isXuiTimeoutError(new Error("ordinary failure")), false);
 
 const gib = 1024 ** 3;
 assert.strictEqual(purchasedPlanName({ currentProductSnapshot: { planName: "BASIC", duration: "yearly", trafficGb: 50 } }), "BASIC-360天-50G");
