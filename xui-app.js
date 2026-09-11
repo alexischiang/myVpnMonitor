@@ -74,7 +74,7 @@ async function callPanel(request, fetchImpl, timeoutMs) {
       }
     });
   } catch (error) {
-    if (error.name === "AbortError") throw Object.assign(new Error("3x-ui 请求超时。"), { statusCode: 504 });
+    if (error.name === "AbortError") throw Object.assign(new Error("3x-ui 请求超时。"), { statusCode: 504, code: "XUI_TIMEOUT" });
     throw error;
   }
 }
