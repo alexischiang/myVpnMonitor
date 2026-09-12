@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-09",
+  "updated_at": "2026-09-12",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -424,6 +424,37 @@
         "2026-09-08: Regression coverage confirmed package visibility, current access, private custom-inbound filtering, real probe values, and response-field sanitization.",
         "2026-09-08: Browser verification confirmed desktop and 390px layouts, three status rows, one locked-node action, and the plan-page navigation with no horizontal overflow or runtime errors."
       ]
+    },
+    {
+      "id": "account-ip-info-card",
+      "name": "Show visitor IP information",
+      "description": "Display the current visitor network IP, organization, location, and fraud score in the user account overview.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The account overview contains a dedicated visitor IP information card.",
+        "The card handles loading, successful data, and API error states.",
+        "The protected server endpoint fetches IP information from my.ippure.com with a timeout.",
+        "Users without an active subscription see only the purchase-service action instead of empty traffic and plan-detail sections.",
+        "Known Chinese carriers and IP locations are rendered in Chinese."
+      ],
+      "verification": [
+        "2026-09-12: npm run check and git diff --check passed.",
+        "2026-09-12: Browser verification rendered the IP card from the protected API payload at desktop and 390px mobile widths with no horizontal overflow, console errors, or page errors.",
+        "2026-09-12: Browser verification confirmed inactive accounts hide traffic and plan details while keeping one purchase-service action; active accounts retain both sections."
+      ],
+      "browser_verification": {
+        "routes": ["/account"],
+        "interactions": [
+          "Opened the authenticated user overview with the IP-info response available.",
+          "Confirmed the IP address, organization, location, and fraud score are visible.",
+          "Checked desktop and 390px mobile layouts for horizontal overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-12"
+      }
     }
   ]
 }

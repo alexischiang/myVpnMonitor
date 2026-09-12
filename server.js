@@ -8622,6 +8622,24 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/account/ip-info" && req.method === "GET") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch("https://my.ippure.com/v1/info", { signal: controller.signal, headers: { Accept: "application/json" } });
+      const payload = await response.json();
+      if (!response.ok || !payload?.ip) throw new Error(`IP 信息服务返回 ${response.status}`);
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 502, { error: error.name === "AbortError" ? "IP 信息服务响应超时。" : "IP 信息服务暂不可用。" });
+    } finally {
+      clearTimeout(timer);
+    }
+    return;
+  }
+
   if (pathname === "/api/account/orders" && req.method === "GET") {
     const session = requireUser(req, res);
     if (!session) return;
