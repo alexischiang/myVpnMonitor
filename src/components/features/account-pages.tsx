@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, BadgeCheck, BookOpen, Check, CheckCircle2, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, HardDrive, HousePlug, Info, Loader2, PackagePlus, Percent, RefreshCw, Star, Users, WalletCards, XCircle, Zap, type LucideIcon } from "lucide-react"
+import { AlertCircle, BadgeCheck, BookOpen, Check, CheckCircle2, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Globe2, HardDrive, HousePlug, Info, Loader2, PackagePlus, Percent, RefreshCw, Star, Users, WalletCards, XCircle, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { clearJsonCache, deleteJson, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
@@ -36,6 +36,7 @@ type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recha
 type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; unlimited?: boolean; trafficTier?: number; purchasedTrafficGb?: number; currentProductSnapshot?: Record<string, unknown>; devices: number | string; subscriptionUrl: string; vipLevel?: string }
 type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; dailyUsage: Array<{ date: string; usedBytes: number }>; stale?: boolean; error?: string }
 type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
+type IpInfo = { ip: string; asn?: number; asOrganization?: string; country?: string; countryCode?: string; region?: string; regionCode?: string; city?: string; timezone?: string; fraudScore?: number; isResidential?: boolean; isBroadcast?: boolean }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type AccountService = { id: string; orderId: string; name: string; regionName?: string; amount: number; durationDays?: number; startedAt: string; expiresAt?: string; status: "pending" | "processing" | "active" | "expired"; deliveryNote?: string }
 type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
@@ -137,12 +138,45 @@ function NodeStatusCard({ status, error }: { status: NodeStatusSummary | null; e
   </Card>
 }
 
+function IpInfoCard({ info, error }: { info: IpInfo | null; error: string }) {
+  if (info) {
+    const organization = info.asOrganization || ""
+    const translatedOrganization = /(?:CHINANET|CHINA TELECOM|TELECOM)/i.test(organization)
+      ? "中国电信"
+      : /(?:CMNET|CHINA MOBILE|MOBILE)/i.test(organization)
+        ? "中国移动"
+        : /(?:CHINA UNICOM|UNICOM)/i.test(organization)
+          ? "中国联通"
+          : organization || "-"
+    const countryNames: Record<string, string> = { CN: "中国", JP: "日本", US: "美国", HK: "中国香港", MO: "中国澳门", TW: "中国台湾", SG: "新加坡", KR: "韩国", GB: "英国", DE: "德国", FR: "法国", CA: "加拿大", AU: "澳大利亚" }
+    const chinaRegions: Record<string, string> = { BJ: "北京市", SH: "上海市", GD: "广东省", ZJ: "浙江省", JS: "江苏省", SC: "四川省", HN: "湖南省", HB: "湖北省", SD: "山东省", FJ: "福建省" }
+    const cityNames: Record<string, string> = { Tokyo: "东京", Shenzhen: "深圳", Guangzhou: "广州", Beijing: "北京", Shanghai: "上海", Singapore: "新加坡", Seoul: "首尔", London: "伦敦", Paris: "巴黎", Frankfurt: "法兰克福", "Los Angeles": "洛杉矶", "San Francisco": "旧金山", "New York": "纽约" }
+    info = { ...info, asOrganization: translatedOrganization, country: info.countryCode ? countryNames[info.countryCode] || "" : "", region: info.countryCode === "CN" ? chinaRegions[info.regionCode || ""] || "" : "", city: info.city ? cityNames[info.city] || "" : "" }
+  }
+  return <Card>
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2"><Globe2 className="size-4" />访问 IP</CardTitle>
+      <CardDescription>{error ? "IP 信息暂不可用" : info ? "当前访问网络的公开信息" : "正在获取当前访问网络信息"}</CardDescription>
+    </CardHeader>
+    <CardContent>
+      {error ? <Alert variant="warning"><Info /><AlertDescription>{error}</AlertDescription></Alert> : info ? <ItemGroup className="grid gap-2 sm:grid-cols-2">
+        <Item variant="muted"><ItemContent><ItemDescription>IP 地址</ItemDescription><ItemTitle className="font-mono text-base">{info.ip}</ItemTitle></ItemContent></Item>
+        <Item variant="muted"><ItemContent><ItemDescription>网络组织</ItemDescription><ItemTitle>{info.asOrganization || "-"}</ItemTitle></ItemContent></Item>
+        <Item variant="muted"><ItemContent><ItemDescription>位置</ItemDescription><ItemTitle>{[info.country, info.region, info.city].filter(Boolean).join(" · ") || "-"}</ItemTitle></ItemContent></Item>
+        <Item variant="muted"><ItemContent><ItemDescription>风险评分</ItemDescription><ItemTitle className="tabular-nums">{Number.isFinite(info.fraudScore) ? info.fraudScore : "-"}</ItemTitle></ItemContent></Item>
+      </ItemGroup> : <div className="grid gap-2 sm:grid-cols-2"><Skeleton className="h-16" /><Skeleton className="h-16" /></div>}
+    </CardContent>
+  </Card>
+}
+
 function PlanStatusCard({ account, subscription, traffic, trafficLoading, trafficError, onImportClient }: { account: Overview; subscription: Subscription | null; traffic: SelfHostedTraffic | null; trafficLoading: boolean; trafficError: string; onImportClient: (client: ImportClient) => void }) {
   const usagePercent = subscription?.lineType === "self_hosted" ? traffic?.usagePercent : null
   const remainingPercent = usagePercent == null ? null : Math.max(0, 100 - usagePercent)
   const trafficTotal = traffic ? `${(traffic.totalBytes / 1024 ** 3).toFixed(0)} GB` : subscription?.traffic || "-"
   const trafficUsed = traffic ? `${(traffic.usedBytes / 1024 ** 3).toFixed(2)} GB` : "-"
   const status = !subscription ? "inactive" : subscription.status === "expired" ? "expired" : traffic?.status === "depleted" ? "depleted" : "active"
+  const hasActiveSubscription = subscription?.status === "active"
+  if (!hasActiveSubscription) subscription = null
   const canBuyHomeIp = account.homeIp?.enabled && status === "active" && subscription?.duration !== "lifetime"
   const homeIpStartingPrice = Math.min(...(account.homeIp?.regions || []).map(region => Number(region.price)).filter(Number.isFinite))
   const expiresAtTime = Date.parse(subscription?.expiresAt || "")
@@ -159,6 +193,7 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
       </div>
     </CardHeader>
     <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(20rem,0.95fr)]">
+      {hasActiveSubscription ? <>
       <section className="grid content-start gap-4" aria-labelledby="traffic-usage-title">
         <header className="grid gap-2">
           <p id="traffic-usage-title" className="flex items-center gap-2 text-sm font-medium"><HardDrive className="size-4" />流量使用</p>
@@ -184,6 +219,7 @@ function PlanStatusCard({ account, subscription, traffic, trafficLoading, traffi
           {subscription ? null : <Button asChild variant="outline" className="min-h-11"><Link to="/account/plans"><PackagePlus />购买服务</Link></Button>}
         </div>
       </section>
+      </> : <Button asChild variant="outline" className="min-h-11"><Link to="/account/plans"><PackagePlus />{"\u8d2d\u4e70\u670d\u52a1"}</Link></Button>}
     </CardContent>
     {subscription ? <><Separator /><CardHeader><CardTitle>订阅链接</CardTitle><CardDescription>请勿将订阅链接分享给其他人。</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel><span className="block rounded-md bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="border-0 bg-background font-semibold shadow-none dark:bg-background" readOnly value={subscription.subscriptionUrl} /></span><div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:min-h-11 [&_[data-slot=button]]:text-base [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto"><CopySubscription value={subscription.subscriptionUrl} /><Button variant="outline" onClick={() => onImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</Button><Button variant="outline" onClick={() => onImportClient("sparkle")}><ExternalLink />导入 Sparkle</Button><Button variant="outline" onClick={() => onImportClient("clash-meta")}><ExternalLink />导入 Clash Meta</Button><Button variant="outline" onClick={() => onImportClient("clash-verge")}><ExternalLink />导入 Clash Verge</Button><Button asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></Button></div></Field></CardContent></> : null}
   </Card>
@@ -203,6 +239,8 @@ export function AccountOverviewPage() {
   const [trafficError, setTrafficError] = React.useState("")
   const [nodeStatus, setNodeStatus] = React.useState<NodeStatusSummary | null>(null)
   const [nodeStatusError, setNodeStatusError] = React.useState("")
+  const [ipInfo, setIpInfo] = React.useState<IpInfo | null>(null)
+  const [ipInfoError, setIpInfoError] = React.useState("")
   const latestAnnouncement = data?.announcements[0]
   const currentAnnouncement = data?.announcements[carouselIndex] || latestAnnouncement
 
@@ -256,6 +294,14 @@ export function AccountOverviewPage() {
     return () => { active = false; window.clearInterval(timer) }
   }, [])
 
+  React.useEffect(() => {
+    let active = true
+    fetchJson<IpInfo>("/api/account/ip-info")
+      .then(value => { if (active) { setIpInfo(value); setIpInfoError("") } })
+      .catch(error => { if (active) setIpInfoError(error instanceof Error ? error.message : "IP 信息获取失败") })
+    return () => { active = false }
+  }, [])
+
   function changeAnnouncementOpen(open: boolean) {
     if (!open && reminderDialog && muteToday && data) localStorage.setItem(`account-announcement-muted:${data.email}`, todayKey())
     if (!open) setReminderDialog(false)
@@ -282,6 +328,7 @@ export function AccountOverviewPage() {
         <section className="grid content-start gap-4 xl:col-span-4" aria-label="账户与节点概览">
           <PersonalInfoCard account={data} />
           <NodeStatusCard status={nodeStatus} error={nodeStatusError} />
+          <IpInfoCard info={ipInfo} error={ipInfoError} />
         </section>
         {data.announcements.length ? <Card className={hasTrafficDetails ? "xl:col-span-6" : "xl:col-span-12"}>
           <CardHeader><CardTitle>网站公告</CardTitle><CardDescription>最新服务动态与使用提醒</CardDescription></CardHeader>
