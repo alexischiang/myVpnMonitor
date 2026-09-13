@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-12
-- Current Objective: 提交并部署账户 IP 信息与无套餐账户展示修正
+- Last Updated: 2026-09-13
+- Current Objective: 提交并部署当前所有改动
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -112,8 +112,20 @@
 
 - 2026-09-12: npm run verify passed; main commit 4b9dc04 pushed; production merge 6092ee0 pushed; GitHub Actions run 34673808404 completed success
 
+- 2026-09-13: npm run test:payment、npm run verify:fast、npm run check、node --check server.js、git diff --check 均通过；Playwright 管理员会话在 /xui-inbounds 打开编辑入站并保存成功，console_errors/page_errors 均为空
+
+- 2026-09-13: npm run test:payment、npm run verify:fast、npm run check、npm run verify:harness、git diff --check 通过；Playwright 在 http://localhost:5173/xui-inbounds 修改地区并保存，仅产生 PUT /api/xui-inbound-groups，无 3x-ui 请求；console_errors/page_errors 为空
+
+- 2026-09-13: npm run verify（含 check、npm test、test:payment、test:wallet）通过；npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 在 http://localhost:5173/xui-inbounds 修改地区并保存，仅产生 PUT /api/xui-inbound-groups，无 3x-ui 请求；console_errors/page_errors 为空
+
+- 2026-09-13: npm run check、npm run verify:fast、npm run test:payment、npm run verify:harness、git diff --check 通过；Playwright 在 http://localhost:5173/xui-inbounds 与 /xui-monitor 验证无变化保存按钮 disabled、修改字段后启用、监控页提示每 2 分钟自动更新，console_errors/page_errors 均为空；回归测试确认无变化的入站分组/定制授权不请求 3x-ui
+
+- 2026-09-13: npm run check, npm run verify:fast, npm run verify:harness, git diff --check passed; Playwright /xui-monitor verified LA BWH API Token field visible, multiplier save issued only application PUT, console errors/page errors empty.
+
+- 2026-09-13: npm run agent:init 和 npm run verify 通过；既有 Playwright 证据确认 /xui-inbounds 与 /xui-monitor 无 console/page errors。
+
 ## Next Session
 
-- Files: none
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/user-form-dialog.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-monitor.tsx`, `test-payment.js`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 继续处理现有 account-node-status-page 的剩余浏览器错误
+- Recommended Next Step: 继续处理 account-node-status-page 的剩余浏览器错误

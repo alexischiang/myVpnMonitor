@@ -43,6 +43,7 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
   const [loading, setLoading] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState("")
+  const clientsLoadedFor = React.useRef("")
 
   React.useEffect(() => {
     if (!open) return
@@ -51,13 +52,15 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
     setClientEmail("")
     setError("")
     setLoading(false)
-  }, [open, user.activeGroup])
+    if (clientsLoadedFor.current !== user.id) setClients([])
+  }, [open, user.activeGroup, user.id])
 
   React.useEffect(() => {
     if (!open || mode !== "link") return
+    if (clientsLoadedFor.current === user.id) return
     setLoading(true)
     void fetchJson<XuiClientData>(`/api/xui-clients?userId=${encodeURIComponent(user.id)}`)
-      .then(data => setClients(data.clients))
+      .then(data => { setClients(data.clients); clientsLoadedFor.current = user.id })
       .catch(error => setError(error instanceof Error ? error.message : "无法读取3x-ui Client"))
       .finally(() => setLoading(false))
   }, [open, mode, user.id])

@@ -68,6 +68,7 @@ export function XuiInboundsPage() {
   const statusFilter = searchParams.get("status") || "all"
   const typeFilter = searchParams.get("type") || "package"
   const searchQuery = searchParams.get("q") || ""
+  const editingInbound = data?.inbounds.find(inbound => inbound.key === editingKey)
 
   function updateSearchParam(key: string, value: string, defaultValue = "all") {
     setSearchParams(current => {
@@ -94,9 +95,15 @@ export function XuiInboundsPage() {
   }, [])
 
   React.useEffect(() => {
-    void refresh()
-    const timer = window.setInterval(refresh, 30_000)
-    return () => window.clearInterval(timer)
+    const refreshIfVisible = () => { if (!document.hidden) void refresh() }
+    const onVisibilityChange = () => { if (!document.hidden) refreshIfVisible() }
+    refreshIfVisible()
+    const timer = window.setInterval(refreshIfVisible, 120_000)
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+    }
   }, [refresh])
 
   const openEditor = React.useCallback((inbound: XuiInbound) => {
@@ -121,7 +128,7 @@ export function XuiInboundsPage() {
     const groupMembershipChanged = Object.values(groups).some(ids => ids.includes(inbound.id)) && draft.inboundType === "custom"
     setSaving(true)
     try {
-      const result = await putJson<{ groups: XuiInboundGroups; metadata: XuiInboundMetadata }>("/api/xui-inbound-groups", { groups: nextGroups, metadata: nextMetadata, syncGroups: groupMembershipChanged })
+      const result = await putJson<{ groups: XuiInboundGroups; metadata: XuiInboundMetadata }>("/api/xui-inbound-groups", { groups: nextGroups, metadata: nextMetadata, syncGroups: false, groupsChanged: groupMembershipChanged })
       if (statusChanged) await postJson(`/api/xui-inbounds/${inbound.id}/set-enable`, { enable: draft.enabled })
       setGroups(result.groups)
       setMetadata(result.metadata)
@@ -135,6 +142,21 @@ export function XuiInboundsPage() {
       setSaving(false)
     }
   }
+
+  const groupSettingsChanged = React.useMemo(() => planGroups.some(group => {
+    const current = [...(groups[group] || [])].sort((left, right) => left - right)
+    const draft = [...(draftGroups[group] || [])].sort((left, right) => left - right)
+    return current.join(",") !== draft.join(",")
+  }), [draftGroups, groups])
+
+  const editorChanged = React.useMemo(() => {
+    if (!editingInbound) return false
+    const item = metadata[editingInbound.key]
+    return draft.enabled !== editingInbound.enabled
+      || draft.networkLevel !== (item?.networkLevel || "")
+      || draft.region !== (item?.region || "")
+      || draft.inboundType !== (item?.inboundType || editingInbound.inboundType || "package")
+  }, [draft, editingInbound, metadata])
 
   function openGroupSettings() {
     const packageIds = new Set((data?.inbounds || []).filter(inbound => inbound.inboundType === "package").map(inbound => inbound.id))
@@ -222,8 +244,6 @@ export function XuiInboundsPage() {
   if (loading && !data) return <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-20" /><Skeleton className="h-96" /></div>
   if (!data?.configured) return <div className="px-4 lg:px-6"><Alert><Server /><AlertDescription>尚未配置 3x-ui，无法管理入站。</AlertDescription></Alert></div>
 
-  const editingInbound = data.inbounds.find(inbound => inbound.key === editingKey)
-
   return (
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="入站管理" description="按单个入站维护线路属性；流量倍率在节点监控的节点设置中统一维护。" />
@@ -264,7 +284,7 @@ export function XuiInboundsPage() {
                 </Table>
             </div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><Button variant="outline" onClick={() => void resyncGroups()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <RefreshCw />}重新同步实际关联</Button><Button onClick={() => void saveGroupSettings()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存套餐分组</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><Button variant="outline" onClick={() => void resyncGroups()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <RefreshCw />}重新同步实际关联</Button><Button onClick={() => void saveGroupSettings()} disabled={saving || !groupSettingsChanged}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存套餐分组</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -277,7 +297,7 @@ export function XuiInboundsPage() {
             <Field><FieldLabel>网络级别</FieldLabel><Select value={draft.networkLevel || "unset"} onValueChange={value => setDraft(current => ({ ...current, networkLevel: value === "unset" ? "" : value }))}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unset">未设置</SelectItem>{networkLevels.map(level => <SelectItem key={level.value} value={level.value}>{level.label}</SelectItem>)}</SelectContent></Select></Field>
             <Field><FieldLabel htmlFor="inbound-region">地区</FieldLabel><Input id="inbound-region" value={draft.region} onChange={event => setDraft(current => ({ ...current, region: event.target.value }))} placeholder="例如：香港、美国、台湾" maxLength={64} /></Field>
           </div>
-          <SheetFooter><Button variant="outline" onClick={() => setEditingKey("")} disabled={saving}>取消</Button><Button onClick={() => void saveEditor()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存设置</Button></SheetFooter>
+          <SheetFooter><Button variant="outline" onClick={() => setEditingKey("")} disabled={saving}>取消</Button><Button onClick={() => void saveEditor()} disabled={saving || !editorChanged}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存设置</Button></SheetFooter>
         </SheetContent>
       </Sheet>
     </div>

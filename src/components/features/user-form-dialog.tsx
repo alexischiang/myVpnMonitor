@@ -152,11 +152,15 @@ export function UserFormDialog({
   const [allowFullPool, setAllowFullPool] = React.useState(false)
   const [recommending, setRecommending] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
+  const initialValues = React.useRef(toFormValues(user))
   const price = selectedPrice(pricing, values)
+  const changed = React.useMemo(() => JSON.stringify(values) !== JSON.stringify(initialValues.current), [values])
 
   React.useEffect(() => {
     if (!open) return
-    setValues(toFormValues(user))
+    const nextValues = toFormValues(user)
+    initialValues.current = nextValues
+    setValues(nextValues)
     setStepIndex(0)
     setErrors({})
     setRecommendationMessage("")
@@ -338,7 +342,7 @@ export function UserFormDialog({
             <DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose>
             <div className="flex gap-2">
               {stepIndex > 0 ? <Button type="button" variant="outline" onClick={() => setStepIndex(current => current - 1)}>上一步</Button> : null}
-              {stepIndex < 2 ? <Button type="button" onClick={nextStep} disabled={recommending}>{recommending ? <Loader2 className="animate-spin" /> : null}{recommending ? "推荐中..." : "下一步"}</Button> : <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="animate-spin" /> : null}{submitting ? "保存中..." : user ? "保存修改" : "完成添加"}</Button>}
+              {stepIndex < 2 ? <Button type="button" onClick={nextStep} disabled={recommending}>{recommending ? <Loader2 className="animate-spin" /> : null}{recommending ? "推荐中..." : "下一步"}</Button> : <Button type="submit" disabled={submitting || Boolean(user && !changed)}>{submitting ? <Loader2 className="animate-spin" /> : null}{submitting ? "保存中..." : user ? "保存修改" : "完成添加"}</Button>}
             </div>
           </DialogFooter>
         </form>
