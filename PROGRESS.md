@@ -1,6 +1,6 @@
 # Current State
 
-- Last Updated: 2026-09-13
+- Last Updated: 2026-09-14
 - Current Objective: 提交并部署当前所有改动
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
@@ -132,8 +132,12 @@
 
 - 2026-09-13: npm run agent:init 和 npm run verify 通过；既有 Playwright 证据确认 Token-only credentials PUT 200 且无 console/page errors。
 
+- 2026-09-14: npm run verify、npm run verify:fast、npm run verify:harness、npm test、git diff --check 均通过；Playwright 干净会话 /xui-monitor 顶部缺 Token Alert 显示、console/page errors 为空；拦截验证 Token+成本依次 credentials/settings 且均 200；本地真实成本保存 settings 返回 200
+
+- 2026-09-14: npm run agent:init、npm run verify、npm run verify:harness、git diff --check 通过；已有 Playwright 证据确认 /xui-monitor 缺 Token 提示、Token+成本 credentials/settings 均 200 且无 console/page errors。
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `redis.js`, `server.js`, `src/components/features/xui-monitor.tsx`, `test-xui-service.js`, `xui-app.js`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/xui-monitor.tsx`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 观察生产锁竞争指标；如仍有高等待，再评估按客户端缩小锁粒度
+- Recommended Next Step: 部署 main 后在生产重新保存一个节点的 Token 与成本；SG AWS 当前 Token 已保存但节点 API 返回 HTTP 404，需检查该节点 basePath/API 路由

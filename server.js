@@ -4250,10 +4250,17 @@ function xuiClientCycleKey(client = {}, now = Date.now()) {
 }
 
 let xuiBillingMutation = Promise.resolve();
+let xuiTrafficSyncMutation = Promise.resolve();
 
 function withXuiBillingLock(operation) {
   const next = xuiBillingMutation.catch(() => undefined).then(operation);
   xuiBillingMutation = next;
+  return next;
+}
+
+function withXuiTrafficSyncLock(operation) {
+  const next = xuiTrafficSyncMutation.catch(() => undefined).then(operation);
+  xuiTrafficSyncMutation = next;
   return next;
 }
 
@@ -4500,7 +4507,7 @@ async function auditXuiClientGroups(clients, allInboundIds, groupInboundIdsByGro
 
 async function syncXuiWeightedTraffic(snapshot = {}) {
   if (!XUI_BASE_URL || !XUI_API_TOKEN) return getXuiBillingState();
-  return withXuiBillingLock(async () => {
+  return withXuiTrafficSyncLock(async () => {
     await loadLatestData();
     if (!XUI_READ_ONLY) await resetDueXuiTraffic();
     const [status, nodes, inbounds, clients, clientIpsByGuid, onlinesByGuid, lastOnline] = await Promise.all([
@@ -9331,10 +9338,11 @@ async function handleApi(req, res, pathname) {
       });
       monitor.nodes.forEach(node => {
         const trafficStatus = billing.nodeResults[node.guid] || {};
-        const hasCentralTraffic = node.id === "local" || (Array.isArray(inbounds) && inbounds.some(item => String(item?.originNodeGuid || `node:${item?.nodeId || "local"}`) === node.guid && Array.isArray(item?.clientStats)));
-        node.trafficTokenRequired = node.id !== "local" && !hasCentralTraffic;
-        node.trafficConfigured = Boolean(nodeTokens[node.guid]) || trafficStatus.configured === true || hasCentralTraffic;
-        node.trafficError = String(trafficStatus.error || "");
+        node.trafficTokenRequired = node.id !== "local";
+        const configuredByToken = Boolean(nodeTokens[node.guid]);
+        node.trafficConfigured = node.id === "local" || configuredByToken || trafficStatus.configured === true;
+        const trafficError = String(trafficStatus.error || "");
+        node.trafficError = configuredByToken && trafficError.includes("缺少节点 API Token") ? "" : trafficError;
         node.multiplier = xuiMultiplier(billing.multipliers[node.guid]);
         node.costConfig = nodeCostConfigForDate(billing.costConfigs[node.guid]);
         if (onlinesByGuid && Object.prototype.hasOwnProperty.call(onlinesByGuid, node.guid)) {
