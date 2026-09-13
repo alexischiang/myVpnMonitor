@@ -21,6 +21,11 @@ function trafficResetKey(userId, reason, reference) {
   return `traffic-reset:${crypto.createHash("sha256").update(idempotencyKey).digest("hex")}`;
 }
 
+function panelWriteLockOptions(timeoutMs) {
+  const requestTimeoutMs = Math.max(1000, Number(timeoutMs) || 15000);
+  return { ttlMs: requestTimeoutMs * 2 + 5000, waitMs: requestTimeoutMs };
+}
+
 function validateTrafficReset(payload = {}) {
   const reason = String(payload.reason || "");
   const reference = String(reason === "calendar_month" ? payload.month || "" : reason === "manual" ? payload.resetId || "" : payload.paymentOrderId || "").trim();
@@ -123,7 +128,7 @@ function createXuiApp({ redis, store, token, baseUrl = "", apiToken = "", readOn
       const data = request.method === "GET"
         ? await operation()
         // ponytail: one lock per panel is enough until measured write throughput requires per-client locks.
-        : await withRedisLock(redis, panelLockKey(request.baseUrl), operation, { ttlMs: timeoutMs + 5000, waitMs: timeoutMs });
+        : await withRedisLock(redis, panelLockKey(request.baseUrl), operation, panelWriteLockOptions(timeoutMs));
       const entry = { event: "xui.request", requestId, level: "info", transport: "proxy", method: request.method, apiPath: request.apiPath, panelHost: new URL(request.baseUrl).host, readOnly, allowed: true, statusCode: 200, durationMs: Date.now() - startedAt };
       logger.info(entry, "3x-ui request completed");
       await persistXuiAudit(store, logger, entry);
@@ -207,7 +212,7 @@ function createXuiApp({ redis, store, token, baseUrl = "", apiToken = "", readOn
         await store.setState(key, result);
         return result;
       };
-      const data = await withRedisLock(redis, `xui:traffic-reset:${crypto.createHash("sha256").update(key).digest("hex").slice(0, 16)}`, operation, { ttlMs: timeoutMs + 5000, waitMs: timeoutMs });
+      const data = await withRedisLock(redis, `xui:traffic-reset:${crypto.createHash("sha256").update(key).digest("hex").slice(0, 16)}`, operation, panelWriteLockOptions(timeoutMs));
       const entry = { event: "xui.request", requestId, level: "info", transport: "proxy", method: "POST", apiPath: "/panel/api/clients/resetTraffic/:email", userId, readOnly, allowed: true, statusCode: 200, durationMs: Date.now() - startedAt };
       logger.info(entry, "3x-ui request completed");
       await persistXuiAudit(store, logger, entry);
@@ -223,4 +228,4 @@ function createXuiApp({ redis, store, token, baseUrl = "", apiToken = "", readOn
   return app;
 }
 
-module.exports = { createXuiApp, validateRequest, validateTrafficReset };
+module.exports = { createXuiApp, validateRequest, validateTrafficReset, panelWriteLockOptions };

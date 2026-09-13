@@ -124,8 +124,16 @@
 
 - 2026-09-13: npm run agent:init 和 npm run verify 通过；既有 Playwright 证据确认 /xui-inbounds 与 /xui-monitor 无 console/page errors。
 
+- 2026-09-13: npm run check、npm test、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright /xui-monitor Token-only 保存仅发 credentials PUT 200，console_errors/page_errors 为空
+
+- 2026-09-13: npm run check、npm run verify:fast、npm run verify:harness、npm test、git diff --check 通过；Playwright /xui-monitor Token-only 保存仅发 credentials PUT 200，console_errors/page_errors 为空；Token 写入使用独立队列避免并发覆盖
+
+- 2026-09-13: npm run verify、npm run verify:fast、npm run verify:harness、git diff --check 通过；FakeRedis 验证 35 秒 TTL、并发互斥和 409/XUI_LOCK_BUSY；此前 Playwright /xui-monitor Token-only credentials PUT 200 且无 console/page errors
+
+- 2026-09-13: npm run agent:init 和 npm run verify 通过；既有 Playwright 证据确认 Token-only credentials PUT 200 且无 console/page errors。
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/user-form-dialog.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-monitor.tsx`, `test-payment.js`
+- Files: `PROGRESS.md`, `feature_list.json`, `redis.js`, `server.js`, `src/components/features/xui-monitor.tsx`, `test-xui-service.js`, `xui-app.js`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 继续处理 account-node-status-page 的剩余浏览器错误
+- Recommended Next Step: 观察生产锁竞争指标；如仍有高等待，再评估按客户端缩小锁粒度

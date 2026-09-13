@@ -1,21 +1,32 @@
 const assert = require("assert");
 const http = require("http");
-const { createXuiApp, validateRequest, validateTrafficReset } = require("./xui-app");
+const { createXuiApp, validateRequest, validateTrafficReset, panelWriteLockOptions } = require("./xui-app");
+const { withRedisLock } = require("./redis");
 const { requestXui, retryXuiTimeout } = require("./xui-client");
 const { createMainApp } = require("./main-app");
 const { initializeBillingState } = require("./scripts/migrate-xui-data");
 
 class FakeRedis {
-  constructor() { this.values = new Map(); }
+  constructor() { this.values = new Map(); this.expirations = new Map(); }
   async ping() { return "PONG"; }
+  expire(key) {
+    if ((this.expirations.get(key) || 0) <= Date.now()) {
+      this.values.delete(key);
+      this.expirations.delete(key);
+    }
+  }
   async set(key, value, options) {
+    this.expire(key);
     if (options?.NX && this.values.has(key)) return null;
     this.values.set(key, value);
+    if (options?.PX) this.expirations.set(key, Date.now() + options.PX);
     return "OK";
   }
   async eval(_script, { keys, arguments: values }) {
+    this.expire(keys[0]);
     if (this.values.get(keys[0]) !== values[0]) return 0;
     this.values.delete(keys[0]);
+    this.expirations.delete(keys[0]);
     return 1;
   }
 }
@@ -45,6 +56,29 @@ function listen(server) {
 }
 
 async function main() {
+  assert.deepStrictEqual(panelWriteLockOptions(15000), { ttlMs: 35000, waitMs: 15000 });
+  const lockRedis = new FakeRedis();
+  let activeLocks = 0;
+  let maxActiveLocks = 0;
+  const lockedWork = withRedisLock(lockRedis, "panel", async () => {
+    activeLocks += 1;
+    maxActiveLocks = Math.max(maxActiveLocks, activeLocks);
+    await new Promise(resolve => setTimeout(resolve, 25));
+    activeLocks -= 1;
+  }, { ttlMs: 100, waitMs: 100 });
+  await new Promise(resolve => setTimeout(resolve, 1));
+  const queuedWork = withRedisLock(lockRedis, "panel", async () => {
+    activeLocks += 1;
+    maxActiveLocks = Math.max(maxActiveLocks, activeLocks);
+    activeLocks -= 1;
+  }, { ttlMs: 100, waitMs: 100 });
+  await Promise.all([lockedWork, queuedWork]);
+  assert.strictEqual(maxActiveLocks, 1);
+  const heldLock = withRedisLock(lockRedis, "busy", () => new Promise(resolve => setTimeout(resolve, 250)), { ttlMs: 500, waitMs: 100 });
+  await new Promise(resolve => setTimeout(resolve, 1));
+  await assert.rejects(withRedisLock(lockRedis, "busy", async () => undefined, { ttlMs: 100, waitMs: 5 }), error => error.statusCode === 409 && error.code === "XUI_LOCK_BUSY");
+  await heldLock;
+
   let timeoutAttempts = 0;
   assert.deepStrictEqual(await retryXuiTimeout(async () => {
     timeoutAttempts += 1;

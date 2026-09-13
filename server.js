@@ -4283,10 +4283,16 @@ async function getXuiNodeTokens(legacyTokens = {}) {
   return legacyTokens;
 }
 
-async function setXuiNodeToken(guid, token) {
-  if (!XUI_SERVICE_URL) return dataStore.setXuiNodeCredential(guid, token);
-  const tokens = await getXuiNodeTokens();
-  await setXuiState("node-tokens", "xuiNodeTokens", { ...tokens, [guid]: token });
+let xuiNodeTokenMutation = Promise.resolve();
+
+function setXuiNodeToken(guid, token) {
+  const next = xuiNodeTokenMutation.catch(() => undefined).then(async () => {
+    if (!XUI_SERVICE_URL) return dataStore.setXuiNodeCredential(guid, token);
+    const tokens = await getXuiNodeTokens();
+    await setXuiState("node-tokens", "xuiNodeTokens", { ...tokens, [guid]: token });
+  });
+  xuiNodeTokenMutation = next;
+  return next;
 }
 
 async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
@@ -9358,9 +9364,8 @@ async function handleApi(req, res, pathname) {
       if (!apiToken || apiToken.length > 4096) throw new Error("请输入有效的节点 API Token。");
       const guid = decodeURIComponent(xuiCredentialsMatch[1]);
       if (!guid || guid.length > 512 || /[\\/]/.test(guid)) throw new Error("节点标识无效。");
-      await withXuiBillingLock(async () => {
-        await setXuiNodeToken(guid, sealXuiNodeToken(apiToken));
-      });
+      // Credentials live separately from billing state and should not wait for traffic sync.
+      await setXuiNodeToken(guid, sealXuiNodeToken(apiToken));
       sendJson(res, 200, { ok: true, guid, configured: true });
     } catch (error) {
       sendJson(res, 400, { error: error.message });

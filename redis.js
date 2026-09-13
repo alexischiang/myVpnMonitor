@@ -13,7 +13,7 @@ async function withRedisLock(client, key, operation, { ttlMs = 30000, waitMs = 1
   const token = crypto.randomUUID();
   const deadline = Date.now() + waitMs;
   while (await client.set(key, token, { NX: true, PX: ttlMs }) !== "OK") {
-    if (Date.now() >= deadline) throw new Error("3x-ui 正在处理其他写入，请稍后重试。");
+    if (Date.now() >= deadline) throw Object.assign(new Error("3x-ui 正在处理其他写入，请稍后重试。"), { statusCode: 409, code: "XUI_LOCK_BUSY" });
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   try {

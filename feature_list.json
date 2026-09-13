@@ -303,13 +303,15 @@
         "Inbound metadata and unchanged custom-inbound assignments write only application state.",
         "Self-hosted user provisioning runs only when 3x-ui-relevant fields change.",
         "Unchanged node, access-group, user, inbound-group, and form settings do not submit saves.",
-        "Polling skips hidden pages and runs every two minutes when visible."
+        "Polling skips hidden pages and runs every two minutes when visible.",
+        "Token-only node saves persist credentials without waiting for the traffic synchronization lock."
       ],
       "verification": [
         "2026-09-13: npm run check, npm run verify:fast, npm run test:payment, npm run verify:harness, and git diff --check passed.",
         "2026-09-13: Browser verification on /xui-inbounds and /xui-monitor confirmed unchanged save buttons are disabled, changed fields enable saving, the monitor label states every two minutes, and console/page errors are empty.",
         "2026-09-13: Payment regression coverage confirmed unchanged custom-inbound assignments and metadata-only group saves do not issue 3x-ui requests.",
-        "2026-09-13: Restored the API token field in every node settings dialog; node settings saves no longer perform remote 3x-ui validation and support token-only or multiplier-only changes."
+        "2026-09-13: Restored the API token field in every node settings dialog; node settings saves no longer perform remote 3x-ui validation and support token-only or multiplier-only changes.",
+        "2026-09-13: Token-only save returned 200 from PUT /api/xui-monitor/nodes/:guid/credentials without a settings request; browser console and page errors were empty."
       ],
       "browser_verification": {
         "routes": ["/xui-inbounds", "/xui-monitor"],
@@ -317,6 +319,7 @@
           "Opened package groups and confirmed 保存套餐分组 is disabled without changes.",
           "Opened an inbound editor and confirmed 保存设置 is disabled without changes and enabled after changing the region.",
           "Opened node settings and confirmed 保存设置 is disabled without changes and enabled after changing the multiplier.",
+          "Entered a node API Token and saved; verified only the credentials PUT was issued and it returned 200.",
           "Confirmed the monitor page displays 每 2 分钟自动更新."
         ],
         "console_errors": [],
@@ -396,11 +399,13 @@
         "A timed-out 3x-ui request is automatically attempted one more time.",
         "Non-timeout failures are not retried.",
         "Direct and standalone 3x-ui service transports share the same retry behavior.",
-        "Background inbound monitoring defaults to a two-minute interval without overlapping an active refresh."
+        "Background inbound monitoring defaults to a two-minute interval without overlapping an active refresh.",
+        "Panel write locks remain valid across one timeout retry and report lock contention as a conflict."
       ],
       "verification": [
         "2026-09-08: Regression coverage confirmed an AbortError is retried exactly once and the second attempt succeeds.",
-        "2026-09-08: Default background inbound polling was reduced from every 30 seconds to every 2 minutes; npm run verify:fast and git diff --check passed."
+        "2026-09-08: Default background inbound polling was reduced from every 30 seconds to every 2 minutes; npm run verify:fast and git diff --check passed.",
+        "2026-09-13: FakeRedis regression coverage confirmed panel lock TTL is 35 seconds for a 15-second request timeout, concurrent writes remain mutually exclusive, and lock contention returns 409/XUI_LOCK_BUSY."
       ]
     },
     {

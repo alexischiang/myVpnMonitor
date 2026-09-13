@@ -124,10 +124,20 @@ export function XuiMonitorPage() {
       if (!nodeMultipliers[guid]?.trim() || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw new Error("节点倍率必须在 0 到 100 之间")
       const costChanged = nodeCostChanged(node)
       if (costChanged && (!cost?.purchaseDate || cost.monthlyFee === "" || !cost.trafficQuotaGiB)) throw new Error("请填写 VPS 购买日期、月费和流量额度")
-      const result = await putJson<{ guid: string; multiplier: number; costConfig: MonitorData["nodes"][number]["costConfig"]; configured?: boolean }>(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { apiToken, multiplier, ...(costChanged && cost ? { costConfig: { ...cost, monthlyFee: Number(cost.monthlyFee), trafficQuotaGiB: Number(cost.trafficQuotaGiB) } } : {}) })
+      const multiplierChanged = multiplier !== node.multiplier
+      let configured = node.trafficConfigured
+      if (apiToken) {
+        const credentials = await putJson<{ configured?: boolean }>(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/credentials`, { apiToken })
+        configured = credentials.configured ?? true
+      }
+      let result: { multiplier: number; costConfig: MonitorData["nodes"][number]["costConfig"]; configured?: boolean } | null = null
+      if (multiplierChanged || costChanged) {
+        result = await putJson<{ multiplier: number; costConfig: MonitorData["nodes"][number]["costConfig"]; configured?: boolean }>(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { multiplier, ...(costChanged && cost ? { costConfig: { ...cost, monthlyFee: Number(cost.monthlyFee), trafficQuotaGiB: Number(cost.trafficQuotaGiB) } } : {}) })
+        configured = result.configured ?? configured
+      }
       setNodeTokens(current => ({ ...current, [guid]: "" }))
       setSettingsGuid("")
-      setData(current => current ? { ...current, nodes: current.nodes.map(item => item.guid === guid ? { ...item, multiplier: result.multiplier, costConfig: result.costConfig ?? item.costConfig, trafficConfigured: result.configured ?? item.trafficConfigured } : item) } : current)
+      setData(current => current ? { ...current, nodes: current.nodes.map(item => item.guid === guid ? { ...item, multiplier: result?.multiplier ?? item.multiplier, costConfig: result?.costConfig ?? item.costConfig, trafficConfigured: configured } : item) } : current)
       toast.success("节点设置已保存")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败")
