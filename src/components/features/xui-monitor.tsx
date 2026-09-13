@@ -137,7 +137,7 @@ export function XuiMonitorPage() {
       }
       setNodeTokens(current => ({ ...current, [guid]: "" }))
       setSettingsGuid("")
-      setData(current => current ? { ...current, nodes: current.nodes.map(item => item.guid === guid ? { ...item, multiplier: result?.multiplier ?? item.multiplier, costConfig: result?.costConfig ?? item.costConfig, trafficConfigured: configured } : item) } : current)
+      setData(current => current ? { ...current, nodes: current.nodes.map(item => item.guid === guid ? { ...item, multiplier: result?.multiplier ?? item.multiplier, costConfig: result?.costConfig ?? item.costConfig, trafficConfigured: configured, trafficError: configured ? "" : item.trafficError } : item) } : current)
       toast.success("节点设置已保存")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败")

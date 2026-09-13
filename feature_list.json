@@ -311,7 +311,8 @@
         "2026-09-13: Browser verification on /xui-inbounds and /xui-monitor confirmed unchanged save buttons are disabled, changed fields enable saving, the monitor label states every two minutes, and console/page errors are empty.",
         "2026-09-13: Payment regression coverage confirmed unchanged custom-inbound assignments and metadata-only group saves do not issue 3x-ui requests.",
         "2026-09-13: Restored the API token field in every node settings dialog; node settings saves no longer perform remote 3x-ui validation and support token-only or multiplier-only changes.",
-        "2026-09-13: Token-only save returned 200 from PUT /api/xui-monitor/nodes/:guid/credentials without a settings request; browser console and page errors were empty."
+        "2026-09-13: Token-only save returned 200 from PUT /api/xui-monitor/nodes/:guid/credentials without a settings request; browser console and page errors were empty.",
+        "2026-09-14: Separated traffic-sync serialization from billing settings; simultaneous Token plus cost save returned 200 for credentials and settings, and the missing-Token alert was restored."
       ],
       "browser_verification": {
         "routes": ["/xui-inbounds", "/xui-monitor"],
@@ -320,11 +321,13 @@
           "Opened an inbound editor and confirmed 保存设置 is disabled without changes and enabled after changing the region.",
           "Opened node settings and confirmed 保存设置 is disabled without changes and enabled after changing the multiplier.",
           "Entered a node API Token and saved; verified only the credentials PUT was issued and it returned 200.",
+          "Confirmed a clean /xui-monitor session shows the missing-Token alert and no console or page errors.",
+          "With request interception, entered Token and cost together and verified credentials then settings requests both completed with 200.",
           "Confirmed the monitor page displays 每 2 分钟自动更新."
         ],
         "console_errors": [],
         "page_errors": [],
-        "checked_at": "2026-09-13"
+        "checked_at": "2026-09-14"
       }
     },
     {
