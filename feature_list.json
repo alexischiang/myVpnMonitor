@@ -274,11 +274,13 @@
         "2026-09-07: Browser verification matched all 19 main-table rows and both package-group lists (9 available, 10 unavailable) against subSortIndex then inbound ID order.",
         "2026-09-08: npm run check passed; browser verification confirmed all 4 disabled inbounds across both package-group lists display a status badge with no false positives.",
         "2026-09-08: Browser verification confirmed all 10 add actions use the green success button treatment.",
-        "2026-09-08: Browser verification confirmed the add actions mirror the remove actions with a 10% background tint and opaque semantic icon color."
+        "2026-09-08: Browser verification confirmed the add actions mirror the remove actions with a 10% background tint and opaque semantic icon color.",
+        "2026-09-13: Browser verification confirmed editing inbound metadata submits only the app API and produces no console or page errors."
       ],
       "browser_verification": {
         "routes": ["/xui-inbounds"],
         "interactions": [
+          "Opened an inbound editor, changed the region, saved, and confirmed the browser issued only PUT /api/xui-inbound-groups with no 3x-ui request or runtime errors.",
           "Logged in as administrator and opened inbound management.",
           "Compared all 19 main-table rows with the subSortIndex and inbound ID order returned by the management API.",
           "Opened package groups and compared all 9 available and 10 unavailable BASIC rows with the same order.",
@@ -287,7 +289,39 @@
         ],
         "console_errors": [],
         "page_errors": [],
-        "checked_at": "2026-09-08"
+        "checked_at": "2026-09-13"
+      }
+    },
+    {
+      "id": "xui-redundant-request-guard",
+      "name": "Reduce redundant 3x-ui synchronization",
+      "description": "Skip 3x-ui calls when inbound, node, user, or access-group settings have not changed.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Inbound metadata and unchanged custom-inbound assignments write only application state.",
+        "Self-hosted user provisioning runs only when 3x-ui-relevant fields change.",
+        "Unchanged node, access-group, user, inbound-group, and form settings do not submit saves.",
+        "Polling skips hidden pages and runs every two minutes when visible."
+      ],
+      "verification": [
+        "2026-09-13: npm run check, npm run verify:fast, npm run test:payment, npm run verify:harness, and git diff --check passed.",
+        "2026-09-13: Browser verification on /xui-inbounds and /xui-monitor confirmed unchanged save buttons are disabled, changed fields enable saving, the monitor label states every two minutes, and console/page errors are empty.",
+        "2026-09-13: Payment regression coverage confirmed unchanged custom-inbound assignments and metadata-only group saves do not issue 3x-ui requests.",
+        "2026-09-13: Restored the API token field in every node settings dialog; node settings saves no longer perform remote 3x-ui validation and support token-only or multiplier-only changes."
+      ],
+      "browser_verification": {
+        "routes": ["/xui-inbounds", "/xui-monitor"],
+        "interactions": [
+          "Opened package groups and confirmed 保存套餐分组 is disabled without changes.",
+          "Opened an inbound editor and confirmed 保存设置 is disabled without changes and enabled after changing the region.",
+          "Opened node settings and confirmed 保存设置 is disabled without changes and enabled after changing the multiplier.",
+          "Confirmed the monitor page displays 每 2 分钟自动更新."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-13"
       }
     },
     {

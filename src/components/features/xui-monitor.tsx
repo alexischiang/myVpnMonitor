@@ -90,9 +90,15 @@ export function XuiMonitorPage() {
   }, [])
 
   React.useEffect(() => {
-    void refresh()
-    const timer = window.setInterval(refresh, 30_000)
-    return () => window.clearInterval(timer)
+    const refreshIfVisible = () => { if (!document.hidden) void refresh() }
+    const onVisibilityChange = () => { if (!document.hidden) refreshIfVisible() }
+    refreshIfVisible()
+    const timer = window.setInterval(refreshIfVisible, 120_000)
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+    }
   }, [refresh])
 
   function openNodeSettings(node: MonitorData["nodes"][number]) {
@@ -108,23 +114,45 @@ export function XuiMonitorPage() {
   }
 
   async function saveNodeSettings(guid: string) {
+    const node = data?.nodes.find(item => item.guid === guid)
+    if (!node || !nodeSettingsChanged(node)) return
     setSavingGuid(guid)
     try {
       const apiToken = nodeTokens[guid]?.trim()
       const multiplier = Number(nodeMultipliers[guid])
       const cost = nodeCosts[guid]
       if (!nodeMultipliers[guid]?.trim() || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw new Error("节点倍率必须在 0 到 100 之间")
-      if (!cost?.purchaseDate || cost.monthlyFee === "" || !cost.trafficQuotaGiB) throw new Error("请填写 VPS 购买日期、月费和流量额度")
-      await putJson(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { apiToken, multiplier, costConfig: { ...cost, monthlyFee: Number(cost.monthlyFee), trafficQuotaGiB: Number(cost.trafficQuotaGiB) } })
+      const costChanged = nodeCostChanged(node)
+      if (costChanged && (!cost?.purchaseDate || cost.monthlyFee === "" || !cost.trafficQuotaGiB)) throw new Error("请填写 VPS 购买日期、月费和流量额度")
+      const result = await putJson<{ guid: string; multiplier: number; costConfig: MonitorData["nodes"][number]["costConfig"]; configured?: boolean }>(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { apiToken, multiplier, ...(costChanged && cost ? { costConfig: { ...cost, monthlyFee: Number(cost.monthlyFee), trafficQuotaGiB: Number(cost.trafficQuotaGiB) } } : {}) })
       setNodeTokens(current => ({ ...current, [guid]: "" }))
       setSettingsGuid("")
-      await refresh()
+      setData(current => current ? { ...current, nodes: current.nodes.map(item => item.guid === guid ? { ...item, multiplier: result.multiplier, costConfig: result.costConfig ?? item.costConfig, trafficConfigured: result.configured ?? item.trafficConfigured } : item) } : current)
       toast.success("节点设置已保存")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败")
     } finally {
       setSavingGuid("")
     }
+  }
+
+  function nodeSettingsChanged(node: MonitorData["nodes"][number]) {
+    const guid = node.guid
+    const multiplier = Number(nodeMultipliers[guid] ?? String(node.multiplier))
+    if (multiplier !== node.multiplier) return true
+    if (nodeTokens[guid]?.trim()) return true
+    return nodeCostChanged(node)
+  }
+
+  function nodeCostChanged(node: MonitorData["nodes"][number]) {
+    const draft = nodeCosts[node.guid]
+    if (!draft) return false
+    const original = node.costConfig
+    if (!original) return Boolean(draft.monthlyFee || draft.trafficQuotaGiB)
+    return draft.purchaseDate !== original.purchaseDate
+      || Number(draft.monthlyFee) !== Number(original.monthlyFee)
+      || Number(draft.trafficQuotaGiB) !== Number(original.trafficQuotaGiB)
+      || draft.trafficMode !== original.trafficMode
   }
 
   if (loading && !data) return <div className="grid gap-4 px-4 lg:px-6"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{[1, 2, 3, 4].map(item => <Skeleton key={item} className="h-36" />)}</div><Skeleton className="h-80" /></div>
@@ -137,7 +165,7 @@ export function XuiMonitorPage() {
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 lg:px-6">
-        <p className="text-sm text-muted-foreground">每 30 秒自动更新 · {data.checkedAt ? formatDateTime(data.checkedAt) : "尚未更新"} · {data.latency ?? "-"} ms</p>
+        <p className="text-sm text-muted-foreground">每 2 分钟自动更新 · {data.checkedAt ? formatDateTime(data.checkedAt) : "尚未更新"} · {data.latency ?? "-"} ms</p>
         <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
           {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
           刷新
@@ -215,13 +243,13 @@ export function XuiMonitorPage() {
               </div>
               <FieldDescription>购买日期是月度计费周期起点，精确到日；费用、额度或计量方式变化时，按实际变更日期保存。</FieldDescription>
             </section>
-            {settingsNode.trafficTokenRequired ? <Field>
+            <Field>
               <FieldLabel htmlFor={`settings-token-${settingsNode.id}`}>节点 API Token <Badge variant={settingsNode.trafficConfigured ? "success" : "secondary"}>{settingsNode.trafficConfigured ? "已配置" : "未配置"}</Badge></FieldLabel>
               <Input id={`settings-token-${settingsNode.id}`} type="password" autoComplete="new-password" placeholder={settingsNode.trafficConfigured ? "留空保持现有 Token" : "输入该节点的 API Token"} value={nodeTokens[settingsNode.guid] ?? ""} onChange={event => setNodeTokens(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
-            </Field> : null}
+            </Field>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setSettingsGuid("")} disabled={savingGuid === settingsNode.guid}>取消</Button>
-              <Button type="submit" disabled={savingGuid === settingsNode.guid}>{savingGuid === settingsNode.guid ? <Loader2 className="animate-spin" /> : null}保存设置</Button>
+              <Button type="submit" disabled={savingGuid === settingsNode.guid || !nodeSettingsChanged(settingsNode)}>{savingGuid === settingsNode.guid ? <Loader2 className="animate-spin" /> : null}保存设置</Button>
             </DialogFooter>
           </form> : null}
         </DialogContent>

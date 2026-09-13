@@ -455,6 +455,20 @@ async function main() {
       { url: "/panel/api/clients/bulkAttach", body: { emails: ["buyer@example.test"], inboundIds: [2] } },
       { url: "/panel/api/clients/bulkDetach", body: { emails: ["buyer@example.test"], inboundIds: [1] } }
     ]);
+    const staleInboundGroups = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [1, 999], pro: [1], ultra: [1] }, syncGroups: false } });
+    assert.strictEqual(staleInboundGroups.response.status, 200);
+    assert.deepStrictEqual(staleInboundGroups.data.groups, { basic: [1], pro: [1], ultra: [1] });
+    xuiRequests.length = 0;
+    const metadataOnlyInboundSave = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [999], pro: [999], ultra: [999] }, metadata: { "node:local:1": { region: "香港", inboundType: "package" } }, syncGroups: false } });
+    assert.strictEqual(metadataOnlyInboundSave.response.status, 200);
+    assert.deepStrictEqual(metadataOnlyInboundSave.data.groups, { basic: [1], pro: [1], ultra: [1] });
+    assert.deepStrictEqual(metadataOnlyInboundSave.data.metadata["node:local:1"].region, "香港");
+    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/")), "metadata-only inbound saves must not request 3x-ui");
+    xuiRequests.length = 0;
+    const appOnlyGroupChange = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [], pro: [1], ultra: [1] }, metadata: { "node:local:1": { region: "上海", inboundType: "package" } }, syncGroups: false, groupsChanged: true } });
+    assert.strictEqual(appOnlyGroupChange.response.status, 200);
+    assert.deepStrictEqual(appOnlyGroupChange.data.groups, { basic: [], pro: [1], ultra: [1] });
+    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/")), "editor group changes must not request 3x-ui");
     assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/groups/bulkAdd"));
     await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [1], pro: [1], ultra: [1] }, syncGroups: false } });
     xuiClients.get("buyer@example.test").inboundIds = [2];
@@ -479,6 +493,10 @@ async function main() {
     assert.strictEqual(customInboundUpdate.response.status, 200);
     assert.deepStrictEqual(customInboundUpdate.data.xuiExtraInboundIds, [2]);
     assert.deepStrictEqual(customInboundUpdate.data.xuiInboundIds, [1, 2]);
+    xuiRequests.length = 0;
+    const unchangedCustomInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2] } });
+    assert.strictEqual(unchangedCustomInboundUpdate.response.status, 200);
+    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/")), "unchanged custom inbound assignments must not request 3x-ui");
     const blockedDisabledInbound = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2, 3] } });
     assert.strictEqual(blockedDisabledInbound.response.status, 400);
     assert.match(blockedDisabledInbound.data.error, /已停用/);

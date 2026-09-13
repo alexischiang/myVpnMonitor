@@ -740,6 +740,7 @@ export function UserDetailPage() {
   }
 
   async function migrateToSelfHosted() {
+    if (user.lineType === "self_hosted" && lineGroup === user.activeGroup) return
     setLineSaving(true)
     try {
       await postJson(`/api/users/${user.id}/line`, { lineType: "self_hosted", activeGroup: lineGroup })
@@ -892,7 +893,7 @@ export function UserDetailPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>{user.lineType === "self_hosted" ? "调整权限组" : "迁移到自研线路"}</DialogTitle><DialogDescription>系统将按入站管理中的套餐分组关联可用节点。未配置有效入站时不会迁移。</DialogDescription></DialogHeader>
           <Field><FieldLabel htmlFor="self-hosted-plan">{user.lineType === "self_hosted" ? "权限组" : "套餐分组"}</FieldLabel><Select value={lineGroup} onValueChange={setLineGroup} disabled={lineSaving}><SelectTrigger id="self-hosted-plan" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{manualPaymentPlans.map(plan => <SelectItem key={plan.value} value={plan.value}>{plan.label}</SelectItem>)}</SelectContent></Select></Field>
-          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={lineSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void migrateToSelfHosted()} disabled={lineSaving}>{lineSaving ? <Loader2 className="animate-spin" /> : <Network />}{lineSaving ? "同步中..." : user.lineType === "self_hosted" ? "保存权限组" : "确认迁移"}</Button></DialogFooter>
+          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={lineSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void migrateToSelfHosted()} disabled={lineSaving || (user.lineType === "self_hosted" && lineGroup === user.activeGroup)}>{lineSaving ? <Loader2 className="animate-spin" /> : <Network />}{lineSaving ? "同步中..." : user.lineType === "self_hosted" ? "保存权限组" : "确认迁移"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog open={customInboundOpen} onOpenChange={setCustomInboundOpen}>

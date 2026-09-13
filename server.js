@@ -5050,6 +5050,11 @@ async function provisionXuiClient(user, options = {}) {
   throw lastError;
 }
 
+function xuiProvisioningChanged(before = {}, after = {}) {
+  return ["lineType", "activeGroup", "group", "unlimited", "duration", "purchasedAt", "expiresAt", "xuiTrafficLimitBytes", "xuiIpLimit", "xuiClientEmail"]
+    .some(key => String(before[key] ?? "") !== String(after[key] ?? ""));
+}
+
 async function clearXuiBillingLedger(email) {
   const state = await getXuiBillingState();
   delete state.users[String(email || "").trim().toLowerCase()];
@@ -9225,20 +9230,28 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/xui-inbound-groups" && req.method === "PUT") {
     try {
       const payload = await readJson(req);
-      const next = normalizeXuiInboundGroups(payload);
+      if (payload.syncGroups === false && payload.metadata !== undefined) {
+        const stored = await getXuiState("inbound-groups", "xuiInboundGroups");
+        const groups = payload.groupsChanged === true ? normalizeXuiInboundGroups(payload) : normalizeXuiInboundGroups(stored || {});
+        const metadata = normalizeXuiInboundMetadata(payload.metadata);
+        await setXuiState("inbound-groups", "xuiInboundGroups", { groups, metadata });
+        sendJson(res, 200, { groups, metadata, synced: [] });
+        return;
+      }
       const management = await refreshXuiInboundManagementData();
       const allInboundIds = management.inbounds.map(inbound => inbound.id);
       const validIds = new Set(allInboundIds);
+      // Drop IDs for inbounds removed directly in 3x-ui so metadata edits remain usable.
+      const next = Object.fromEntries(Object.entries(normalizeXuiInboundGroups(payload)).map(([group, ids]) => [group, ids.filter(id => validIds.has(id))]));
       const validKeys = new Set(management.inbounds.map(inbound => inbound.key));
       const metadata = Object.fromEntries(Object.entries(normalizeXuiInboundMetadata(payload.metadata === undefined ? management.metadata : payload.metadata)).filter(([key]) => validKeys.has(key)));
       const packageInboundIds = new Set(management.inbounds.filter(inbound => (metadata[inbound.key]?.inboundType || inbound.inboundType) !== "custom").map(inbound => inbound.id));
       for (const [group, ids] of Object.entries(next)) {
-        if (ids.some(id => !validIds.has(id))) throw new Error(`${group.toUpperCase()} 包含不存在的入站。`);
         if (ids.some(id => !packageInboundIds.has(id))) throw new Error(`${group.toUpperCase()} 包含定制节点；定制节点不能加入套餐分组。`);
       }
       await setXuiState("inbound-groups", "xuiInboundGroups", { groups: next, metadata });
       const synced = [];
-      if (payload.syncGroups !== false) for (const group of USER_GROUPS) synced.push(await syncXuiInboundGroup(group, management.groups[group] || [], next[group], allInboundIds));
+      if (payload.syncGroups !== false) for (const group of USER_GROUPS) synced.push(await syncXuiInboundGroup(group, (management.groups[group] || []).filter(id => validIds.has(id)), next[group], allInboundIds));
       sendJson(res, 200, { groups: next, metadata, synced });
     } catch (error) {
       sendJson(res, error.statusCode || 400, { error: error.message });
@@ -9344,8 +9357,7 @@ async function handleApi(req, res, pathname) {
       const apiToken = String(payload.apiToken || "").trim();
       if (!apiToken || apiToken.length > 4096) throw new Error("请输入有效的节点 API Token。");
       const guid = decodeURIComponent(xuiCredentialsMatch[1]);
-      const nodes = await xuiRequest("/panel/api/nodes/list");
-      if (!(Array.isArray(nodes) ? nodes : []).some(node => String(node?.guid) === guid)) throw new Error("节点不存在。");
+      if (!guid || guid.length > 512 || /[\\/]/.test(guid)) throw new Error("节点标识无效。");
       await withXuiBillingLock(async () => {
         await setXuiNodeToken(guid, sealXuiNodeToken(apiToken));
       });
@@ -9363,9 +9375,7 @@ async function handleApi(req, res, pathname) {
       const multiplier = Number(payload.multiplier);
       if (payload.multiplier === "" || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw new Error("节点倍率必须在 0 到 100 之间。");
       const guid = decodeURIComponent(xuiNodeSettingsMatch[1]);
-      const [status, nodes] = await Promise.all([xuiRequest("/panel/api/server/status"), xuiRequest("/panel/api/nodes/list")]);
-      const localGuid = String(status?.panelGuid || "node:local");
-      if (guid !== localGuid && !(Array.isArray(nodes) ? nodes : []).some(node => String(node?.guid) === guid)) throw new Error("节点不存在。");
+      if (!guid || guid.length > 512 || /[\\/]/.test(guid)) throw new Error("节点标识无效。");
       const apiToken = String(payload.apiToken || "").trim();
       const costConfig = payload.costConfig ? normalizeNodeCostConfig(payload.costConfig) : null;
       if (apiToken.length > 4096) throw new Error("节点 API Token 无效。");
@@ -9376,7 +9386,7 @@ async function handleApi(req, res, pathname) {
         if (apiToken) await setXuiNodeToken(guid, sealXuiNodeToken(apiToken));
         await saveXuiBillingState(state);
       });
-      sendJson(res, 200, { ok: true, guid, multiplier, costConfig, configured: guid === localGuid || apiToken ? true : undefined });
+      sendJson(res, 200, { ok: true, guid, multiplier, costConfig });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -10428,20 +10438,20 @@ async function handleApi(req, res, pathname) {
         if (!item.xuiClientEmail) throw new Error("用户尚未关联3x-ui Client。");
         const payload = await readJson(req);
         if (!Array.isArray(payload.inboundIds)) throw new Error("个人定制入站格式无效。");
-        const management = await refreshXuiInboundManagementData();
-        const inboundsById = new Map(management.inbounds.map(inbound => [inbound.id, inbound]));
         const previousIds = normalizeXuiInboundIdList(item.xuiExtraInboundIds);
         const nextIds = normalizeXuiInboundIdList(payload.inboundIds);
         const addedIds = nextIds.filter(id => !previousIds.includes(id));
         const removedIds = previousIds.filter(id => !nextIds.includes(id));
+        if (!addedIds.length && !removedIds.length) {
+          sendJson(res, 200, publicUser(item));
+          return;
+        }
+        const management = await refreshXuiInboundManagementData();
+        const inboundsById = new Map(management.inbounds.map(inbound => [inbound.id, inbound]));
         for (const id of addedIds) {
           const inbound = inboundsById.get(id);
           if (!inbound) throw new Error(`入站 #${id} 不存在，无法新增授权。`);
           if (!inbound.enabled) throw new Error(`${inbound.name} 已停用，无法新增授权。`);
-        }
-        if (!addedIds.length && !removedIds.length) {
-          sendJson(res, 200, publicUser(item));
-          return;
         }
         const allInboundIds = management.inbounds.map(inbound => inbound.id);
         const inheritedInboundIds = effectiveXuiInboundIds(management.groups[activeUserGroup(item)] || [], [], allInboundIds);
@@ -10835,6 +10845,10 @@ async function handleApi(req, res, pathname) {
         if (!["upstream", "self_hosted"].includes(lineType) || !group) throw new Error("请选择有效的线路类型和套餐分组。");
         const before = userSnapshotForLog(item);
         if (lineType === "self_hosted") {
+          if (item.lineType === "self_hosted" && activeUserGroup(item) === group) {
+            sendJson(res, 200, publicUser(item));
+            return;
+          }
           Object.assign(item, { lineType, activeGroup: group, subscriptionId: "", updatedAt: new Date().toISOString() });
           await provisionXuiClient(item);
         } else {
@@ -10883,8 +10897,9 @@ async function handleApi(req, res, pathname) {
         const toSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
         if (fromSubscription?.id !== toSubscription?.id && toSubscription && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
         Object.assign(item, normalized);
-        if (isSelfHostedUser(item)) await provisionXuiClient(item);
-        else if (item.xuiClientEmail) await disableXuiClient(item);
+        if (isSelfHostedUser(item)) {
+          if (xuiProvisioningChanged(previousUserState, item)) await provisionXuiClient(item);
+        } else if (item.xuiClientEmail) await disableXuiClient(item);
         if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
         if (isSelfHostedUser(item)) item.blockUserinfo = false;
         else if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
