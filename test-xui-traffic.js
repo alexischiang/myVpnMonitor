@@ -1,4 +1,5 @@
 const assert = require("assert");
+const { createDataStore } = require("./database");
 const {
   RESET_INTERVAL_DAYS,
   MS_PER_DAY,
@@ -98,4 +99,36 @@ assert.deepStrictEqual(d3["u@x"].LA, { inBytes: 0, outBytes: 0 }, "negative clam
 const d4 = deductRemotesFromLocalNode({ "u@x": { TW: { inBytes: 5, outBytes: 5 } } }, "LA");
 assert.deepStrictEqual(d4["u@x"], { TW: { inBytes: 5, outBytes: 5 } }, "no local → untouched");
 
-console.log("xui-traffic pure-function checks passed.");
+async function checkApplicationTrafficStore() {
+  let dailyInsert;
+  const client = {
+    async query(sql, params) {
+      if (String(sql).includes("SELECT email, node_guid, last_up, last_down")) return { rows: [{ email: "user@example.com", node_guid: "hk", last_up: "100", last_down: "200" }] };
+      if (String(sql).includes("INSERT INTO xui_daily_traffic")) dailyInsert = { sql: String(sql), params };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const store = createDataStore({ databaseUrl: "postgres://test:test@127.0.0.1/test" });
+  store.pool = { connect: async () => client };
+  const recorded = await store.recordXuiTrafficSamples("2026-09-15", [{ email: "user@example.com", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", up: 130, down: 260 }]);
+  assert.deepStrictEqual(recorded, { applied: 1, seeded: 0 });
+  assert.ok(dailyInsert.sql.includes("user_id, user_label, plan_id, node_name"));
+  assert.deepStrictEqual(dailyInsert.params, ["2026-09-15", ["user@example.com"], ["hk"], ["u1"], ["U1"], ["pro"], ["Hong Kong"], [30], [60]]);
+
+  store.pool = {
+    async query(sql, params) {
+      assert.ok(String(sql).includes("FROM xui_daily_traffic WHERE date BETWEEN $1 AND $2"));
+      assert.deepStrictEqual(params, ["2026-09-01", "2026-09-15"]);
+      return { rows: [{ date: "2026-09-15", email: "user@example.com", node_guid: "hk", user_id: "u1", user_label: "U1", plan_id: "pro", node_name: "Hong Kong", up_bytes: "30", down_bytes: "60" }] };
+    }
+  };
+  assert.deepStrictEqual(await store.xuiTrafficRange("2026-09-01", "2026-09-15"), [{ date: "2026-09-15", email: "user@example.com", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", inBytes: 30, outBytes: 60 }]);
+}
+
+checkApplicationTrafficStore()
+  .then(() => console.log("xui-traffic pure-function and application-store checks passed."))
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });

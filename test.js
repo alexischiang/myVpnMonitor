@@ -1,4 +1,5 @@
 const assert = require("assert");
+const fs = require("fs");
 const { salesAmount, salesDateKey, salesDateRange, salesMonthRange, unlinkedSalesBills } = require("./src/components/features/sales-analytics-logic.ts");
 const { purchasedPlanName } = require("./src/utils.ts");
 const net = require("net");
@@ -68,7 +69,8 @@ const {
   normalizeXuiPresence,
   xuiTrafficByUser,
   xuiDirectionalTrafficByUser,
-  updateProfitTrafficMonth,
+  xuiTrafficSamples,
+  normalizeSalesTrafficState,
   normalizeNodeCostConfig,
   nodeCostConfigForDate,
   salesProfitabilityReport,
@@ -103,15 +105,15 @@ assert.strictEqual(purchasedPlanName({ currentProductSnapshot: { planName: "BASI
 assert.deepStrictEqual(["initial", "extend", "replace"].map(billTypeForPurchaseAction), ["initial", "renewal", "replacement"]);
 assert.strictEqual(salesAmount({ realCashAmount: 40, totalAmount: 50, amount: 30 }), 40);
 assert.deepStrictEqual(xuiDirectionalTrafficByUser([{ originNodeGuid: "hk", clientStats: [{ email: "USER", up: 10, down: 20 }] }]), { user: { hk: { inBytes: 10, outBytes: 20 } } });
-const profitBaseline = updateProfitTrafficMonth({}, { user: { hk: { inBytes: 10, outBytes: 20 } } }, "2026-09-01", new Map([["user", { id: "u1", userId: "U1" }]]), { hk: "Hong Kong" });
-const profitTraffic = updateProfitTrafficMonth(profitBaseline, { user: { hk: { inBytes: 20, outBytes: 40 } } }, "2026-09-01", new Map([["user", { id: "u1", userId: "U1" }]]), { hk: "Hong Kong" });
-assert.deepStrictEqual(profitTraffic.days["2026-09-01"].users.u1.nodes.hk, { name: "Hong Kong", inBytes: 10, outBytes: 20 });
+assert.deepStrictEqual(xuiTrafficSamples({ user: { hk: { inBytes: 10, outBytes: 20 } } }, new Map([["user", { id: "u1", userId: "U1", activeGroup: "pro" }]]), { hk: "Hong Kong" }), [{ email: "user", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", up: 10, down: 20 }]);
+assert.deepStrictEqual(normalizeSalesTrafficState({ costConfigs: { hk: [2] }, nodeNames: { hk: "Current" } }, { costConfigs: { hk: [1], sg: [3] }, nodeNames: { hk: "Legacy", sg: "Singapore" } }), { costConfigs: { hk: [2], sg: [3] }, nodeNames: { hk: "Current", sg: "Singapore" } });
+assert.ok(!fs.readFileSync(require.resolve("./server"), "utf8").includes("profit-traffic:"));
 assert.deepStrictEqual(normalizeNodeCostConfig({ purchaseDate: "2026-09-15", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" }), { purchaseDate: "2026-09-15", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" });
 assert.strictEqual(nodeCostConfigForDate([{ effectiveMonth: "2026-08" }, { purchaseDate: "2026-09-15" }], "2026-09-14").purchaseDate, "2026-08-01");
 assert.strictEqual(nodeCostConfigForDate([{ effectiveMonth: "2026-08" }, { purchaseDate: "2026-09-15" }], "2026-09-15").purchaseDate, "2026-09-15");
 const profitReport = salesProfitabilityReport({
   from: "2026-09-01", to: "2026-09-30",
-  trafficMonths: [{ month: "2026-09", days: { "2026-09-10": { users: { u1: { label: "U1", nodes: { hk: { name: "Hong Kong", inBytes: 10 * gib, outBytes: 20 * gib } } } } } } }],
+  trafficRows: [{ date: "2026-09-10", email: "user@example.com", userId: "u1", userLabel: "U1", planId: "", nodeGuid: "hk", nodeName: "Hong Kong", inBytes: 10 * gib, outBytes: 20 * gib }],
   costConfigs: { hk: [{ purchaseDate: "2026-09-01", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" }] },
   nodeNames: { hk: "Hong Kong" },
   reportBills: [{ userId: "u1", amount: 90, duration: "quarterly", type: "initial", occurredAt: "2026-08-20T00:00:00+08:00" }],
@@ -406,7 +408,7 @@ const trafficByUser = xuiTrafficByUser([
   { id: 3, originNodeGuid: "jp", clientStats: [{ email: "user@test.com", up: 20, down: 30 }] }
 ]);
 assert.deepStrictEqual(trafficByUser, { "user@test.com": { hk: 150, jp: 50 } });
-assert.deepStrictEqual(xuiBillingPayload({ users: { user: {} }, nodeTokens: { hk: "secret" } }), { users: { user: {} } });
+assert.deepStrictEqual(xuiBillingPayload({ users: { user: {} }, nodeTokens: { hk: "secret" }, costConfigs: { hk: [{}] } }), { users: { user: {} } });
 assert.deepStrictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 80, trafficAlerts: {} }, 100, 80, { telegram: true, mail: true, userMail: true }), { key: "cycle-1:80", channels: ["telegram", "mail", "userMail"] });
 assert.deepStrictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 90, trafficAlerts: { "cycle-1:80": ["telegram"] } }, 100, 80, { telegram: true, mail: true }), { key: "cycle-1:80", channels: ["mail"] });
 assert.strictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 79 }, 100, 80, { telegram: true }), null);

@@ -3893,14 +3893,28 @@ async function setXuiState(key, legacyCollection, value) {
   });
 }
 
-async function getProfitTrafficMonth(month) {
-  if (!XUI_SERVICE_URL) return dataStore.getRecord("xuiProfitTraffic", month);
-  return getXuiState(`profit-traffic:${month}`, "");
+function normalizeSalesTrafficState(value = {}, legacyBilling = {}) {
+  return {
+    costConfigs: { ...(legacyBilling.costConfigs || {}), ...(value?.costConfigs || {}) },
+    nodeNames: { ...(legacyBilling.nodeNames || {}), ...(value?.nodeNames || {}) }
+  };
 }
 
-async function setProfitTrafficMonth(month, value) {
-  if (!XUI_SERVICE_URL) return dataStore.setRecord("xuiProfitTraffic", month, value);
-  return setXuiState(`profit-traffic:${month}`, "", value);
+async function getSalesTrafficState() {
+  return normalizeSalesTrafficState(await dataStore.getRecord("salesTraffic", "state"));
+}
+
+let salesTrafficStateMutation = Promise.resolve();
+
+function updateSalesTrafficState(operation, legacyBilling = {}) {
+  const next = salesTrafficStateMutation.catch(() => undefined).then(async () => {
+    const current = normalizeSalesTrafficState(await dataStore.getRecord("salesTraffic", "state"), legacyBilling);
+    const updated = normalizeSalesTrafficState(await operation(current));
+    await dataStore.setRecord("salesTraffic", "state", updated);
+    return updated;
+  });
+  salesTrafficStateMutation = next;
+  return next;
 }
 
 function xuiTrafficByUser(value = []) {
@@ -3927,37 +3941,6 @@ function xuiDirectionalTrafficByUser(value = []) {
     }
   }
   return result;
-}
-
-function updateProfitTrafficMonth(previous = {}, current = {}, date = chinaDateKey(), usersByEmail = new Map(), nodeNames = {}) {
-  const month = String(date).slice(0, 7);
-  const state = previous?.month === month ? structuredClone(previous) : { month, startedAt: new Date().toISOString(), baselines: {}, days: {} };
-  state.baselines ||= {};
-  state.days ||= {};
-  const day = state.days[date] || { users: {} };
-  for (const [email, nodes] of Object.entries(current || {})) {
-    const priorNodes = state.baselines[email] || {};
-    const nextNodes = { ...priorNodes };
-    const user = usersByEmail.get(email);
-    const userKey = user?.id || `unlinked:${email}`;
-    for (const [guid, counters] of Object.entries(nodes || {})) {
-      const prior = priorNodes[guid];
-      const inBytes = Math.max(0, Number(counters?.inBytes) || 0);
-      const outBytes = Math.max(0, Number(counters?.outBytes) || 0);
-      const inDelta = prior ? (inBytes >= prior.inBytes ? inBytes - prior.inBytes : inBytes) : 0;
-      const outDelta = prior ? (outBytes >= prior.outBytes ? outBytes - prior.outBytes : outBytes) : 0;
-      nextNodes[guid] = { inBytes, outBytes };
-      if (!inDelta && !outDelta) continue;
-      const userRow = day.users[userKey] ||= { label: user ? billUserLabel(user) : email, planId: user ? activeUserGroup(user) : "", nodes: {} };
-      const node = userRow.nodes[guid] ||= { name: nodeNames[guid] || guid, inBytes: 0, outBytes: 0 };
-      node.inBytes += inDelta;
-      node.outBytes += outDelta;
-    }
-    state.baselines[email] = nextNodes;
-  }
-  state.days[date] = day;
-  state.updatedAt = new Date().toISOString();
-  return state;
 }
 
 function normalizeNodeCostConfig(value = {}) {
@@ -4011,11 +3994,12 @@ function nodeBillingCycleDays(purchaseDate, date) {
   return chinaDayNumber(boundary(startYear, startMonth)) - chinaDayNumber(start);
 }
 
-function salesProfitabilityReport({ from, to, plan = "all", trafficMonths = [], costConfigs = {}, nodeNames = {}, reportBills = [], reportOrders = [], reportUsers = [] }) {
+function salesProfitabilityReport({ from, to, plan = "all", trafficRows = [], costConfigs = {}, nodeNames = {}, reportBills = [], reportOrders = [], reportUsers = [] }) {
   const fromDay = chinaDayNumber(from);
   const toDay = chinaDayNumber(to);
   if (!Number.isFinite(fromDay) || !Number.isFinite(toDay) || fromDay > toDay) throw new Error("请选择有效的统计日期范围。");
   const usersById = new Map(reportUsers.map(user => [user.id, user]));
+  const usersByEmail = new Map(reportUsers.map(user => [String(user.xuiClientEmail || user.email || "").trim().toLowerCase(), user]).filter(([email]) => email));
   const ordersById = new Map(reportOrders.map(order => [order.id, order]));
   const userRows = new Map();
   const nodeRows = new Map();
@@ -4055,34 +4039,35 @@ function salesProfitabilityReport({ from, to, plan = "all", trafficMonths = [], 
 
   const missingConfigNodes = new Set();
   let dataSince = "";
-  for (const monthState of trafficMonths.filter(Boolean)) {
-    for (const [date, day] of Object.entries(monthState.days || {})) {
-      const number = chinaDayNumber(date);
-      if (number < fromDay || number > toDay) continue;
-      if (!dataSince || date < dataSince) dataSince = date;
-      for (const [userId, traffic] of Object.entries(day.users || {})) {
-        if (plan !== "all" && traffic.planId !== plan) continue;
-        const userRow = rowForUser(userId, traffic.label);
-        for (const [guid, node] of Object.entries(traffic.nodes || {})) {
-          const inBytes = Math.max(0, Number(node.inBytes) || 0);
-          const outBytes = Math.max(0, Number(node.outBytes) || 0);
-          const billingBytes = inBytes + outBytes;
-          const config = nodeCostConfigForDate(costConfigs[guid], date);
-          const costBytes = config?.trafficMode === "out_only" ? outBytes : billingBytes;
-          const rate = config ? config.monthlyFee / (config.trafficQuotaGiB * 1024 ** 3) : 0;
-          const trafficCost = costBytes * rate;
-          if (!config && billingBytes) missingConfigNodes.add(guid);
-          userRow.billingBytes += billingBytes;
-          userRow.costBytes += costBytes;
-          userRow.trafficCost += trafficCost;
-          const nodeRow = nodeRows.get(guid) || { guid, name: node.name || nodeNames[guid] || guid, billingBytes: 0, costBytes: 0, trafficCost: 0, fixedCost: 0 };
-          nodeRow.billingBytes += billingBytes;
-          nodeRow.costBytes += costBytes;
-          nodeRow.trafficCost += trafficCost;
-          nodeRows.set(guid, nodeRow);
-        }
-      }
-    }
+  for (const traffic of trafficRows) {
+    const date = String(traffic.date || "");
+    const number = chinaDayNumber(date);
+    if (number < fromDay || number > toDay) continue;
+    if (!dataSince || date < dataSince) dataSince = date;
+    const email = String(traffic.email || "").trim().toLowerCase();
+    const user = usersById.get(traffic.userId) || usersByEmail.get(email);
+    const userId = String(traffic.userId || user?.id || `unlinked:${email}`);
+    const planId = String(traffic.planId || activeUserGroup(user || {}));
+    if (plan !== "all" && planId !== plan) continue;
+    const userRow = rowForUser(userId, traffic.userLabel || (user ? billUserLabel(user) : email));
+    const guid = String(traffic.nodeGuid || "");
+    if (!guid) continue;
+    const inBytes = Math.max(0, Number(traffic.inBytes) || 0);
+    const outBytes = Math.max(0, Number(traffic.outBytes) || 0);
+    const billingBytes = inBytes + outBytes;
+    const config = nodeCostConfigForDate(costConfigs[guid], date);
+    const costBytes = config?.trafficMode === "out_only" ? outBytes : billingBytes;
+    const rate = config ? config.monthlyFee / (config.trafficQuotaGiB * 1024 ** 3) : 0;
+    const trafficCost = costBytes * rate;
+    if (!config && billingBytes) missingConfigNodes.add(guid);
+    userRow.billingBytes += billingBytes;
+    userRow.costBytes += costBytes;
+    userRow.trafficCost += trafficCost;
+    const nodeRow = nodeRows.get(guid) || { guid, name: traffic.nodeName || nodeNames[guid] || guid, billingBytes: 0, costBytes: 0, trafficCost: 0, fixedCost: 0 };
+    nodeRow.billingBytes += billingBytes;
+    nodeRow.costBytes += costBytes;
+    nodeRow.trafficCost += trafficCost;
+    nodeRows.set(guid, nodeRow);
   }
 
   let fixedCost = 0;
@@ -4170,11 +4155,21 @@ async function xuiPresencePayload() {
 
 // Flatten the per-(user,node) directional traffic snapshot into cursor samples
 // for the daily table: { email, nodeGuid, up, down } using current counter values.
-function xuiTrafficSamples(directionalTraffic = {}) {
+function xuiTrafficSamples(directionalTraffic = {}, usersByEmail = new Map(), nodeNames = {}) {
   const samples = [];
   for (const [email, byNode] of Object.entries(directionalTraffic || {})) {
+    const user = usersByEmail.get(email);
     for (const [nodeGuid, dir] of Object.entries(byNode || {})) {
-      samples.push({ email, nodeGuid, up: Math.max(0, Number(dir?.inBytes) || 0), down: Math.max(0, Number(dir?.outBytes) || 0) });
+      samples.push({
+        email,
+        nodeGuid,
+        userId: user?.id || "",
+        userLabel: user ? billUserLabel(user) : email,
+        planId: user ? activeUserGroup(user) : "",
+        nodeName: nodeNames[nodeGuid] || nodeGuid,
+        up: Math.max(0, Number(dir?.inBytes) || 0),
+        down: Math.max(0, Number(dir?.outBytes) || 0)
+      });
     }
   }
   return samples;
@@ -4267,12 +4262,13 @@ function withXuiTrafficSyncLock(operation) {
 async function getXuiBillingState() {
   const value = await getXuiState("billing", "xuiBilling");
   // Per-day usage now lives in the xui_daily_traffic table; billing state only carries
-  // multipliers, cost configs, node metadata, presence and the per-user ledger.
-  return { multipliers: {}, costConfigs: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
+  // multipliers, node metadata, presence and the per-user ledger.
+  return { multipliers: {}, nodeResults: {}, nodeNames: {}, users: {}, ...(value || {}) };
 }
 
 function xuiBillingPayload(state) {
-  const { nodeTokens, ...billing } = state;
+  // costConfigs is migrated to application storage and omitted from future 3x-ui state writes.
+  const { nodeTokens, costConfigs, ...billing } = state;
   return billing;
 }
 
@@ -4521,25 +4517,27 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     ]);
     const state = await getXuiBillingState();
     const nodeTokens = await getXuiNodeTokens(state.nodeTokens);
-    const { traffic, directionalTraffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
+    const { directionalTraffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
+    const localGuid = String(status?.panelGuid || "node:local");
+    const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
+    const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
+    try {
+      await updateSalesTrafficState(current => ({ ...current, nodeNames: { ...current.nodeNames, ...nodeNames } }), state);
+    } catch (error) {
+      console.warn(`[sales-traffic] Failed to persist application traffic settings: ${error.message}`);
+    }
     // Record this sampling round into the daily traffic table (the source of truth going
     // forward). recordXuiTrafficSamples diffs against the per-(user,node) cursor, so the
     // first observation only seeds the cursor and later rounds add per-day growth.
     try {
-      await dataStore.recordXuiTrafficSamples(chinaDateKey(), xuiTrafficSamples(directionalTraffic));
+      await dataStore.recordXuiTrafficSamples(chinaDateKey(), xuiTrafficSamples(directionalTraffic, appUsersByEmail, nodeNames));
     } catch (error) {
       console.warn(`[xui-traffic] Failed to record daily samples: ${error.message}`);
     }
-    const localGuid = String(status?.panelGuid || "node:local");
-    const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
-    const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
     const allInboundIds = normalizeXuiInboundIds(inbounds);
     const configuredGroups = await getXuiInboundGroups();
     const groupAudit = await auditXuiClientGroups(clients, allInboundIds, new Map(Object.entries(configuredGroups)));
     if (groupAudit.mismatched) console.log(`[xui-group] checked=${groupAudit.checked} mismatched=${groupAudit.mismatched} repaired=${groupAudit.repaired} failed=${groupAudit.failed} skipped=${groupAudit.skipped}`);
-    const profitMonth = chinaDateKey().slice(0, 7);
-    const profitTraffic = updateProfitTrafficMonth(await getProfitTrafficMonth(profitMonth), directionalTraffic, chinaDateKey(), appUsersByEmail, nodeNames);
-    await setProfitTrafficMonth(profitMonth, profitTraffic);
     const nodeMultipliers = state.multipliers || {};
     // Current-cycle usage per user comes from the daily table (single source of truth).
     // Fetch every app user's per-node cycle sums in one query, keyed by email.
@@ -9307,7 +9305,7 @@ async function handleApi(req, res, pathname) {
           return null;
         })
       ]);
-      const billing = await getXuiBillingState();
+      const [billing, salesTraffic] = await Promise.all([getXuiBillingState(), getSalesTrafficState()]);
       const nodeTokens = await getXuiNodeTokens(billing.nodeTokens);
       const monitor = normalizeXuiMonitor(status, nodes);
       const localGuid = String(status?.panelGuid || "node:local");
@@ -9344,7 +9342,7 @@ async function handleApi(req, res, pathname) {
         const trafficError = String(trafficStatus.error || "");
         node.trafficError = configuredByToken && trafficError.includes("缺少节点 API Token") ? "" : trafficError;
         node.multiplier = xuiMultiplier(billing.multipliers[node.guid]);
-        node.costConfig = nodeCostConfigForDate(billing.costConfigs[node.guid]);
+        node.costConfig = nodeCostConfigForDate(salesTraffic.costConfigs[node.guid]);
         if (onlinesByGuid && Object.prototype.hasOwnProperty.call(onlinesByGuid, node.guid)) {
           node.onlineCount = new Set((Array.isArray(onlinesByGuid[node.guid]) ? onlinesByGuid[node.guid] : []).map(email => String(email).toLowerCase())).size;
         }
@@ -9383,16 +9381,39 @@ async function handleApi(req, res, pathname) {
       const guid = decodeURIComponent(xuiNodeSettingsMatch[1]);
       if (!guid || guid.length > 512 || /[\\/]/.test(guid)) throw new Error("节点标识无效。");
       const apiToken = String(payload.apiToken || "").trim();
-      const costConfig = payload.costConfig ? normalizeNodeCostConfig(payload.costConfig) : null;
       if (apiToken.length > 4096) throw new Error("节点 API Token 无效。");
       await withXuiBillingLock(async () => {
         const state = await getXuiBillingState();
-        state.multipliers[guid] = multiplier;
-        if (costConfig) state.costConfigs[guid] = [...(state.costConfigs[guid] || []).filter(item => nodeCostConfigDate(item) !== costConfig.purchaseDate), costConfig].sort((left, right) => nodeCostConfigDate(left).localeCompare(nodeCostConfigDate(right)));
+        const multiplierChanged = xuiMultiplier(state.multipliers[guid]) !== multiplier;
+        if (multiplierChanged) {
+          state.multipliers[guid] = multiplier;
+          await saveXuiBillingState(state);
+        }
         if (apiToken) await setXuiNodeToken(guid, sealXuiNodeToken(apiToken));
-        await saveXuiBillingState(state);
       });
-      sendJson(res, 200, { ok: true, guid, multiplier, costConfig });
+      sendJson(res, 200, { ok: true, guid, multiplier });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  const salesTrafficCostMatch = pathname.match(/^\/api\/sales-traffic\/nodes\/([^/]+)\/cost$/);
+  if (salesTrafficCostMatch && req.method === "PUT") {
+    try {
+      const payload = await readJson(req);
+      const guid = decodeURIComponent(salesTrafficCostMatch[1]);
+      if (!guid || guid.length > 512 || /[\\/]/.test(guid)) throw new Error("节点标识无效。");
+      const costConfig = normalizeNodeCostConfig(payload.costConfig);
+      await updateSalesTrafficState(state => ({
+        ...state,
+        costConfigs: {
+          ...state.costConfigs,
+          [guid]: [...(state.costConfigs[guid] || []).filter(item => nodeCostConfigDate(item) !== costConfig.purchaseDate), costConfig]
+            .sort((left, right) => nodeCostConfigDate(left).localeCompare(nodeCostConfigDate(right)))
+        }
+      }));
+      sendJson(res, 200, { ok: true, guid, costConfig });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -9648,9 +9669,8 @@ async function handleApi(req, res, pathname) {
       const fromDay = chinaDayNumber(from);
       const toDay = chinaDayNumber(to);
       if (!Number.isFinite(fromDay) || !Number.isFinite(toDay) || fromDay > toDay || toDay - fromDay > 1095) throw new Error("统计日期范围必须在三年以内。");
-      const months = [...new Set(Array.from({ length: toDay - fromDay + 1 }, (_, index) => chinaDateFromDayNumber(fromDay + index).slice(0, 7)))];
-      const [billing, ...trafficMonths] = await Promise.all([getXuiBillingState(), ...months.map(getProfitTrafficMonth)]);
-      sendJson(res, 200, salesProfitabilityReport({ from, to, plan, trafficMonths, costConfigs: billing.costConfigs, nodeNames: billing.nodeNames, reportBills: bills, reportOrders: paymentOrders, reportUsers: users }));
+      const [salesTraffic, trafficRows] = await Promise.all([getSalesTrafficState(), dataStore.xuiTrafficRange(from, to)]);
+      sendJson(res, 200, salesProfitabilityReport({ from, to, plan, trafficRows, costConfigs: salesTraffic.costConfigs, nodeNames: salesTraffic.nodeNames, reportBills: bills, reportOrders: paymentOrders, reportUsers: users }));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -11349,7 +11369,8 @@ module.exports = Object.assign(requestHandler, {
   normalizeXuiPresence,
   xuiTrafficByUser,
   xuiDirectionalTrafficByUser,
-  updateProfitTrafficMonth,
+  xuiTrafficSamples,
+  normalizeSalesTrafficState,
   normalizeNodeCostConfig,
   nodeCostConfigForDate,
   salesProfitabilityReport,

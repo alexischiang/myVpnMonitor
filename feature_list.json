@@ -449,6 +449,37 @@
       ]
     },
     {
+      "id": "sales-app-database-traffic",
+      "name": "Keep sales traffic data in the application database",
+      "description": "Remove the growing monthly profit-traffic state and serve sales profitability exclusively from normalized application PostgreSQL data.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["sales-traffic-profitability"],
+      "done_criteria": [
+        "The five-minute traffic sync never reads or writes profit-traffic monthly state.",
+        "Sales profitability reads traffic, node names, and cost settings only from the application database.",
+        "Existing node cost settings migrate into application storage without affecting traffic multipliers.",
+        "A profitability-state failure cannot prevent quota aggregation or user traffic persistence.",
+        "The profitability page continues to render current application-database traffic without browser errors."
+      ],
+      "verification": [
+        "2026-09-15: npm test, npm run check, npm run verify:fast, node --check server.js, node --check database.js, and git diff --check passed.",
+        "2026-09-15: Regression coverage confirms application-database traffic metadata writes and date-range reads, sales-state migration, and removal of all profit-traffic monthly-state references.",
+        "2026-09-15: Browser verification rendered the profitability report from application-database data and saved a node cost through only PUT /api/sales-traffic/nodes/hk/cost, with no console or page errors."
+      ],
+      "browser_verification": {
+        "routes": ["/sales-analytics/profitability", "/xui-monitor"],
+        "interactions": [
+          "Opened the profitability report with application-database traffic, user, node, revenue, and cost data.",
+          "Changed only the node monthly cost and saved it.",
+          "Confirmed the save issued PUT /api/sales-traffic/nodes/hk/cost and did not issue a 3x-ui settings request."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-15"
+      }
+    },
+    {
       "id": "account-node-status-page",
       "name": "Show account node status",
       "description": "Let active self-hosted subscribers view real probe status for package inbounds and their private custom inbounds, with upgrade guidance for locked access groups.",

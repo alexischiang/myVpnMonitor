@@ -130,14 +130,19 @@ export function XuiMonitorPage() {
         const credentials = await putJson<{ configured?: boolean }>(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/credentials`, { apiToken })
         configured = credentials.configured ?? true
       }
-      let result: { multiplier: number; costConfig: MonitorData["nodes"][number]["costConfig"]; configured?: boolean } | null = null
-      if (multiplierChanged || costChanged) {
-        result = await putJson<{ multiplier: number; costConfig: MonitorData["nodes"][number]["costConfig"]; configured?: boolean }>(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { multiplier, ...(costChanged && cost ? { costConfig: { ...cost, monthlyFee: Number(cost.monthlyFee), trafficQuotaGiB: Number(cost.trafficQuotaGiB) } } : {}) })
-        configured = result.configured ?? configured
+      let savedMultiplier = node.multiplier
+      let savedCost = node.costConfig
+      if (multiplierChanged) {
+        const result = await putJson<{ multiplier: number }>(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { multiplier })
+        savedMultiplier = result.multiplier
+      }
+      if (costChanged && cost) {
+        const result = await putJson<{ costConfig: MonitorData["nodes"][number]["costConfig"] }>(`/api/sales-traffic/nodes/${encodeURIComponent(guid)}/cost`, { costConfig: { ...cost, monthlyFee: Number(cost.monthlyFee), trafficQuotaGiB: Number(cost.trafficQuotaGiB) } })
+        savedCost = result.costConfig
       }
       setNodeTokens(current => ({ ...current, [guid]: "" }))
       setSettingsGuid("")
-      setData(current => current ? { ...current, nodes: current.nodes.map(item => item.guid === guid ? { ...item, multiplier: result?.multiplier ?? item.multiplier, costConfig: result?.costConfig ?? item.costConfig, trafficConfigured: configured, trafficError: configured ? "" : item.trafficError } : item) } : current)
+      setData(current => current ? { ...current, nodes: current.nodes.map(item => item.guid === guid ? { ...item, multiplier: savedMultiplier, costConfig: savedCost, trafficConfigured: configured, trafficError: configured ? "" : item.trafficError } : item) } : current)
       toast.success("节点设置已保存")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败")

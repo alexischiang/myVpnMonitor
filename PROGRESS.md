@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-14
-- Current Objective: 提交并部署当前所有改动
+- Last Updated: 2026-09-15
+- Current Objective: 将应用数据库流量改动发布到 main 和 production
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -136,8 +136,12 @@
 
 - 2026-09-14: npm run agent:init、npm run verify、npm run verify:harness、git diff --check 通过；已有 Playwright 证据确认 /xui-monitor 缺 Token 提示、Token+成本 credentials/settings 均 200 且无 console/page errors。
 
+- 2026-09-15: npm run check、npm test、npm run verify:fast、npm run verify:harness 和浏览器验证通过；npm run verify 的应用构建、文档构建、核心测试和 3x-ui 测试通过，payment/wallet 因缺少 TEST_DATABASE_URL 未运行
+
+- 2026-09-15: npm run agent:init 通过；npm run verify 的应用/文档构建与核心、3x-ui 测试通过，支付测试因本机未配置隔离 TEST_DATABASE_URL 未运行；既有 2026-09-15 浏览器验证无 console/page errors
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/xui-monitor.tsx`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/xui-monitor.tsx`, `test-xui-traffic.js`, `test.js`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 部署 main 后在生产重新保存一个节点的 Token 与成本；SG AWS 当前 Token 已保存但节点 API 返回 HTTP 404，需检查该节点 basePath/API 路由
+- Recommended Next Step: 持续观察生产流量同步，确认不再出现 HTTP 413 且利润报表数据正常
