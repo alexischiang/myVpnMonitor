@@ -4351,13 +4351,18 @@ async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
     }
   }));
   const inbounds = [...inboundsByKey.values()];
-  // Central panel gives each client's GLOBAL total on the local node; subtract the remote nodes'
-  // real usage to recover the local node's own usage and avoid double-counting the remotes.
-  const directionalTraffic = xuiTraffic.deductRemotesFromLocalNode(xuiDirectionalTrafficByUser(inbounds), localGuid);
+  // Per-user MONOTONIC per-node counters: the local guid carries each client's GLOBAL total
+  // (LA-own + Σremotes, mirrored by the panel); each remote carries its own real usage. This is
+  // fed to the daily sampler, which derives the local node's usage in delta-space (Plan B) —
+  // never subtracting in absolute space, so a lagging global read can't re-count as a reset.
+  const monotonicTraffic = xuiDirectionalTrafficByUser(inbounds);
+  // Deducted (absolute) residual view kept for legacy consumers: per-node display totals and the
+  // profit ledger. structuredClone so the mutating deduction leaves monotonicTraffic intact.
+  const directionalTraffic = xuiTraffic.deductRemotesFromLocalNode(structuredClone(monotonicTraffic), localGuid);
   const traffic = Object.fromEntries(Object.entries(directionalTraffic).map(([email, nodes]) =>
     [email, Object.fromEntries(Object.entries(nodes).map(([guid, dir]) => [guid, (Number(dir?.inBytes) || 0) + (Number(dir?.outBytes) || 0)]))]
   ));
-  return { traffic, directionalTraffic, nodeResults, inbounds };
+  return { traffic, directionalTraffic, monotonicTraffic, nodeResults, inbounds, localGuid };
 }
 
 function xuiResetReference(value) {
@@ -4517,8 +4522,7 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
     ]);
     const state = await getXuiBillingState();
     const nodeTokens = await getXuiNodeTokens(state.nodeTokens);
-    const { directionalTraffic, nodeResults } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
-    const localGuid = String(status?.panelGuid || "node:local");
+    const { monotonicTraffic, nodeResults, localGuid } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
     const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
     const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
     try {
@@ -4527,10 +4531,12 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       console.warn(`[sales-traffic] Failed to persist application traffic settings: ${error.message}`);
     }
     // Record this sampling round into the daily traffic table (the source of truth going
-    // forward). recordXuiTrafficSamples diffs against the per-(user,node) cursor, so the
-    // first observation only seeds the cursor and later rounds add per-day growth.
+    // forward). recordXuiTrafficSamples diffs the MONOTONIC per-node counters against the
+    // per-(user,node) cursor — the local guid carries the client's global counter and its own
+    // usage is derived as Δglobal − ΣΔremote inside the sampler (Plan B). First observation only
+    // seeds the cursor; later rounds add per-day growth.
     try {
-      await dataStore.recordXuiTrafficSamples(chinaDateKey(), xuiTrafficSamples(directionalTraffic, appUsersByEmail, nodeNames));
+      await dataStore.recordXuiTrafficSamples(chinaDateKey(), xuiTrafficSamples(monotonicTraffic, appUsersByEmail, nodeNames), localGuid);
     } catch (error) {
       console.warn(`[xui-traffic] Failed to record daily samples: ${error.message}`);
     }

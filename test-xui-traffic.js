@@ -99,6 +99,25 @@ assert.deepStrictEqual(d3["u@x"].LA, { inBytes: 0, outBytes: 0 }, "negative clam
 const d4 = deductRemotesFromLocalNode({ "u@x": { TW: { inBytes: 5, outBytes: 5 } } }, "LA");
 assert.deepStrictEqual(d4["u@x"], { TW: { inBytes: 5, outBytes: 5 } }, "no local → untouched");
 
+// applyLocalNodeDelta (Plan B): derive the local node's per-round usage in delta space.
+const { applyLocalNodeDelta } = require("./xui-traffic");
+assert.deepStrictEqual(
+  applyLocalNodeDelta({ LA: { up: 10, down: 20 }, TW: { up: 3, down: 5 } }, "LA"),
+  { LA: { up: 7, down: 15 }, TW: { up: 3, down: 5 } },
+  "local = delta global - remote; remote untouched"
+);
+assert.deepStrictEqual(
+  applyLocalNodeDelta({ LA: { up: 0, down: 0 }, JP: { up: 5, down: 0 } }, "LA"),
+  { LA: { up: 0, down: 0 }, JP: { up: 5, down: 0 } },
+  "global lag is clamped without re-counting"
+);
+assert.deepStrictEqual(
+  applyLocalNodeDelta({ LA: { up: 100, down: 100 }, A: { up: 10, down: 20 }, B: { up: 30, down: 5 } }, "LA").LA,
+  { up: 60, down: 75 },
+  "multiple remote deltas are summed"
+);
+assert.deepStrictEqual(applyLocalNodeDelta({ TW: { up: 5, down: 5 } }, "LA"), { TW: { up: 5, down: 5 } });
+
 async function checkApplicationTrafficStore() {
   let dailyInsert;
   const client = {
@@ -111,7 +130,7 @@ async function checkApplicationTrafficStore() {
   };
   const store = createDataStore({ databaseUrl: "postgres://test:test@127.0.0.1/test" });
   store.pool = { connect: async () => client };
-  const recorded = await store.recordXuiTrafficSamples("2026-09-15", [{ email: "user@example.com", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", up: 130, down: 260 }]);
+  const recorded = await store.recordXuiTrafficSamples("2026-09-15", [{ email: "user@example.com", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", up: 130, down: 260 }], "hk");
   assert.deepStrictEqual(recorded, { applied: 1, seeded: 0 });
   assert.ok(dailyInsert.sql.includes("user_id, user_label, plan_id, node_name"));
   assert.deepStrictEqual(dailyInsert.params, ["2026-09-15", ["user@example.com"], ["hk"], ["u1"], ["U1"], ["pro"], ["Hong Kong"], [30], [60]]);

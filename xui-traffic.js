@@ -158,10 +158,43 @@ function deductRemotesFromLocalNode(directionalByUser = {}, localGuid) {
   return directionalByUser;
 }
 
+// Plan B — derive the local (panel) node's per-round usage in DELTA space.
+//
+// The panel has no independent per-user counter for its own node: it reports each
+// client's GLOBAL total (LA-own + Σremotes) under the local guid, mirrored on every
+// inbound. Subtracting remotes in ABSOLUTE space (deductRemotesFromLocalNode) yields a
+// residual that legitimately falls whenever the central-global read lags the live
+// per-remote reads — and feeding that bouncy residual to counterDelta makes every dip
+// look like a counter reset, re-counting the full value and ballooning the local node
+// (observed in prod: LA-BWH daily accrued ~20x its real usage).
+//
+// Instead, given ONE sampling round's monotonic per-node delta map for ONE user
+// (local guid = Δglobal, each remote = its own Δ), set the local node's delta to
+// max(0, Δglobal − ΣΔremote). Both operands are monotonic counters, so their per-round
+// deltas are always well-defined; the read-lag now nets out across rounds instead of
+// exploding. Remotes pass through unchanged. Mutates and returns the { guid: { up, down } } map.
+function applyLocalNodeDelta(perNodeDelta = {}, localGuid) {
+  if (!localGuid || !perNodeDelta[localGuid]) return perNodeDelta;
+  let remoteUp = 0;
+  let remoteDown = 0;
+  for (const [guid, d] of Object.entries(perNodeDelta)) {
+    if (guid === localGuid) continue;
+    remoteUp += Math.max(0, Number(d?.up) || 0);
+    remoteDown += Math.max(0, Number(d?.down) || 0);
+  }
+  const global = perNodeDelta[localGuid];
+  perNodeDelta[localGuid] = {
+    up: Math.max(0, (Number(global.up) || 0) - remoteUp),
+    down: Math.max(0, (Number(global.down) || 0) - remoteDown)
+  };
+  return perNodeDelta;
+}
+
 module.exports = {
   RESET_INTERVAL_DAYS,
   MS_PER_DAY,
   deductRemotesFromLocalNode,
+  applyLocalNodeDelta,
   counterDelta,
   directionalDelta,
   isPeriodicPlan,
