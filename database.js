@@ -145,11 +145,19 @@ class PostgresDataStore {
         date TEXT NOT NULL,
         email TEXT NOT NULL,
         node_guid TEXT NOT NULL,
+        user_id TEXT NOT NULL DEFAULT '',
+        user_label TEXT NOT NULL DEFAULT '',
+        plan_id TEXT NOT NULL DEFAULT '',
+        node_name TEXT NOT NULL DEFAULT '',
         up_bytes BIGINT NOT NULL DEFAULT 0,
         down_bytes BIGINT NOT NULL DEFAULT 0,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (date, email, node_guid)
       );
+      ALTER TABLE xui_daily_traffic ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE xui_daily_traffic ADD COLUMN IF NOT EXISTS user_label TEXT NOT NULL DEFAULT '';
+      ALTER TABLE xui_daily_traffic ADD COLUMN IF NOT EXISTS plan_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE xui_daily_traffic ADD COLUMN IF NOT EXISTS node_name TEXT NOT NULL DEFAULT '';
       CREATE INDEX IF NOT EXISTS xui_daily_traffic_email_date_idx ON xui_daily_traffic (email, date);
       CREATE INDEX IF NOT EXISTS xui_daily_traffic_date_node_idx ON xui_daily_traffic (date, node_guid);
       CREATE TABLE IF NOT EXISTS xui_traffic_cursor (
@@ -613,6 +621,10 @@ class PostgresDataStore {
       .map(sample => ({
         email: String(sample.email),
         nodeGuid: String(sample.nodeGuid),
+        userId: String(sample.userId || ""),
+        userLabel: String(sample.userLabel || ""),
+        planId: String(sample.planId || ""),
+        nodeName: String(sample.nodeName || ""),
         up: Math.max(0, Number(sample.up) || 0),
         down: Math.max(0, Number(sample.down) || 0)
       }));
@@ -630,10 +642,11 @@ class PostgresDataStore {
         const cursorByKey = new Map(
           cursorResult.rows.map(row => [`${row.email} ${row.node_guid}`, { up: Number(row.last_up), down: Number(row.last_down) }])
         );
-        const delta = { emails: [], nodes: [], ups: [], downs: [] };
+        const delta = { emails: [], nodes: [], userIds: [], userLabels: [], planIds: [], nodeNames: [], ups: [], downs: [] };
         const cursor = { emails: [], nodes: [], ups: [], downs: [] };
         let seeded = 0;
         const deltaByEmail = new Map();
+        const sampleByKey = new Map();
         for (const sample of clean) {
           const stored = cursorByKey.get(`${sample.email} ${sample.nodeGuid}`) || null;
           if (!stored) seeded += 1;
@@ -641,6 +654,7 @@ class PostgresDataStore {
           const perNode = deltaByEmail.get(sample.email) || {};
           perNode[sample.nodeGuid] = change;
           deltaByEmail.set(sample.email, perNode);
+          sampleByKey.set(`${sample.email} ${sample.nodeGuid}`, sample);
           cursor.emails.push(sample.email);
           cursor.nodes.push(sample.nodeGuid);
           cursor.ups.push(sample.up);
@@ -650,8 +664,13 @@ class PostgresDataStore {
           applyLocalNodeDelta(perNode, localGuid);
           for (const [node, change] of Object.entries(perNode)) {
             if (change.up > 0 || change.down > 0) {
+              const sample = sampleByKey.get(`${email} ${node}`) || {};
               delta.emails.push(email);
               delta.nodes.push(node);
+              delta.userIds.push(sample.userId || "");
+              delta.userLabels.push(sample.userLabel || "");
+              delta.planIds.push(sample.planId || "");
+              delta.nodeNames.push(sample.nodeName || "");
               delta.ups.push(change.up);
               delta.downs.push(change.down);
             }
@@ -659,14 +678,19 @@ class PostgresDataStore {
         }
         if (delta.emails.length) {
           await client.query(
-            `INSERT INTO xui_daily_traffic (date, email, node_guid, up_bytes, down_bytes, updated_at)
-             SELECT $1, u.email, u.node, u.up, u.down, NOW()
-             FROM UNNEST($2::text[], $3::text[], $4::bigint[], $5::bigint[]) AS u(email, node, up, down)
+            `INSERT INTO xui_daily_traffic (date, email, node_guid, user_id, user_label, plan_id, node_name, up_bytes, down_bytes, updated_at)
+             SELECT $1, u.email, u.node, u.user_id, u.user_label, u.plan_id, u.node_name, u.up, u.down, NOW()
+             FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::bigint[], $9::bigint[])
+               AS u(email, node, user_id, user_label, plan_id, node_name, up, down)
              ON CONFLICT (date, email, node_guid)
              DO UPDATE SET up_bytes = xui_daily_traffic.up_bytes + EXCLUDED.up_bytes,
                            down_bytes = xui_daily_traffic.down_bytes + EXCLUDED.down_bytes,
+                           user_id = COALESCE(NULLIF(xui_daily_traffic.user_id, ''), EXCLUDED.user_id),
+                           user_label = CASE WHEN EXCLUDED.user_label <> '' THEN EXCLUDED.user_label ELSE xui_daily_traffic.user_label END,
+                           plan_id = COALESCE(NULLIF(xui_daily_traffic.plan_id, ''), EXCLUDED.plan_id),
+                           node_name = CASE WHEN EXCLUDED.node_name <> '' THEN EXCLUDED.node_name ELSE xui_daily_traffic.node_name END,
                            updated_at = NOW()`,
-            [dateKey, delta.emails, delta.nodes, delta.ups, delta.downs]
+            [dateKey, delta.emails, delta.nodes, delta.userIds, delta.userLabels, delta.planIds, delta.nodeNames, delta.ups, delta.downs]
           );
         }
         await client.query(
@@ -735,6 +759,29 @@ class PostgresDataStore {
       `xui daily series ${email}`
     );
     return result.rows.map(row => ({ date: row.date, up: Number(row.up), down: Number(row.down) }));
+  }
+
+  // Directional application traffic rows used by sales profitability reports.
+  async xuiTrafficRange(fromDateKey, toDateKey) {
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT date, email, node_guid, user_id, user_label, plan_id, node_name, up_bytes, down_bytes
+         FROM xui_daily_traffic WHERE date BETWEEN $1 AND $2 ORDER BY date, email, node_guid`,
+        [fromDateKey, toDateKey]
+      ),
+      `load xui traffic range ${fromDateKey}..${toDateKey}`
+    );
+    return result.rows.map(row => ({
+      date: row.date,
+      email: row.email,
+      nodeGuid: row.node_guid,
+      userId: row.user_id,
+      userLabel: row.user_label,
+      planId: row.plan_id,
+      nodeName: row.node_name,
+      inBytes: Number(row.up_bytes),
+      outBytes: Number(row.down_bytes)
+    }));
   }
 
   // Per-node up/down totals across all users for one day (admin overview).

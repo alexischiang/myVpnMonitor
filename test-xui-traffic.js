@@ -1,4 +1,5 @@
 const assert = require("assert");
+const { createDataStore } = require("./database");
 const {
   RESET_INTERVAL_DAYS,
   MS_PER_DAY,
@@ -98,39 +99,55 @@ assert.deepStrictEqual(d3["u@x"].LA, { inBytes: 0, outBytes: 0 }, "negative clam
 const d4 = deductRemotesFromLocalNode({ "u@x": { TW: { inBytes: 5, outBytes: 5 } } }, "LA");
 assert.deepStrictEqual(d4["u@x"], { TW: { inBytes: 5, outBytes: 5 } }, "no local → untouched");
 
-// applyLocalNodeDelta (Plan B): derive the local node's per-ROUND usage in delta-space as
-// Δglobal − ΣΔremote, instead of delta-ing the absolute residual (which re-counts on lag dips).
+// applyLocalNodeDelta (Plan B): derive the local node's per-round usage in delta space.
 const { applyLocalNodeDelta } = require("./xui-traffic");
-// normal round: global grew 10/20, remote grew 3/5 → local own growth = 7/15
 assert.deepStrictEqual(
   applyLocalNodeDelta({ LA: { up: 10, down: 20 }, TW: { up: 3, down: 5 } }, "LA"),
   { LA: { up: 7, down: 15 }, TW: { up: 3, down: 5 } },
-  "local = Δglobal - Σremote; remote untouched"
+  "local = delta global - remote; remote untouched"
 );
-// lag round: remote's fresh counter moved (+5) but central global hasn't caught up (Δglobal=0)
-// → local delta clamps to 0 (NOT re-counted). This is the exact case the old path exploded on.
 assert.deepStrictEqual(
   applyLocalNodeDelta({ LA: { up: 0, down: 0 }, JP: { up: 5, down: 0 } }, "LA"),
   { LA: { up: 0, down: 0 }, JP: { up: 5, down: 0 } },
-  "global lag (ΔG=0, ΔR>0) → local 0, no re-count"
+  "global lag is clamped without re-counting"
 );
-// multiple remotes summed
 assert.deepStrictEqual(
   applyLocalNodeDelta({ LA: { up: 100, down: 100 }, A: { up: 10, down: 20 }, B: { up: 30, down: 5 } }, "LA").LA,
   { up: 60, down: 75 },
-  "sum over all remotes"
+  "multiple remote deltas are summed"
 );
-// no local guid entry → map untouched
-assert.deepStrictEqual(
-  applyLocalNodeDelta({ TW: { up: 5, down: 5 } }, "LA"),
-  { TW: { up: 5, down: 5 } },
-  "no local entry → untouched"
-);
-// lag dip is suppressed to 0; genuine local growth (global rises while remote flat) still counts
-{
-  const r1 = applyLocalNodeDelta({ LA: { up: 0, down: 0 }, JP: { up: 5, down: 0 } }, "LA").LA;
-  const r2 = applyLocalNodeDelta({ LA: { up: 5, down: 0 }, JP: { up: 0, down: 0 } }, "LA").LA;
-  assert.ok(r1.up === 0 && r2.up === 5, "dip suppressed, genuine local growth still counted");
+assert.deepStrictEqual(applyLocalNodeDelta({ TW: { up: 5, down: 5 } }, "LA"), { TW: { up: 5, down: 5 } });
+
+async function checkApplicationTrafficStore() {
+  let dailyInsert;
+  const client = {
+    async query(sql, params) {
+      if (String(sql).includes("SELECT email, node_guid, last_up, last_down")) return { rows: [{ email: "user@example.com", node_guid: "hk", last_up: "100", last_down: "200" }] };
+      if (String(sql).includes("INSERT INTO xui_daily_traffic")) dailyInsert = { sql: String(sql), params };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const store = createDataStore({ databaseUrl: "postgres://test:test@127.0.0.1/test" });
+  store.pool = { connect: async () => client };
+  const recorded = await store.recordXuiTrafficSamples("2026-09-15", [{ email: "user@example.com", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", up: 130, down: 260 }], "hk");
+  assert.deepStrictEqual(recorded, { applied: 1, seeded: 0 });
+  assert.ok(dailyInsert.sql.includes("user_id, user_label, plan_id, node_name"));
+  assert.deepStrictEqual(dailyInsert.params, ["2026-09-15", ["user@example.com"], ["hk"], ["u1"], ["U1"], ["pro"], ["Hong Kong"], [30], [60]]);
+
+  store.pool = {
+    async query(sql, params) {
+      assert.ok(String(sql).includes("FROM xui_daily_traffic WHERE date BETWEEN $1 AND $2"));
+      assert.deepStrictEqual(params, ["2026-09-01", "2026-09-15"]);
+      return { rows: [{ date: "2026-09-15", email: "user@example.com", node_guid: "hk", user_id: "u1", user_label: "U1", plan_id: "pro", node_name: "Hong Kong", up_bytes: "30", down_bytes: "60" }] };
+    }
+  };
+  assert.deepStrictEqual(await store.xuiTrafficRange("2026-09-01", "2026-09-15"), [{ date: "2026-09-15", email: "user@example.com", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", inBytes: 30, outBytes: 60 }]);
 }
 
-console.log("xui-traffic pure-function checks passed.");
+checkApplicationTrafficStore()
+  .then(() => console.log("xui-traffic pure-function and application-store checks passed."))
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
