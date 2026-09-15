@@ -33,6 +33,7 @@ const GeneralSettingsPage = lazy(() => import("@/components/features/general-set
 const PaymentSettingsPage = lazy(() => import("@/components/features/payment-settings").then(module => ({ default: module.PaymentSettingsPage })))
 const StatusPage = lazy(() => import("@/components/features/status-page").then(module => ({ default: module.StatusPage })))
 const SubconverterPage = lazy(() => import("@/components/features/subconverter").then(module => ({ default: module.SubconverterPage })))
+const CashierPage = lazy(() => import("@/components/features/cashier-page").then(module => ({ default: module.CashierPage })))
 const CheckoutPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.CheckoutPage })))
 const DeliveryPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.DeliveryPage })))
 const PricingPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.PricingPage })))
@@ -111,6 +112,7 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/delivery/:token" element={<DeliveryPage />} />
+            <Route path="/cashier/:id" element={<CashierPage />} />
             <Route path="/pricing" element={<PricingPage />} />
             <Route path="/buy" element={<PricingPage />} />
             <Route path="/onboarding" element={<AccountOnboardingPage />} />

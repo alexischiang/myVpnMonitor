@@ -31,8 +31,7 @@ import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { VipBadge } from "@/components/features/vip-badge"
 import { formatDate, formatDateTime, formatMoney, purchasedPlanName } from "@/utils"
 
-type OrderAddOn = { id: string; optionId: string; name: string; regionName?: string; amount: number; durationDays?: number; deliveryMode?: string; deliveryDescription?: string }
-type PaymentOrder = { id: string; merOrderTid: string; purpose?: "plan" | "recharge" | "traffic_pack" | "addon"; planName: string; optionLabel: string; amount: number; totalAmount?: number; baseAmount?: number; originalAmount?: number; discountAmount?: number; vipDiscountAmount?: number; subtotal?: number; taxAmount?: number; addOnAmount?: number; addOnSnapshots?: OrderAddOn[]; trafficTier?: number; trafficBaseGb?: number; trafficGb?: number | null; trafficTierMarkupPercent?: number; walletAmount?: number; walletCashAmount?: number; walletGiftAmount?: number; walletReferralAmount?: number; realCashAmount?: number; virtualCashAmount?: number; status: string; statusText: string; paymentProvider?: string; channelCode?: string; couponCode?: string; purchaseAction?: string; fulfillmentStatus?: string; fulfillmentStartedAt?: string; fulfilledAt?: string; vipSpendAmount?: number; vipSpendBefore?: number; vipSpendAfter?: number; payUrl?: string; paymentError?: string; fulfillmentError?: string; createdAt: string; updatedAt?: string; expiresAt: string; paidAt?: string }
+import type { PaymentOrder } from "@/components/features/cashier-types"
 type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; unlimited?: boolean; trafficTier?: number; purchasedTrafficGb?: number; currentProductSnapshot?: Record<string, unknown>; devices: number | string; subscriptionUrl: string; vipLevel?: string }
 type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; dailyUsage: Array<{ date: string; usedBytes: number }>; stale?: boolean; error?: string }
 type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
@@ -472,6 +471,7 @@ export function AccountOrderDetailPage() {
   const { id = "" } = useParams()
   const [order, setOrder] = React.useState<PaymentOrder | null>(null)
   const [loading, setLoading] = React.useState(false)
+  const [loadError, setLoadError] = React.useState("")
   const [cancelling, setCancelling] = React.useState(false)
   const [cancelOpen, setCancelOpen] = React.useState(false)
   const [testOpen, setTestOpen] = React.useState(false)
@@ -480,6 +480,7 @@ export function AccountOrderDetailPage() {
   const [now, setNow] = React.useState(Date.now())
   async function refresh(showToast = false) {
     setLoading(true)
+    setLoadError("")
     try {
       const nextOrder = await fetchJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(id)}`)
       setOrder(nextOrder)
@@ -487,7 +488,7 @@ export function AccountOrderDetailPage() {
       if (order?.status === "pending" && nextOrder.status !== "pending") window.dispatchEvent(new Event("payment-order-updated"))
       if (showToast) nextOrder.status === "paid" ? toast.success("支付成功") : toast.info(`当前状态：${nextOrder.statusText}`)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "查询订单失败")
+      setLoadError(error instanceof Error ? error.message : "查询订单失败")
     } finally {
       setLoading(false)
     }
@@ -533,7 +534,9 @@ export function AccountOrderDetailPage() {
       setSettingTestStatus(false)
     }
   }
+  if (!order && loadError) return <div className="px-4 lg:px-6"><Alert variant="warning"><AlertTitle>订单暂时无法加载</AlertTitle><AlertDescription>{loadError}</AlertDescription></Alert><Button variant="outline" className="mt-4 min-h-11" disabled={loading} onClick={() => void refresh()}>重新加载订单</Button></div>
   if (!order) return <PageLoading />
+  if (order.checkoutVersion === 2) return <Navigate to={`/cashier/${encodeURIComponent(order.id)}`} replace />
   const countdown = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`
   return (
     <div className="px-4 lg:px-6">
@@ -663,6 +666,7 @@ export function PaymentResultPage() {
   }
   React.useEffect(() => { void refresh() }, [orderId])
   if (!orderId) return <Navigate to="/account/orders" replace />
+  if (order?.checkoutVersion === 2) return <Navigate to={`/cashier/${encodeURIComponent(order.id)}`} replace />
   const error = order?.paymentError || order?.fulfillmentError
   const paid = order?.status === "paid" && !error
   const failed = order && !["pending", "paid"].includes(order.status)

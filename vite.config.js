@@ -28,7 +28,7 @@ export default defineConfig({
       "/uploads": "http://127.0.0.1:3000",
       "/docs": "http://localhost:3001",
       "/sub": "http://127.0.0.1:3000",
-      "/c": "http://127.0.0.1:3000",
+      "^/c(?:/|$)": "http://127.0.0.1:3000",
       "/custom": "http://127.0.0.1:3000"
     }
   }

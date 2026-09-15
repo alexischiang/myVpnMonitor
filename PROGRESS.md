@@ -1,12 +1,12 @@
 # Current State
 
 - Last Updated: 2026-09-15
-- Current Objective: 将应用数据库流量改动发布到 main 和 production
+- Current Objective: 将收银台提示重构为 NoticeBadge 四种语义样式
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
-- Active feature: account-node-status-page
+- Active feature: none
 - Blockers: none
 
 ## Verification Evidence
@@ -140,8 +140,16 @@
 
 - 2026-09-15: npm run agent:init 通过；npm run verify 的应用/文档构建与核心、3x-ui 测试通过，支付测试因本机未配置隔离 TEST_DATABASE_URL 未运行；既有 2026-09-15 浏览器验证无 console/page errors
 
+- 2026-09-15: npm run verify、npm run verify:fast、npm run verify:harness、git diff --check 通过；隔离 PostgreSQL 支付/钱包回归及 1280px/390px 浏览器验收通过，console_errors/page_errors 为空。
+
+- 2026-09-15: npm run check、verify:fast、verify:harness、git diff --check 通过；Playwright 模拟 API 实测桌面/手机、路由跳转和交互，console_errors/page_errors 为空。
+
+- 2026-09-15: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 在 1440px/390px 验证 3 个 Badge+Tooltip 样例、鼠标与键盘提示、响应式换行，console_errors/page_errors 为空。
+
+- 2026-09-15: NoticeBadge 使用 variant 参数提供 info 蓝色、warning 橙色、success 绿色、error 红色；已移除该业务组件 Tooltip。npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 在 1440px 与 390px 验证四个样例、无 Tooltip、无横向溢出，console_errors/page_errors 为空。
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/xui-monitor.tsx`, `test-xui-traffic.js`, `test.js`
+- Files: `PROGRESS.md`, `feature_list.json`, `package.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/bills.tsx`, `src/components/features/public-pages.tsx`, `src/main.tsx`, `test-payment.js`, `vite.config.js`, `commerce/`, `docs/order-checkout.md`, `src/components/features/cashier-page.tsx`, `src/components/features/cashier-types.ts`, `src/components/features/cashier.tsx`, `src/components/features/notice-badge.tsx`, `src/components/features/online-payment.tsx`, `src/components/features/order-summary.tsx`, `test-checkout.js`
 - Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 持续观察生产流量同步，确认不再出现 HTTP 413 且利润报表数据正常
+- Recommended Next Step: 审阅收银台四种 NoticeBadge；提交或部署需用户明确要求

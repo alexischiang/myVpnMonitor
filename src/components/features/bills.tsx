@@ -22,6 +22,9 @@ import { useSearchParamState } from "@/hooks/use-search-param-state"
 import { durationLabels, formatDateTime, formatMoney } from "@/utils"
 
 type AdminOrder = {
+  manualPaidBy?: string
+  manualPaymentNote?: string
+  duplicatePaymentReferences?: string[]
   id: string
   merOrderTid: string
   purpose: "plan" | "recharge" | "traffic_pack" | "addon"
@@ -227,6 +230,7 @@ export function OrderDetailPage() {
   const [reverseOpen, setReverseOpen] = React.useState(false)
   const [reversing, setReversing] = React.useState(false)
   const [markPaidOpen, setMarkPaidOpen] = React.useState(false)
+  const [manualNote, setManualNote] = React.useState("")
   const [markingPaid, setMarkingPaid] = React.useState(false)
   const [deliveryNote, setDeliveryNote] = React.useState("")
   const [delivering, setDelivering] = React.useState(false)
@@ -273,7 +277,7 @@ export function OrderDetailPage() {
     setMarkingPaid(true)
     setRetryError("")
     try {
-      setOrder(await postJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}/mark-paid`))
+      setOrder(await postJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}/mark-paid`, { note: manualNote }))
       setMarkPaidOpen(false)
     } catch (error) {
       setRetryError(error instanceof Error ? error.message : "标记付款失败")
@@ -299,11 +303,12 @@ export function OrderDetailPage() {
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="订单详情" description={order.merOrderTid} actions={<>
         {status === "pending" ? <>
-          <Button size="sm" disabled={markingPaid} onClick={() => setMarkPaidOpen(true)}><BadgeCheck />标记已付款</Button>
+          <Button size="sm" disabled={markingPaid} onClick={() => setMarkPaidOpen(true)}><BadgeCheck />已人工收款</Button>
           <AlertDialog open={markPaidOpen} onOpenChange={setMarkPaidOpen}>
             <AlertDialogContent>
-              <AlertDialogHeader><AlertDialogTitle>确认已收到转账？</AlertDialogTitle><AlertDialogDescription>订单的第三方实付金额为 {formatMoney(order.amount)}。确认后收款渠道将改为人工收款，并立即按原订单结算余额、发放套餐。请勿在尚未到账时操作。</AlertDialogDescription></AlertDialogHeader>
-              <AlertDialogFooter><AlertDialogCancel disabled={markingPaid}>取消</AlertDialogCancel><AlertDialogAction disabled={markingPaid} onClick={() => void markOrderPaid()}>{markingPaid ? <Loader2 className="animate-spin" /> : null}确认已收款</AlertDialogAction></AlertDialogFooter>
+              <AlertDialogHeader><AlertDialogTitle>确认已收到转账？</AlertDialogTitle><AlertDialogDescription>客户 {order.email}，套餐 {order.optionLabel}。本次需要线下收取 {formatMoney(order.amount)}。已预留的余额将另行结算，确认后按原订单发放服务。请勿在尚未到账时操作。</AlertDialogDescription></AlertDialogHeader>
+              <Field><FieldLabel htmlFor="manual-collection-note">收款备注</FieldLabel><Textarea id="manual-collection-note" value={manualNote} onChange={event => setManualNote(event.target.value)} maxLength={500} placeholder="例如收款方式、转账流水号或核对说明" disabled={markingPaid} /></Field>
+              <AlertDialogFooter><AlertDialogCancel disabled={markingPaid}>取消</AlertDialogCancel><AlertDialogAction disabled={markingPaid} onClick={event => { event.preventDefault(); void markOrderPaid() }}>{markingPaid ? <Loader2 className="animate-spin" /> : null}确认已收款</AlertDialogAction></AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
         </> : null}
@@ -337,6 +342,9 @@ export function OrderDetailPage() {
             <DetailRow label="客户" value={order.email || "-"} />
             <DetailRow label="账单种类" value={<Badge variant={orderTypeVariants[orderType(order)]}>{orderTypeLabels[orderType(order)]}</Badge>} />
             <DetailRow label="订单状态" value={<Badge variant={statusBadgeVariant(status)}>{orderStatusLabels[status] || order.statusText}</Badge>} />
+            {order.manualPaidBy ? <DetailRow label="收款确认人" value={order.manualPaidBy} /> : null}
+            {order.manualPaymentNote ? <DetailRow label="收款备注" value={order.manualPaymentNote} /> : null}
+            {order.duplicatePaymentReferences?.length ? <DetailRow label="重复收款待核查" value={order.duplicatePaymentReferences.join("、")} /> : null}
             <DetailRow label="发放状态" value={order.fulfillmentStatus === "fulfilled" ? "已全部交付" : order.fulfillmentStatus === "manual_pending" ? "基础套餐已发放，附加服务待人工交付" : order.fulfillmentStatus === "failed" ? "发放失败" : order.fulfillmentStatus === "reversed" ? "已撤销" : "尚未发放"} />
             <DetailRow label="创建时间" value={formatDateTime(order.createdAt)} />
             <DetailRow label="支付时间" value={order.paidAt ? formatDateTime(order.paidAt) : "尚未支付"} />
@@ -364,7 +372,7 @@ export function OrderDetailPage() {
             {order.walletGiftAmount ? <DetailRow label="赠送余额支付" value={formatMoney(order.walletGiftAmount)} /> : null}
             {order.walletReferralAmount ? <DetailRow label="返利余额支付" value={formatMoney(order.walletReferralAmount)} /> : null}
             {order.walletCashAmount ? <DetailRow label="充值余额支付" value={formatMoney(order.walletCashAmount)} /> : null}
-            <DetailRow label="第三方实付" value={formatMoney(order.amount)} />
+            <DetailRow label={order.status === "pending" ? "待收款金额" : order.channelCode === "manual" ? "人工收款" : "线上实付"} value={formatMoney(order.amount)} />
             <DetailRow label="realCash（实际现金）" value={formatMoney(order.realCashAmount ?? ((order.amount || 0) + (order.walletCashAmount || 0) + (order.walletReferralAmount || 0)))} />
             <DetailRow label="virtualCash（后台赠送）" value={formatMoney(order.virtualCashAmount ?? order.walletGiftAmount ?? 0)} />
             <DetailRow label="订单支付合计" value={<strong>{formatMoney(order.totalAmount ?? order.amount)}</strong>} />
