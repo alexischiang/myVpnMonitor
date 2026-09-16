@@ -44,6 +44,7 @@ const ResetPasswordPage = lazy(() => import("@/components/features/auth-pages").
 const AccountShell = lazy(() => import("@/components/features/account-shell").then(module => ({ default: module.AccountShell })))
 const AccountOnboardingPage = lazy(() => import("@/components/features/account-onboarding").then(module => ({ default: module.AccountOnboardingPage })))
 const AccountNodeStatusPage = lazy(() => import("@/components/features/account-node-status").then(module => ({ default: module.AccountNodeStatusPage })))
+const OrangeButtonShowcasePage = lazy(() => import("@/components/features/orange-button-showcase").then(module => ({ default: module.OrangeButtonShowcasePage })))
 const AccountDocsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountDocsPage })))
 const AccountOrderDetailPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrderDetailPage })))
 const AccountOrdersPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrdersPage })))
@@ -77,12 +78,9 @@ function ScrollToTop() {
   return null
 }
 
-function AuthCrispChat() {
-  const { pathname } = useLocation()
-  const visible = pathname === "/login" || pathname === "/register"
+function CrispChat() {
   useEffect(() => {
-    if (!visible) return
-    const crispWindow = window as typeof window & { $crisp?: { push(command: ["do", "chat:show" | "chat:hide" | "session:reset"]): number }; CRISP_WEBSITE_ID?: string }
+    const crispWindow = window as typeof window & { $crisp?: { push(command: ["do", "chat:show" | "session:reset"]): number }; CRISP_WEBSITE_ID?: string }
     crispWindow.$crisp ||= []
     crispWindow.CRISP_WEBSITE_ID = "149a15d1-aa5b-471e-9da6-fa37c8b17f68"
     crispWindow.$crisp.push(["do", "session:reset"])
@@ -93,18 +91,17 @@ function AuthCrispChat() {
       script.async = true
       document.head.appendChild(script)
     }
-    return () => { crispWindow.$crisp?.push(["do", "chat:hide"]) }
-  }, [visible])
+  }, [])
   return null
 }
 
 function App() {
   return (
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} storageKey="themeMode">
+      <CrispChat />
       <TooltipProvider>
         <BrowserRouter>
           <ScrollToTop />
-          <AuthCrispChat />
           <Suspense fallback={<Skeleton className="m-6 min-h-24" />}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
@@ -122,6 +119,7 @@ function App() {
               <Route path="subscription" element={<Navigate to="/account" replace />} />
               <Route path="docs" element={<AccountDocsPage />} />
               <Route path="plans" element={<PricingPage />} />
+              <Route path="design-system/buttons" element={<OrangeButtonShowcasePage />} />
               <Route path="plans/checkout" element={<CheckoutPage />} />
               <Route path="orders" element={<AccountOrdersPage />} />
               <Route path="wallet" element={<AccountWalletPage />} />

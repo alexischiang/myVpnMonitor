@@ -46,6 +46,20 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+@theme static {
+  --color-orange-100: color-mix(in oklch, var(--color-orange-600) 8%, white);
+  --color-orange-200: color-mix(in oklch, var(--color-orange-600) 14%, white);
+  --color-orange-300: color-mix(in oklch, var(--color-orange-600) 28%, white);
+  --color-orange-400: color-mix(in oklch, var(--color-orange-600) 45%, white);
+  --color-orange-500: color-mix(in oklch, var(--color-orange-600) 68%, white);
+  --color-orange-600: #ff592c;
+  --color-orange-700: color-mix(in oklch, var(--color-orange-600) 88%, black);
+  --color-orange-800: color-mix(in oklch, var(--color-orange-600) 76%, black);
+  --color-orange-900: color-mix(in oklch, var(--color-orange-600) 64%, black);
+  --color-orange-1000: color-mix(in oklch, var(--color-orange-600) 50%, black);
+  --color-orange-1100: color-mix(in oklch, var(--color-orange-600) 34%, black);
+}
+
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);

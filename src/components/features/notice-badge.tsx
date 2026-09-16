@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react"
+import type { ReactNode } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
@@ -12,7 +13,7 @@ const noticeBadgeStyles = {
 
 type NoticeBadgeProps = {
   icon: LucideIcon
-  label: string
+  label: ReactNode
   variant?: keyof typeof noticeBadgeStyles
 }
 

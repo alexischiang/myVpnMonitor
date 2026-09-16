@@ -1,12 +1,12 @@
 # Current State
 
-- Last Updated: 2026-09-15
-- Current Objective: 将收银台提示重构为 NoticeBadge 四种语义样式
+- Last Updated: 2026-09-16
+- Current Objective: 发布当前收银台、橙色按钮和账户套餐页改动
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
-- Active feature: none
+- Active feature: harness-minimum-loop
 - Blockers: none
 
 ## Verification Evidence
@@ -148,8 +148,44 @@
 
 - 2026-09-15: NoticeBadge 使用 variant 参数提供 info 蓝色、warning 橙色、success 绿色、error 红色；已移除该业务组件 Tooltip。npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 在 1440px 与 390px 验证四个样例、无 Tooltip、无横向溢出，console_errors/page_errors 为空。
 
+- 2026-09-15: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 在桌面与 390px 下确认金额明细默认展开、等待付款/待支付已删除、无横向溢出、console_errors/page_errors 为空
+
+- 2026-09-15: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 桌面/390px 验证三组摘要、增强阴影与字距、删除指定元素、仅显示启用渠道、无横向溢出，console_errors/page_errors 为空
+
+- 2026-09-15: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 桌面/390px 确认顶部套餐文案删除、商品明细包含套餐等级、金额静态展示、提交时间删除、标题正文间距 8px、无横向溢出，console_errors/page_errors 为空
+
+- 2026-09-15: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 桌面/390px 验证统一 12px 标题间距和 8px 正文行距、待支付按钮 3:1、已关闭返回按钮满行、金额字距 2.4px、无横向溢出，console_errors/page_errors 为空
+
+- 2026-09-15: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 确认金额 38px/800/1.52px 字距、倒计时位于 NoticeBadge、余额付款独立预览页与 390px 无溢出，console_errors/page_errors 为空
+
+- 2026-09-15: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 桌面/390px 验证金额数字字距 0.57px、货币符号间隔 8px、四向 56px 阴影、付款提示区块删除、已关闭 NoticeBadge 文案及零控制台错误
+
+- 2026-09-15: npm run agent:init、npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 桌面/390px 验证主题按钮响应式隐藏、待付款/已关闭徽章同位、12px 按钮组间距、44px 触控高度、无溢出且 console/page errors 均为空
+
+- 2026-09-16: npm run check、npm run verify:fast、npm run verify、git diff --check 均通过；Playwright 验证支付宝/微信品牌按钮、微信白字、自动支付弹窗、Sonner 状态提示、全局 Crisp 和 390px 无溢出
+
+- 2026-09-16: npm run check、npm run verify:fast、git diff --check 通过；Playwright 实测 11 个 --color-orange-* 计算值与参考图一致，console_errors 为空
+
+- 2026-09-16: npm run agent:init、npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 在 1440px/390px 及浅色/深色主题验证 5 种 variants、11 色阶、44px 移动触控高度、无溢出且 console/page errors 为空
+
+- 2026-09-16: npm run agent:init、npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 确认 orange-600=#ff592c、实心按钮白字、全部按钮英文参数值、1440px/390px 浅深主题无溢出且 console/page errors 为空
+
+- 2026-09-16: npm run agent:init、npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 在 1440px 和 390px 验证月付价格、动态标题与 NoticeBadge、24px 间距、无横向溢出及空 console/page errors
+
+- 2026-09-16: npm run agent:init、npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 在 1440px/390px 验证 #ff592c 背景、浅色文本、Tabs 双状态、24px 间距、无溢出且 console/page errors 为空
+
+- 2026-09-16: npm run agent:init、npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 验证账户页零 tablist、双橙色板块顺序展示、六个购买选项、1440px/390px 无溢出，/pricing 原选择器回归正常，console/page errors 为空
+
+- 2026-09-16: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 在 1440px/390px 验证通过且 console/page errors 为空
+
+- 2026-09-16: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 桌面/390px 验证恢复成功且 console/page errors 为空
+
+- 2026-09-16: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 1154px/390px 验证无徽章且文案正确，console/page errors 为空
+
+- 2026-09-16: npm run verify、npm run verify:harness、git diff --check 通过；相关 UI 已有当日桌面/移动端浏览器验证，console_errors/page_errors 为空
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `package.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/bills.tsx`, `src/components/features/public-pages.tsx`, `src/main.tsx`, `test-payment.js`, `vite.config.js`, `commerce/`, `docs/order-checkout.md`, `src/components/features/cashier-page.tsx`, `src/components/features/cashier-types.ts`, `src/components/features/cashier.tsx`, `src/components/features/notice-badge.tsx`, `src/components/features/online-payment.tsx`, `src/components/features/order-summary.tsx`, `test-checkout.js`
-- Known risks: browser execution remains task-specific; the reported console error in the existing UI work still needs its own fix and clean rerun before that UI task is considered complete.
-- Recommended Next Step: 审阅收银台四种 NoticeBadge；提交或部署需用户明确要求
+- Files: `PROGRESS.md`, `feature_list.json`, `src/components/features/account-shell.tsx`, `src/components/features/cashier-page.tsx`, `src/components/features/cashier.tsx`, `src/components/features/notice-badge.tsx`, `src/components/features/online-payment.tsx`, `src/components/features/order-summary.tsx`, `src/components/features/public-pages.tsx`, `src/components/ui/button.tsx`, `src/main.tsx`, `src/styles.css`, `src/components/features/cashier-card.tsx`, `src/components/features/orange-button-showcase.tsx`
+- Known risks: none
+- Recommended Next Step: 推送 main，合并并推送 production，确认 GitHub Actions 部署成功

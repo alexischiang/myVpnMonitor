@@ -121,42 +121,46 @@ export function PricingPage() {
   const trafficPackProduct = addOnProducts.find(product => product.addonType === "traffic_pack")
   const homeIpProduct = addOnProducts.find(product => product.addonType === "home_ip")
   const otherServices = addOnProducts.filter(product => !["traffic_pack", "home_ip"].includes(product.addonType || ""))
-  const visiblePlans = plans.filter(plan => planMode === "lifetime" ? plan.lifetimeAvailable && Number.isFinite(plan.lifetimePrice) : plan.recurringAvailable && Number.isFinite(plan.prices[periodIndex]))
+  const displayedPlanModes = inAccount ? [false, true] : [planMode === "lifetime"]
   const PageRoot = inAccount ? "div" : "main"
 
   return (
     <PageRoot className={inAccount ? "pt-4" : "min-h-svh bg-background px-4 py-8 text-foreground md:py-20"}>
-      <section className="grid w-full min-w-0 gap-2">
-        <header className="grid min-w-0 justify-items-center gap-4 text-center">
-          <h1 className="text-2xl font-semibold sm:text-3xl md:text-4xl">{inAccount ? "购买套餐" : "定制您的套餐"}</h1>
-          <p className="text-sm text-muted-foreground sm:text-base">{inAccount ? "选择基础套餐或按需购买附加服务。" : "选择流量版本与计费周期，支付成功后立即生效。"}</p>
-          <div className="flex min-w-0 w-full flex-col justify-center gap-2 sm:w-auto sm:flex-row">
-            {planMode === "recurring" ? <Tabs className="min-w-0 w-full sm:w-auto" value={periods[periodIndex].id} onValueChange={value => setPeriodIndex(periods.findIndex(item => item.id === value))}>
-              <TabsList className="relative grid min-w-0 w-full grid-cols-4 overflow-hidden">
-                <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 4)", transform: `translateX(${periodIndex * 100}%)` }} />
-                {periods.map(item => <TabsTrigger key={item.id} value={item.id} className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent">{item.label}</TabsTrigger>)}
-              </TabsList>
-            </Tabs> : null}
-            <Tabs className="min-w-0 w-full sm:w-auto" value={planMode} onValueChange={selectPlanMode}>
-              <TabsList className="relative grid min-w-0 w-full grid-cols-2">
-                <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 2)", transform: `translateX(${planMode === "lifetime" ? 100 : 0}%)` }} />
-                <TabsTrigger value="recurring" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="sm:hidden">周期套餐</span><span className="hidden sm:inline">周期性套餐</span></TabsTrigger>
-                <TabsTrigger value="lifetime" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="inline-flex min-w-0 items-center gap-1"><span className="sm:hidden">不限时</span><span className="hidden sm:inline">不限时套餐</span><Badge variant="destructive" className="px-1 text-[10px] leading-4">限量</Badge></span></TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
-        </header>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {visiblePlans.map(plan => {
-            const lifetime = planMode === "lifetime"
-            const displayedPrice = lifetime ? plan.lifetimePrice : plan.prices[periodIndex]
-            const checkoutOption = lifetime ? `${plan.id}-lifetime` : `${plan.id}-${periods[periodIndex].suffix}`
-            return <Card key={plan.id} className={plan.recommended ? "min-w-0 border-foreground" : "min-w-0"}>
-            <CardHeader><div className="flex items-center justify-between"><CardTitle>{lifetime ? plan.lifetimeName : plan.name}</CardTitle>{plan.recommended ? <Badge className="bg-emerald-600 text-white dark:bg-emerald-500 dark:text-emerald-950">推荐</Badge> : null}</div><p className="text-sm text-muted-foreground">{lifetime ? plan.lifetimeTitle : plan.title}</p><div className="flex flex-wrap items-baseline gap-2 pt-2"><span><span className="text-4xl font-semibold">￥{Number.isFinite(displayedPrice) ? displayedPrice : "—"}</span><span className="text-sm text-muted-foreground"> / {lifetime ? "不限时" : periods[periodIndex].days}</span></span>{!lifetime ? <BillingDiscount monthlyPrice={plan.prices[0]} totalPrice={plan.prices[periodIndex]} months={periods[periodIndex].months} /> : null}</div><p className="text-sm text-muted-foreground sm:min-h-10">{lifetime ? plan.lifetimeDescription : plan.description}</p></CardHeader>
-            <CardContent className="grid gap-5">{Number.isFinite(displayedPrice) ? <Button variant={plan.recommended ? "default" : "outline"} asChild>{inAccount ? <Link to={`/account/plans/checkout?option=${checkoutOption}`}>选择套餐</Link> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</Button> : <Button disabled>当前周期未开放</Button>}<Separator /><div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{lifetime ? plan.lifetimeTraffic : plan.traffic}</p><p className="flex items-center gap-2"><Check className="size-4" />可使用设备数：{lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]} 台</p>{(lifetime ? plan.lifetimeFeatures || [] : plan.features).map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}{(lifetime ? plan.lifetimeUnavailableFeatures || [] : plan.unavailableFeatures).map(feature => <p key={feature} className="flex items-center gap-2 text-muted-foreground"><X className="size-4" /><span className="sr-only">不支持：</span>{feature}</p>)}</div></CardContent>
-          </Card>
-          })}
-        </div>
+      <section className={inAccount ? "grid w-full min-w-0 gap-6" : "grid w-full min-w-0 gap-2"}>
+        {displayedPlanModes.map(lifetime => {
+          const visiblePlans = plans.filter(plan => lifetime ? plan.lifetimeAvailable && Number.isFinite(plan.lifetimePrice) : plan.recurringAvailable && Number.isFinite(plan.prices[periodIndex]))
+          return <section key={lifetime ? "lifetime" : "recurring"} className={inAccount ? "grid gap-6" : "contents"}>
+            <header className={inAccount ? "grid min-w-0 justify-items-start gap-4 overflow-hidden rounded-xl bg-orange-600 p-6 text-left text-white sm:p-8" : "grid min-w-0 justify-items-center gap-4 text-center"}>
+              <h1 className="text-2xl font-semibold sm:text-3xl md:text-4xl">{inAccount ? lifetime ? "不限时套餐" : "周期性套餐" : "定制您的套餐"}</h1>
+              <p className={inAccount ? "text-sm text-orange-50/80 sm:text-base" : "text-sm text-muted-foreground sm:text-base"}>{inAccount ? lifetime ? "不设到期时间 流量用完为止" : "按付款周期计费 每月重置流量" : "选择流量版本与计费周期，支付成功后立即生效。"}</p>
+              {!inAccount ? <div className="flex min-w-0 w-full flex-col justify-start gap-2 sm:w-auto sm:flex-row">
+                {!lifetime ? <Tabs className="min-w-0 w-full sm:w-auto" value={periods[periodIndex].id} onValueChange={value => setPeriodIndex(periods.findIndex(item => item.id === value))}>
+                  <TabsList className="relative grid min-w-0 w-full grid-cols-4 overflow-hidden">
+                    <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 4)", transform: `translateX(${periodIndex * 100}%)` }} />
+                    {periods.map(item => <TabsTrigger key={item.id} value={item.id} className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent">{item.label}</TabsTrigger>)}
+                  </TabsList>
+                </Tabs> : null}
+                <Tabs className="min-w-0 w-full sm:w-auto" value={planMode} onValueChange={selectPlanMode}>
+                  <TabsList className="relative grid min-w-0 w-full grid-cols-2">
+                    <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 2)", transform: `translateX(${planMode === "lifetime" ? 100 : 0}%)` }} />
+                    <TabsTrigger value="recurring" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="sm:hidden">周期套餐</span><span className="hidden sm:inline">周期性套餐</span></TabsTrigger>
+                    <TabsTrigger value="lifetime" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="inline-flex min-w-0 items-center gap-1"><span className="sm:hidden">不限时</span><span className="hidden sm:inline">不限时套餐</span><Badge variant="destructive" className="px-1 text-[10px] leading-4">限量</Badge></span></TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div> : null}
+            </header>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {visiblePlans.map(plan => {
+                const displayedPrice = lifetime ? plan.lifetimePrice : plan.prices[periodIndex]
+                const checkoutOption = lifetime ? `${plan.id}-lifetime` : `${plan.id}-${periods[periodIndex].suffix}`
+                return <Card key={plan.id} className={plan.recommended ? "min-w-0 border-foreground" : "min-w-0"}>
+                <CardHeader><div className="flex items-center justify-between"><CardTitle>{lifetime ? plan.lifetimeName : plan.name}</CardTitle>{plan.recommended ? <Badge className="bg-emerald-600 text-white dark:bg-emerald-500 dark:text-emerald-950">推荐</Badge> : null}</div><p className="text-sm text-muted-foreground">{lifetime ? plan.lifetimeTitle : plan.title}</p><div className="flex flex-wrap items-baseline gap-2 pt-2"><span><span className="text-4xl font-semibold">￥{Number.isFinite(displayedPrice) ? displayedPrice : "—"}</span><span className="text-sm text-muted-foreground"> / {lifetime ? "不限时" : periods[periodIndex].days}</span></span>{!lifetime ? <BillingDiscount monthlyPrice={plan.prices[0]} totalPrice={plan.prices[periodIndex]} months={periods[periodIndex].months} /> : null}</div><p className="text-sm text-muted-foreground sm:min-h-10">{lifetime ? plan.lifetimeDescription : plan.description}</p></CardHeader>
+                <CardContent className="grid gap-5">{Number.isFinite(displayedPrice) ? <Button variant={plan.recommended ? "default" : "outline"} asChild>{inAccount ? <Link to={`/account/plans/checkout?option=${checkoutOption}`}>选择套餐</Link> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</Button> : <Button disabled>当前周期未开放</Button>}<Separator /><div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{lifetime ? plan.lifetimeTraffic : plan.traffic}</p><p className="flex items-center gap-2"><Check className="size-4" />可使用设备数：{lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]} 台</p>{(lifetime ? plan.lifetimeFeatures || [] : plan.features).map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}{(lifetime ? plan.lifetimeUnavailableFeatures || [] : plan.unavailableFeatures).map(feature => <p key={feature} className="flex items-center gap-2 text-muted-foreground"><X className="size-4" /><span className="sr-only">不支持：</span>{feature}</p>)}</div></CardContent>
+              </Card>
+              })}
+            </div>
+          </section>
+        })}
         {inAccount ? <section className="grid gap-4">
           <header className="grid gap-1"><h2 className="text-xl font-semibold">附加服务</h2><p className="text-sm text-muted-foreground">按需购买额外服务，不影响当前套餐。</p></header>
           <div className="grid gap-4 md:grid-cols-2">

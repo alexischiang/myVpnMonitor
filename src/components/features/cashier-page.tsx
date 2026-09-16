@@ -28,7 +28,7 @@ export function CashierPage() {
   }, [id, attempt])
   if (order && order.checkoutVersion !== 2) return <Navigate to={`/account/orders/${encodeURIComponent(id)}`} replace />
   return <main className="min-h-svh bg-muted/20 px-4 py-6 sm:py-12">
-    <div className="mx-auto mb-2 flex max-w-md justify-end sm:absolute sm:right-6 sm:top-5 sm:mb-0">
+    <div className="hidden sm:absolute sm:right-6 sm:top-5 sm:flex">
       <Button variant="ghost" size="icon" className="min-h-11 min-w-11 rounded-full" aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>{resolvedTheme === "dark" ? <Sun /> : <Moon />}</Button>
     </div>
     {order ? <Cashier key={order.id} initialOrder={order} /> : <section className="mx-auto grid max-w-md gap-4" aria-label="加载收银台">

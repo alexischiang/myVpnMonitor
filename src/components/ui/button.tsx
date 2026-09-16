@@ -18,6 +18,16 @@ const buttonVariants = cva(
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         success:
           "bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500",
+        orange:
+          "bg-orange-600 text-white shadow-xs hover:bg-orange-700 active:bg-orange-800 focus-visible:border-orange-900 focus-visible:ring-orange-600/30",
+        "orange-soft":
+          "bg-orange-200 text-orange-1100 hover:bg-orange-300 active:bg-orange-400 focus-visible:border-orange-700 focus-visible:ring-orange-600/25 dark:bg-orange-1100 dark:text-orange-100 dark:hover:bg-orange-1000",
+        "orange-outline":
+          "border border-orange-700 bg-transparent text-orange-1000 shadow-xs hover:bg-orange-100 hover:text-orange-1100 focus-visible:border-orange-900 focus-visible:ring-orange-600/25 dark:border-orange-500 dark:text-orange-300 dark:hover:bg-orange-1100",
+        "orange-ghost":
+          "text-orange-1000 hover:bg-orange-100 hover:text-orange-1100 focus-visible:ring-orange-600/25 dark:text-orange-300 dark:hover:bg-orange-1100",
+        "orange-link":
+          "text-orange-900 underline-offset-4 hover:text-orange-1000 hover:underline focus-visible:ring-orange-600/25 dark:text-orange-400 dark:hover:text-orange-300",
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
