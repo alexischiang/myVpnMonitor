@@ -1,5 +1,4 @@
 import * as React from "react"
-import { IconBrandAlipay, IconBrandWechat } from "@tabler/icons-react"
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { ArrowLeft, Check, CheckCircle, HousePlug, LinkIcon, Loader2, PackagePlus, Rocket, ShieldCheck, Tag, TriangleAlert, X } from "lucide-react"
 import { toast } from "sonner"
@@ -122,42 +121,46 @@ export function PricingPage() {
   const trafficPackProduct = addOnProducts.find(product => product.addonType === "traffic_pack")
   const homeIpProduct = addOnProducts.find(product => product.addonType === "home_ip")
   const otherServices = addOnProducts.filter(product => !["traffic_pack", "home_ip"].includes(product.addonType || ""))
-  const visiblePlans = plans.filter(plan => planMode === "lifetime" ? plan.lifetimeAvailable && Number.isFinite(plan.lifetimePrice) : plan.recurringAvailable && Number.isFinite(plan.prices[periodIndex]))
+  const displayedPlanModes = inAccount ? [false, true] : [planMode === "lifetime"]
   const PageRoot = inAccount ? "div" : "main"
 
   return (
     <PageRoot className={inAccount ? "pt-4" : "min-h-svh bg-background px-4 py-8 text-foreground md:py-20"}>
-      <section className="grid w-full min-w-0 gap-2">
-        <header className="grid min-w-0 justify-items-center gap-4 text-center">
-          <h1 className="text-2xl font-semibold sm:text-3xl md:text-4xl">{inAccount ? "购买套餐" : "定制您的套餐"}</h1>
-          <p className="text-sm text-muted-foreground sm:text-base">{inAccount ? "选择基础套餐或按需购买附加服务。" : "选择流量版本与计费周期，支付成功后立即生效。"}</p>
-          <div className="flex min-w-0 w-full flex-col justify-center gap-2 sm:w-auto sm:flex-row">
-            {planMode === "recurring" ? <Tabs className="min-w-0 w-full sm:w-auto" value={periods[periodIndex].id} onValueChange={value => setPeriodIndex(periods.findIndex(item => item.id === value))}>
-              <TabsList className="relative grid min-w-0 w-full grid-cols-4 overflow-hidden">
-                <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 4)", transform: `translateX(${periodIndex * 100}%)` }} />
-                {periods.map(item => <TabsTrigger key={item.id} value={item.id} className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent">{item.label}</TabsTrigger>)}
-              </TabsList>
-            </Tabs> : null}
-            <Tabs className="min-w-0 w-full sm:w-auto" value={planMode} onValueChange={selectPlanMode}>
-              <TabsList className="relative grid min-w-0 w-full grid-cols-2">
-                <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 2)", transform: `translateX(${planMode === "lifetime" ? 100 : 0}%)` }} />
-                <TabsTrigger value="recurring" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="sm:hidden">周期套餐</span><span className="hidden sm:inline">周期性套餐</span></TabsTrigger>
-                <TabsTrigger value="lifetime" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="inline-flex min-w-0 items-center gap-1"><span className="sm:hidden">不限时</span><span className="hidden sm:inline">不限时套餐</span><Badge variant="destructive" className="px-1 text-[10px] leading-4">限量</Badge></span></TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
-        </header>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {visiblePlans.map(plan => {
-            const lifetime = planMode === "lifetime"
-            const displayedPrice = lifetime ? plan.lifetimePrice : plan.prices[periodIndex]
-            const checkoutOption = lifetime ? `${plan.id}-lifetime` : `${plan.id}-${periods[periodIndex].suffix}`
-            return <Card key={plan.id} className={plan.recommended ? "min-w-0 border-foreground" : "min-w-0"}>
-            <CardHeader><div className="flex items-center justify-between"><CardTitle>{lifetime ? plan.lifetimeName : plan.name}</CardTitle>{plan.recommended ? <Badge className="bg-emerald-600 text-white dark:bg-emerald-500 dark:text-emerald-950">推荐</Badge> : null}</div><p className="text-sm text-muted-foreground">{lifetime ? plan.lifetimeTitle : plan.title}</p><div className="flex flex-wrap items-baseline gap-2 pt-2"><span><span className="text-4xl font-semibold">￥{Number.isFinite(displayedPrice) ? displayedPrice : "—"}</span><span className="text-sm text-muted-foreground"> / {lifetime ? "不限时" : periods[periodIndex].days}</span></span>{!lifetime ? <BillingDiscount monthlyPrice={plan.prices[0]} totalPrice={plan.prices[periodIndex]} months={periods[periodIndex].months} /> : null}</div><p className="text-sm text-muted-foreground sm:min-h-10">{lifetime ? plan.lifetimeDescription : plan.description}</p></CardHeader>
-            <CardContent className="grid gap-5">{Number.isFinite(displayedPrice) ? <Button variant={plan.recommended ? "default" : "outline"} asChild>{inAccount ? <Link to={`/account/plans/checkout?option=${checkoutOption}`}>选择套餐</Link> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</Button> : <Button disabled>当前周期未开放</Button>}<Separator /><div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{lifetime ? plan.lifetimeTraffic : plan.traffic}</p><p className="flex items-center gap-2"><Check className="size-4" />可使用设备数：{lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]} 台</p>{(lifetime ? plan.lifetimeFeatures || [] : plan.features).map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}{(lifetime ? plan.lifetimeUnavailableFeatures || [] : plan.unavailableFeatures).map(feature => <p key={feature} className="flex items-center gap-2 text-muted-foreground"><X className="size-4" /><span className="sr-only">不支持：</span>{feature}</p>)}</div></CardContent>
-          </Card>
-          })}
-        </div>
+      <section className={inAccount ? "grid w-full min-w-0 gap-6" : "grid w-full min-w-0 gap-2"}>
+        {displayedPlanModes.map(lifetime => {
+          const visiblePlans = plans.filter(plan => lifetime ? plan.lifetimeAvailable && Number.isFinite(plan.lifetimePrice) : plan.recurringAvailable && Number.isFinite(plan.prices[periodIndex]))
+          return <section key={lifetime ? "lifetime" : "recurring"} className={inAccount ? "grid gap-6" : "contents"}>
+            <header className={inAccount ? "grid min-w-0 justify-items-start gap-4 overflow-hidden rounded-xl bg-orange-600 p-6 text-left text-white sm:p-8" : "grid min-w-0 justify-items-center gap-4 text-center"}>
+              <h1 className="text-2xl font-semibold sm:text-3xl md:text-4xl">{inAccount ? lifetime ? "不限时套餐" : "周期性套餐" : "定制您的套餐"}</h1>
+              <p className={inAccount ? "text-sm text-orange-50/80 sm:text-base" : "text-sm text-muted-foreground sm:text-base"}>{inAccount ? lifetime ? "不设到期时间 流量用完为止" : "按付款周期计费 每月重置流量" : "选择流量版本与计费周期，支付成功后立即生效。"}</p>
+              {!inAccount ? <div className="flex min-w-0 w-full flex-col justify-start gap-2 sm:w-auto sm:flex-row">
+                {!lifetime ? <Tabs className="min-w-0 w-full sm:w-auto" value={periods[periodIndex].id} onValueChange={value => setPeriodIndex(periods.findIndex(item => item.id === value))}>
+                  <TabsList className="relative grid min-w-0 w-full grid-cols-4 overflow-hidden">
+                    <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 4)", transform: `translateX(${periodIndex * 100}%)` }} />
+                    {periods.map(item => <TabsTrigger key={item.id} value={item.id} className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent">{item.label}</TabsTrigger>)}
+                  </TabsList>
+                </Tabs> : null}
+                <Tabs className="min-w-0 w-full sm:w-auto" value={planMode} onValueChange={selectPlanMode}>
+                  <TabsList className="relative grid min-w-0 w-full grid-cols-2">
+                    <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 2)", transform: `translateX(${planMode === "lifetime" ? 100 : 0}%)` }} />
+                    <TabsTrigger value="recurring" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="sm:hidden">周期套餐</span><span className="hidden sm:inline">周期性套餐</span></TabsTrigger>
+                    <TabsTrigger value="lifetime" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="inline-flex min-w-0 items-center gap-1"><span className="sm:hidden">不限时</span><span className="hidden sm:inline">不限时套餐</span><Badge variant="destructive" className="px-1 text-[10px] leading-4">限量</Badge></span></TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div> : null}
+            </header>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {visiblePlans.map(plan => {
+                const displayedPrice = lifetime ? plan.lifetimePrice : plan.prices[periodIndex]
+                const checkoutOption = lifetime ? `${plan.id}-lifetime` : `${plan.id}-${periods[periodIndex].suffix}`
+                return <Card key={plan.id} className={plan.recommended ? "min-w-0 border-foreground" : "min-w-0"}>
+                <CardHeader><div className="flex items-center justify-between"><CardTitle>{lifetime ? plan.lifetimeName : plan.name}</CardTitle>{plan.recommended ? <Badge className="bg-emerald-600 text-white dark:bg-emerald-500 dark:text-emerald-950">推荐</Badge> : null}</div><p className="text-sm text-muted-foreground">{lifetime ? plan.lifetimeTitle : plan.title}</p><div className="flex flex-wrap items-baseline gap-2 pt-2"><span><span className="text-4xl font-semibold">￥{Number.isFinite(displayedPrice) ? displayedPrice : "—"}</span><span className="text-sm text-muted-foreground"> / {lifetime ? "不限时" : periods[periodIndex].days}</span></span>{!lifetime ? <BillingDiscount monthlyPrice={plan.prices[0]} totalPrice={plan.prices[periodIndex]} months={periods[periodIndex].months} /> : null}</div><p className="text-sm text-muted-foreground sm:min-h-10">{lifetime ? plan.lifetimeDescription : plan.description}</p></CardHeader>
+                <CardContent className="grid gap-5">{Number.isFinite(displayedPrice) ? <Button variant={plan.recommended ? "default" : "outline"} asChild>{inAccount ? <Link to={`/account/plans/checkout?option=${checkoutOption}`}>选择套餐</Link> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</Button> : <Button disabled>当前周期未开放</Button>}<Separator /><div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{lifetime ? plan.lifetimeTraffic : plan.traffic}</p><p className="flex items-center gap-2"><Check className="size-4" />可使用设备数：{lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]} 台</p>{(lifetime ? plan.lifetimeFeatures || [] : plan.features).map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}{(lifetime ? plan.lifetimeUnavailableFeatures || [] : plan.unavailableFeatures).map(feature => <p key={feature} className="flex items-center gap-2 text-muted-foreground"><X className="size-4" /><span className="sr-only">不支持：</span>{feature}</p>)}</div></CardContent>
+              </Card>
+              })}
+            </div>
+          </section>
+        })}
         {inAccount ? <section className="grid gap-4">
           <header className="grid gap-1"><h2 className="text-xl font-semibold">附加服务</h2><p className="text-sm text-muted-foreground">按需购买额外服务，不影响当前套餐。</p></header>
           <div className="grid gap-4 md:grid-cols-2">
@@ -181,10 +184,6 @@ export function PricingPage() {
     </PageRoot>
   )
 }
-
-type PaymentMethod = "100" | "200"
-type PaymentPlatform = { id: string; name: string; provider: string; enabled: boolean; ready: boolean; methods: { alipay: boolean; wechat: boolean } }
-type PaymentSelection = { platformId: string; method: PaymentMethod }
 
 type CheckoutQuote = {
   optionId: string
@@ -225,7 +224,6 @@ type CheckoutQuote = {
   availableAddOns?: Array<{ id: string; name: string; description: string; amount?: number; available: boolean; unavailableReason?: string; options?: Array<{ id: string; label: string; amount: number }> }>
   couponCode: string
   discountPercent: number
-  paymentPlatforms: PaymentPlatform[]
   cycles: Array<{ optionId: string; label: string; amount: number; devices: number }>
 }
 
@@ -242,22 +240,20 @@ export function CheckoutPage() {
   const [couponError, setCouponError] = React.useState("")
   const [loading, setLoading] = React.useState(true)
   const [validatingCoupon, setValidatingCoupon] = React.useState(false)
-  const [paying, setPaying] = React.useState("")
-  const paymentStartingRef = React.useRef(false)
+  const [submitting, setSubmitting] = React.useState(false)
+  const submissionStartingRef = React.useRef(false)
   const [useBalance, setUseBalance] = React.useState(true)
   const [addOns, setAddOns] = React.useState<string[]>([])
   const [trafficTier, setTrafficTier] = React.useState(1)
-  const [paymentPlatformId, setPaymentPlatformId] = React.useState("")
-  const [pendingPaymentSelection, setPendingPaymentSelection] = React.useState<PaymentSelection | null>(null)
+  const [replacementOpen, setReplacementOpen] = React.useState(false)
 
   async function loadQuote(code = "", nextOptionId = optionId, nextUseBalance = useBalance, nextAddOns = addOns, nextTrafficTier = trafficTier) {
     setLoading(true)
     setCouponError("")
     try {
-      const nextQuote = await postJson<CheckoutQuote>("/api/payments/quote", trafficPack ? { product: "traffic_pack", useBalance: nextUseBalance } : homeIp ? { product: "home_ip", optionId: nextOptionId, useBalance: nextUseBalance } : { optionId: nextOptionId, couponCode: code, useBalance: nextUseBalance, addOns: nextAddOns, trafficTier: nextTrafficTier })
+      const nextQuote = await postJson<CheckoutQuote>("/api/orders/quote", trafficPack ? { product: "traffic_pack", useBalance: nextUseBalance } : homeIp ? { product: "home_ip", optionId: nextOptionId, useBalance: nextUseBalance } : { optionId: nextOptionId, couponCode: code, useBalance: nextUseBalance, addOns: nextAddOns, trafficTier: nextTrafficTier })
       setQuote(nextQuote)
       setOptionId(nextQuote.optionId)
-      setPaymentPlatformId(current => nextQuote.paymentPlatforms.some(platform => platform.id === current && platform.ready) ? current : nextQuote.paymentPlatforms.find(platform => platform.ready)?.id || "")
       if (code) toast.success("优惠码已应用")
     } catch (error) {
       const message = error instanceof Error ? error.message : "获取结算信息失败"
@@ -305,68 +301,34 @@ export function CheckoutPage() {
     }
   }
 
-  async function createPayment(selection: PaymentSelection, confirmReplacement = false) {
-    if (!quote || paymentStartingRef.current) return
-    paymentStartingRef.current = true
-    let paymentWindow: Window | null = null
-    setPaying(`${selection.platformId}:${selection.method}`)
+  async function submitOrder(confirmReplacement = false) {
+    if (!quote || submissionStartingRef.current) return
+    submissionStartingRef.current = true
+    setSubmitting(true)
     try {
-      const pendingOrder = (await fetchJson<Array<{ id: string; payUrl?: string; status: string }>>("/api/account/orders")).find(order => order.status === "pending")
-      if (pendingOrder) {
-        if (pendingOrder.payUrl) {
-          paymentWindow = window.open("", "_blank")
-          if (paymentWindow) {
-            paymentWindow.opener = null
-            paymentWindow.location.replace(pendingOrder.payUrl)
-          } else window.location.assign(pendingOrder.payUrl)
-        }
-        if (!pendingOrder.payUrl || paymentWindow) navigate(`/account/orders/${encodeURIComponent(pendingOrder.id)}`)
+      const pending = (await fetchJson<Array<{ id: string; status: string }>>("/api/account/orders")).find(order => order.status === "pending")
+      if (pending) {
+        navigate(`/account/orders/${encodeURIComponent(pending.id)}`)
         return
       }
-      paymentWindow = quote.amount > 0 ? window.open("", "_blank") : null
-      if (paymentWindow) paymentWindow.opener = null
-      const order = await postJson<{ id: string; payUrl?: string; status?: string; paymentProvider?: string }>("/api/payments/orders", {
+      const order = await postJson<{ id: string }>("/api/orders", {
         product: trafficPack ? "traffic_pack" : homeIp ? "home_ip" : "plan",
-        optionId,
-        couponCode: quote.couponCode,
-        addOns,
-        trafficTier,
-        useBalance,
-        paymentPlatformId: selection.platformId,
-        channelCode: selection.method,
-        confirmReplacement,
-        returnUrl: `${window.location.origin}/account/payment/result`,
+        optionId, couponCode: quote.couponCode, addOns, trafficTier, useBalance, confirmReplacement,
       })
       clearJsonCache()
-      if (order.status === "pending") window.dispatchEvent(new CustomEvent("payment-order-updated", { detail: { id: order.id, status: order.status } }))
-      if (order.paymentProvider === "test") {
-        paymentWindow?.close()
-        navigate(`/account/orders/${encodeURIComponent(order.id)}`)
-      } else if (order.payUrl) {
-        if (paymentWindow) paymentWindow.location.replace(order.payUrl)
-        else window.location.assign(order.payUrl)
-        if (paymentWindow) navigate(`/account/orders/${encodeURIComponent(order.id)}`)
-      } else {
-        paymentWindow?.close()
-        navigate(`/account/payment/result?paymentOrder=${encodeURIComponent(order.id)}`)
-      }
+      window.dispatchEvent(new Event("payment-order-updated"))
+      navigate(`/cashier/${encodeURIComponent(order.id)}`)
     } catch (error) {
-      paymentWindow?.close()
-      paymentStartingRef.current = false
-      toast.error(error instanceof Error ? error.message : "创建订单失败")
-      setPaying("")
+      toast.error(error instanceof Error ? error.message : "提交订单失败")
+    } finally {
+      submissionStartingRef.current = false
+      setSubmitting(false)
     }
   }
 
-  function pay(selection: PaymentSelection) {
-    if (quote?.purchaseAction === "replace") setPendingPaymentSelection(selection)
-    else void createPayment(selection)
-  }
-
-  async function confirmReplacement() {
-    if (!pendingPaymentSelection) return
-    await createPayment(pendingPaymentSelection, true)
-    setPendingPaymentSelection(null)
+  function confirmOrder() {
+    if (quote?.purchaseAction === "replace") setReplacementOpen(true)
+    else void submitOrder()
   }
 
   if (loading && !quote) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
@@ -382,7 +344,7 @@ export function CheckoutPage() {
   return (
     <div className="px-4 lg:px-6">
       <section className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-5">
-        <header className="grid gap-1 lg:col-span-5"><h1 className="text-2xl font-semibold tracking-tight">确认订单</h1><p className="text-sm text-muted-foreground">{trafficPack ? "确认流量包信息后完成支付" : homeIp ? "选择服务地区并确认人工交付信息" : "确认商品、计费周期与优惠信息后完成支付"}</p><Separator className="mt-3" /></header>
+        <header className="grid gap-1 lg:col-span-5"><h1 className="text-2xl font-semibold tracking-tight">确认订单</h1><p className="text-sm text-muted-foreground">{trafficPack ? "确认流量包信息后提交订单" : homeIp ? "选择服务地区并确认人工交付信息" : "确认商品、计费周期与优惠信息后提交订单"}</p><Separator className="mt-3" /></header>
         {quote.purchaseAction !== "initial" ? <Alert variant={quote.purchaseAction === "replace" ? "warning" : "default"} className="lg:col-span-5"><TriangleAlert /><AlertDescription>{actionMessage}</AlertDescription></Alert> : null}
         <section className="grid content-start gap-4 lg:col-span-3">
           <Card>
@@ -398,14 +360,14 @@ export function CheckoutPage() {
           {!trafficPack && !quote.lifetime && (quote.trafficMaxTier || 1) > 1 ? <Card>
             <CardHeader><CardTitle>定制每月流量</CardTitle><CardDescription>可按套餐默认流量的倍数增加，价格根据所选流量自动计算。</CardDescription></CardHeader>
             <CardContent className="grid gap-4">
-              <Slider aria-label="每月流量" min={1} max={quote.trafficMaxTier} step={1} value={[trafficTier]} onValueChange={values => setTrafficTier(values[0] || 1)} onValueCommit={selectTrafficTier} disabled={loading || Boolean(paying)} />
+              <Slider aria-label="每月流量" min={1} max={quote.trafficMaxTier} step={1} value={[trafficTier]} onValueChange={values => setTrafficTier(values[0] || 1)} onValueCommit={selectTrafficTier} disabled={loading || submitting} />
               <Item variant="muted"><ItemContent><ItemDescription>当前选择</ItemDescription><ItemTitle>每月 {(quote.trafficBaseGb || 0) * trafficTier} GB</ItemTitle></ItemContent><ItemActions><span className="text-xl font-semibold tabular-nums">{formatMoney(quote.originalAmount)}</span></ItemActions></Item>
             </CardContent>
           </Card> : null}
           {standaloneAddOn || quote.lifetime ? null : <Card>
             <CardHeader><CardTitle>附加服务</CardTitle><CardDescription>可与基础套餐合并结算，按需选择。</CardDescription></CardHeader>
             <CardContent><ItemGroup>
-              {(quote.availableAddOns || []).map(addOn => <Item key={addOn.id} variant="muted">{addOn.id === "home_ip" ? <HousePlug /> : <PackagePlus />}<ItemContent><ItemTitle>{addOn.name}</ItemTitle><ItemDescription>{addOn.description}{addOn.available ? " · 支付后进入人工交付" : ` · ${addOn.unavailableReason}`}</ItemDescription></ItemContent><ItemActions>{addOn.available && addOn.options?.length ? <Select value={addOns.find(id => id.startsWith(`${addOn.id}:`)) || "none"} onValueChange={value => selectAddOnOption(value === "none" ? "" : value)} disabled={loading || Boolean(paying)}><SelectTrigger aria-label={`选择${addOn.name}地区`} className="w-full sm:w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">不购买</SelectItem>{addOn.options.map(option => <SelectItem key={option.id} value={option.id}>{option.label} · {formatMoney(option.amount)}</SelectItem>)}</SelectContent></Select> : <Badge variant="secondary">{addOn.unavailableReason}</Badge>}</ItemActions></Item>)}
+              {(quote.availableAddOns || []).map(addOn => <Item key={addOn.id} variant="muted">{addOn.id === "home_ip" ? <HousePlug /> : <PackagePlus />}<ItemContent><ItemTitle>{addOn.name}</ItemTitle><ItemDescription>{addOn.description}{addOn.available ? " · 支付后进入人工交付" : ` · ${addOn.unavailableReason}`}</ItemDescription></ItemContent><ItemActions>{addOn.available && addOn.options?.length ? <Select value={addOns.find(id => id.startsWith(`${addOn.id}:`)) || "none"} onValueChange={value => selectAddOnOption(value === "none" ? "" : value)} disabled={loading || submitting}><SelectTrigger aria-label={`选择${addOn.name}地区`} className="w-full sm:w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">不购买</SelectItem>{addOn.options.map(option => <SelectItem key={option.id} value={option.id}>{option.label} · {formatMoney(option.amount)}</SelectItem>)}</SelectContent></Select> : <Badge variant="secondary">{addOn.unavailableReason}</Badge>}</ItemActions></Item>)}
             </ItemGroup></CardContent>
           </Card>}
         </section>
@@ -429,28 +391,21 @@ export function CheckoutPage() {
                 {quote.walletReferralAmount ? <p className="flex justify-between"><span className="text-muted-foreground">返利余额</span><span>-{formatMoney(quote.walletReferralAmount)}</span></p> : null}
                 {quote.walletCashAmount ? <p className="flex justify-between"><span className="text-muted-foreground">充值余额</span><span>-{formatMoney(quote.walletCashAmount)}</span></p> : null}
               </div>
-              {quote.wallet.availableBalance > 0 ? <FieldLabel htmlFor="use-wallet" className="min-h-10 w-full cursor-pointer justify-between rounded-md border bg-muted/40 px-3 py-2.5 transition-colors hover:bg-muted/60 has-[[data-disabled]]:cursor-not-allowed">使用余额抵扣<Checkbox id="use-wallet" checked={useBalance} onCheckedChange={checked => { const enabled = checked === true; setUseBalance(enabled); void loadQuote(quote.couponCode, optionId, enabled) }} disabled={loading || Boolean(paying)} /></FieldLabel> : null}
+              {quote.wallet.availableBalance > 0 ? <FieldLabel htmlFor="use-wallet" className="min-h-10 w-full cursor-pointer justify-between rounded-md border bg-muted/40 px-3 py-2.5 transition-colors hover:bg-muted/60 has-[[data-disabled]]:cursor-not-allowed">使用余额抵扣<Checkbox id="use-wallet" checked={useBalance} onCheckedChange={checked => { const enabled = checked === true; setUseBalance(enabled); void loadQuote(quote.couponCode, optionId, enabled) }} disabled={loading || submitting} /></FieldLabel> : null}
               <Separator />
-              <p className="flex justify-between text-base font-semibold"><span>支付订单</span><span>{formatMoney(quote.amount)}</span></p>
-              {quote.amount === 0 ? <Button onClick={() => pay({ platformId: "wallet", method: "100" })} disabled={Boolean(paying) || loading}>{paying ? <Loader2 className="animate-spin" /> : <Check />}{quote.walletAmount ? "余额支付" : "确认覆盖"}</Button> : <Field><FieldDescription>请选择一个支付结算平台</FieldDescription><Accordion type="single" value={paymentPlatformId} onValueChange={setPaymentPlatformId} className="grid gap-2">
-                {quote.paymentPlatforms.map(platform => <AccordionItem key={platform.id} value={platform.id} disabled={!platform.ready || Boolean(paying) || loading} className="rounded-md border px-3 last:border-b data-[state=open]:border-primary">
-                  <AccordionTrigger className="py-3 hover:no-underline"><span className="flex min-w-0 items-center gap-3"><ShieldCheck className="size-5 shrink-0" /><span className="truncate">{platform.name}</span></span></AccordionTrigger>
-                  <AccordionContent className="grid gap-2 border-t pt-3 text-foreground">
-                    {platform.methods.alipay ? <Button type="button" className="w-full bg-[#1677ff] text-white hover:bg-[#1677ff]/90" onClick={() => pay({ platformId: platform.id, method: "100" })} disabled={Boolean(paying) || loading}>{paying === `${platform.id}:100` ? <Loader2 className="animate-spin" /> : <IconBrandAlipay />}{`支付宝支付 ${formatMoney(quote.amount)}`}</Button> : null}
-                    {platform.methods.wechat ? <Button type="button" className="w-full bg-[#07c160] text-white hover:bg-[#07c160]/90" onClick={() => pay({ platformId: platform.id, method: "200" })} disabled={Boolean(paying) || loading}>{paying === `${platform.id}:200` ? <Loader2 className="animate-spin" /> : <IconBrandWechat />}{`微信支付 ${formatMoney(quote.amount)}`}</Button> : null}
-                  </AccordionContent>
-                </AccordionItem>)}
-              </Accordion></Field>}
+              <p className="flex justify-between text-base font-semibold"><span>待付金额</span><span>{formatMoney(quote.amount)}</span></p>
+              <Button className="min-h-11" onClick={confirmOrder} disabled={submitting || loading}>{submitting ? <Loader2 className="animate-spin" /> : <Check />}{submitting ? "正在提交订单…" : "提交订单"}</Button>
+              <p className="text-xs text-muted-foreground">提交后进入收银台，确认付款后发放服务。</p>
               <Button variant="outline" onClick={() => navigate(-1)}><ArrowLeft />{standaloneAddOn ? "返回服务列表" : "返回服务选择"}</Button>
               <p className="text-xs text-muted-foreground">{trafficPack ? "付款成功后流量立即生效，月度重置、续费或更换套餐后失效。" : homeIp ? "付款成功后进入人工交付，服务有效期以订单快照和交付记录为准。" : "付款成功后套餐立即生效，数字商品不支持退款。"}</p>
             </CardContent>
           </Card>
         </aside>
       </section>
-      <AlertDialog open={pendingPaymentSelection !== null} onOpenChange={open => { if (!open) setPendingPaymentSelection(null) }}>
+      <AlertDialog open={replacementOpen} onOpenChange={setReplacementOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>确认覆盖当前套餐？</AlertDialogTitle><AlertDialogDescription>支付成功后，{quote.planName} 将立即覆盖当前套餐，原套餐剩余有效期和流量不再保留，且无法恢复。</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={Boolean(paying)}>返回检查</AlertDialogCancel><AlertDialogAction onClick={() => void confirmReplacement()} disabled={Boolean(paying)}>{paying ? <Loader2 className="animate-spin" /> : null}{quote.amount === 0 ? "确认覆盖" : "确认并继续支付"}</AlertDialogAction></AlertDialogFooter>
+          <AlertDialogFooter><AlertDialogCancel disabled={submitting}>返回检查</AlertDialogCancel><AlertDialogAction onClick={() => void submitOrder(true)} disabled={submitting}>{submitting ? <Loader2 className="animate-spin" /> : null}确认并提交订单</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>

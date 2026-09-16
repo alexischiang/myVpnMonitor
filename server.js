@@ -14,6 +14,13 @@ const xuiTraffic = require("./xui-traffic");
 const yaml = require("js-yaml");
 const notifier = require("./notifier");
 const packageJson = require("./package.json");
+const orderDomain = require("./commerce/orders");
+const { createGatewayClient } = require("./commerce/gateway");
+const { createGatewayPayment, queryGatewayPayment } = createGatewayClient({ sign: paymentSign, compact: compactPaymentParams });
+const { createOperationLock } = require("./commerce/operation-lock");
+const { createSettlementService } = require("./commerce/settlement");
+const { createPaymentService, manualReceipt, transactionError } = require("./commerce/payments");
+const { createCheckoutWorkflow } = require("./commerce/checkout-workflow");
 
 loadLocalEnv();
 
@@ -472,7 +479,7 @@ let _loadingPromise = null;
 let _writeGen = 0;
 const DATA_CACHE_TTL_MS = Number(process.env.DATA_CACHE_TTL_MS || 5 * 60 * 1000);
 
-function _doLoad() {
+function _doLoad({ strict = false } = {}) {
   if (_loadingPromise) return _loadingPromise;
   const gen = _writeGen;
   _loadingPromise = dataStore.loadAll().then(state => {
@@ -494,7 +501,7 @@ function _doLoad() {
     tickets = state.tickets || [];
     lastLoadedAt = Date.now();
   }).catch(error => {
-    if (lastLoadedAt > 0) {
+    if (!strict && lastLoadedAt > 0) {
       console.warn(`[data] loadLatestData failed; using cached in-memory data: ${error.message}`);
       lastLoadedAt = Date.now();
       return;
@@ -504,7 +511,9 @@ function _doLoad() {
   return _loadingPromise;
 }
 
+let commerceActive = false;
 async function loadLatestData({ force = false } = {}) {
+  if (commerceActive) return;
   if (!force && Date.now() - lastLoadedAt < DATA_CACHE_TTL_MS) return;
   return _doLoad();
 }
@@ -1250,6 +1259,9 @@ function publicPaymentOrder(order) {
     purchaseCountBefore: Number(order.purchaseCountBefore) || 0,
     channelCode: order.channelCode || "",
     paymentProvider: order.paymentProvider || "",
+    checkoutVersion: order.checkoutVersion || 1,
+    paymentAttemptId: order.paymentAttemptId || "",
+    manualPaidAt: order.manualPaidAt || "",
     couponCode: order.couponCode || "",
     payUrl: order.payUrl || "",
     status,
@@ -1281,7 +1293,10 @@ function adminPaymentOrder(order) {
     internalFulfillmentError: order.fulfillmentError || "",
     reversible: order.status === "paid" && Boolean(order.rollbackSnapshot) && !order.reversedAt,
     reversedAt: order.reversedAt || "",
-    reversalError: order.reversalError || ""
+    reversalError: order.reversalError || "",
+    manualPaidBy: order.manualPaidBy || "",
+    manualPaymentNote: order.manualPaymentNote || "",
+    duplicatePaymentReferences: order.duplicatePaymentReferences || []
   };
 }
 
@@ -1325,91 +1340,9 @@ function compactPaymentParams(params) {
   );
 }
 
-async function postPaymentForm(endpoint, params, config = paymentConfig()) {
-  const response = await fetch(`${config.apiBaseUrl}${endpoint}`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(compactPaymentParams(params))
-  });
-  const text = await response.text();
-  let payload;
-  try {
-    payload = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`Payment gateway returned non-JSON response (${response.status}).`);
-  }
-  if (!response.ok) throw new Error(payload?.errMsg || `Payment gateway request failed: ${response.status}`);
-  if (payload.status !== 0) throw new Error(payload.errMsg || "Payment gateway rejected the order.");
-  return payload.result || {};
-}
-
-async function postXinhuiForm(endpoint, params, config) {
-  const signed = { ...compactPaymentParams(params), sign_type: "MD5" };
-  signed.sign = paymentSign(signed, config);
-  const response = await fetch(`${config.apiBaseUrl}${endpoint}`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(signed)
-  });
-  const text = await response.text();
-  let payload;
-  try {
-    payload = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`新汇返回了非 JSON 响应（${response.status}）。`);
-  }
-  if (!response.ok) throw new Error(payload?.msg || `新汇请求失败：${response.status}`);
-  if (Number(payload.code) !== 1) throw new Error(payload.msg || "新汇拒绝了请求。");
-  return payload;
-}
-
 function requestIp(req) {
   return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "127.0.0.1")
     .split(",")[0].trim().replace(/^::ffff:/, "");
-}
-
-async function createGatewayPayment(config, params) {
-  if (config.provider === "test") return { result: { tid: `test-${params.merOrderTid}`, payOrderStatus: 0 }, requestParams: {} };
-  if (config.provider !== "xinhui") {
-    const signed = compactPaymentParams(params);
-    signed.sign = paymentSign(signed, config);
-    return { result: await postPaymentForm("/api/services/app/Api_PayOrder/CreateOrderPay", signed, config), requestParams: signed };
-  }
-  const requestParams = {
-    pid: config.merchantId,
-    type: params.channelCode,
-    out_trade_no: params.merOrderTid,
-    notify_url: params.notifyUrl,
-    return_url: params.returnUrl,
-    name: params.clientUserPayRemark,
-    money: params.money,
-    clientip: params.clientip,
-    device: "jump"
-  };
-  const payload = await postXinhuiForm("/mapi.php", requestParams, config);
-  return {
-    requestParams: { ...requestParams, sign_type: "MD5" },
-    result: { tid: payload.trade_no, payUrl: payload.payurl || payload.qrcode || payload.urlscheme, payOrderStatus: 0 }
-  };
-}
-
-async function queryGatewayPayment(config, order) {
-  if (config.provider !== "xinhui") {
-    const params = { mid: config.merchantId, merOrderTid: order.merOrderTid };
-    params.sign = paymentSign(params, config);
-    return postPaymentForm("/api/services/app/Api_PayOrder/QueryPayOrder", params, config);
-  }
-  const url = new URL(`${config.apiBaseUrl}/api.php`);
-  url.search = new URLSearchParams({ act: "order", pid: config.merchantId, key: config.merchantSecret, out_trade_no: order.merOrderTid });
-  const response = await fetch(url);
-  const payload = await response.json();
-  if (!response.ok || Number(payload.code) !== 1) throw new Error(payload.msg || `新汇查单失败：${response.status}`);
-  const status = Number(payload.status);
-  return {
-    tid: payload.trade_no,
-    money: payload.money,
-    payOrderStatus: status === 1 ? 1 : status === 0 ? 0 : 3
-  };
 }
 
 function makePaymentOrderId() {
@@ -2884,160 +2817,128 @@ function paymentReturnUrl(config, req, merOrderTid, fallbackUrl = "") {
   return url.toString();
 }
 
-async function createPaymentOrder(payload, req, account, paymentSource = "online") {
-  const manualPayment = paymentSource === "manual";
-  const wallet = await walletForAccount(account);
-  const trafficPackPurchase = payload.product === "traffic_pack";
-  const homeIpPurchase = payload.product === "home_ip";
-  const addOnPurchase = trafficPackPurchase || homeIpPurchase;
-  const selectedOption = trafficPackPurchase ? trafficPackQuote(account)
-    : homeIpPurchase ? homeIpQuote(account, payload.optionId)
-    : planQuoteWithAddOns(paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id, payload.trafficTier), payload.addOns);
-  if (!manualPayment && !addOnPurchase && selectedOption.purchaseAction === "replace" && payload.confirmReplacement !== true) throw new Error("请确认新套餐将立即覆盖当前套餐。");
-  assertPendingPaymentOrderLimit(account.id);
-  const email = normalizePaymentEmail(account.email);
-  const id = crypto.randomUUID();
-  const merOrderTid = makePaymentOrderId();
-  const payableCents = manualPayment ? moneyCents(payload.amount, "人工收款金额") : Math.round(selectedOption.amount * 100);
-  if (manualPayment && payableCents > 1000000) throw new Error("单次人工收款不能超过 ¥10,000.00。");
-  const expiresAt = new Date(Date.now() + PAYMENT_ORDER_TTL_MS).toISOString();
-  const hold = payload.useBalance === false || payableCents === 0
-    ? { cashCents: 0, giftCents: 0, referralCents: 0 }
-    : await dataStore.reserveWallet({ accountId: account.id, orderId: id, amountCents: payableCents, expiresAt, initialVipCents: initialWalletVipCents(account) });
-  const gatewayCents = payableCents - hold.cashCents - hold.giftCents - hold.referralCents;
-  const planAmountCents = addOnPurchase ? 0 : manualPayment ? payableCents : Math.round(Number(selectedOption.planAmount ?? selectedOption.amount) * 100);
-  const planAfterGiftCents = Math.max(planAmountCents - Math.min(planAmountCents, hold.giftCents), 0);
-  const planAfterReferralCents = Math.max(planAfterGiftCents - Math.min(planAfterGiftCents, hold.referralCents), 0);
-  const planWalletCashCents = Math.min(planAfterReferralCents, hold.cashCents);
-  const planGatewayCents = Math.max(planAfterReferralCents - planWalletCashCents, 0);
-  const amount = (gatewayCents / 100).toFixed(2);
-  let config;
-  let channelCode;
-  let compactParams = {};
-  let result = {};
-  try {
-    const requestedMethod = String(payload.channelCode || "").trim();
-    if (requestedMethod && requestedMethod !== "100" && requestedMethod !== "200") throw new Error("不支持的支付方式。");
-    config = !manualPayment && gatewayCents > 0 ? requirePaymentConfig(requestedMethod, String(payload.paymentPlatformId || "").trim()) : null;
-    const method = config ? (requestedMethod || paymentMethodForPlatform(config)) : "";
-    channelCode = manualPayment ? "manual" : config ? configuredPaymentChannel(config, method) : hold.cashCents + hold.giftCents + hold.referralCents > 0 ? "wallet" : "cash-credit";
-    if (config) {
-      const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
-      if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
-      const requestParams = {
-        mid: config.merchantId,
-        merOrderTid,
-        money: amount,
-        channelCode,
-        notifyUrl,
-        clientUserPayRemark: selectedOption.optionLabel,
-        clientUserId: String(payload.clientUserId || "").trim(),
-        clientUserName: String(payload.clientUserName || "").trim(),
-        returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl),
-        ...(config.provider === "xinhui" ? { clientip: requestIp(req) } : {})
-      };
-      ({ result, requestParams: compactParams } = await createGatewayPayment(config, requestParams));
-    }
-  } catch (error) {
-    await dataStore.releaseWalletHold(id);
-    throw error;
-  }
-
-  const now = new Date().toISOString();
-  const order = {
-    id,
-    merOrderTid,
-    purpose: trafficPackPurchase ? "traffic_pack" : homeIpPurchase ? "addon" : "plan",
-    tid: result.tid || "",
-    planId: selectedOption.planId,
-    planName: selectedOption.planName,
-    optionId: String(selectedOption.optionId || payload.optionId || "").trim(),
-    optionLabel: selectedOption.optionLabel,
-    duration: selectedOption.duration,
-    group: selectedOption.group,
-    unlimited: Boolean(selectedOption.unlimited),
-    trafficTier: selectedOption.trafficTier || 1,
-    trafficBaseGb: selectedOption.trafficBaseGb || 0,
-    trafficGb: selectedOption.trafficGb ?? null,
-    trafficMaxTier: selectedOption.trafficMaxTier || 1,
-    trafficTierMarkupPercent: selectedOption.trafficTierMarkupPercent || 0,
-    baseAmount: selectedOption.baseAmount ?? selectedOption.originalAmount,
-    originalAmount: selectedOption.originalAmount,
-    discountAmount: manualPayment ? 0 : selectedOption.discountAmount,
-    vipLevel: selectedOption.vipLevel,
-    vipDiscountPercent: manualPayment ? 0 : selectedOption.vipDiscountPercent,
-    vipDiscountAmount: manualPayment ? 0 : selectedOption.vipDiscountAmount,
-    subtotal: manualPayment ? payableCents / 100 : selectedOption.subtotal,
-    taxAmount: manualPayment ? 0 : selectedOption.taxAmount,
-    beforeCreditAmount: manualPayment ? payableCents / 100 : selectedOption.beforeCreditAmount,
-    cashCredit: manualPayment ? 0 : selectedOption.cashCredit,
-    purchaseAction: selectedOption.purchaseAction,
-    purchaseCountBefore: addOnPurchase ? undefined : Number(account.purchaseCount) || 0,
-    addOns: selectedOption.selectedAddOns || [],
-    addOnSnapshots: selectedOption.selectedAddOnSnapshots || [],
-    addOnAmount: selectedOption.addOnAmount || 0,
-    productSnapshot: {
-      planId: selectedOption.planId,
-      planName: selectedOption.planName,
-      optionId: String(selectedOption.optionId || payload.optionId || "").trim(),
-      optionLabel: selectedOption.optionLabel,
-      duration: selectedOption.duration,
-      group: selectedOption.group,
-      lineType: "self_hosted",
-      lifetime: Boolean(selectedOption.lifetime),
-      trafficTier: selectedOption.trafficTier || 1,
-      trafficGb: selectedOption.trafficGb ?? null,
-      baseAmount: selectedOption.baseAmount ?? selectedOption.originalAmount,
-      originalAmount: selectedOption.originalAmount,
-      addOns: selectedOption.selectedAddOnSnapshots || []
+function checkoutWorkflow(account, req) {
+  return createCheckoutWorkflow({
+    orders: orderDomain,
+    settlement: createSettlementService({ reserve: args => dataStore.reserveWallet(args), release: id => dataStore.releaseWalletHold(id) }),
+    persist: async order => {
+      paymentOrders.unshift(order);
+      try { await savePaymentOrders(); }
+      catch (error) { paymentOrders = paymentOrders.filter(item => item.id !== order.id); throw error; }
     },
-    planPayableAmount: planAmountCents / 100,
-    planGatewayAmount: planGatewayCents / 100,
-    planCashValueAmount: (planGatewayCents + planWalletCashCents) / 100,
-    vipSpendAmount: planGatewayCents / 100,
-    couponCode: selectedOption.couponCode,
-    channelCode,
-    paymentPlatformId: config?.id || "",
-    paymentPlatformName: manualPayment ? "人工收款" : config?.name || "",
-    paymentProvider: manualPayment ? "manual" : config?.provider || "wallet",
-    totalAmount: payableCents / 100,
-    walletAmount: (hold.cashCents + hold.giftCents + hold.referralCents) / 100,
-    walletCashAmount: hold.cashCents / 100,
-    walletGiftAmount: hold.giftCents / 100,
-    walletReferralAmount: hold.referralCents / 100,
-    amount: Number(amount),
-    email,
-    accountId: account.id,
-    payUrl: result.payUrl || "",
-    status: config ? platformStatusToOrderStatus(result.payOrderStatus) : "paid",
-    platformStatus: result.payOrderStatus ?? null,
-    requestParams: compactParams,
-    paidAt: config ? "" : now,
-    createdAt: now,
-    expiresAt,
-    updatedAt: now
-  };
-  paymentOrders.unshift(order);
-  try {
-    await savePaymentOrders();
-  } catch (error) {
-    paymentOrders = paymentOrders.filter(item => item.id !== order.id);
-    await dataStore.releaseWalletHold(order.id);
-    throw error;
-  }
-  await recordPendingPaymentOrderLog(account, order, req);
-  if (order.status === "paid") {
-    order.paidAt ||= now;
-    try {
-      await fulfillPaymentOrder(order, req);
-    } catch (error) {
-      order.fulfillmentStatus = "failed";
-      order.fulfillmentError = error.message;
-      order.updatedAt = new Date().toISOString();
+    logSubmitted: order => recordPendingPaymentOrderLog(account, order, req),
+    deliver: fulfillPaymentOrder, save: savePaymentOrders
+  });
+}
+
+async function submitPurchaseOrder(payload, req, account, manualAmount) {
+  const wallet = await walletForAccount(account);
+  const purpose = payload.product === "traffic_pack" ? "traffic_pack" : payload.product === "home_ip" ? "addon" : "plan";
+  const selected = purpose === "traffic_pack" ? trafficPackQuote(account)
+    : purpose === "addon" ? homeIpQuote(account, payload.optionId)
+    : planQuoteWithAddOns(paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id, payload.trafficTier), payload.addOns);
+  if (manualAmount === undefined && purpose === "plan" && selected.purchaseAction === "replace" && payload.confirmReplacement !== true) throw new Error("请确认新套餐将立即覆盖当前套餐。");
+  assertPendingPaymentOrderLimit(account.id);
+  const quote = manualAmount === undefined ? selected : { ...selected, amount: manualAmount, subtotal: manualAmount, beforeCreditAmount: manualAmount, taxAmount: 0, discountAmount: 0, vipDiscountPercent: 0, vipDiscountAmount: 0, cashCredit: 0 };
+  quote.optionId = String(quote.optionId || payload.optionId || "");
+  const totalCents = Math.round(quote.amount * 100);
+  const now = new Date().toISOString();
+  return checkoutWorkflow(account, req).submit({
+    id: crypto.randomUUID(), number: makePaymentOrderId(), accountId: account.id,
+    email: normalizePaymentEmail(account.email), purpose, quote, purchaseCount: Number(account.purchaseCount) || 0,
+    now, expiresAt: new Date(Date.now() + PAYMENT_ORDER_TTL_MS).toISOString()
+  }, {
+    totalCents, planCents: purpose === "plan" ? Math.round((manualAmount ?? selected.planAmount ?? selected.amount) * 100) : 0,
+    useBalance: payload.useBalance !== false, initialVipCents: initialWalletVipCents(account)
+  });
+}
+
+// Existing administrator-created sales still compose submission and collection.
+async function createPaymentOrder(payload, req, account, paymentSource = "online") {
+  if (paymentSource !== "manual") return submitPurchaseOrder(payload, req, account);
+  const cents = moneyCents(payload.amount, "人工收款金额");
+  if (cents > 1000000) throw new Error("单次人工收款不能超过 ¥10,000.00。");
+  const order = await submitPurchaseOrder(payload, req, account, cents / 100);
+  return markPaymentOrderPaidManually(order, req);
+}
+
+function onlinePayments() {
+  return createPaymentService({
+    get: id => dataStore.getRecord("paymentAttempts", id),
+    put: attempt => dataStore.setRecord("paymentAttempts", attempt.id, attempt),
+    getCurrent: async id => (await dataStore.getRecord("paymentSessions", id))?.attemptId,
+    setCurrent: (id, attemptId) => dataStore.setRecord("paymentSessions", id, { attemptId }),
+    configure: requirePaymentConfig, channel: configuredPaymentChannel,
+    createGateway: createGatewayPayment, queryGateway: queryGatewayPayment,
+    statusOf: platformStatusToOrderStatus, amountError: paymentAmountError
+  });
+}
+
+function projectAttempt(order, attempt) {
+  Object.assign(order, { paymentAttemptId: attempt.id, paymentPlatformId: attempt.platformId,
+    paymentPlatformName: attempt.platformName, paymentProvider: attempt.provider,
+    channelCode: attempt.channelCode, tid: attempt.tid || "", payUrl: attempt.payUrl || "",
+    paymentError: attempt.error || "", updatedAt: new Date().toISOString() });
+}
+
+async function acceptAttemptReceipt(order, attempt, req) {
+  if (attempt.status !== "paid") return order;
+  if (order.status === "paid" || order.reversedAt) {
+    if (order.collectedAttemptId !== attempt.id) {
+      order.duplicatePaymentReferences = [...new Set([...(order.duplicatePaymentReferences || []), attempt.id])];
       await savePaymentOrders();
-      console.error(`Immediate payment fulfillment failed for ${order.merOrderTid}:`, error.message);
     }
-  } else if (["failed", "abnormal", "closed"].includes(order.status)) await dataStore.releaseWalletHold(order.id);
+    return order.collectedAttemptId === attempt.id ? checkoutWorkflow(null, req).fulfill(order, req) : order;
+  }
+  if (order.cancelledAt || isPaymentOrderExpired(order) || order.status !== "pending") {
+    order.paymentError = "订单关闭后支付平台仍收到款项，请联系客服处理。";
+    order.status = "abnormal";
+    await savePaymentOrders();
+    return order;
+  }
+  projectAttempt(order, attempt);
+  return checkoutWorkflow(null, req).collect(order, { collectedAttemptId: attempt.id, paidAt: new Date().toISOString() }, req);
+}
+
+async function startOrderPayment(order, payload, req) {
+  orderDomain.assertOpen({ ...order, expiresAt: paymentOrderExpiresAt(order) });
+  if (order.amount === 0) {
+    return checkoutWorkflow(null, req).collect(order, {
+      channelCode: order.walletAmount ? "wallet" : "cash-credit", paymentProvider: "wallet", paidAt: new Date().toISOString()
+    }, req);
+  }
+  const attempt = await onlinePayments().start({ id: order.id, reference: order.merOrderTid, label: order.optionLabel, amount: order.amount, attemptId: order.paymentAttemptId }, payload, {
+    notify: config => config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`,
+    return: config => paymentReturnUrl(config, req, order.id, `${requestOrigin(req)}/account/payment/result`), ip: requestIp(req)
+  });
+  projectAttempt(order, attempt);
+  await savePaymentOrders();
+  await acceptAttemptReceipt(order, attempt, req);
+  return order;
+}
+
+async function refreshCheckoutOrder(order, req) {
+  if (order.status !== "pending") return order;
+  if (isPaymentOrderExpired(order)) {
+    order.status = "closed";
+    order.paymentError = "";
+    order.updatedAt = new Date().toISOString();
+    await savePaymentOrders();
+    await dataStore.releaseWalletHold(order.id);
+    return order;
+  }
+  if (!order.paymentAttemptId) return order;
+  try {
+    const attempt = await onlinePayments().get(order.paymentAttemptId);
+    if (!attempt) return order;
+    await onlinePayments().query(attempt);
+    projectAttempt(order, attempt);
+    await savePaymentOrders();
+    await acceptAttemptReceipt(order, attempt, req);
+  } catch {
+    order.paymentError = "暂时无法查询支付渠道，订单已保留。请稍后检查或联系客服。";
+    await savePaymentOrders();
+  }
   return order;
 }
 
@@ -3106,7 +3007,9 @@ async function createRechargeOrder(payload, req, account) {
   return order;
 }
 
-async function refreshPaymentOrder(order) {
+async function refreshPaymentOrder(order, req) {
+  if (order.checkoutVersion === 2) return refreshCheckoutOrder(order, req);
+  if (order.status !== "pending" || order.manualPaidAt) return order;
   if (order.paymentProvider === "test") return order;
   const config = requirePaymentConfig("", order.paymentPlatformId);
   const result = await queryGatewayPayment(config, order);
@@ -3127,12 +3030,13 @@ async function refreshPaymentOrder(order) {
 
 async function cancelPaymentOrder(order, req) {
   if (order.status !== "pending" || isPaymentOrderExpired(order)) throw new Error("只有待支付订单可以取消。");
-  const refreshedOrder = await refreshPaymentOrder(order);
+  const refreshedOrder = await refreshPaymentOrder(order, req);
   if (refreshedOrder.status === "paid") {
     await fulfillPaymentOrder(refreshedOrder, req);
     throw new Error("订单已经支付，无法取消。");
   }
   if (refreshedOrder.status !== "pending") throw new Error("订单已经关闭，无法取消。");
+  if (order.checkoutVersion === 2) return checkoutWorkflow(null, req).cancel(order, new Date().toISOString());
   const now = new Date().toISOString();
   refreshedOrder.status = "closed";
   refreshedOrder.cancelledAt = now;
@@ -3143,34 +3047,39 @@ async function cancelPaymentOrder(order, req) {
   return refreshedOrder;
 }
 
-async function markPaymentOrderPaidManually(order, req) {
+async function markPaymentOrderPaidManually(order, req, note = "") {
   if (order.status !== "pending" || isPaymentOrderExpired(order)) throw new Error("只有有效的待付款订单可以标记为已付款。");
-  const now = new Date().toISOString();
-  order.status = "paid";
-  order.platformStatus = 1;
-  order.channelCode = "manual";
-  order.paymentProvider = "manual";
-  order.paymentPlatformName = "客服人工收款";
-  order.payUrl = "";
-  order.paymentError = "";
-  order.paidAt = now;
-  order.manualPaidAt = now;
-  order.updatedAt = now;
-  await savePaymentOrders();
-  try {
-    await fulfillPaymentOrder(order, req);
-  } catch (error) {
-    order.fulfillmentStatus = "failed";
-    order.fulfillmentError = error.message;
-    order.updatedAt = new Date().toISOString();
-    await savePaymentOrders();
+  const session = currentSession(req);
+  return checkoutWorkflow(null, req).collect(order, manualReceipt({ amount: order.amount,
+    actor: session?.account || session?.username || session?.accountId || session?.role || "admin", note, now: new Date().toISOString() }), req);
+}
+
+async function handleCheckoutCallback(attempt, payload, req) {
+  const config = paymentConfigs().find(item => item.id === attempt.platformId);
+  if (!config || !verifyPaymentSign(payload, config)) return { ok: false, statusCode: 400, body: "invalid sign" };
+  const paid = config.provider === "xinhui" ? payload.trade_status === "TRADE_SUCCESS" : platformStatusToOrderStatus(payload.status) === "paid";
+  const error = paid ? paymentAmountError(attempt.amount, payload.money) : "";
+  if (attempt.status !== "paid") {
+    attempt.status = error ? "abnormal" : paid ? "paid" : config.provider === "xinhui" ? "pending" : platformStatusToOrderStatus(payload.status);
+    attempt.error = error || transactionError(attempt.status);
   }
-  return order;
+  attempt.tid = String(payload.trade_no || payload.tid || attempt.tid || "");
+  attempt.callbackPayload = payload;
+  attempt.updatedAt = new Date().toISOString();
+  await onlinePayments().put(attempt);
+  const order = paymentOrders.find(item => item.id === attempt.orderId);
+  if (order) {
+    if (order.status === "pending" && order.paymentAttemptId === attempt.id) { projectAttempt(order, attempt); await savePaymentOrders(); }
+    if (!error) await acceptAttemptReceipt(order, attempt, req);
+  }
+  return { ok: true, statusCode: 200, body: "success" };
 }
 
 async function handlePaymentCallback(req) {
   const payload = await readPaymentCallback(req);
   const merOrderTid = String(payload.out_trade_no || payload.merOrderTid || "").trim();
+  const attempt = await onlinePayments().get(merOrderTid);
+  if (attempt) return handleCheckoutCallback(attempt, payload, req);
   const order = paymentOrders.find(item => item.merOrderTid === merOrderTid);
   if (order?.manualPaidAt) return { ok: true, statusCode: 200, body: "success" };
   let config = order?.paymentPlatformId
@@ -8928,7 +8837,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (pathname === "/api/payments/orders" && req.method === "POST") {
+  if (["/api/orders", "/api/payments/orders"].includes(pathname) && req.method === "POST") {
     await loadLatestData({ force: true });
     const session = requireUser(req, res);
     if (!session) return;
@@ -8957,16 +8866,43 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (pathname === "/api/payments/quote" && req.method === "POST") {
+  if (["/api/orders/quote", "/api/payments/quote"].includes(pathname) && req.method === "POST") {
     const session = requireUser(req, res);
     if (!session) return;
     try {
       const payload = await readJson(req);
       const account = accountBySession(session);
-      sendJson(res, 200, await paymentQuoteForAccount(payload, account));
+      const quote = await paymentQuoteForAccount(payload, account);
+      if (pathname === "/api/orders/quote") { delete quote.paymentPlatforms; delete quote.paymentMethods; }
+      sendJson(res, 200, quote);
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
+    return;
+  }
+
+  if (pathname === "/api/payments/platforms" && req.method === "GET") {
+    if (!requireUser(req, res)) return;
+    sendJson(res, 200, publicPaymentPlatforms());
+    return;
+  }
+
+  const cashierMatch = pathname.match(/^\/api\/payments\/orders\/([^/]+)\/(start|refresh)$/);
+  if (cashierMatch && req.method === "POST") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    const order = paymentOrders.find(item => item.id === cashierMatch[1] && item.accountId === session.accountId);
+    if (!order) return sendJson(res, 404, { error: "订单不存在。" });
+    try {
+      if (cashierMatch[2] === "start") {
+        if (order.checkoutVersion !== 2) throw new Error("请通过原支付链接完成该订单。");
+        await startOrderPayment(order, await readJson(req), req);
+      } else {
+        await refreshPaymentOrder(order, req);
+        await checkoutWorkflow(null, req).fulfill(order, req);
+      }
+      sendJson(res, 200, publicPaymentOrder(order));
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
     return;
   }
 
@@ -8977,9 +8913,21 @@ async function handleApi(req, res, pathname) {
     try {
       const order = paymentOrders.find(item => item.id === testPaymentStatusMatch[1] && item.accountId === session.accountId);
       if (!order || order.paymentProvider !== "test") throw new Error("测试支付订单不存在。");
-      if (order.status !== "pending") throw new Error("只能设置待付款测试订单的状态。");
+      if (order.status !== "pending" || isPaymentOrderExpired(order)) throw new Error("只能设置有效的待付款测试订单的状态。");
       const { status } = await readJson(req);
       if (!["paid", "failed", "closed"].includes(status)) throw new Error("不支持的测试付款状态。");
+      if (order.checkoutVersion === 2) {
+        const attempt = await onlinePayments().get(order.paymentAttemptId);
+        if (!attempt || attempt.provider !== "test") throw new Error("测试交易不存在。");
+        attempt.status = status;
+        attempt.error = status === "paid" ? "" : "测试交易未完成付款，可以重试。";
+        await onlinePayments().put(attempt);
+        projectAttempt(order, attempt);
+        await savePaymentOrders();
+        await acceptAttemptReceipt(order, attempt, req);
+        sendJson(res, 200, publicPaymentOrder(order));
+        return;
+      }
       order.status = status;
       order.platformStatus = ({ paid: 1, failed: 2, closed: 4 })[status];
       order.paidAt = status === "paid" ? new Date().toISOString() : "";
@@ -9002,7 +8950,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const publicPaymentOrderMatch = pathname.match(/^\/api\/payments\/orders\/([^/]+)$/);
+  const publicPaymentOrderMatch = pathname.match(/^\/api\/(?:payments\/)?orders\/([^/]+)$/);
   if (publicPaymentOrderMatch && req.method === "DELETE") {
     const session = requireUser(req, res);
     if (!session) return;
@@ -9033,10 +8981,11 @@ async function handleApi(req, res, pathname) {
           return;
         }
       }
+      if (order.checkoutVersion === 2 && order.status === "pending" && isPaymentOrderExpired(order)) await refreshCheckoutOrder(order, req);
       const config = paymentConfig(order.paymentPlatformId);
-      const shouldQueryGateway = order.status === "pending" && order.paymentProvider !== "test" && paymentConfigCredentialsReady(config);
-      const refreshedOrder = shouldQueryGateway ? await refreshPaymentOrder(order) : order;
-      if (refreshedOrder.status === "paid") {
+      const shouldQueryGateway = order.checkoutVersion !== 2 && order.status === "pending" && order.paymentProvider !== "test" && paymentConfigCredentialsReady(config);
+      const refreshedOrder = shouldQueryGateway ? await refreshPaymentOrder(order, req) : order;
+      if (refreshedOrder.status === "paid" && order.checkoutVersion !== 2) {
         try {
           await fulfillPaymentOrder(refreshedOrder, req);
         } catch (error) {
@@ -9689,7 +9638,8 @@ async function handleApi(req, res, pathname) {
     const order = paymentOrders.find(item => item.id === adminOrderMarkPaidMatch[1]);
     if (!order) { sendJson(res, 404, { error: "没有找到这个订单。" }); return; }
     try {
-      await markPaymentOrderPaidManually(order, req);
+      const payload = await readJson(req);
+      await markPaymentOrderPaidManually(order, req, payload.note);
       sendJson(res, 200, adminPaymentOrder(order));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -11229,6 +11179,16 @@ async function serveStatic(req, res, pathname) {
 
 let initialized = false;
 
+const withCommerceOperation = createOperationLock({
+  connect: () => dataStore.pool.connect(),
+  reload: async () => { await _loadingPromise; await _doLoad({ strict: true }); },
+  enter: () => { commerceActive = true; _markWritten(); },
+  leave: () => { commerceActive = false; }
+});
+function isCommerceRoute(pathname) {
+  return /^\/api\/(orders(?:\/|$)|payments(?:\/|$)|wallet(?:\/|$)|admin\/(orders|manual-payments)(?:\/|$))/.test(pathname);
+}
+
 async function requestHandler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   try {
@@ -11242,7 +11202,8 @@ async function requestHandler(req, res) {
     if (relayMatch && req.method === "GET") {
       await handleRelaySubscription(req, res, relayMatch[1]);
     } else if (url.pathname.startsWith("/api/")) {
-      await handleApi(req, res, url.pathname);
+      if (isCommerceRoute(url.pathname)) await withCommerceOperation(() => handleApi(req, res, url.pathname));
+      else await handleApi(req, res, url.pathname);
     } else {
       await serveStatic(req, res, url.pathname);
     }

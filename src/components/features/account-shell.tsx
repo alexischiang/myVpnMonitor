@@ -34,7 +34,7 @@ export function AccountShell() {
   const [userAlerts, setUserAlerts] = React.useState<UserAlertSetting[]>([])
   const dark = (theme ?? resolvedTheme) === "dark"
   const navItems = accountNav.filter(item => !("nodeAccess" in item) || !item.nodeAccess || hasActiveNodeAccess)
-  const current = navItems.find(item => item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)) || navItems[0]
+  const current = location.pathname === "/account/design-system/buttons" ? { title: "按钮样式" } : navItems.find(item => item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)) || navItems[0]
 
   React.useEffect(() => {
     fetchJson<{ role: string; email?: string; hasActiveNodeAccess?: boolean }>("/api/auth/me")

@@ -7,7 +7,7 @@
       "id": "harness-minimum-loop",
       "name": "Minimum agent harness loop",
       "description": "Make startup, scoped work, verification, and session handoff restartable.",
-      "status": "passing",
+      "status": "in_progress",
       "ui": false,
       "dependencies": [],
       "done_criteria": [
@@ -483,7 +483,7 @@
       "id": "account-node-status-page",
       "name": "Show account node status",
       "description": "Let active self-hosted subscribers view real probe status for package inbounds and their private custom inbounds, with upgrade guidance for locked access groups.",
-      "status": "in_progress",
+      "status": "pending",
       "ui": true,
       "dependencies": ["xui-inbound-subscription-order", "xui-timeout-retry"],
       "done_criteria": [
@@ -493,6 +493,7 @@
         "The API does not expose node hosts, ports, versions, client counts, tokens, or internal errors."
       ],
       "verification": [
+        "2026-09-15: 暂停推进，保留未完成浏览器复核；当前优先处理用户要求的订单与收款拆分。",
         "2026-09-08: npm run check, npm run verify:fast, and git diff --check passed.",
         "2026-09-08: Regression coverage confirmed package visibility, current access, private custom-inbound filtering, real probe values, and response-field sanitization.",
         "2026-09-08: Browser verification confirmed desktop and 390px layouts, three status rows, one locked-node action, and the plan-page navigation with no horizontal overflow or runtime errors."
@@ -527,6 +528,176 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-09-12"
+      }
+    },
+    {
+      "id": "order-cashier-separation",
+      "name": "Separate order submission, collection and fulfillment",
+      "description": "Independent order and payment domains composed by a checkout workflow, with a dedicated cashier and audited manual collection.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Order submission persists without contacting a payment provider.",
+        "Cashier starts payment separately; provider failures preserve the order.",
+        "Admin collection and online receipts share idempotent fulfillment.",
+        "Order domain has no payment or fulfillment dependencies.",
+        "Payment/wallet regression and desktop/mobile browser checks pass."
+      ],
+      "verification": [
+        "2026-09-15: 已先复现渠道异常后不存在待付款业务订单的失败断言，再实现先保存订单、后发起付款。",
+        "2026-09-15: npm run agent:init、npm run verify（check、核心/3x-ui、独立领域、支付及钱包测试）、npm run verify:fast 和 git diff --check 通过；支付与钱包使用隔离 PostgreSQL，渠道及 3x-ui 均使用模拟服务。",
+        "2026-09-15: 回归覆盖渠道故障保留订单、交易编号持久化重试与切换恢复、无渠道人工收款、并发人工确认/回调只生成一份账单、发放失败重试、余额抵扣和过期拒绝收款。",
+        "2026-09-15: Playwright 实测 1280px 与 390px 提交订单、收银台、后台列表/详情、渠道失败恢复、余额付款、无渠道、人工收款与支付返回；console_errors/page_errors 均为空。"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans/checkout",
+          "/account/orders/:id",
+          "/account/payment/result",
+          "/orders",
+          "/orders/:id"
+        ],
+        "interactions": [
+          "390px: amount details, copy order number, help dialog, payment method selection; gateway outage preserves order with actionable message",
+          "Gateway recovery: retry creates a usable payment link on the same business order",
+          "Administrator order list/detail: manually collected with note, service delivered; customer cashier polls to completed and removes payment controls",
+          "Payment return URL redirects to the same cashier",
+          "Mobile checkout submits and cancels a second order without contacting a provider",
+          "390px: wallet-only order remains pending until explicit balance confirmation, then delivers successfully",
+          "390px and desktop: all channels disabled still show persisted order and contact/reload actions without overflow",
+          "Re-enable test channel: explicit payment initiation and test receipt complete fulfillment",
+          "Final 390px order number stays on one line; administrator confirmation includes customer and package"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-15T09:54:01.971Z"
+      }
+    },
+    {
+      "id": "standalone-cashier-ui",
+      "name": "Standalone cashier route and layout",
+      "description": "Present the cashier outside account shells with compact payment-focused styling.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "order-cashier-separation"
+      ],
+      "done_criteria": [
+        "Standalone /cashier/:id has no account sidebar or nested shell.",
+        "Submission and legacy detail/return links reach the standalone cashier.",
+        "Desktop/mobile interactions and error states verified without console errors."
+      ],
+      "verification": [
+        "2026-09-15: npm run agent:init、npm run check、npm run verify:fast、git diff --check 通过。",
+        "2026-09-15: Playwright 使用模拟 API 验证 1440px/390px 独立路由、直接刷新、旧链接跳转、新订单提交、付款渠道错误、无渠道、主题和对话框；未修改收款或发放逻辑。",
+        "2026-09-15: 新增可复用 NoticeBadge 业务组件，以 variant 参数提供 info、warning、success、error 四种语义样式，并移除该提示组件的 Tooltip 行为。",
+        "2026-09-15: npm run check、npm run verify:fast、git diff --check 通过；Playwright 在 1440px/390px 验证四个 NoticeBadge 样例、蓝橙绿红配色、无 Tooltip、响应式换行与无横向溢出。",
+        "2026-09-15: 收银台移除重复的等待付款/待支付文案，订单金额明细默认展开；npm run check、npm run verify:fast 与 Playwright 桌面/390px 验证通过。",
+        "2026-09-15: 加强收银台阴影与金额字距，删除帮助、页脚和付款说明，将摘要拆为订单号/商品明细/金额明细，并仅显示已启用支付渠道；构建、快速验证和浏览器检查通过。",
+        "2026-09-15: 删除金额下方重复套餐文案；商品明细补充套餐等级；金额明细改为静态展示并删除提交时间；三组标题与正文间距增至 8px。",
+        "2026-09-15: 三个摘要区块由统一 SummarySection 循环渲染，标题/正文间距为 12px、正文行距为 8px；返回/取消按钮按状态使用整行或 3:1 布局；金额字符间距增至 0.08em。",
+        "2026-09-15: 金额调整为 38px/800/0.04em；倒计时改用支持 ReactNode 标签的 NoticeBadge；余额付款状态通过隔离模拟订单完成浏览器预览。",
+        "2026-09-15: 金额符号与数字拆分，符号间距 8px、数字字距 0.015em；删除付款提示组；卡片使用四向 56px 阴影；已关闭状态改为仅显示 NoticeBadge 文案‘该订单已关闭’。",
+        "2026-09-15: 提取 CashierCard 业务组件统一品牌头、金额、状态提示与内容布局；小屏隐藏主题切换；待付款与已关闭 NoticeBadge 由订单状态传参显示在同一头部位置；按钮组间距收紧至 12px。",
+        "2026-09-15: 支付按钮按支付宝/微信切换品牌色并统一使用 700 白字；支付启动自动打开新窗口；状态检查统一使用 Sonner 成功、未支付和错误提示；全局挂载 Crisp，并在渠道上方加入客服提示。",
+        "2026-09-15: npm run check、npm run verify:fast 与 git diff --check 通过；Playwright 验证支付宝蓝、微信绿/白字、自动弹窗、Sonner 成功/错误、全局 Crisp 及 390px 无溢出。"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/cashier/:id",
+          "/account/orders/:id",
+          "/account/payment/result",
+          "/account/plans/checkout"
+        ],
+        "interactions": [
+          "Playwright mocked API: desktop 1440px and mobile 390px standalone shell, no sidebar, no overflow, direct reload",
+          "Help, amount details, payment selection, gateway error, no-channel reload, cancel dialog and light/dark theme",
+          "Legacy order and payment return links redirect to standalone route; new order submission goes directly to standalone cashier",
+          "Rendered four NoticeBadge samples using info, warning, success and error props; verified blue, orange, green and red styles, no Tooltip markup, responsive wrapping and no horizontal overflow at 1440px and 390px",
+          "Playwright mocked order read: desktop and 390px cashier omit 等待付款/待支付, amount details are expanded by default, and mobile has no horizontal overflow",
+          "Desktop and 390px: stronger computed card shadow, normal amount letter spacing, three summary groups with muted headings and foreground content, no copy/help/footer/payment-heading/provider copy, two enabled channels shown, disabled channel and provider hidden",
+          "Desktop and 390px: top plan copy removed, product details show PRO · 月付 30天 once, amount details have no accordion button or submission time, all three heading-to-body gaps compute to 8px",
+          "Desktop and 390px: all summary heading gaps compute to 12px and product/amount body gaps to 8px; pending actions measure 3:1 with bordered arrow return and destructive cancel; closed return fills its row; amount letter spacing computes to 2.4px",
+          "Desktop and 390px: amount computes to 38px, weight 800 and 1.52px letter spacing; countdown is rendered inside NoticeBadge; separate mocked balance-payment page shows reserved balance, balance deduction and balance payment action",
+          "Desktop and 390px: amount digits compute to 0.57px letter spacing with an 8px currency gap; payment-hint region is absent; card shadow computes to a symmetric 56px blur; closed order shows only the error NoticeBadge text 该订单已关闭; no horizontal overflow",
+          "Desktop and 390px: theme switch remains visible on desktop and is hidden on mobile; pending and closed NoticeBadges are both the third child of card-header; card/payment content gaps compute to 12px while buttons retain 44px touch height; no horizontal overflow or console/page errors",
+          "Payment flow: Alipay button computes rgb(22,119,255), WeChat rgb(7,193,96), both white/700; selected WeChat starts channel 200 and opens /payment-mock in a popup; fallback link remains available",
+          "Status refresh: pending response shows Sonner info and mocked 500 shows Sonner error; Crisp script and visible chat launcher are mounted globally; 390px hides theme switch and has no horizontal overflow; page error capture is empty"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-15T16:08:00.000Z"
+      }
+    },
+    {
+      "id": "orange-button-showcase",
+      "name": "Orange button variants and showcase",
+      "description": "Add reusable Orange button variants and display their styles, sizes and states on an account design-system page.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Orange solid, soft, outline, ghost and link variants are available through the shared Button component.",
+        "The showcase page displays the palette, variants, sizes, icon examples, loading and disabled states.",
+        "Desktop and mobile browser verification passes without overflow, console errors or page errors."
+      ],
+      "verification": [
+        "2026-09-16: npm run agent:init, npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-16: Playwright verified all five Orange variants, 11 swatches, loading/disabled states and icon compositions at 1440px and 390px in light and dark themes.",
+        "2026-09-16: Rebased the generated OKLCH scale on orange-600 #ff592c; Playwright confirmed the exact base color, white solid-button text and English parameter labels."
+      ],
+      "browser_verification": {
+        "routes": ["/account/design-system/buttons"],
+        "interactions": [
+          "Opened the lazy-loaded showcase with mocked authenticated account data.",
+          "Verified solid, soft, outline, ghost and link variants plus sizes, loading, disabled and icon examples.",
+          "Confirmed orange-600 computes to #ff592c and all 11 swatches follow the generated light-to-dark scale.",
+          "Confirmed the solid button computes to rgb(255, 89, 44) with white text and every Orange button label uses an English parameter value.",
+          "Switched to dark theme and checked the 390px layout, 44px minimum button height and absence of horizontal overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-16"
+      }
+    },
+    {
+      "id": "account-plans-monthly-layout",
+      "name": "Account plans monthly pricing layout",
+      "description": "Show monthly recurring pricing with left-aligned plan mode context on the account plans page.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The account plans page hides the recurring billing-period selector and displays monthly recurring prices.",
+        "Recurring and lifetime plans are shown as two consecutive sections without account-page plan-mode tabs.",
+        "The account plans header is presented as an orange-600 card with light text.",
+        "Each section heading and supporting copy describe its plan mode without a NoticeBadge.",
+        "Each section header has 24px spacing before its plan cards.",
+        "Desktop and mobile browser verification passes without console or page errors."
+      ],
+      "verification": [
+        "2026-09-16: npm run agent:init, npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-16: Playwright verified recurring and lifetime modes at 1440px and 390px with 24px selector-to-card spacing, no billing-period selector, no overflow, and empty console/page errors.",
+        "2026-09-16: Wrapped the account plans header in an orange-600 card with light text; npm run agent:init, npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-16: Reused the plan-section layout to show recurring and lifetime plans consecutively without account-page tabs; build, fast checks and Playwright desktop/mobile verification passed.",
+        "2026-09-16: Removed both account plan NoticeBadges and moved their mode-specific text into the supporting copy; build and Playwright desktop/mobile verification passed."
+      ],
+      "browser_verification": {
+        "routes": ["/account/plans", "/pricing"],
+        "interactions": [
+          "Opened the account plans page with an isolated authenticated browser session and live public pricing data.",
+          "Confirmed the account page contains zero tablists and orders the recurring orange header/cards before the lifetime orange header/cards.",
+          "Confirmed recurring cards show monthly prices and checkout options while lifetime cards show lifetime prices and checkout options.",
+          "Confirmed both account headers contain no NoticeBadge and show their mode-specific supporting copy.",
+          "Confirmed both header backgrounds compute to #ff592c and each header-to-card gap computes to 24px.",
+          "Verified the stacked layout at 1440px and 390px with no horizontal overflow.",
+          "Opened /pricing and switched from recurring to lifetime to confirm its existing public selectors still work.",
+          "Verified both routes have no console errors or uncaught page errors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-16"
       }
     }
   ]
