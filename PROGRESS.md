@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-16
-- Current Objective: 发布当前收银台、橙色按钮和账户套餐页改动
+- Last Updated: 2026-09-17
+- Current Objective: 客户端套餐标题区居中并调整推荐卡配色
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -184,8 +184,20 @@
 
 - 2026-09-16: npm run verify、npm run verify:harness、git diff --check 通过；相关 UI 已有当日桌面/移动端浏览器验证，console_errors/page_errors 为空
 
+- 2026-09-17: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 验证 /account/plans 与 /pricing 桌面/390px、推荐外框、不限时套餐、checkout href，console/page errors 为空
+
+- 2026-09-17: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 实测外层宽+16px/高+28px、内卡尺寸不变、无边框深橙背景，桌面/390px及/public pricing无溢出，console/page errors为空
+
+- 2026-09-17: 推荐外层为 orange-500，margin top=-32px、左右/底部=-8px；npm run verify:fast、verify:harness、git diff --check 通过；Playwright 桌面/390px无溢出且console/page errors为空
+
+- 2026-09-17: Playwright 实测 margin top=-32px、left/right/bottom=-2px，内卡尺寸不变，桌面/390px无溢出且console/page errors为空；verify:fast、verify:harness、git diff --check通过
+
+- 2026-09-17: npm run agent:init、npm run check、verify:harness、git diff --check通过；Playwright验证/account/plans周期→不限时→周期切换、1280px/390px无溢出、console/page errors为空；按要求未单独检查-3px数值
+
+- 2026-09-17: npm run check、npm run verify:harness、git diff --check 通过；Playwright 验证桌面与 390px 标题透明居中、48px 卡片间距、orange-600 白字推荐卡、Tab 切换，无横向溢出且 console/page errors 为空。
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `src/components/features/account-shell.tsx`, `src/components/features/cashier-page.tsx`, `src/components/features/cashier.tsx`, `src/components/features/notice-badge.tsx`, `src/components/features/online-payment.tsx`, `src/components/features/order-summary.tsx`, `src/components/features/public-pages.tsx`, `src/components/ui/button.tsx`, `src/main.tsx`, `src/styles.css`, `src/components/features/cashier-card.tsx`, `src/components/features/orange-button-showcase.tsx`
+- Files: `PROGRESS.md`, `feature_list.json`, `src/components/features/public-pages.tsx`, `src/components/features/product-card.tsx`
 - Known risks: none
-- Recommended Next Step: 推送 main，合并并推送 production，确认 GitHub Actions 部署成功
+- Recommended Next Step: 等待用户确认视觉效果

@@ -664,16 +664,19 @@
     {
       "id": "account-plans-monthly-layout",
       "name": "Account plans monthly pricing layout",
-      "description": "Show monthly recurring pricing with left-aligned plan mode context on the account plans page.",
+      "description": "Show recurring and lifetime products with reusable, recommendation-aware product cards on the account plans page.",
       "status": "passing",
       "ui": true,
       "dependencies": [],
       "done_criteria": [
         "The account plans page hides the recurring billing-period selector and displays monthly recurring prices.",
-        "Recurring and lifetime plans are shown as two consecutive sections without account-page plan-mode tabs.",
-        "The account plans header is presented as an orange-600 card with light text.",
-        "Each section heading and supporting copy describe its plan mode without a NoticeBadge.",
-        "Each section header has 24px spacing before its plan cards.",
+        "A plan-mode tab selector shows either recurring or lifetime plans without rendering both sections together.",
+        "The account plans header has no colored background and centers its heading, supporting copy and mode selector.",
+        "The selected mode heading and supporting copy update without a NoticeBadge.",
+        "The selected mode header has 48px spacing before its plan cards so the recommended card does not overlap it.",
+        "Each product card renders title, price, feature and action regions from props with a divider between price and features.",
+        "Backend recommendation flags wrap recurring and lifetime products in a larger borderless orange-600 recommendation card with white label text without resizing the inner product card.",
+        "Lifetime products retain their unlimited-duration labels and checkout options.",
         "Desktop and mobile browser verification passes without console or page errors."
       ],
       "verification": [
@@ -681,23 +684,31 @@
         "2026-09-16: Playwright verified recurring and lifetime modes at 1440px and 390px with 24px selector-to-card spacing, no billing-period selector, no overflow, and empty console/page errors.",
         "2026-09-16: Wrapped the account plans header in an orange-600 card with light text; npm run agent:init, npm run check, npm run verify:fast and git diff --check passed.",
         "2026-09-16: Reused the plan-section layout to show recurring and lifetime plans consecutively without account-page tabs; build, fast checks and Playwright desktop/mobile verification passed.",
-        "2026-09-16: Removed both account plan NoticeBadges and moved their mode-specific text into the supporting copy; build and Playwright desktop/mobile verification passed."
+        "2026-09-16: Removed both account plan NoticeBadges and moved their mode-specific text into the supporting copy; build and Playwright desktop/mobile verification passed.",
+        "2026-09-17: Replaced plan cards with the prop-driven ProductCard component; npm run check, npm run verify:fast, npm run verify:harness and git diff --check passed. Playwright verified recurring/lifetime rendering, checkout hrefs and responsive layouts. The recommendation wrapper uses orange-500 with -32px top and -3px side/bottom margins.",
+        "2026-09-17: Reused the existing plan-mode Tabs so /account/plans renders one selected mode at a time. Playwright verified recurring → lifetime → recurring switching at 1280px and the 390px layout with empty console/page errors.",
+        "2026-09-17: Removed the account plan header background, centered its content, increased the card gap to 48px, and changed the recommendation wrapper to orange-600 with white text. npm run check passed; Playwright verified desktop and 390px lifetime switching with no overflow or console/page errors."
       ],
       "browser_verification": {
         "routes": ["/account/plans", "/pricing"],
         "interactions": [
           "Opened the account plans page with an isolated authenticated browser session and live public pricing data.",
-          "Confirmed the account page contains zero tablists and orders the recurring orange header/cards before the lifetime orange header/cards.",
-          "Confirmed recurring cards show monthly prices and checkout options while lifetime cards show lifetime prices and checkout options.",
-          "Confirmed both account headers contain no NoticeBadge and show their mode-specific supporting copy.",
-          "Confirmed both header backgrounds compute to #ff592c and each header-to-card gap computes to 24px.",
-          "Verified the stacked layout at 1440px and 390px with no horizontal overflow.",
+          "Confirmed the account page contains one plan-mode tablist and renders only the selected mode's three product cards.",
+          "Switched recurring → lifetime → recurring and confirmed headings, descriptions, prices and checkout options update without retaining hidden-mode cards.",
+          "Confirmed the selected account header has a transparent background and centers its heading, supporting copy and mode selector.",
+          "Confirmed a 48px header-to-card gap prevents the raised recommendation card from overlapping the heading area.",
+          "Verified the selector and cards at 1280px and 390px with no horizontal overflow.",
           "Opened /pricing and switched from recurring to lifetime to confirm its existing public selectors still work.",
+          "Confirmed all six account plan cards use separate title, price, feature and action regions, with the action anchored after the feature list.",
+          "Confirmed recurring and lifetime PRO products independently show the outer recommendation frame from backend flags.",
+          "Confirmed the recommendation card has no border, uses orange-600 and renders its recommendation label in white.",
+          "Confirmed checkout hrefs retain basic/pro/ultra recurring and lifetime option identifiers.",
+          "Rechecked /account/plans at 1280px and 390px and /pricing after switching to lifetime mode.",
           "Verified both routes have no console errors or uncaught page errors."
         ],
         "console_errors": [],
         "page_errors": [],
-        "checked_at": "2026-09-16"
+        "checked_at": "2026-09-17"
       }
     }
   ]
