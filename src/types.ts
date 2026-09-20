@@ -313,6 +313,38 @@ export type PricingRow = {
   yearlyDevices?: number
 }
 
+export type CatalogV2Feature = { label: string; isIncluded: boolean; sortOrder: number }
+export type CatalogV2Period = { id: string; durationDays: number; trafficBytes: number | null; deviceLimit: number; priceCents: number; isEnabled: boolean; sortOrder: number }
+export type CatalogV2LineGroup = { id: string; name: string; isEnabled: boolean; sortOrder: number; inboundKeys: string[]; productCount?: number; createdAt?: string; updatedAt?: string }
+export type CatalogV2Product = {
+  id: string
+  type: "recurring_plan" | "lifetime_plan" | "addon"
+  isEnabled: boolean
+  isForSale: boolean
+  stock: number | null
+  sortOrder: number
+  name: string
+  description: string
+  features: CatalogV2Feature[]
+  isRecommended: boolean
+  lineGroupId: string | null
+  durationDays: number | null
+  trafficBytes: number | null
+  deviceLimit: number | null
+  priceCents: number | null
+  trafficCustomization: { enabled: boolean; stepBytes: number | null; stepPriceCents: number | null; maxSteps: number }
+  purchaseRequirement: "standalone" | "requires_recurring_plan" | null
+  fulfillment: { mode: "automatic" | "manual" | null; handler: "traffic_credit" | "manual" | null; config: { trafficBytes?: number } }
+  deliveryDescription: string
+  serviceDurationDays: number | null
+  allowQuantity: boolean
+  minQuantity: number
+  maxQuantity: number | null
+  periods: CatalogV2Period[]
+  createdAt?: string
+  updatedAt?: string
+}
+
 export type XuiInboundGroups = Record<string, number[]>
 
 export type XuiInboundMetadata = Record<string, {

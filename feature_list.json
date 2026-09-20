@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-12",
+  "updated_at": "2026-09-19",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -709,6 +709,46 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-09-17"
+      }
+    },
+    {
+      "id": "catalog-v2-admin-entry",
+      "name": "V2 product catalog schema and admin entry",
+      "description": "Add a parallel V2 catalog, inventory-backed purchase domain and guarded existing-user binding migration without changing the legacy storefront.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "V2 products, recurring periods, line groups and inventory reservations have independent PostgreSQL storage.",
+        "Product IDs are immutable lowercase letter, digit and hyphen identifiers, and type-specific validation preserves cents and bytes as storage units.",
+        "Line groups bind live inbounds by nodeGuid:inboundId and disabled groups cannot be newly assigned to enabled products.",
+        "The admin UI can create and edit recurring plans, lifetime plans, add-ons and line groups, including isEnabled and isForSale controls.",
+        "All V2 product types can be quoted and purchased through inventory reservation, consumption and release rules, while expired payments are routed to manual handling without decrementing stock.",
+        "Existing users can be dry-run and idempotently bound to explicitly mapped V2 plans while retaining their legacy product fields for rollback.",
+        "The legacy pricing, storefront and payment flow remain unchanged until the separately approved data migration.",
+        "Desktop and mobile browser verification passes without horizontal overflow, console errors or page errors."
+      ],
+      "verification": [
+        "2026-09-19: npm run check and npm run verify:fast passed; database initialization created all four V2 tables and authenticated API CRUD smoke passed with temporary data removed.",
+        "2026-09-19: Browser verification created a line group from a live compound inbound key, waited for synchronization, created a recurring product with isForSale enabled, and confirmed the persisted list state.",
+        "2026-09-19: Browser verification switched through recurring, lifetime and add-on forms, checked the 390px layout with no horizontal overflow, and found no console or page errors.",
+        "2026-09-19: Kept recurring-period rows mounted while editing their identifiers; browser verification entered 30d one character at a time with focus retained after every character.",
+        "2026-09-19: npm run verify:catalog-v2 passed in a disposable PostgreSQL schema: payment and wallet regression plus recurring, lifetime, automatic add-on and manual add-on creation/purchase, inventory reservation lifecycle, sold-out behavior, late-payment safety, migration dry-run/apply/replay and unmapped-user blocking all passed; the schema was removed afterward."
+      ],
+      "browser_verification": {
+        "routes": ["/catalog-v2", "/catalog-v2/products/new", "/catalog-v2/products/v2-browser-product", "/catalog-v2/line-groups", "/catalog-v2/line-groups/new"],
+        "interactions": [
+          "Logged in as administrator and opened the independent V2 product catalog.",
+          "Created a temporary enabled line group containing a live nodeGuid:inboundId entry and confirmed the UI remained blocked until synchronization completed.",
+          "Switched the product type among recurring plan, lifetime plan and add-on and confirmed each type displays only its applicable fields.",
+          "Created a temporary recurring product with shared stock, enabled isEnabled and isForSale, one 30-day period, line-group binding and feature lists; confirmed its list badges and immutable ID on edit.",
+          "Entered a recurring-period identifier one character at a time and confirmed the same input retained focus after each state update; restored the user's original unsaved value afterward.",
+          "Verified the catalog list and recurring editor at 390px; document scroll width equaled the viewport width.",
+          "Removed all temporary browser-verification records after the checks completed."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-19"
       }
     }
   ]

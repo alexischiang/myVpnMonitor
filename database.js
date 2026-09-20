@@ -169,6 +169,76 @@ class PostgresDataStore {
         PRIMARY KEY (email, node_guid)
       )
       `), "xui daily traffic init");
+      await withPgRetry(() => pool.query(`
+      CREATE TABLE IF NOT EXISTS catalog_v2_line_groups (
+        id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9-]{1,63}$'),
+        name TEXT NOT NULL,
+        is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        inbound_keys JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(inbound_keys) = 'array'),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS catalog_v2_products (
+        id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9-]{1,63}$'),
+        type TEXT NOT NULL CHECK (type IN ('recurring_plan', 'lifetime_plan', 'addon')),
+        is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        is_for_sale BOOLEAN NOT NULL DEFAULT FALSE,
+        stock INTEGER CHECK (stock IS NULL OR stock >= 0),
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        features JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(features) = 'array'),
+        is_recommended BOOLEAN NOT NULL DEFAULT FALSE,
+        line_group_id TEXT REFERENCES catalog_v2_line_groups(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+        duration_days INTEGER CHECK (duration_days IS NULL OR duration_days > 0),
+        traffic_bytes BIGINT CHECK (traffic_bytes IS NULL OR traffic_bytes >= 0),
+        device_limit INTEGER CHECK (device_limit IS NULL OR device_limit >= 0),
+        price_cents BIGINT CHECK (price_cents IS NULL OR price_cents >= 0),
+        traffic_customization_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        traffic_step_bytes BIGINT CHECK (traffic_step_bytes IS NULL OR traffic_step_bytes > 0),
+        traffic_step_price_cents BIGINT CHECK (traffic_step_price_cents IS NULL OR traffic_step_price_cents > 0),
+        traffic_max_steps INTEGER NOT NULL DEFAULT 10 CHECK (traffic_max_steps > 0),
+        purchase_requirement TEXT CHECK (purchase_requirement IS NULL OR purchase_requirement IN ('standalone', 'requires_recurring_plan')),
+        fulfillment_mode TEXT CHECK (fulfillment_mode IS NULL OR fulfillment_mode IN ('automatic', 'manual')),
+        fulfillment_handler TEXT CHECK (fulfillment_handler IS NULL OR fulfillment_handler IN ('traffic_credit', 'manual')),
+        fulfillment_config JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(fulfillment_config) = 'object'),
+        delivery_description TEXT NOT NULL DEFAULT '',
+        service_duration_days INTEGER CHECK (service_duration_days IS NULL OR service_duration_days > 0),
+        allow_quantity BOOLEAN NOT NULL DEFAULT TRUE,
+        min_quantity INTEGER NOT NULL DEFAULT 1 CHECK (min_quantity > 0),
+        max_quantity INTEGER CHECK (max_quantity IS NULL OR max_quantity >= min_quantity),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CHECK ((type <> 'addon') OR is_recommended = FALSE)
+      );
+      CREATE TABLE IF NOT EXISTS catalog_v2_product_periods (
+        product_id TEXT NOT NULL REFERENCES catalog_v2_products(id) ON UPDATE RESTRICT ON DELETE CASCADE,
+        id TEXT NOT NULL CHECK (id ~ '^[a-z0-9][a-z0-9-]{0,31}$'),
+        duration_days INTEGER NOT NULL CHECK (duration_days > 0),
+        traffic_bytes BIGINT CHECK (traffic_bytes IS NULL OR traffic_bytes >= 0),
+        device_limit INTEGER NOT NULL CHECK (device_limit >= 0),
+        price_cents BIGINT NOT NULL CHECK (price_cents >= 0),
+        is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (product_id, id),
+        UNIQUE (product_id, duration_days)
+      );
+      CREATE TABLE IF NOT EXISTS catalog_v2_inventory_reservations (
+        id TEXT PRIMARY KEY,
+        product_id TEXT NOT NULL REFERENCES catalog_v2_products(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+        order_id TEXT NOT NULL,
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        status TEXT NOT NULL CHECK (status IN ('reserved', 'consumed', 'released')),
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (product_id, order_id)
+      );
+      CREATE INDEX IF NOT EXISTS catalog_v2_products_sort_idx ON catalog_v2_products (sort_order, id);
+      CREATE INDEX IF NOT EXISTS catalog_v2_line_groups_sort_idx ON catalog_v2_line_groups (sort_order, id);
+      CREATE INDEX IF NOT EXISTS catalog_v2_inventory_active_idx ON catalog_v2_inventory_reservations (product_id, status, expires_at);
+      `), "catalog v2 init");
     } catch (error) {
       if (this.pool === pool) this.pool = null;
       await pool.end().catch(() => undefined);
@@ -782,6 +852,162 @@ class PostgresDataStore {
       inBytes: Number(row.up_bytes),
       outBytes: Number(row.down_bytes)
     }));
+  }
+
+  async listCatalogV2LineGroups() {
+    const result = await withPgRetry(() => this.pool.query(
+      `SELECT g.*, COUNT(p.id)::int AS product_count
+       FROM catalog_v2_line_groups g
+       LEFT JOIN catalog_v2_products p ON p.line_group_id = g.id AND p.is_enabled = TRUE
+       GROUP BY g.id ORDER BY g.sort_order, g.id`
+    ), "list catalog v2 line groups");
+    return result.rows.map(row => ({
+      id: row.id, name: row.name, isEnabled: row.is_enabled, sortOrder: row.sort_order,
+      inboundKeys: Array.isArray(row.inbound_keys) ? row.inbound_keys : [], productCount: Number(row.product_count || 0),
+      createdAt: row.created_at, updatedAt: row.updated_at
+    }));
+  }
+
+  async upsertCatalogV2LineGroup(group, { create = false } = {}) {
+    const query = create
+      ? `INSERT INTO catalog_v2_line_groups (id, name, is_enabled, sort_order, inbound_keys)
+         VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING *`
+      : `UPDATE catalog_v2_line_groups SET name=$2, is_enabled=$3, sort_order=$4, inbound_keys=$5::jsonb, updated_at=NOW()
+         WHERE id=$1 RETURNING *`;
+    const result = await withPgRetry(() => this.pool.query(query, [group.id, group.name, group.isEnabled, group.sortOrder, JSON.stringify(group.inboundKeys)]), `save catalog v2 line group ${group.id}`);
+    return result.rows[0] || null;
+  }
+
+  async deleteCatalogV2LineGroup(id) {
+    return withPgRetry(() => this.pool.query("DELETE FROM catalog_v2_line_groups WHERE id=$1", [id]), `delete catalog v2 line group ${id}`);
+  }
+
+  async listCatalogV2Products() {
+    const [products, periods] = await Promise.all([
+      withPgRetry(() => this.pool.query("SELECT * FROM catalog_v2_products ORDER BY sort_order, id"), "list catalog v2 products"),
+      withPgRetry(() => this.pool.query("SELECT * FROM catalog_v2_product_periods ORDER BY product_id, sort_order, duration_days"), "list catalog v2 periods")
+    ]);
+    const periodsByProduct = new Map();
+    for (const row of periods.rows) {
+      const list = periodsByProduct.get(row.product_id) || [];
+      list.push({ id: row.id, durationDays: row.duration_days, trafficBytes: row.traffic_bytes === null ? null : Number(row.traffic_bytes), deviceLimit: row.device_limit, priceCents: Number(row.price_cents), isEnabled: row.is_enabled, sortOrder: row.sort_order });
+      periodsByProduct.set(row.product_id, list);
+    }
+    return products.rows.map(row => this.catalogV2ProductRow(row, periodsByProduct.get(row.id) || []));
+  }
+
+  catalogV2ProductRow(row, periods = []) {
+    return {
+      id: row.id, type: row.type, isEnabled: row.is_enabled, isForSale: row.is_for_sale, stock: row.stock,
+      sortOrder: row.sort_order, name: row.name, description: row.description, features: row.features || [],
+      isRecommended: row.is_recommended, lineGroupId: row.line_group_id, durationDays: row.duration_days,
+      trafficBytes: row.traffic_bytes === null ? null : Number(row.traffic_bytes), deviceLimit: row.device_limit,
+      priceCents: row.price_cents === null ? null : Number(row.price_cents),
+      trafficCustomization: { enabled: row.traffic_customization_enabled, stepBytes: row.traffic_step_bytes === null ? null : Number(row.traffic_step_bytes), stepPriceCents: row.traffic_step_price_cents === null ? null : Number(row.traffic_step_price_cents), maxSteps: row.traffic_max_steps },
+      purchaseRequirement: row.purchase_requirement, fulfillment: { mode: row.fulfillment_mode, handler: row.fulfillment_handler, config: row.fulfillment_config || {} },
+      deliveryDescription: row.delivery_description, serviceDurationDays: row.service_duration_days,
+      allowQuantity: row.allow_quantity, minQuantity: row.min_quantity, maxQuantity: row.max_quantity,
+      periods, createdAt: row.created_at, updatedAt: row.updated_at
+    };
+  }
+
+  async saveCatalogV2Product(product, { create = false } = {}) {
+    return withPgRetry(async () => {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        const values = [product.id, product.type, product.isEnabled, product.isForSale, product.stock, product.sortOrder, product.name, product.description, JSON.stringify(product.features), product.isRecommended, product.lineGroupId, product.durationDays, product.trafficBytes, product.deviceLimit, product.priceCents, product.trafficCustomization.enabled, product.trafficCustomization.stepBytes, product.trafficCustomization.stepPriceCents, product.trafficCustomization.maxSteps, product.purchaseRequirement, product.fulfillment.mode, product.fulfillment.handler, JSON.stringify(product.fulfillment.config), product.deliveryDescription, product.serviceDurationDays, product.allowQuantity, product.minQuantity, product.maxQuantity];
+        const result = create
+          ? await client.query(`INSERT INTO catalog_v2_products (id,type,is_enabled,is_for_sale,stock,sort_order,name,description,features,is_recommended,line_group_id,duration_days,traffic_bytes,device_limit,price_cents,traffic_customization_enabled,traffic_step_bytes,traffic_step_price_cents,traffic_max_steps,purchase_requirement,fulfillment_mode,fulfillment_handler,fulfillment_config,delivery_description,service_duration_days,allow_quantity,min_quantity,max_quantity) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24,$25,$26,$27,$28) RETURNING *`, values)
+          : await client.query(`UPDATE catalog_v2_products SET type=$2,is_enabled=$3,is_for_sale=$4,stock=$5,sort_order=$6,name=$7,description=$8,features=$9::jsonb,is_recommended=$10,line_group_id=$11,duration_days=$12,traffic_bytes=$13,device_limit=$14,price_cents=$15,traffic_customization_enabled=$16,traffic_step_bytes=$17,traffic_step_price_cents=$18,traffic_max_steps=$19,purchase_requirement=$20,fulfillment_mode=$21,fulfillment_handler=$22,fulfillment_config=$23::jsonb,delivery_description=$24,service_duration_days=$25,allow_quantity=$26,min_quantity=$27,max_quantity=$28,updated_at=NOW() WHERE id=$1 RETURNING *`, values);
+        if (!result.rows[0]) throw Object.assign(new Error("商品不存在。"), { statusCode: 404 });
+        await client.query("DELETE FROM catalog_v2_product_periods WHERE product_id=$1", [product.id]);
+        for (const period of product.periods) {
+          await client.query(`INSERT INTO catalog_v2_product_periods (product_id,id,duration_days,traffic_bytes,device_limit,price_cents,is_enabled,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [product.id, period.id, period.durationDays, period.trafficBytes, period.deviceLimit, period.priceCents, period.isEnabled, period.sortOrder]);
+        }
+        await client.query("COMMIT");
+        return this.catalogV2ProductRow(result.rows[0], product.periods);
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch {}
+        throw error;
+      } finally { client.release(); }
+    }, `save catalog v2 product ${product.id}`);
+  }
+
+  async deleteCatalogV2Product(id) {
+    return withPgRetry(() => this.pool.query("DELETE FROM catalog_v2_products WHERE id=$1", [id]), `delete catalog v2 product ${id}`);
+  }
+
+  async reserveCatalogV2Inventory({ id, productId, orderId, quantity = 1, expiresAt, now = new Date().toISOString() }) {
+    return withPgRetry(async () => {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        const productResult = await client.query("SELECT id, stock FROM catalog_v2_products WHERE id=$1 FOR UPDATE", [productId]);
+        const product = productResult.rows[0];
+        if (!product) throw new Error("V2 商品不存在。");
+        await client.query("UPDATE catalog_v2_inventory_reservations SET status='released', updated_at=NOW() WHERE product_id=$1 AND status='reserved' AND expires_at <= $2", [productId, now]);
+        const existingResult = await client.query("SELECT * FROM catalog_v2_inventory_reservations WHERE product_id=$1 AND order_id=$2 FOR UPDATE", [productId, orderId]);
+        const existing = existingResult.rows[0];
+        if (existing) {
+          if (existing.status === "reserved" && Number(existing.quantity) === Number(quantity)) {
+            await client.query("COMMIT");
+            return { id: existing.id, productId, orderId, quantity: Number(existing.quantity), status: existing.status, expiresAt: existing.expires_at };
+          }
+          throw new Error("订单已有不同状态的库存记录。");
+        }
+        const reservedResult = await client.query("SELECT COALESCE(SUM(quantity), 0)::int AS quantity FROM catalog_v2_inventory_reservations WHERE product_id=$1 AND status='reserved' AND expires_at > $2", [productId, now]);
+        const reserved = Number(reservedResult.rows[0].quantity || 0);
+        if (product.stock !== null && Number(product.stock) - reserved < Number(quantity)) throw new Error("商品库存不足。");
+        const result = await client.query("INSERT INTO catalog_v2_inventory_reservations (id, product_id, order_id, quantity, status, expires_at) VALUES ($1,$2,$3,$4,'reserved',$5) RETURNING *", [id, productId, orderId, quantity, expiresAt]);
+        await client.query("COMMIT");
+        const row = result.rows[0];
+        return { id: row.id, productId: row.product_id, orderId: row.order_id, quantity: Number(row.quantity), status: row.status, expiresAt: row.expires_at };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch {}
+        throw error;
+      } finally { client.release(); }
+    }, `reserve catalog v2 inventory ${productId}/${orderId}`);
+  }
+
+  async consumeCatalogV2Inventory(orderId, { now = new Date().toISOString() } = {}) {
+    return withPgRetry(async () => {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await client.query("SELECT * FROM catalog_v2_inventory_reservations WHERE order_id=$1 FOR UPDATE", [orderId]);
+        if (!result.rows.length) { await client.query("COMMIT"); return []; }
+        const consumed = [];
+        for (const row of result.rows) {
+          if (row.status === "consumed") { consumed.push(row); continue; }
+          if (row.status !== "reserved" || new Date(row.expires_at).getTime() <= new Date(now).getTime()) throw new Error("库存预占已失效，订单需要人工处理。");
+          const productResult = await client.query("SELECT stock FROM catalog_v2_products WHERE id=$1 FOR UPDATE", [row.product_id]);
+          const product = productResult.rows[0];
+          if (!product) throw new Error("预占商品不存在。");
+          if (product.stock !== null) {
+            const update = await client.query("UPDATE catalog_v2_products SET stock=stock-$2, updated_at=NOW() WHERE id=$1 AND stock >= $2", [row.product_id, row.quantity]);
+            if (!update.rowCount) throw new Error("商品库存不足，订单需要人工处理。");
+          }
+          await client.query("UPDATE catalog_v2_inventory_reservations SET status='consumed', updated_at=NOW() WHERE id=$1", [row.id]);
+          consumed.push({ ...row, status: "consumed" });
+        }
+        await client.query("COMMIT");
+        return consumed.map(row => ({ id: row.id, productId: row.product_id, orderId: row.order_id, quantity: Number(row.quantity), status: row.status, expiresAt: row.expires_at }));
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch {}
+        throw error;
+      } finally { client.release(); }
+    }, `consume catalog v2 inventory ${orderId}`);
+  }
+
+  async releaseCatalogV2Inventory(orderId) {
+    const result = await withPgRetry(() => this.pool.query("UPDATE catalog_v2_inventory_reservations SET status='released', updated_at=NOW() WHERE order_id=$1 AND status='reserved' RETURNING *", [orderId]), `release catalog v2 inventory ${orderId}`);
+    return result.rows.map(row => ({ id: row.id, productId: row.product_id, orderId: row.order_id, quantity: Number(row.quantity), status: row.status, expiresAt: row.expires_at }));
+  }
+
+  async listCatalogV2InventoryReservations(orderId = "") {
+    const result = await withPgRetry(() => this.pool.query(`SELECT * FROM catalog_v2_inventory_reservations ${orderId ? "WHERE order_id=$1" : ""} ORDER BY created_at, id`, orderId ? [orderId] : []), "list catalog v2 inventory reservations");
+    return result.rows.map(row => ({ id: row.id, productId: row.product_id, orderId: row.order_id, quantity: Number(row.quantity), status: row.status, expiresAt: row.expires_at }));
   }
 
   // Per-node up/down totals across all users for one day (admin overview).

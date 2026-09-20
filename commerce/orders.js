@@ -2,11 +2,22 @@
 // wallet, gateway, receipt or delivery dependencies belong in this module.
 function productSnapshot(quote) {
   return {
+    catalogVersion: quote.catalogVersion || 1,
+    catalogProductType: quote.catalogProductType || "",
+    productId: quote.productId || quote.planId,
+    periodId: quote.periodId || null,
+    lineGroupId: quote.lineGroupId || null,
     planId: quote.planId, planName: quote.planName, optionId: quote.optionId,
     optionLabel: quote.optionLabel, duration: quote.duration, group: quote.group,
+    durationDays: quote.durationDays || null,
     unlimited: Boolean(quote.unlimited), lifetime: Boolean(quote.lifetime),
     lineType: "self_hosted", trafficTier: quote.trafficTier || 1,
-    trafficGb: quote.trafficGb ?? null, baseAmount: quote.baseAmount ?? quote.originalAmount,
+    trafficSteps: quote.trafficSteps || 0, trafficBytes: quote.trafficBytes ?? null,
+    trafficGb: quote.trafficGb ?? null, quantity: quote.quantity || 1,
+    inventoryQuantity: quote.inventoryQuantity || 1,
+    fulfillment: structuredClone(quote.fulfillment || { mode: null, handler: null, config: {} }),
+    v2: quote.productSnapshotV2 ? structuredClone(quote.productSnapshotV2) : null,
+    baseAmount: quote.baseAmount ?? quote.originalAmount,
     originalAmount: quote.originalAmount, addOns: structuredClone(quote.selectedAddOnSnapshots || [])
   };
 }

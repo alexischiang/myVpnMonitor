@@ -1,0 +1,17 @@
+{
+  "migrationId": "catalog-v2-user-binding-v1",
+  "mappings": [
+    {
+      "legacyProductId": "basic",
+      "legacyOptionId": "basic-30",
+      "targetProductId": "basic-recurring",
+      "targetPeriodId": "30d"
+    },
+    {
+      "legacyProductId": "basic",
+      "legacyOptionId": "basic-lifetime",
+      "targetProductId": "basic-lifetime",
+      "targetPeriodId": null
+    }
+  ]
+}

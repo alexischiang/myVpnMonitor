@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-17
-- Current Objective: 客户端套餐标题区居中并调整推荐卡配色
+- Last Updated: 2026-09-20
+- Current Objective: 部署商品目录 V2 与旧用户迁移支持
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -196,8 +196,18 @@
 
 - 2026-09-17: npm run check、npm run verify:harness、git diff --check 通过；Playwright 验证桌面与 390px 标题透明居中、48px 卡片间距、orange-600 白字推荐卡、Tab 切换，无横向溢出且 console/page errors 为空。
 
+- 2026-09-19: npm run check、npm run verify:fast、V2 API CRUD smoke、数据库四表存在性检查、git diff --check 均通过；临时数据已清理
+
+- 2026-09-19: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；浏览器完成权限组与周期套餐真实保存，验证三类表单、390px 无横向溢出且 console_errors/page_errors 为空；临时验证数据已清理
+
+- 2026-09-19: 周期行使用稳定 React key；浏览器逐字符输入 30d 后焦点始终保留，用户原有未保存字段已恢复，console_errors/page_errors 为空；npm run check、npm run verify:fast、git diff --check 通过
+
+- 2026-09-19: npm run verify:catalog-v2 通过：随机 PostgreSQL schema 中支付、钱包、周期套餐、不限时套餐、自动/手动附加服务、库存预占/释放/扣减、超时支付转人工、迁移 dry-run/apply/幂等重放/缺失映射阻断均通过且 schema 已删除；npm run check、npm run verify:fast、git diff --check 通过。
+
+- 2026-09-20: npm run agent:init 通过；npm run verify 的应用/文档构建及核心/3x-ui 测试通过，普通支付门因未直接配置 TEST_DATABASE_URL 安全停止；npm run verify:catalog-v2 使用一次性 PostgreSQL schema 完整通过支付、钱包、目录 V2、库存和迁移测试；git diff --check 通过
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `src/components/features/public-pages.tsx`, `src/components/features/product-card.tsx`
+- Files: `PROGRESS.md`, `commerce/checkout-workflow.js`, `commerce/orders.js`, `database.js`, `feature_list.json`, `package.json`, `server.js`, `src/components/features/navigation.ts`, `src/main.tsx`, `src/types.ts`, `test.js`, `commerce/catalog-v2-migration.js`, `commerce/catalog-v2.js`, `docs/agent/catalog-v2-migration.md`, `scripts/catalog-v2-mapping.example.json`, `scripts/migrate-catalog-v2-users.js`, `scripts/verify-catalog-v2.js`, `src/components/features/catalog-v2.tsx`, `test-catalog-v2.js`
 - Known risks: none
-- Recommended Next Step: 等待用户确认视觉效果
+- Recommended Next Step: 部署后由管理员创建权限组和 V2 商品，并按实际映射先 dry-run 再执行旧用户迁移；公共销售入口切换留作后续独立步骤

@@ -62,6 +62,8 @@ const {
   effectiveXuiInboundIds,
   normalizeXuiInboundMetadata,
   normalizeXuiInboundEnable,
+  normalizeCatalogV2LineGroup,
+  normalizeCatalogV2Product,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
   summarizeXuiInboundProbes,
@@ -92,6 +94,20 @@ const {
   clearSubscriptionSourceState,
   ticketTelegramText
 } = require("./server");
+
+assert.deepStrictEqual(normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", inboundKeys: ["node-a:1", "node-a:1", "invalid"], sortOrder: 10 }), { id: "premium-1", name: "精品线路", isEnabled: true, sortOrder: 10, inboundKeys: ["node-a:1"] });
+assert.throws(() => normalizeCatalogV2LineGroup({ id: "UPPER", name: "无效" }), /小写字母/);
+const catalogV2Product = normalizeCatalogV2Product({ id: "pro-v2", type: "recurring_plan", isEnabled: true, isForSale: false, stock: 0, name: "PRO", lineGroupId: "premium-1", features: [{ label: "优化线路", isIncluded: true }], periods: [{ id: "30d", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3, priceCents: 4900 }], trafficCustomization: { enabled: true, stepBytes: 50 * 1024 ** 3, stepPriceCents: 2000, maxSteps: 10 } });
+assert.strictEqual(catalogV2Product.isForSale, false);
+assert.strictEqual(catalogV2Product.periods[0].priceCents, 4900);
+assert.strictEqual(catalogV2Product.trafficCustomization.maxSteps, 10);
+assert.throws(() => normalizeCatalogV2Product({ ...catalogV2Product, periods: [{ ...catalogV2Product.periods[0], trafficBytes: null }] }), /无限流量周期/);
+const catalogV2Lifetime = normalizeCatalogV2Product({ id: "ultra-lifetime", type: "lifetime_plan", isEnabled: true, isForSale: true, stock: null, name: "ULTRA 不限时", lineGroupId: "premium-1", trafficBytes: null, deviceLimit: 5, priceCents: 19900 });
+assert.deepStrictEqual([catalogV2Lifetime.durationDays, catalogV2Lifetime.trafficBytes, catalogV2Lifetime.deviceLimit, catalogV2Lifetime.priceCents], [null, null, 5, 19900]);
+const catalogV2TrafficAddon = normalizeCatalogV2Product({ id: "traffic-addon", type: "addon", isEnabled: true, isForSale: true, stock: 20, name: "流量附加包", priceCents: 1000, purchaseRequirement: "requires_recurring_plan", fulfillment: { mode: "automatic", handler: "traffic_credit", config: { trafficBytes: 50 * 1024 ** 3 } }, allowQuantity: true, minQuantity: 1, maxQuantity: 5 });
+assert.deepStrictEqual([catalogV2TrafficAddon.purchaseRequirement, catalogV2TrafficAddon.fulfillment.mode, catalogV2TrafficAddon.fulfillment.handler, catalogV2TrafficAddon.maxQuantity], ["requires_recurring_plan", "automatic", "traffic_credit", 5]);
+const catalogV2ManualAddon = normalizeCatalogV2Product({ id: "apple-id", type: "addon", isEnabled: true, isForSale: true, stock: 2, name: "Apple ID", priceCents: 500, fulfillment: { mode: "manual" }, deliveryDescription: "人工交付", allowQuantity: false });
+assert.deepStrictEqual([catalogV2ManualAddon.fulfillment.mode, catalogV2ManualAddon.fulfillment.handler, catalogV2ManualAddon.allowQuantity], ["manual", "manual", false]);
 
 assert.strictEqual(strictActiveUserGroup({ group: "basic", activeGroup: "ultra" }), "ultra");
 assert.strictEqual(strictActiveUserGroup({ group: "basic" }), "basic");
