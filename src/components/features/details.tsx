@@ -704,12 +704,13 @@ export function UserDetailPage() {
   async function recoverXuiClient() {
     setXuiRecoverSaving(true)
     try {
-      await postJson(`/api/users/${user.id}/xui-recover`, {})
+      const v2 = user.productCatalogVersion === 2
+      await postJson(`/api/users/${user.id}/${v2 ? "xui-sync" : "xui-recover"}`, {})
       await refreshUserDetails()
       setXuiRecoverOpen(false)
-      toast.success("3x-ui 客户端已恢复")
+      toast.success(v2 ? "已按V2套餐同步到3x-ui" : "3x-ui 客户端已恢复")
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "3x-ui 客户端恢复失败")
+      toast.error(error instanceof Error ? error.message : "3x-ui 同步失败")
     } finally {
       setXuiRecoverSaving(false)
     }
@@ -940,8 +941,8 @@ export function UserDetailPage() {
       </AlertDialog>
       <AlertDialog open={xuiRecoverOpen} onOpenChange={setXuiRecoverOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>恢复3x-ui客户端？</AlertDialogTitle><AlertDialogDescription>将使用原邮箱、套餐额度、到期时间、重置日和入站组重新创建客户端。已有折算流量和历史账本不会清空。</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={xuiRecoverSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "恢复中..." : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
+          <AlertDialogHeader><AlertDialogTitle>{user.productCatalogVersion === 2 ? "同步V2套餐到3x-ui？" : "恢复3x-ui客户端？"}</AlertDialogTitle><AlertDialogDescription>{user.productCatalogVersion === 2 ? "将按当前V2套餐的额度、到期时间、设备数和入站组更新或补建3x-ui客户端，不清空已有流量。" : "将使用原邮箱、套餐额度、到期时间、重置日和入站组重新创建客户端。已有折算流量和历史账本不会清空。"}</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={xuiRecoverSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "同步中..." : user.productCatalogVersion === 2 ? "立即同步" : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
       {user.accountStatus === "disabled" ? <Alert variant="warning"><AlertCircle /><AlertDescription>该用户已停用</AlertDescription></Alert> : null}
@@ -993,7 +994,7 @@ export function UserDetailPage() {
                 {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => void openCustomInbounds()}><Network />管理个人定制入站</Button> : null}
                 {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={openPlanDialog}><ArrowRightLeft />更改套餐</Button> : null}
                 {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => setTrafficResetOpen(true)}><RotateCcw />重置流量</Button> : null}
-                {user.lineType === "self_hosted" && user.xuiClientPresent === false ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)}><RefreshCw />恢复3x-ui客户端</Button> : null}
+                {user.lineType === "self_hosted" && (user.productCatalogVersion === 2 || user.xuiClientPresent === false) ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)} disabled={xuiRecoverSaving}><RefreshCw />{user.productCatalogVersion === 2 ? "同步V2套餐到3x-ui" : "恢复3x-ui客户端"}</Button> : null}
                 {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
                 <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
               </>}

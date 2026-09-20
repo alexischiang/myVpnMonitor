@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-20
-- Current Objective: 修复并部署 3x-ui 客户端分组字段映射
+- Current Objective: 部署V2套餐同步与订单补关联
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -220,8 +220,18 @@
 
 - 2026-09-20: main 207e6af、production 55b67d1 已推送；GitHub Actions 35507422237 成功；首轮 checked=296 updated=296 missing=0 failed=[]；下一轮 checked=296 updated=0 missing=0 failed=[]；线上分组 pro=204 basic=79 ultra=15 系统=3 空=10；health ok
 
+- 2026-09-20: npm run verify (isolated PostgreSQL), npm run verify:fast, npm run verify:harness, git diff --check passed; Playwright mocked unlisted V2 product/quote in manual-payment dialog at desktop and 390px with empty console/page errors
+
+- 2026-09-20: 隔离PostgreSQL schema下 npm run verify 通过；npm run verify:fast 通过；Playwright桌面和390px模拟同步无console/page错误；git diff --check通过
+
+- 2026-09-20: 隔离PostgreSQL schema下 npm run verify 通过；npm run verify:fast通过；Playwright桌面和390px模拟同步无console/page错误；git diff --check通过
+
+- 2026-09-20: 隔离PostgreSQL下npm run verify通过；Playwright桌面1280px与手机390px模拟补关联成功、冲突反馈通过，成功路径console/page错误为空且无溢出；npm run verify:fast及git diff --check通过
+
+- 2026-09-20: npm run agent:init、npm run verify、git diff --check通过；现有Playwright证据覆盖桌面和390px且console/page errors为空
+
 ## Next Session
 
-- Files: none
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/bills.tsx`, `src/components/features/details.tsx`, `test-payment.js`
 - Known risks: none
-- Recommended Next Step: 持续关注后续 catalog-v2:xui-sync 日志，正常轮次应保持 updated=0
+- Recommended Next Step: 推送main，合并production并确认GitHub Actions部署成功

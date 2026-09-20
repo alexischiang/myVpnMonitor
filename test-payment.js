@@ -118,7 +118,7 @@ async function main() {
 
   let app;
   let handler;
-  const catalogV2Ids = { group: `payment-v2-group-${Date.now()}`, product: `payment-v2-plan-${Date.now()}` };
+  const catalogV2Ids = { group: `payment-v2-group-${Date.now()}`, product: `payment-v2-plan-${Date.now()}`, lifetime: `payment-v2-lifetime-${Date.now()}` };
   try {
     const gatewayPort = await listen(gateway);
     const xuiPort = await listen(xui);
@@ -291,6 +291,12 @@ async function main() {
       periods: [{ id: "30d", durationDays: 30, trafficBytes: 50 * 1024 ** 3, deviceLimit: 2, priceCents: 100, isEnabled: true, sortOrder: 0 }]
     } });
     assert.strictEqual(v2Product.response.status, 201, v2Product.text);
+    const lifetimeProduct = await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: {
+      id: catalogV2Ids.lifetime, type: "lifetime_plan", isEnabled: true, isForSale: false, stock: 1, sortOrder: 0,
+      name: "Payment V2 lifetime", description: "Expired renewal", features: [], isRecommended: false, lineGroupId: catalogV2Ids.group,
+      trafficBytes: 0, deviceLimit: 3, priceCents: 100
+    } });
+    assert.strictEqual(lifetimeProduct.response.status, 201, lifetimeProduct.text);
     const publicV2 = await request("/api/public/catalog-v2");
     assert.ok(publicV2.data.some(item => item.id === catalogV2Ids.product));
     const v2Quote = await request("/api/orders/quote", { method: "POST", cookie, body: { optionId: `v2:${catalogV2Ids.product}:30d`, useBalance: false } });
@@ -920,6 +926,12 @@ async function main() {
     const v2Registration = await request("/api/auth/register", { method: "POST", body: { email: "v2-sync@example.test", password: "payment-test-password" } });
     assert.strictEqual(v2Registration.response.status, 201);
     const v2Account = (await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "v2-sync@example.test");
+    await database.query("UPDATE catalog_v2_products SET is_for_sale=FALSE WHERE id=$1", [catalogV2Ids.product]);
+    const hiddenOptionId = `v2:${catalogV2Ids.product}:30d`;
+    const publicHiddenQuote = await request("/api/orders/quote", { method: "POST", cookie: v2Registration.response.headers.get("set-cookie").split(";", 1)[0], body: { optionId: hiddenOptionId } });
+    assert.strictEqual(publicHiddenQuote.response.status, 400);
+    const adminHiddenQuote = await request("/api/admin/manual-payments/quote", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: hiddenOptionId } });
+    assert.strictEqual(adminHiddenQuote.response.status, 200);
     const v2ManualOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.product}:30d`, amount: 1 } });
     assert.deepStrictEqual([v2ManualOrder.response.status, v2ManualOrder.data.productSnapshot.catalogVersion, v2ManualOrder.data.fulfillmentStatus], [201, 2, "fulfilled"]);
     const v2User = (await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "v2-sync@example.test");
@@ -929,11 +941,75 @@ async function main() {
     const catalogBeforeSync = (await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value;
     xuiClients.get("v2-sync@example.test").inboundIds = [2];
     xuiClients.get("v2-sync@example.test").group = "panel-change-must-not-write-back";
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiClientPresent: false, xuiClientMissingAt: "2026-01-01T00:00:00.000Z" })]);
     const syncReport = await handler.syncCatalogV2ToXui();
     assert.deepStrictEqual([syncReport.checked >= 1, syncReport.updated >= 1, syncReport.failed.length], [true, true, 0]);
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
     assert.strictEqual(xuiClients.get("v2-sync@example.test").group, catalogV2Ids.group);
+    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientPresent, true);
     assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "3x-ui sync must not write panel state back to V2 catalog data");
+
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ expiresAt: "2020-01-01T00:00:00.000Z", xuiIpLimit: 1 })]);
+    const lifetimeOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.lifetime}`, amount: 1 } });
+    assert.deepStrictEqual([lifetimeOrder.response.status, lifetimeOrder.data.fulfillmentStatus], [201, "fulfilled"], lifetimeOrder.text);
+    const lifetimeUser = (await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data;
+    assert.deepStrictEqual([lifetimeUser.duration, lifetimeUser.productCatalogVersion, lifetimeUser.v2ProductId], ["lifetime", 2, catalogV2Ids.lifetime]);
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true);
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").limitIp, 3, "a new V2 plan must replace the previous device limit");
+
+    xuiClients.delete("v2-sync@example.test");
+    const missingReport = await handler.syncCatalogV2ToXui();
+    assert.strictEqual(missingReport.failed.length, 0);
+    assert.ok(xuiClients.has("v2-sync@example.test"), "five-minute V2 sync must restore a missing client");
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
+    await database.query("UPDATE app_records SET data=data-'xuiClientEmail' WHERE collection='users' AND id=$1", [v2User.id]);
+    const unlinkedReport = await handler.syncCatalogV2ToXui();
+    assert.strictEqual(unlinkedReport.failed.length, 0);
+    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, "v2-sync@example.test", "five-minute V2 sync must relink an existing client");
+    xuiClients.get("v2-sync@example.test").expiryTime = 0;
+    const manualSync = await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: adminCookie, body: {} });
+    assert.strictEqual(manualSync.response.status, 200, manualSync.text);
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").limitIp, 3, "manual sync must use V2 device limits");
+    xuiClients.delete("v2-sync@example.test");
+    const manualRestore = await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: adminCookie, body: {} });
+    assert.strictEqual(manualRestore.response.status, 200, manualRestore.text);
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime(), "manual V2 sync must recreate a missing client");
+    assert.strictEqual((await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: v2Registration.response.headers.get("set-cookie").split(";", 1)[0], body: {} })).response.status, 403);
+
+    const lifetimeBillCount = (await database.query("SELECT COUNT(*)::int AS n FROM app_records WHERE collection='bills' AND data->>'paymentOrderId'=$1", [lifetimeOrder.data.id])).rows[0].n;
+    const lifetimeSpend = lifetimeUser.actualPaid;
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({
+      currentProductId: v2User.currentProductId, currentOptionId: v2User.currentOptionId,
+      currentProductOrderId: v2User.currentProductOrderId, currentProductBoundAt: v2User.currentProductBoundAt,
+      currentProductSnapshot: v2User.currentProductSnapshot, v2ProductId: v2User.v2ProductId,
+      v2PeriodId: v2User.v2PeriodId, v2LineGroupId: v2User.v2LineGroupId, v2ProductSnapshot: v2User.v2ProductSnapshot,
+      duration: v2User.duration, expiresAt: "2020-01-01T00:00:00.000Z", purchasedAt: v2User.purchasedAt,
+      unlimited: v2User.unlimited, trafficTier: v2User.trafficTier, xuiTrafficLimitBytes: v2User.xuiTrafficLimitBytes
+    })]);
+    const repairPath = `/api/admin/orders/${lifetimeOrder.data.id}/repair-binding`;
+    const staleDetail = await request(`/api/admin/orders/${lifetimeOrder.data.id}`, { cookie: adminCookie });
+    assert.strictEqual(staleDetail.data.bindingNeedsRepair, true);
+    await database.query("UPDATE app_records SET data=jsonb_set(data, '{xuiTrafficLimitBytes}', to_jsonb($2::bigint)) WHERE collection='users' AND id=$1", [v2User.id, 40 * 1024 ** 3]);
+    assert.strictEqual((await request(repairPath, { method: "POST", cookie: adminCookie, body: {} })).response.status, 400, "later entitlement changes must not be overwritten");
+    await database.query("UPDATE app_records SET data=jsonb_set(data, '{xuiTrafficLimitBytes}', to_jsonb($2::bigint)) WHERE collection='users' AND id=$1", [v2User.id, v2User.xuiTrafficLimitBytes]);
+    const blockedCustomerRepair = await request(repairPath, { method: "POST", cookie: v2Registration.response.headers.get("set-cookie").split(";", 1)[0], body: {} });
+    assert.strictEqual(blockedCustomerRepair.response.status, 403);
+    const repairedBinding = await request(repairPath, { method: "POST", cookie: adminCookie, body: {} });
+    assert.strictEqual(repairedBinding.response.status, 200, repairedBinding.text);
+    const repairedUser = (await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data;
+    assert.deepStrictEqual([repairedUser.currentProductOrderId, repairedUser.v2ProductId, repairedUser.duration, repairedUser.expiresAt, repairedUser.actualPaid], [lifetimeOrder.data.id, catalogV2Ids.lifetime, "lifetime", lifetimeUser.expiresAt, lifetimeSpend]);
+    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").expiryTime, xuiClients.get("v2-sync@example.test").limitIp], [new Date(lifetimeUser.expiresAt).getTime(), 3]);
+    assert.strictEqual((await request(repairPath, { method: "POST", cookie: adminCookie, body: {} })).response.status, 200, "repair must be idempotent");
+    assert.strictEqual((await database.query("SELECT COUNT(*)::int AS n FROM app_records WHERE collection='bills' AND data->>'paymentOrderId'=$1", [lifetimeOrder.data.id])).rows[0].n, lifetimeBillCount, "repair must not duplicate the bill");
+    assert.strictEqual((await database.query("SELECT COUNT(*)::int AS n FROM wallet_entries WHERE idempotency_key=$1", [`purchase:${lifetimeOrder.data.id}`])).rows[0].n, 1, "repair must not settle the wallet twice");
+    assert.strictEqual((await request(`/api/admin/orders/${lifetimeOrder.data.id}`, { cookie: adminCookie })).data.bindingNeedsRepair, false);
+
+    const newerPlan = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: hiddenOptionId, amount: 1 } });
+    assert.strictEqual(newerPlan.data.fulfillmentStatus, "fulfilled", newerPlan.text);
+    assert.strictEqual((await request(repairPath, { method: "POST", cookie: adminCookie, body: {} })).response.status, 400, "an older order must not override a later paid plan");
+    assert.strictEqual((await request(`/api/admin/orders/${lifetimeOrder.data.id}`, { cookie: adminCookie })).data.bindingNeedsRepair, false, "older completed orders must not offer repair");
 
     const passwordChange = await request("/api/auth/password", {
       method: "PUT",
@@ -950,7 +1026,9 @@ async function main() {
     console.log("Payment chain checks passed: payments, wallet priority, referral spending, idempotent reversals, snapshots, ledger entries, and validation.");
   } finally {
     await database.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id=$1", [catalogV2Ids.product]).catch(() => {});
+    await database.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id=$1", [catalogV2Ids.lifetime]).catch(() => {});
     await database.query("DELETE FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.product]).catch(() => {});
+    await database.query("DELETE FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.lifetime]).catch(() => {});
     await database.query("DELETE FROM catalog_v2_line_groups WHERE id=$1", [catalogV2Ids.group]).catch(() => {});
     if (app) await close(app);
     if (handler) await handler.closeDataStore();

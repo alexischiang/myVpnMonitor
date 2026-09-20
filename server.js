@@ -2162,10 +2162,10 @@ function planQuoteWithAddOns(quote, requestedAddOns) {
   };
 }
 
-async function paymentQuoteForAccount(payload, account) {
+async function paymentQuoteForAccount(payload, account, { allowUnlisted = false } = {}) {
   const wallet = await walletForAccount(account);
   const selection = catalogV2Selection(payload);
-  const quote = selection.productId ? await catalogV2Quote(payload, account)
+  const quote = selection.productId ? await catalogV2Quote(payload, account, { allowUnlisted })
     : payload.product === "traffic_pack" ? trafficPackQuote(account)
     : payload.product === "home_ip" ? homeIpQuote(account, payload.optionId)
     : planQuoteWithAddOns(paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id, payload.trafficTier), payload.addOns);
@@ -2389,6 +2389,15 @@ function bindUserProductFromOrder(user, order) {
     trafficGb: order.trafficGb ?? null
   };
   return bindUserProduct(user, { productId: order.planId, optionId: order.optionId, snapshot }, { source: order.paymentProvider === "manual" ? "manual_order" : "payment_order", orderId: order.id, boundAt: order.paidAt || new Date().toISOString() });
+}
+
+function paymentOrderNeedsBindingRepair(order) {
+  const user = users.find(item => item.id === order?.userId);
+  const snapshot = order?.productSnapshot?.v2;
+  const orderIndex = paymentOrders.indexOf(order);
+  return Boolean(order?.status === "paid" && order.fulfillmentStatus === "fulfilled" && !order.reversedAt && (order.purpose || "plan") === "plan" && snapshot && user && orderIndex >= 0 &&
+    !paymentOrders.some((item, index) => index < orderIndex && item.accountId === order.accountId && (item.purpose || "plan") === "plan" && item.status === "paid" && !item.reversedAt) &&
+    (user.currentProductOrderId !== order.id || user.v2ProductId !== snapshot.productId || user.currentOptionId !== order.optionId));
 }
 
 function latestMatchingPlanOrder(user) {
@@ -5076,12 +5085,28 @@ async function syncCatalogV2ToXui() {
     const desiredByGroup = new Map(groups.filter(group => group.isEnabled).map(group => [group.id, effectiveXuiInboundIds(group.inboundKeys.map(key => inboundByKey.get(key)).filter(Boolean), [], allInboundIds)]));
     const clientsByEmail = new Map((Array.isArray(clients) ? clients : []).map(client => normalizeXuiClientResult(client)).filter(client => client.email).map(client => [client.email.trim().toLowerCase(), client]));
     const report = { checked: 0, updated: 0, missing: 0, failed: [] };
-    for (const user of users.filter(item => item.productCatalogVersion === 2 && isSelfHostedUser(item) && item.xuiClientEmail)) {
-      const email = String(user.xuiClientEmail).trim().toLowerCase();
-      const existing = clientsByEmail.get(email);
+    for (const user of users.filter(item => item.productCatalogVersion === 2 && isSelfHostedUser(item))) {
       report.checked++;
-      if (!existing) { report.missing++; continue; }
       try {
+        const email = xuiClientEmail(user);
+        const existing = clientsByEmail.get(email);
+        if (!existing) {
+          report.missing++;
+          if (isUserExpired(user) || isUserAccountDisabled(user)) continue;
+          await provisionXuiClient(user, { allowLegacyEmail: false, allInboundIds, groupInboundIds: desiredByGroup.get(String(user.v2LineGroupId || "")) || [] });
+          user.xuiClientPresent = true;
+          delete user.xuiClientMissingAt;
+          await saveUsers();
+          report.updated++;
+          continue;
+        }
+        if (!user.xuiClientEmail) {
+          await provisionXuiClient(user, { allowLegacyEmail: false, allInboundIds, groupInboundIds: desiredByGroup.get(String(user.v2LineGroupId || "")) || [], existingClient: existing });
+          user.xuiClientPresent = true;
+          await saveUsers();
+          report.updated++;
+          continue;
+        }
         const inherited = desiredByGroup.get(String(user.v2LineGroupId || "")) || [];
         const desiredInboundIds = effectiveXuiInboundIds(inherited, user.xuiExtraInboundIds, allInboundIds);
         const desired = {
@@ -5103,6 +5128,11 @@ async function syncCatalogV2ToXui() {
         if (attach.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails: [email], inboundIds: attach } });
         if (detach.length) await xuiRequest("/panel/api/clients/bulkDetach", { method: "POST", body: { emails: [email], inboundIds: detach } });
         if (xuiClientNeedsUpdate(existing, desired) || attach.length || detach.length) report.updated++;
+        if (user.xuiClientPresent === false) {
+          user.xuiClientPresent = true;
+          delete user.xuiClientMissingAt;
+          await saveUsers();
+        }
       } catch (error) {
         report.failed.push({ userId: user.id, error: error.message });
       }
@@ -5188,7 +5218,7 @@ async function provisionXuiClientOnce(user, options = {}) {
     email,
     totalGB: xuiTrafficLimitBytes(user, existing || {}),
     expiryTime: new Date(user.expiresAt).getTime(),
-    limitIp: Number.isFinite(Number(user.xuiIpLimit)) ? Math.max(0, Number(user.xuiIpLimit)) : planDeviceLimit(user),
+    limitIp: user.productCatalogVersion === 2 ? planDeviceLimit(user) : Number.isFinite(Number(user.xuiIpLimit)) ? Math.max(0, Number(user.xuiIpLimit)) : planDeviceLimit(user),
     reset: 0,
     flow: XUI_VISION_FLOW,
     groupName: group,
@@ -9880,7 +9910,7 @@ async function handleApi(req, res, pathname) {
       if (!account) throw new Error("只有已启用的认领账户可以人工收款。");
       const input = { ...payload, useBalance: false };
       if (pathname.endsWith("/quote")) {
-        sendJson(res, 200, await paymentQuoteForAccount(input, account));
+        sendJson(res, 200, await paymentQuoteForAccount(input, account, { allowUnlisted: true }));
       } else {
         const order = await createPaymentOrder(input, req, account, "manual");
         sendJson(res, 201, adminPaymentOrder(order));
@@ -9949,6 +9979,48 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  const adminOrderRepairMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)\/repair-binding$/);
+  if (adminOrderRepairMatch && req.method === "POST") {
+    await loadLatestData({ force: true });
+    const order = paymentOrders.find(item => item.id === adminOrderRepairMatch[1]);
+    try {
+      if (!order || order.status !== "paid" || order.fulfillmentStatus !== "fulfilled" || !order.fulfilledAt || order.reversedAt || (order.purpose || "plan") !== "plan" || order.catalogVersion !== 2 || !order.productSnapshot?.v2?.productId) throw new Error("仅已完成交付的V2套餐订单可以补关联。");
+      const user = users.find(item => item.id === order.userId);
+      const account = accounts.find(item => item.id === order.accountId);
+      const bill = bills.find(item => item.paymentOrderId === order.id && item.userId === user?.id && !item.reversedAt);
+      if (!user || !account || account.linkedUserId !== user.id || !bill?.afterExpiresAt) throw new Error("订单、用户或账单不一致，请先人工核对，不能自动补关联。");
+      const orderIndex = paymentOrders.indexOf(order);
+      if (paymentOrders.some((item, index) => index < orderIndex && item.accountId === order.accountId && (item.purpose || "plan") === "plan" && item.status === "paid" && !item.reversedAt)) throw new Error("该账户有后续已付款套餐订单，不能覆盖更新的套餐。");
+      if (paymentOrderNeedsBindingRepair(order)) {
+        const before = order.rollbackSnapshot?.user;
+        if (user.currentProductOrderId && user.currentProductOrderId !== order.id && Date.parse(user.currentProductBoundAt || 0) > Date.parse(order.planFulfilledAt || order.fulfilledAt)) throw new Error("用户在订单交付后又调整过套餐，不能自动覆盖。");
+        const group = normalizeUserGroup(order.group, activeUserGroup(before || user));
+        const target = {
+          purchasedAt: order.paidAt, duration: order.duration, expiresAt: bill.afterExpiresAt,
+          group, activeGroup: group, unlimited: Boolean(order.unlimited), trafficTier: order.trafficTier || 1,
+          xuiTrafficLimitBytes: Math.max(0, Number(order.trafficBytes) || 0), lineType: "self_hosted", subscriptionId: ""
+        };
+        if (!target.purchasedAt || !isValidDuration(target.duration) || Number.isNaN(Date.parse(target.expiresAt))) throw new Error("订单权益快照不完整，不能自动补关联。");
+        for (const [key, value] of Object.entries(target)) {
+          if (String(user[key] ?? "") !== String(value ?? "") && String(user[key] ?? "") !== String(before?.[key] ?? "")) throw new Error("用户权益在订单交付后发生变更，请先人工核对，不能自动覆盖。");
+        }
+        const repaired = structuredClone(user);
+        Object.assign(repaired, target, { purchasedTrafficGb: order.trafficGb ?? null, updatedAt: new Date().toISOString() });
+        bindUserProductFromOrder(repaired, order);
+        await provisionXuiClient(repaired, { allowLegacyEmail: false });
+        repaired.xuiClientPresent = true;
+        delete repaired.xuiClientMissingAt;
+        appendUserLogToUser(repaired, createUserLog({ event: "user-action", status: "recorded", reason: "payment-order-binding-repaired", req, message: `已按订单 ${order.merOrderTid} 补关联V2套餐并同步3x-ui。`, details: { paymentOrderId: order.id, productId: repaired.v2ProductId } }));
+        await saveUser(repaired);
+        users[users.indexOf(user)] = repaired;
+      }
+      sendJson(res, 200, { ...adminPaymentOrder(order), bindingNeedsRepair: paymentOrderNeedsBindingRepair(order) });
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, { error: error.message });
+    }
+    return;
+  }
+
   const adminOrderMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)$/);
   if (adminOrderMatch && req.method === "PUT") {
     const order = paymentOrders.find(item => item.id === adminOrderMatch[1]);
@@ -10000,12 +10072,13 @@ async function handleApi(req, res, pathname) {
     return;
   }
   if (adminOrderMatch && req.method === "GET") {
-    const order = paymentOrders.find(item => item.id === adminOrderMatch[1]);
-    if (!order) {
+    await loadLatestData({ force: true });
+    const latestOrder = paymentOrders.find(item => item.id === adminOrderMatch[1]);
+    if (!latestOrder) {
       sendJson(res, 404, { error: "没有找到这个订单。" });
       return;
     }
-    sendJson(res, 200, adminPaymentOrder(order));
+    sendJson(res, 200, { ...adminPaymentOrder(latestOrder), bindingNeedsRepair: paymentOrderNeedsBindingRepair(latestOrder) });
     return;
   }
 
@@ -10732,7 +10805,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|account-status|type|line|xui|xui-recover|traffic-reset|plan|plan-rollback|custom-inbounds))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -11160,6 +11233,26 @@ async function handleApi(req, res, pathname) {
         await connectXuiClient(item, { mode: String(payload.mode || ""), email: payload.clientEmail, importedIpLimit });
         const changes = summarizeUserChanges(before, userSnapshotForLog(item));
         appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "user-updated", req, message: payload.mode === "link" ? "关联已有3x-ui Client并切换到自研线路" : "导入3x-ui并切换到自研线路", details: { changes, xuiManagementMode: item.xuiManagementMode, xuiClientEmail: item.xuiClientEmail } }));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        if (item && previous) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previous);
+        }
+        sendJson(res, error.statusCode || 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (action === "xui-sync" && req.method === "POST") {
+      const previous = item ? structuredClone(item) : null;
+      try {
+        if (!item || !isSelfHostedUser(item) || item.productCatalogVersion !== 2 || !item.v2ProductSnapshot) throw new Error("仅已绑定V2套餐的自研线路用户可以同步3x-ui。");
+        await provisionXuiClient(item, { allowLegacyEmail: false });
+        item.xuiClientPresent = true;
+        delete item.xuiClientMissingAt;
+        appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "xui-v2-synced", req, message: "已按当前V2套餐同步3x-ui客户端。", details: { email: item.xuiClientEmail, productId: item.v2ProductId, inboundIds: item.xuiInboundIds || [] } }));
         await saveUsers();
         sendJson(res, 200, publicUser(item));
       } catch (error) {

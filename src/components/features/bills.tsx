@@ -1,7 +1,7 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useParams } from "react-router-dom"
-import { AlertCircle, BadgeCheck, Eye, Loader2, Undo2 } from "lucide-react"
+import { AlertCircle, BadgeCheck, Eye, Link2, Loader2, Undo2 } from "lucide-react"
 
 import { fetchJson, postJson, putJson } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -58,6 +58,7 @@ type AdminOrder = {
   status: string
   statusText: string
   fulfillmentStatus?: string
+  bindingNeedsRepair?: boolean
   fulfillmentStartedAt?: string
   fulfilledAt?: string
   deliveryNote?: string
@@ -227,6 +228,8 @@ export function OrderDetailPage() {
   const [retryError, setRetryError] = React.useState("")
   const [retryOpen, setRetryOpen] = React.useState(false)
   const [retrying, setRetrying] = React.useState(false)
+  const [repairOpen, setRepairOpen] = React.useState(false)
+  const [repairing, setRepairing] = React.useState(false)
   const [reverseOpen, setReverseOpen] = React.useState(false)
   const [reversing, setReversing] = React.useState(false)
   const [markPaidOpen, setMarkPaidOpen] = React.useState(false)
@@ -255,6 +258,20 @@ export function OrderDetailPage() {
       setRetryError(error instanceof Error ? error.message : "重新发放失败")
     } finally {
       setRetrying(false)
+    }
+  }
+
+  async function repairBinding() {
+    if (!id || repairing) return
+    setRepairing(true)
+    setRetryError("")
+    try {
+      setOrder(await postJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}/repair-binding`, {}))
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "补关联失败")
+    } finally {
+      setRepairOpen(false)
+      setRepairing(false)
     }
   }
 
@@ -328,6 +345,15 @@ export function OrderDetailPage() {
             <AlertDialogHeader><AlertDialogTitle>确认重新发放套餐？</AlertDialogTitle><AlertDialogDescription>系统会按原订单重新执行套餐发放。已经结算的钱包和 VIP 流水不会重复记账。</AlertDialogDescription></AlertDialogHeader>
             <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void retryFulfillment()}>确认发放</AlertDialogAction></AlertDialogFooter>
           </AlertDialogContent>
+          </AlertDialog>
+        </> : null}
+        {order.bindingNeedsRepair ? <>
+          <Button variant="outline" size="sm" disabled={repairing} onClick={() => setRepairOpen(true)}>{repairing ? <Loader2 className="animate-spin" /> : <Link2 />}{repairing ? "补关联中..." : "补关联"}</Button>
+          <AlertDialog open={repairOpen} onOpenChange={setRepairOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader><AlertDialogTitle>补关联此订单的V2套餐？</AlertDialogTitle><AlertDialogDescription>将核对 {order.email} 的最新套餐订单，并按该订单的已交付账单补齐用户套餐绑定和权益，立即同步3x-ui。不会重复收款或生成账单；存在后续套餐或权益变更时将拒绝覆盖。</AlertDialogDescription></AlertDialogHeader>
+              <AlertDialogFooter><AlertDialogCancel disabled={repairing}>取消</AlertDialogCancel><AlertDialogAction disabled={repairing} onClick={event => { event.preventDefault(); void repairBinding() }}>{repairing ? <Loader2 className="animate-spin" /> : <Link2 />}{repairing ? "补关联中..." : "确认补关联"}</AlertDialogAction></AlertDialogFooter>
+            </AlertDialogContent>
           </AlertDialog>
         </> : null}
         <BackButton fallback="/orders" size="sm" />
