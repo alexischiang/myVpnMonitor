@@ -1034,8 +1034,9 @@ export function UserDetailPage() {
         </Card>
 
         <Tabs defaultValue="overview" className="min-w-0 gap-4">
-          <TabsList className="grid w-full grid-cols-3 group-data-[orientation=horizontal]/tabs:h-auto">
+          <TabsList className="grid w-full grid-cols-2 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-4">
             <TabsTrigger value="overview" className="h-9">基本信息</TabsTrigger>
+            <TabsTrigger value="catalog-v2" className="h-9">V2 商品</TabsTrigger>
             <TabsTrigger value="bills" className="h-9">用户日志</TabsTrigger>
             <TabsTrigger value="referral" className="h-9">邀请返利</TabsTrigger>
           </TabsList>
@@ -1133,6 +1134,32 @@ export function UserDetailPage() {
                 {user.xuiMigrationError ? <Info label="迁移错误" value={user.xuiMigrationError} /> : null}
               </CardContent>
             </Card>
+          </TabsContent>
+          <TabsContent value="catalog-v2" className="grid min-w-0 gap-4">
+            {user.productCatalogVersion === 2 && user.v2ProductSnapshot ? <>
+              <Card>
+                <CardHeader><CardTitle>当前 V2 商品</CardTitle><CardDescription>用户迁移后生效的商品绑定快照。</CardDescription><CardAction><Badge variant="success">已迁移</Badge></CardAction></CardHeader>
+                <CardContent className="grid gap-4 sm:grid-cols-2">
+                  <Info label="商品名称" value={user.v2ProductSnapshot.name} />
+                  <Info label="商品 ID" value={user.v2ProductId || user.v2ProductSnapshot.productId} />
+                  <Info label="商品类型" value={user.v2ProductSnapshot.productType === "recurring_plan" ? "周期性套餐" : "不限时套餐"} />
+                  <Info label="周期标识" value={user.v2PeriodId || "不限时"} />
+                  <Info label="周期时长" value={user.v2ProductSnapshot.durationDays ? `${user.v2ProductSnapshot.durationDays} 天` : "不限时"} />
+                  <Info label="流量额度" value={user.v2ProductSnapshot.trafficBytes === null ? "不限流量" : formatBytes(user.v2ProductSnapshot.trafficBytes)} />
+                  <Info label="设备数" value={user.v2ProductSnapshot.deviceLimit === null ? "-" : `${user.v2ProductSnapshot.deviceLimit} 台`} />
+                  <Info label="线路权限组" value={user.v2LineGroupId || "-"} />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle>迁移记录</CardTitle><CardDescription>旧商品绑定仍保留，可用于核对和回滚。</CardDescription></CardHeader>
+                <CardContent className="grid gap-4 sm:grid-cols-2">
+                  <Info label="迁移批次" value={user.v2MigrationId || "-"} />
+                  <Info label="迁移时间" value={user.v2MigratedAt ? formatDateTime(user.v2MigratedAt) : "-"} />
+                  <Info label="旧商品 ID" value={user.legacyProductBinding?.productId || "-"} />
+                  <Info label="旧周期标识" value={user.legacyProductBinding?.optionId || "-"} />
+                </CardContent>
+              </Card>
+            </> : <EmptyState title="尚未迁移到 V2 商品" description="完成 V2 商品映射迁移后，此处会显示新的商品绑定与原商品信息。" />}
           </TabsContent>
           <TabsContent value="bills" className="grid min-w-0 gap-4">
             <UserBillsCard bills={userBills} />

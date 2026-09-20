@@ -30,8 +30,6 @@ const PricingSettingsPage = lazy(() => import("@/components/features/pricing-set
 const PricingDetailPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingDetailPage })))
 const CatalogV2ProductsPage = lazy(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2ProductsPage })))
 const CatalogV2ProductDetailPage = lazy(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2ProductDetailPage })))
-const CatalogV2LineGroupsPage = lazy(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2LineGroupsPage })))
-const CatalogV2LineGroupDetailPage = lazy(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2LineGroupDetailPage })))
 const SalesSettingsPage = lazy(() => import("@/components/features/sales-settings").then(module => ({ default: module.SalesSettingsPage })))
 const GeneralSettingsPage = lazy(() => import("@/components/features/general-settings").then(module => ({ default: module.GeneralSettingsPage })))
 const PaymentSettingsPage = lazy(() => import("@/components/features/payment-settings").then(module => ({ default: module.PaymentSettingsPage })))
@@ -158,8 +156,7 @@ function App() {
               <Route path="pricing-settings/:group" element={<PricingDetailPage />} />
               <Route path="catalog-v2" element={<CatalogV2ProductsPage />} />
               <Route path="catalog-v2/products/:id" element={<CatalogV2ProductDetailPage />} />
-              <Route path="catalog-v2/line-groups" element={<CatalogV2LineGroupsPage />} />
-              <Route path="catalog-v2/line-groups/:id" element={<CatalogV2LineGroupDetailPage />} />
+              <Route path="catalog-v2/line-groups/*" element={<Navigate to="/xui-inbounds" replace />} />
               <Route path="sales-settings" element={<SalesSettingsPage />} />
               <Route path="general-settings" element={<GeneralSettingsPage />} />
               <Route path="payment-settings" element={<PaymentSettingsPage />} />

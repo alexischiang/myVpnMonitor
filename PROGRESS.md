@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-20
-- Current Objective: 部署商品目录 V2 与旧用户迁移支持
+- Current Objective: 将 V2 线路权限组整合到入站管理
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -206,8 +206,14 @@
 
 - 2026-09-20: npm run agent:init 通过；npm run verify 的应用/文档构建及核心/3x-ui 测试通过，普通支付门因未直接配置 TEST_DATABASE_URL 安全停止；npm run verify:catalog-v2 使用一次性 PostgreSQL schema 完整通过支付、钱包、目录 V2、库存和迁移测试；git diff --check 通过
 
+- 2026-09-20: npm run check、npm run verify:fast、git diff --check 通过；Playwright 验证 /catalog-v2/products/new 与用户详情 V2 商品分页，控制台和页面错误为空
+
+- 2026-09-20: V2 线路权限组已移入入站管理，页面只渲染 V2 分组；npm run check、npm run verify:fast、git diff --check 通过，Playwright 验证桌面/390px 新建、编辑双列窗口和旧路由跳转，控制台与页面错误为空
+
+- 2026-09-20: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 验证 V2 卡片、新建/编辑双列窗口、旧路由跳转和 390px 布局，console_errors/page_errors 为空
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `commerce/checkout-workflow.js`, `commerce/orders.js`, `database.js`, `feature_list.json`, `package.json`, `server.js`, `src/components/features/navigation.ts`, `src/main.tsx`, `src/types.ts`, `test.js`, `commerce/catalog-v2-migration.js`, `commerce/catalog-v2.js`, `docs/agent/catalog-v2-migration.md`, `scripts/catalog-v2-mapping.example.json`, `scripts/migrate-catalog-v2-users.js`, `scripts/verify-catalog-v2.js`, `src/components/features/catalog-v2.tsx`, `test-catalog-v2.js`
+- Files: `PROGRESS.md`, `feature_list.json`, `src/components/features/catalog-v2.tsx`, `src/components/features/details.tsx`, `src/components/features/xui-inbounds.tsx`, `src/main.tsx`, `src/types.ts`
 - Known risks: none
-- Recommended Next Step: 部署后由管理员创建权限组和 V2 商品，并按实际映射先 dry-run 再执行旧用户迁移；公共销售入口切换留作后续独立步骤
+- Recommended Next Step: 等待用户验收

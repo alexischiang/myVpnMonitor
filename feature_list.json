@@ -723,8 +723,11 @@
         "Product IDs are immutable lowercase letter, digit and hyphen identifiers, and type-specific validation preserves cents and bytes as storage units.",
         "Line groups bind live inbounds by nodeGuid:inboundId and disabled groups cannot be newly assigned to enabled products.",
         "The admin UI can create and edit recurring plans, lifetime plans, add-ons and line groups, including isEnabled and isForSale controls.",
+        "Inbound management renders V2 line-group cards and uses the existing two-column inbound picker for V2 group creation and editing without rendering legacy plan groups.",
+        "New products default to enabled and externally sold, while recurring period IDs and ascending sort orders are generated from the entered duration and row order.",
         "All V2 product types can be quoted and purchased through inventory reservation, consumption and release rules, while expired payments are routed to manual handling without decrementing stock.",
         "Existing users can be dry-run and idempotently bound to explicitly mapped V2 plans while retaining their legacy product fields for rollback.",
+        "The user detail page has a dedicated tab showing the migrated V2 binding, snapshot, migration metadata and retained legacy binding.",
         "The legacy pricing, storefront and payment flow remain unchanged until the separately approved data migration.",
         "Desktop and mobile browser verification passes without horizontal overflow, console errors or page errors."
       ],
@@ -733,22 +736,28 @@
         "2026-09-19: Browser verification created a line group from a live compound inbound key, waited for synchronization, created a recurring product with isForSale enabled, and confirmed the persisted list state.",
         "2026-09-19: Browser verification switched through recurring, lifetime and add-on forms, checked the 390px layout with no horizontal overflow, and found no console or page errors.",
         "2026-09-19: Kept recurring-period rows mounted while editing their identifiers; browser verification entered 30d one character at a time with focus retained after every character.",
-        "2026-09-19: npm run verify:catalog-v2 passed in a disposable PostgreSQL schema: payment and wallet regression plus recurring, lifetime, automatic add-on and manual add-on creation/purchase, inventory reservation lifecycle, sold-out behavior, late-payment safety, migration dry-run/apply/replay and unmapped-user blocking all passed; the schema was removed afterward."
+        "2026-09-19: npm run verify:catalog-v2 passed in a disposable PostgreSQL schema: payment and wallet regression plus recurring, lifetime, automatic add-on and manual add-on creation/purchase, inventory reservation lifecycle, sold-out behavior, late-payment safety, migration dry-run/apply/replay and unmapped-user blocking all passed; the schema was removed afterward.",
+        "2026-09-20: npm run check passed; browser verification confirmed new-product defaults, generated period identifiers, ascending period sort orders, and migrated/unmigrated user-detail states without console or page errors.",
+        "2026-09-20: Moved V2 line-group management into inbound management; npm run check, npm run verify:fast and git diff --check passed. Playwright verified V2-only cards/filtering, create/edit two-column dialogs, legacy-route redirect and 390px layout without console or page errors."
       ],
       "browser_verification": {
-        "routes": ["/catalog-v2", "/catalog-v2/products/new", "/catalog-v2/products/v2-browser-product", "/catalog-v2/line-groups", "/catalog-v2/line-groups/new"],
+        "routes": ["/catalog-v2", "/catalog-v2/products/new", "/catalog-v2/products/v2-browser-product", "/catalog-v2/line-groups", "/catalog-v2/line-groups/new", "/users/detail/ce6fb1f9-5e6a-4e2b-a24d-5168cb46e42d", "/xui-inbounds"],
         "interactions": [
           "Logged in as administrator and opened the independent V2 product catalog.",
           "Created a temporary enabled line group containing a live nodeGuid:inboundId entry and confirmed the UI remained blocked until synchronization completed.",
           "Switched the product type among recurring plan, lifetime plan and add-on and confirmed each type displays only its applicable fields.",
           "Created a temporary recurring product with shared stock, enabled isEnabled and isForSale, one 30-day period, line-group binding and feature lists; confirmed its list badges and immutable ID on edit.",
-          "Entered a recurring-period identifier one character at a time and confirmed the same input retained focus after each state update; restored the user's original unsaved value afterward.",
-          "Verified the catalog list and recurring editor at 390px; document scroll width equaled the viewport width.",
+          "Confirmed new products default to enabled and externally sold; added two periods with sort orders 0 and 1, then changed the second duration to 90 days and observed the read-only identifier update to 90d.",
+          "Opened the dedicated V2 product tab with a mocked migrated binding and confirmed product, period, quota, line-group, migration and legacy-binding fields; removed the mock and confirmed the unmigrated empty state.",
+          "Verified the catalog editor and user V2 tab at 390px; document scroll width did not exceed the viewport width.",
+          "Opened inbound management with mocked V2 and conflicting legacy groups; confirmed only V2 group cards, memberships and filter options were rendered.",
+          "Edited PRO in the reused two-column dialog, moved an inbound into the available column and saved the V2 group; opened the new-group dialog and entered ID, name and an inbound selection.",
+          "Verified the V2 group dialog and page at 390px without horizontal overflow; legacy V2 line-group URLs redirect to /xui-inbounds.",
           "Removed all temporary browser-verification records after the checks completed."
         ],
         "console_errors": [],
         "page_errors": [],
-        "checked_at": "2026-09-19"
+        "checked_at": "2026-09-20"
       }
     }
   ]

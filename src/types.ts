@@ -123,6 +123,24 @@ export type User = {
   currentProductSource?: string
   currentProductBoundAt?: string
   currentProductSnapshot?: Record<string, unknown>
+  productCatalogVersion?: number
+  v2ProductId?: string
+  v2PeriodId?: string | null
+  v2LineGroupId?: string | null
+  v2ProductSnapshot?: {
+    version: 2
+    productId: string
+    productType: "recurring_plan" | "lifetime_plan"
+    periodId: string | null
+    lineGroupId: string | null
+    name: string
+    durationDays: number | null
+    trafficBytes: number | null
+    deviceLimit: number | null
+  }
+  v2MigrationId?: string
+  v2MigratedAt?: string
+  legacyProductBinding?: { productId: string; optionId: string; snapshot: Record<string, unknown> | null }
   vipLevel?: string
   duration?: string
   purchasedAt?: string
