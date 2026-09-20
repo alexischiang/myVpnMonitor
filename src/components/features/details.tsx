@@ -29,7 +29,7 @@ import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-
 import { UserBillsCard } from "@/components/features/user-bills-card"
 import { BackButton } from "@/components/features/back-button"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
-import type { User, XuiCustomInboundManagement } from "@/types"
+import type { CatalogV2Product, User, XuiCustomInboundManagement } from "@/types"
 import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, purchasedPlanName, userStatus } from "@/utils"
 
 type GiftPreview = {
@@ -45,7 +45,7 @@ type ManualPaymentQuote = {
   vipLevel: string
   vipDiscountAmount: number
   amount: number
-  purchaseAction: "initial" | "extend" | "replace"
+  purchaseAction: "initial" | "extend" | "replace" | "add_on"
 }
 
 type ReferralDetails = {
@@ -54,19 +54,7 @@ type ReferralDetails = {
   rewards: Array<{ id: string; sourceOrderId: string; orderNumber: string; inviteeEmail: string; baseAmount: number; rate: number; rewardAmount: number; status: string; availableAt?: string }>
 }
 
-const manualPaymentPlans = [{ value: "basic", label: "BASIC" }, { value: "pro", label: "PRO" }, { value: "ultra", label: "ULTRA" }]
-const manualPaymentDurations = [{ value: "30", label: "月付 30 天" }, { value: "90", label: "季付 90 天" }, { value: "180", label: "半年付 180 天" }, { value: "360", label: "年付 360 天" }]
-const planChangePeriods = {
-  monthly: { suffix: "30", label: "月付 30 天", priceKey: "monthly", devicesKey: "monthlyDevices", variant: "recurring" },
-  quarterly: { suffix: "90", label: "季付 90 天", priceKey: "quarterly", devicesKey: "quarterlyDevices", variant: "recurring" },
-  half_yearly: { suffix: "180", label: "半年付 180 天", priceKey: "half_yearly", devicesKey: "half_yearlyDevices", variant: "recurring" },
-  yearly: { suffix: "360", label: "年付 360 天", priceKey: "yearly", devicesKey: "yearlyDevices", variant: "recurring" },
-  lifetime: { suffix: "lifetime", label: "固定流量 · 不限时", priceKey: "lifetimePrice", devicesKey: "lifetimeDevices", variant: "lifetime" },
-} as const
-function manualPaymentOptionId(plan: string, traffic: string, duration: string) {
-  return `${plan}${traffic === "unlimited" ? "-unlimited" : ""}-${duration}`
-}
-
+const lineGroups = [{ value: "basic", label: "BASIC" }, { value: "pro", label: "PRO" }, { value: "ultra", label: "ULTRA" }]
 function formatPoolExpiryDifference(days?: number | null) {
   if (days === null || days === undefined) return "暂无法判断"
   if (days === 0) return "与用户同日到期"
@@ -282,9 +270,7 @@ export function UserDetailPage() {
   const [giftBalanceError, setGiftBalanceError] = React.useState("")
   const [giftBalanceSaving, setGiftBalanceSaving] = React.useState(false)
   const [manualPaymentOpen, setManualPaymentOpen] = React.useState(false)
-  const [manualPaymentPlan, setManualPaymentPlan] = React.useState("basic")
-  const [manualPaymentTraffic, setManualPaymentTraffic] = React.useState("limited")
-  const [manualPaymentDuration, setManualPaymentDuration] = React.useState("30")
+  const [manualPaymentOption, setManualPaymentOption] = React.useState("")
   const [manualPaymentQuote, setManualPaymentQuote] = React.useState<ManualPaymentQuote | null>(null)
   const [manualPaymentAmount, setManualPaymentAmount] = React.useState("")
   const [manualPaymentError, setManualPaymentError] = React.useState("")
@@ -334,6 +320,7 @@ export function UserDetailPage() {
   const [customInboundLoading, setCustomInboundLoading] = React.useState(false)
   const [customInboundSaving, setCustomInboundSaving] = React.useState(false)
   const [walletBalance, setWalletBalance] = React.useState<number | null>(null)
+  const [catalogV2Products, setCatalogV2Products] = React.useState<CatalogV2Product[]>([])
   const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const purchaseCount = userBills.filter(item => !item.reversedAt).length
@@ -341,36 +328,26 @@ export function UserDetailPage() {
   const productName = React.useMemo(() => {
     return user ? purchasedPlanName(user, pricing) : "-"
   }, [pricing, user])
+  const catalogPurchaseOptions = React.useMemo(() => catalogV2Products.filter(product => product.isEnabled).flatMap(product => product.type === "recurring_plan"
+    ? product.periods.filter(period => period.isEnabled).map(period => ({ value: `v2:${product.id}:${period.id}`, label: `${product.name} · ${period.durationDays} 天`, product, period }))
+    : [{ value: `v2:${product.id}`, label: `${product.name} · ${product.type === "lifetime_plan" ? "不限时" : "附加服务"}`, product, period: null }]), [catalogV2Products])
+  const catalogPlanOptions = React.useMemo(() => catalogPurchaseOptions.filter(option => option.product.type !== "addon"), [catalogPurchaseOptions])
   const planOptions = React.useMemo(() => {
-    const currentPeriod = planChangePeriods[user?.duration as keyof typeof planChangePeriods]
-    const periods = currentPeriod ? [currentPeriod, ...(currentPeriod.variant === "lifetime" ? [] : [planChangePeriods.lifetime])] : []
-    return pricing.flatMap(plan => periods.flatMap(period => (plan.productKind && plan.productKind !== "plan") || (period.variant === "lifetime" ? plan.lifetimeDeleted : plan.recurringDeleted) === true || !Number.isFinite(Number(plan[period.priceKey]))
-      ? []
-      : [{ value: `${plan.group}-${period.suffix}`, label: `${period.variant === "lifetime" ? plan.lifetimeName || plan.name || plan.group : plan.name || plan.group} · ${period.variant === "lifetime" && plan.lifetimeUnlimited ? "不限流量 · 不限时" : `${period.label}${plan.unlimited ? " · 无限流量" : ""}`}${plan.availability?.[period.variant] ? "" : "（未上架）"}` }]))
-  }, [pricing, user?.duration])
+    const currentDays = user?.productCatalogVersion === 2 ? Number(user.v2ProductSnapshot?.durationDays) : ({ monthly: 30, quarterly: 90, half_yearly: 180, yearly: 360 })[user?.duration || ""]
+    return catalogPlanOptions.filter(option => option.product.type === "lifetime_plan" || option.period?.durationDays === currentDays)
+  }, [catalogPlanOptions, user])
   const selectedPlanConfig = React.useMemo(() => {
     const option = planOptions.find(item => item.value === planOptionId)
-    const period = planOptionId.endsWith("-lifetime") ? planChangePeriods.lifetime : planChangePeriods[user?.duration as keyof typeof planChangePeriods]
-    const plan = period && pricing.find(item => `${item.group}-${period.suffix}` === planOptionId)
-    if (!option || !period || !plan) return null
-    const lifetime = period.variant === "lifetime"
-    const unlimited = lifetime ? plan.lifetimeUnlimited === true : plan.unlimited === true
-    const baseTrafficMatch = String(plan.traffic || "").match(/(\d+(?:\.\d+)?)\s*(?:GB|G)/i)
-    const lifetimeTrafficMatch = String(plan.lifetimeTraffic || "").match(/(\d+(?:\.\d+)?)\s*(TB|GB|G|MB|M)/i)
-    const lifetimeFactors: Record<string, number> = { TB: 1024, GB: 1, G: 1, MB: 1 / 1024, M: 1 / 1024 }
-    const baseGb = lifetime
-      ? Number.isFinite(Number(plan.lifetimeTrafficBytes)) ? Number(plan.lifetimeTrafficBytes) / 1024 ** 3 : lifetimeTrafficMatch ? Number(lifetimeTrafficMatch[1]) * lifetimeFactors[lifetimeTrafficMatch[2].toUpperCase()] : 0
-      : Number(plan.trafficBaseGb ?? baseTrafficMatch?.[1]) || 0
-    const configuredMaxTier = Number(plan.trafficMaxTier ?? 10)
-    const maxTier = Number.isSafeInteger(configuredMaxTier) && configuredMaxTier > 0 ? Math.min(configuredMaxTier, 50) : 1
-    return { option, period, plan, lifetime, unlimited, baseGb, maxTier }
-  }, [planOptionId, planOptions, pricing, user?.duration])
+    if (!option) return null
+    const lifetime = option.product.type === "lifetime_plan"
+    const trafficBytes = lifetime ? option.product.trafficBytes : option.period?.trafficBytes
+    return { option, lifetime, unlimited: trafficBytes === null, baseBytes: Number(trafficBytes) || 0, stepBytes: Number(option.product.trafficCustomization.stepBytes) || 0, maxTier: option.product.trafficCustomization.enabled ? option.product.trafficCustomization.maxSteps + 1 : 1, targetDevices: lifetime ? option.product.deviceLimit || 0 : option.period?.deviceLimit || 0 }
+  }, [planOptionId, planOptions])
   const planPreview = React.useMemo(() => {
     if (!user || !selectedPlanConfig) return null
-    const { option, period, plan, lifetime, unlimited, baseGb } = selectedPlanConfig
+    const { option, lifetime, unlimited, baseBytes, stepBytes, targetDevices } = selectedPlanConfig
     const trafficTier = lifetime || unlimited ? 1 : Number(planTrafficTier)
-    const targetBytes = unlimited ? 0 : baseGb * trafficTier * 1024 ** 3
-    const targetDevices = Number(plan[period.devicesKey]) || 0
+    const targetBytes = unlimited ? 0 : baseBytes + (trafficTier - 1) * stepBytes
     const usedBytes = Math.max(0, Number(user.xuiWeightedTraffic?.usedBytes) || 0)
     const changes = [
       ...(user.currentOptionId !== planOptionId ? [{ label: "商品规格", before: productName, after: option.label }] : []),
@@ -406,6 +383,10 @@ export function UserDetailPage() {
     void fetchJson<User>(`/api/users/${id}`).then(data => { if (active) setLoadedUser(data) }).catch(() => undefined)
     return () => { active = false }
   }, [id])
+
+  React.useEffect(() => {
+    void fetchJson<CatalogV2Product[]>("/api/catalog-v2/products").then(setCatalogV2Products).catch(() => setCatalogV2Products([]))
+  }, [])
 
   React.useEffect(() => {
     if (!planOpen || !selectedPlanConfig || selectedPlanConfig.lifetime || selectedPlanConfig.unlimited) return
@@ -735,7 +716,7 @@ export function UserDetailPage() {
   }
 
   function openLineDialog() {
-    setLineGroup(manualPaymentPlans.some(item => item.value === user.activeGroup) ? user.activeGroup || "pro" : "pro")
+    setLineGroup(lineGroups.some(item => item.value === user.activeGroup) ? user.activeGroup || "pro" : "pro")
     setLineOpen(true)
   }
 
@@ -754,7 +735,7 @@ export function UserDetailPage() {
     }
   }
 
-  async function loadManualPaymentQuote(plan: string, traffic: string, duration: string) {
+  async function loadManualPaymentQuote(optionId: string) {
     setManualPaymentLoading(true)
     setManualPaymentError("")
     setManualPaymentQuote(null)
@@ -762,7 +743,7 @@ export function UserDetailPage() {
     try {
       const quote = await postJson<ManualPaymentQuote>("/api/admin/manual-payments/quote", {
         accountId: user.accountId,
-        optionId: manualPaymentOptionId(plan, traffic, duration),
+        optionId,
       })
       setManualPaymentQuote(quote)
       setManualPaymentAmount(quote.originalAmount.toFixed(2))
@@ -774,13 +755,10 @@ export function UserDetailPage() {
   }
 
   function openManualPaymentDialog() {
-    const plan = manualPaymentPlans.some(item => item.value === user.activeGroup) ? user.activeGroup || "basic" : "basic"
-    const traffic = user.unlimited ? "unlimited" : "limited"
-    setManualPaymentPlan(plan)
-    setManualPaymentTraffic(traffic)
-    setManualPaymentDuration("30")
+    const optionId = catalogPurchaseOptions.find(option => option.value === user.currentOptionId)?.value || catalogPurchaseOptions[0]?.value || ""
+    setManualPaymentOption(optionId)
     setManualPaymentOpen(true)
-    void loadManualPaymentQuote(plan, traffic, "30")
+    if (optionId) void loadManualPaymentQuote(optionId)
   }
 
   async function submitManualPayment(event: React.FormEvent<HTMLFormElement>) {
@@ -820,13 +798,11 @@ export function UserDetailPage() {
           <form className="grid gap-4" onSubmit={submitManualPayment}>
             <DialogHeader><DialogTitle>人工收款</DialogTitle></DialogHeader>
             <FieldGroup>
-              <Field><FieldLabel htmlFor="manual-payment-plan">套餐</FieldLabel><Select value={manualPaymentPlan} onValueChange={value => { setManualPaymentPlan(value); void loadManualPaymentQuote(value, manualPaymentTraffic, manualPaymentDuration) }} disabled={manualPaymentLoading || manualPaymentSaving}><SelectTrigger id="manual-payment-plan" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{manualPaymentPlans.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
-              <Field><FieldLabel htmlFor="manual-payment-traffic">流量版本</FieldLabel><Select value={manualPaymentTraffic} onValueChange={value => { setManualPaymentTraffic(value); void loadManualPaymentQuote(manualPaymentPlan, value, manualPaymentDuration) }} disabled={manualPaymentLoading || manualPaymentSaving}><SelectTrigger id="manual-payment-traffic" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="limited">固定流量</SelectItem><SelectItem value="unlimited">无限流量</SelectItem></SelectContent></Select></Field>
-              <Field><FieldLabel htmlFor="manual-payment-duration">计费周期</FieldLabel><Select value={manualPaymentDuration} onValueChange={value => { setManualPaymentDuration(value); void loadManualPaymentQuote(manualPaymentPlan, manualPaymentTraffic, value) }} disabled={manualPaymentLoading || manualPaymentSaving}><SelectTrigger id="manual-payment-duration" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{manualPaymentDurations.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+              <Field><FieldLabel htmlFor="manual-payment-plan">V2 商品规格</FieldLabel><Select value={manualPaymentOption} onValueChange={value => { setManualPaymentOption(value); void loadManualPaymentQuote(value) }} disabled={manualPaymentLoading || manualPaymentSaving || !catalogPurchaseOptions.length}><SelectTrigger id="manual-payment-plan" className="w-full"><SelectValue placeholder="暂无可用 V2 商品" /></SelectTrigger><SelectContent>{catalogPurchaseOptions.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
             </FieldGroup>
             {manualPaymentLoading ? <Item variant="outline"><ItemContent><ItemTitle>正在计算报价</ItemTitle><ItemDescription>请稍候</ItemDescription></ItemContent><ItemActions><Loader2 className="animate-spin" /></ItemActions></Item> : null}
             {manualPaymentQuote ? <><Item variant="outline"><ItemContent><ItemTitle>{manualPaymentQuote.optionLabel}</ItemTitle><ItemDescription>仅显示套餐原价，不统计税费等</ItemDescription></ItemContent><ItemActions><span className="font-semibold">{formatMoney(manualPaymentQuote.originalAmount)}</span></ItemActions></Item><Field><FieldLabel htmlFor="manual-payment-amount">收款金额</FieldLabel><Input id="manual-payment-amount" inputMode="decimal" value={manualPaymentAmount} onChange={event => { setManualPaymentAmount(event.target.value); setManualPaymentError("") }} aria-invalid={Boolean(manualPaymentError)} required /></Field></> : null}
-            {manualPaymentQuote?.purchaseAction !== "initial" ? <Alert variant="warning"><AlertCircle /><AlertDescription>{manualPaymentQuote?.purchaseAction === "replace" ? "确认后将立即替换当前套餐。" : "确认后将在当前到期日基础上续期。"}</AlertDescription></Alert> : null}
+            {["replace", "extend"].includes(manualPaymentQuote?.purchaseAction || "") ? <Alert variant="warning"><AlertCircle /><AlertDescription>{manualPaymentQuote?.purchaseAction === "replace" ? "确认后将立即替换当前套餐。" : "确认后将在当前到期日基础上续期。"}</AlertDescription></Alert> : null}
             {manualPaymentError ? <Alert variant="error"><AlertCircle /><AlertTitle>人工收款失败</AlertTitle><AlertDescription>{manualPaymentError}</AlertDescription></Alert> : null}
             <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={manualPaymentSaving}>取消</Button></DialogClose><Button type="submit" disabled={!manualPaymentQuote || manualPaymentLoading || manualPaymentSaving}>{manualPaymentSaving ? <Loader2 className="animate-spin" /> : <Banknote />}{manualPaymentSaving ? "处理中..." : `确认收款 ${manualPaymentAmount && Number.isFinite(Number(manualPaymentAmount)) ? formatMoney(Number(manualPaymentAmount)) : ""}`}</Button></DialogFooter>
           </form>
@@ -892,7 +868,7 @@ export function UserDetailPage() {
       <Dialog open={lineOpen} onOpenChange={setLineOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{user.lineType === "self_hosted" ? "调整权限组" : "迁移到自研线路"}</DialogTitle><DialogDescription>系统将按入站管理中的套餐分组关联可用节点。未配置有效入站时不会迁移。</DialogDescription></DialogHeader>
-          <Field><FieldLabel htmlFor="self-hosted-plan">{user.lineType === "self_hosted" ? "权限组" : "套餐分组"}</FieldLabel><Select value={lineGroup} onValueChange={setLineGroup} disabled={lineSaving}><SelectTrigger id="self-hosted-plan" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{manualPaymentPlans.map(plan => <SelectItem key={plan.value} value={plan.value}>{plan.label}</SelectItem>)}</SelectContent></Select></Field>
+          <Field><FieldLabel htmlFor="self-hosted-plan">{user.lineType === "self_hosted" ? "权限组" : "套餐分组"}</FieldLabel><Select value={lineGroup} onValueChange={setLineGroup} disabled={lineSaving}><SelectTrigger id="self-hosted-plan" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{lineGroups.map(group => <SelectItem key={group.value} value={group.value}>{group.label}</SelectItem>)}</SelectContent></Select></Field>
           <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={lineSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void migrateToSelfHosted()} disabled={lineSaving || (user.lineType === "self_hosted" && lineGroup === user.activeGroup)}>{lineSaving ? <Loader2 className="animate-spin" /> : <Network />}{lineSaving ? "同步中..." : user.lineType === "self_hosted" ? "保存权限组" : "确认迁移"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>

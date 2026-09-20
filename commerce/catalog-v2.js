@@ -138,6 +138,7 @@ function resolvePurchase(products, input = {}, context = {}) {
       unitPriceCents,
       quantity,
       trafficSteps,
+      purchaseRequirement: product.purchaseRequirement,
       fulfillment: structuredClone(product.fulfillment || { mode: null, handler: null, config: {} })
     }
   };

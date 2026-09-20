@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-19",
+  "updated_at": "2026-09-20",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -709,6 +709,42 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-09-17"
+      }
+    },
+    {
+      "id": "catalog-v2-business-cutover",
+      "name": "V2 catalog business cutover",
+      "description": "Use catalog V2 as the source of truth for sales, fulfillment, entitlements and one-way 3x-ui synchronization.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "catalog-v2-admin-entry"
+      ],
+      "done_criteria": [
+        "Public storefront, quote and order submission read enabled for-sale V2 products.",
+        "Orders reserve, consume and release V2 inventory and persist immutable V2 snapshots.",
+        "Paid plans and add-ons update V2 user bindings and entitlements without using legacy pricing as authority.",
+        "A five-minute task pushes V2 line-group access from PostgreSQL to 3x-ui without importing 3x-ui access changes into catalog tables.",
+        "Existing traffic history remains intact and new rows retain product attribution.",
+        "Relevant automated and browser verification passes without console or page errors."
+      ],
+      "verification": [
+        "2026-09-20: npm run verify passed application/docs builds, core, 3x-ui, traffic, payment, wallet, and catalog V2 suites.",
+        "2026-09-20: Payment integration verified public V2 quote/order snapshots, inventory reserve/release/consume, V2 fulfillment, and one-way V2-to-3x-ui repair without catalog mutation.",
+        "2026-09-20: Playwright verified public pricing, V2 product management, and the V2 manual-payment selector at desktop and 390x844 with no console or page errors and no mobile horizontal overflow.",
+        "2026-09-20: git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": ["/pricing", "/catalog-v2", "/users/detail/:id"],
+        "interactions": [
+          "Verified the public storefront reads V2 only and shows a safe empty state when no V2 products are available.",
+          "Logged in as administrator, opened 商品管理, and confirmed the legacy product-management navigation entry is absent.",
+          "Opened a user detail and the 人工收款 dialog, confirming the selector is labeled V2 商品规格 and disables safely when no V2 products exist.",
+          "Repeated public pricing and product-management checks at 390x844 and confirmed document scroll width did not exceed client width."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-20"
       }
     },
     {
