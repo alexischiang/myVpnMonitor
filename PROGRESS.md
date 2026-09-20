@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-20
-- Current Objective: 修复 3x-ui 客户端分组字段映射
+- Current Objective: 修复并部署 3x-ui 客户端分组字段映射
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -218,8 +218,10 @@
 
 - 2026-09-20: npm run verify 通过；真实 API group 已映射到内部 groupName，写请求改为 group
 
+- 2026-09-20: main 207e6af、production 55b67d1 已推送；GitHub Actions 35507422237 成功；首轮 checked=296 updated=296 missing=0 failed=[]；下一轮 checked=296 updated=0 missing=0 failed=[]；线上分组 pro=204 basic=79 ultra=15 系统=3 空=10；health ok
+
 ## Next Session
 
-- Files: `server.js`, `test-payment.js`, `test.js`
+- Files: none
 - Known risks: none
-- Recommended Next Step: 用户明确要求上线后提交 main、合并 production，并观察连续两轮五分钟同步
+- Recommended Next Step: 持续关注后续 catalog-v2:xui-sync 日志，正常轮次应保持 updated=0
