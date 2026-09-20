@@ -732,15 +732,24 @@
         "2026-09-20: npm run verify passed application/docs builds, core, 3x-ui, traffic, payment, wallet, and catalog V2 suites.",
         "2026-09-20: Payment integration verified public V2 quote/order snapshots, inventory reserve/release/consume, V2 fulfillment, and one-way V2-to-3x-ui repair without catalog mutation.",
         "2026-09-20: Playwright verified public pricing, V2 product management, and the V2 manual-payment selector at desktop and 390x844 with no console or page errors and no mobile horizontal overflow.",
-        "2026-09-20: git diff --check passed."
+        "2026-09-20: git diff --check passed.",
+        "2026-09-20: Isolated npm run verify passed; payment regression rejects public quotes for enabled unlisted V2 products while allowing administrator manual quotes and collection.",
+        "2026-09-20: Playwright opened the manual-payment dialog with a mocked enabled unlisted V2 product and quote on desktop and 390x844; no horizontal overflow, console errors, or page errors. No payment was submitted.",
+        "2026-09-20: Isolated npm run verify passed; payment regression covers expired-to-lifetime V2 fulfillment, old device-limit replacement, missing-client recreation, missing-email relinking, stale missing-state clearing, and administrator-only manual sync.",
+        "2026-09-20: Playwright verified V2 user detail sync dialog and mocked submit at desktop and 390x844, with no console or page errors or mobile horizontal overflow.",
+        "2026-09-20: Isolated npm run verify passed; payment regression verified admin-only completed V2 order binding repair, conflict protection, idempotence, and no duplicate bill or wallet settlement.",
+        "2026-09-20: Playwright verified order-detail repair confirmation and mocked success at 1280px and 390px without overflow or console/page errors; mocked conflict displayed an actionable error and retained the repair button."
       ],
       "browser_verification": {
-        "routes": ["/pricing", "/catalog-v2", "/users/detail/:id"],
+        "routes": ["/pricing", "/catalog-v2", "/users/detail/:id", "/orders/:id"],
         "interactions": [
           "Verified the public storefront reads V2 only and shows a safe empty state when no V2 products are available.",
           "Logged in as administrator, opened 商品管理, and confirmed the legacy product-management navigation entry is absent.",
           "Opened a user detail and the 人工收款 dialog, confirming the selector is labeled V2 商品规格 and disables safely when no V2 products exist.",
-          "Repeated public pricing and product-management checks at 390x844 and confirmed document scroll width did not exceed client width."
+          "Repeated public pricing and product-management checks at 390x844 and confirmed document scroll width did not exceed client width.",
+          "Opened an active user's manual-payment dialog with a mocked enabled, unlisted V2 product and quote; confirmed the selector, original amount, and collection amount render on desktop and 390x844 without submitting payment.",
+          "Opened a mocked V2 lifetime user's detail at desktop and 390x844, confirmed the sync button is visible even with a missing client, opened its confirmation dialog and submitted to a mocked endpoint. Verified POST /api/users/test-v2/xui-sync and no mobile horizontal overflow; no real 3x-ui mutation.",
+          "Opened the completed V2 order detail at 1280px and 390px, confirmed the repair dialog, mocked POST success and confirmed the repair button disappeared; a separate mocked conflict showed the error and kept retry available. No real order or 3x-ui mutation."
         ],
         "console_errors": [],
         "page_errors": [],
