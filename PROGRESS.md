@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-20
-- Current Objective: 部署V2套餐同步与订单补关联
+- Current Objective: 完成V2套餐同步与订单补关联部署
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -230,8 +230,10 @@
 
 - 2026-09-20: npm run agent:init、npm run verify、git diff --check通过；现有Playwright证据覆盖桌面和390px且console/page errors为空
 
+- 2026-09-20: main 646d835已推送；production 0c30483已推送；GitHub Actions 35513041695成功，VPS构建、发布、PM2重启及健康检查通过
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/bills.tsx`, `src/components/features/details.tsx`, `test-payment.js`
+- Files: none
 - Known risks: none
-- Recommended Next Step: 推送main，合并production并确认GitHub Actions部署成功
+- Recommended Next Step: 持续观察catalog-v2:xui-sync日志；真实订单补关联前先核对用户、账单与后续订单
