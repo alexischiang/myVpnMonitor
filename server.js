@@ -3859,6 +3859,7 @@ function normalizeXuiClientResult(value, fallbackEmail = "") {
   return {
     ...client,
     email: String(client.email || fallbackEmail),
+    groupName: String(client.groupName ?? client.group ?? ""),
     inboundIds: (Array.isArray(root.inboundIds) ? root.inboundIds : Array.isArray(client.inboundIds) ? client.inboundIds : []).map(Number).filter(Number.isSafeInteger),
     usedTraffic,
     traffic: {
@@ -4842,7 +4843,9 @@ async function getXuiClientAfterMutation(user) {
 }
 
 function xuiClientWritePayload(existing, desired) {
-  const writableFields = ["email", "enable", "expiryTime", "totalGB", "limitIp", "reset", "subId", "uuid", "id", "password", "auth", "flow", "tgId", "comment", "security", "reverse", "groupName"];
+  const writableFields = ["email", "enable", "expiryTime", "totalGB", "limitIp", "reset", "subId", "uuid", "id", "password", "auth", "flow", "tgId", "comment", "security", "reverse", "group"];
+  desired = { ...desired, group: desired.groupName ?? desired.group };
+  existing = { ...existing, group: existing?.groupName ?? existing?.group };
   const payload = Object.fromEntries(writableFields
     .filter(key => desired[key] !== undefined || existing?.[key] !== undefined)
     .map(key => [key, desired[key] !== undefined ? desired[key] : existing[key]]));
