@@ -122,6 +122,7 @@ assert.deepStrictEqual(["initial", "extend", "replace"].map(billTypeForPurchaseA
 assert.strictEqual(salesAmount({ realCashAmount: 40, totalAmount: 50, amount: 30 }), 40);
 assert.deepStrictEqual(xuiDirectionalTrafficByUser([{ originNodeGuid: "hk", clientStats: [{ email: "USER", up: 10, down: 20 }] }]), { user: { hk: { inBytes: 10, outBytes: 20 } } });
 assert.deepStrictEqual(xuiTrafficSamples({ user: { hk: { inBytes: 10, outBytes: 20 } } }, new Map([["user", { id: "u1", userId: "U1", activeGroup: "pro" }]]), { hk: "Hong Kong" }), [{ email: "user", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", up: 10, down: 20 }]);
+assert.strictEqual(xuiTrafficSamples({ user: { hk: { inBytes: 10, outBytes: 20 } } }, new Map([["user", { id: "u1", userId: "U1", productCatalogVersion: 2, v2ProductId: "pro-v2" }]]), { hk: "Hong Kong" })[0].planId, "pro-v2");
 assert.deepStrictEqual(normalizeSalesTrafficState({ costConfigs: { hk: [2] }, nodeNames: { hk: "Current" } }, { costConfigs: { hk: [1], sg: [3] }, nodeNames: { hk: "Legacy", sg: "Singapore" } }), { costConfigs: { hk: [2], sg: [3] }, nodeNames: { hk: "Current", sg: "Singapore" } });
 assert.ok(!fs.readFileSync(require.resolve("./server"), "utf8").includes("profit-traffic:"));
 assert.deepStrictEqual(normalizeNodeCostConfig({ purchaseDate: "2026-09-15", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" }), { purchaseDate: "2026-09-15", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" });

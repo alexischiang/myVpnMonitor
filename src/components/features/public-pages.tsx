@@ -21,7 +21,7 @@ import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyButton, EmptyState } from "@/components/features/shared"
 import { ProductCard } from "@/components/features/product-card"
-import type { FaqSetting, PricingRow } from "@/types"
+import type { CatalogV2Product, FaqSetting } from "@/types"
 import { formatDate, formatMoney } from "@/utils"
 
 const periods = [
@@ -54,9 +54,9 @@ function lifetimeTrafficLabel(bytes: number | undefined, fallback: string) {
 }
 
 const defaultPlans = [
-  { id: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", traffic: "每月 100G", devices: [1, 2, 3, 3], prices: [39, 109, 199, 369], recurringAvailable: true, lifetimeName: "BASIC 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "100G 固定流量", lifetimeTrafficBytes: 100 * 1024 ** 3, lifetimePrice: 79, lifetimeAvailable: true, lifetimeDevices: 1, features: ["基础线路", "流媒体支持", "在线客服"], unavailableFeatures: ["稳定 GPT 解锁", "国际内网专线", "独享级带宽体验"] },
-  { id: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", devices: [3, 3, 5, 5], prices: [49, 129, 229, 429], recurringAvailable: true, lifetimeName: "PRO 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "200G 固定流量", lifetimeTrafficBytes: 200 * 1024 ** 3, lifetimePrice: 95, lifetimeAvailable: true, lifetimeDevices: 3, lifetimeRecommended: true, features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], unavailableFeatures: ["国际内网专线", "独享级带宽体验"] },
-  { id: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", traffic: "每月 300G", devices: [1, 2, 3, 3], prices: [89, 239, 449, 859], recurringAvailable: true, lifetimeName: "ULTRA 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "300G 固定流量", lifetimeTrafficBytes: 300 * 1024 ** 3, lifetimePrice: 129, lifetimeAvailable: true, lifetimeDevices: 1, features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], unavailableFeatures: [] },
+  { id: "basic", name: "BASIC", title: "基本套餐", description: "适合轻量网页浏览和社交软件", traffic: "每月 100G", devices: [1, 2, 3, 3], prices: [39, 109, 199, 369], optionIds: ["basic-30", "basic-90", "basic-180", "basic-360"], recurringAvailable: true, lifetimeName: "BASIC 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "100G 固定流量", lifetimeTrafficBytes: 100 * 1024 ** 3, lifetimePrice: 79, lifetimeOptionId: "basic-lifetime", lifetimeAvailable: true, lifetimeDevices: 1, features: ["基础线路", "流媒体支持", "在线客服"], unavailableFeatures: ["稳定 GPT 解锁", "国际内网专线", "独享级带宽体验"] },
+  { id: "pro", name: "PRO", title: "高级套餐", description: "优质节点与稳定流媒体体验", recommended: true, traffic: "每月 200G", devices: [3, 3, 5, 5], prices: [49, 129, 229, 429], optionIds: ["pro-30", "pro-90", "pro-180", "pro-360"], recurringAvailable: true, lifetimeName: "PRO 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "200G 固定流量", lifetimeTrafficBytes: 200 * 1024 ** 3, lifetimePrice: 95, lifetimeOptionId: "pro-lifetime", lifetimeAvailable: true, lifetimeDevices: 3, lifetimeRecommended: true, features: ["优质节点", "普通专线连接", "稳定 GPT 解锁"], unavailableFeatures: ["国际内网专线", "独享级带宽体验"] },
+  { id: "ultra", name: "ULTRA", title: "极致套餐", description: "国际内网专线与低延迟体验", traffic: "每月 300G", devices: [1, 2, 3, 3], prices: [89, 239, 449, 859], optionIds: ["ultra-30", "ultra-90", "ultra-180", "ultra-360"], recurringAvailable: true, lifetimeName: "ULTRA 不限时", lifetimeTitle: "固定流量不限时长", lifetimeDescription: "流量用完为止，不设到期时间", lifetimeTraffic: "300G 固定流量", lifetimeTrafficBytes: 300 * 1024 ** 3, lifetimePrice: 129, lifetimeOptionId: "ultra-lifetime", lifetimeAvailable: true, lifetimeDevices: 1, features: ["国际内网专线", "独享级带宽体验", "专属客服支持"], unavailableFeatures: [] },
 ]
 
 const defaultPricingFaqs: FaqSetting[] = [
@@ -70,44 +70,39 @@ const defaultPricingFaqs: FaqSetting[] = [
 export function PricingPage() {
   const location = useLocation()
   const inAccount = location.pathname.startsWith("/account")
-  const [plans, setPlans] = React.useState(defaultPlans)
-  const [addOnProducts, setAddOnProducts] = React.useState<PricingRow[]>([])
+  const [plans, setPlans] = React.useState<typeof defaultPlans>([])
+  const [addOnProducts, setAddOnProducts] = React.useState<CatalogV2Product[]>([])
   const [pricingFaqs, setPricingFaqs] = React.useState(defaultPricingFaqs)
   const [periodIndex, setPeriodIndex] = React.useState(0)
   const [planMode, setPlanMode] = React.useState<"recurring" | "lifetime">("recurring")
 
   React.useEffect(() => {
-    fetchJson<PricingRow[]>("/api/public/pricing").then(rows => {
-      setAddOnProducts(rows.filter(row => row.availability?.addon && (row.stock === undefined || row.stock > 0)))
-      setPlans(rows.filter(row => row.productKind === "plan" && row.testPlan !== true && (row.availability?.recurring || row.availability?.lifetime)).map(row => {
-        const defaultPlan = defaultPlans.find(plan => plan.id === row.group) || { id: row.group, name: row.group.toUpperCase(), title: "周期性套餐", description: "", recommended: false, traffic: "", devices: [1, 1, 1, 1], prices: [Number.NaN, Number.NaN, Number.NaN, Number.NaN], lifetimeName: `${row.group.toUpperCase()} 不限时`, lifetimeTitle: "固定流量不限时长", lifetimeDescription: "", lifetimeTraffic: "固定流量", lifetimeTrafficBytes: undefined, lifetimePrice: Number.NaN, lifetimeDevices: 1, lifetimeRecommended: false, features: [], unavailableFeatures: [] }
+    fetchJson<CatalogV2Product[]>("/api/public/catalog-v2").then(rows => {
+      setAddOnProducts(rows.filter(row => row.type === "addon" && row.stock !== 0))
+      setPlans(rows.filter(row => row.type !== "addon" && row.stock !== 0).map(row => {
+        const included = row.features.filter(feature => feature.isIncluded).map(feature => feature.label)
+        const excluded = row.features.filter(feature => !feature.isIncluded).map(feature => feature.label)
+        const prices = [Number.NaN, Number.NaN, Number.NaN, Number.NaN]
+        const devices = [0, 0, 0, 0]
+        const optionIds = ["", "", "", ""]
+        for (const period of row.periods.filter(period => period.isEnabled)) {
+          const index = periods.findIndex(item => Number(item.suffix) === period.durationDays)
+          if (index >= 0) { prices[index] = period.priceCents / 100; devices[index] = period.deviceLimit; optionIds[index] = `v2:${row.id}:${period.id}` }
+        }
+        const firstPeriod = row.periods.find(period => period.isEnabled)
         return {
-          ...defaultPlan,
-          id: row.group,
-          name: row.name || defaultPlan.name,
-          title: row.title || defaultPlan.title,
-          description: row.description || defaultPlan.description,
-          recommended: Boolean(row.recommended),
-          recurringAvailable: row.availability?.recurring === true,
-          traffic: row.unlimited ? "无限流量" : row.trafficBaseGb ? `每月 ${row.trafficBaseGb}G，可定制至 ${row.trafficBaseGb * (row.trafficMaxTier || 1)}G` : row.traffic || defaultPlan.traffic,
-          features: row.features ?? defaultPlan.features,
-          unavailableFeatures: row.unavailableFeatures ?? defaultPlan.unavailableFeatures,
-          prices: [row.monthly ?? defaultPlan.prices[0], row.quarterly ?? defaultPlan.prices[1], row.half_yearly ?? defaultPlan.prices[2], row.yearly ?? defaultPlan.prices[3]],
-          lifetimeName: row.lifetimeName || defaultPlan.lifetimeName,
-          lifetimeTitle: row.lifetimeTitle || defaultPlan.lifetimeTitle,
-          lifetimeDescription: row.lifetimeDescription || defaultPlan.lifetimeDescription,
-          lifetimeTraffic: row.lifetimeUnlimited ? "无限流量" : lifetimeTrafficLabel(row.lifetimeTrafficBytes ?? defaultPlan.lifetimeTrafficBytes, row.lifetimeTraffic || defaultPlan.lifetimeTraffic),
-          lifetimeTrafficBytes: row.lifetimeTrafficBytes ?? defaultPlan.lifetimeTrafficBytes,
-          lifetimePrice: row.availability?.lifetime ? row.lifetimePrice ?? defaultPlan.lifetimePrice : Number.NaN,
-          lifetimeAvailable: row.availability?.lifetime === true,
-          lifetimeDevices: row.lifetimeDevices ?? defaultPlan.lifetimeDevices,
-          lifetimeRecommended: Boolean(row.lifetimeRecommended),
-          lifetimeFeatures: row.lifetimeFeatures,
-          lifetimeUnavailableFeatures: row.lifetimeUnavailableFeatures,
-          devices: [row.monthlyDevices ?? defaultPlan.devices[0], row.quarterlyDevices ?? defaultPlan.devices[1], row.half_yearlyDevices ?? defaultPlan.devices[2], row.yearlyDevices ?? defaultPlan.devices[3]],
+          ...defaultPlans[0], id: row.id, name: row.name, title: row.type === "lifetime_plan" ? "固定流量不限时长" : "周期性套餐", description: row.description,
+          recommended: row.type === "recurring_plan" && row.isRecommended, recurringAvailable: row.type === "recurring_plan", prices, devices, optionIds,
+          traffic: firstPeriod?.trafficBytes === null ? "无限流量" : firstPeriod ? `${Number((firstPeriod.trafficBytes / 1024 ** 3).toFixed(2))}G 流量` : "",
+          features: included, unavailableFeatures: excluded,
+          lifetimeName: row.name, lifetimeTitle: "固定流量不限时长", lifetimeDescription: row.description,
+          lifetimeTraffic: lifetimeTrafficLabel(row.trafficBytes ?? undefined, "固定流量"), lifetimeTrafficBytes: row.trafficBytes ?? undefined,
+          lifetimePrice: row.type === "lifetime_plan" ? Number(row.priceCents) / 100 : Number.NaN, lifetimeOptionId: `v2:${row.id}`,
+          lifetimeAvailable: row.type === "lifetime_plan", lifetimeDevices: row.deviceLimit || 0, lifetimeRecommended: row.type === "lifetime_plan" && row.isRecommended,
+          lifetimeFeatures: included, lifetimeUnavailableFeatures: excluded,
         }
       }))
-    }).catch(() => undefined)
+    }).catch(() => { setPlans([]); setAddOnProducts([]) })
     fetchJson<{ faqs: FaqSetting[] }>("/api/public/sales-settings").then(data => setPricingFaqs(data.faqs)).catch(() => undefined)
   }, [])
 
@@ -120,9 +115,6 @@ export function PricingPage() {
     setPlanMode(value === "lifetime" ? "lifetime" : "recurring")
   }
 
-  const trafficPackProduct = addOnProducts.find(product => product.addonType === "traffic_pack")
-  const homeIpProduct = addOnProducts.find(product => product.addonType === "home_ip")
-  const otherServices = addOnProducts.filter(product => !["traffic_pack", "home_ip"].includes(product.addonType || ""))
   const displayedPlanModes = [planMode === "lifetime"]
   const PageRoot = inAccount ? "div" : "main"
 
@@ -154,7 +146,7 @@ export function PricingPage() {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {visiblePlans.map(plan => {
                 const displayedPrice = lifetime ? plan.lifetimePrice : plan.prices[periodIndex]
-                const checkoutOption = lifetime ? `${plan.id}-lifetime` : `${plan.id}-${periods[periodIndex].suffix}`
+                const checkoutOption = lifetime ? plan.lifetimeOptionId : plan.optionIds[periodIndex]
                 const recommended = lifetime ? plan.lifetimeRecommended : plan.recommended
                 const features = [
                   { label: lifetime ? plan.lifetimeTraffic : plan.traffic },
@@ -176,23 +168,16 @@ export function PricingPage() {
                   recommendationLabel="推荐套餐"
                 />
               })}
+              {visiblePlans.length ? null : <EmptyState title="当前暂无可购买套餐" description="请稍后再试或联系客服。" />}
             </div>
           </section>
         })}
         {inAccount ? <section className="grid gap-4">
           <header className="grid gap-1"><h2 className="text-xl font-semibold">附加服务</h2><p className="text-sm text-muted-foreground">按需购买额外服务，不影响当前套餐。</p></header>
           <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><PackagePlus className="size-5" />流量包</CardTitle><CardDescription>为当前自研线路固定流量套餐增加本周期流量。</CardDescription></CardHeader>
-            <CardContent className="grid gap-4"><p className="text-2xl font-semibold">{formatMoney(Number(trafficPackProduct?.addonPrice || 0))} <span className="text-sm font-normal text-muted-foreground">/ {trafficPackProduct?.addonTrafficGb || 0} GB</span></p><p className="text-sm text-muted-foreground">{trafficPackProduct?.addonDeliveryDescription || "月度重置、续费或更换套餐后失效，同一周期可重复购买。"}</p><Button asChild disabled={!trafficPackProduct}><Link to="/account/plans/checkout?product=traffic-pack">购买流量包</Link></Button></CardContent>
-            </Card>
-            <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><HousePlug className="size-5" />家宽 IP 定制<Badge variant="secondary">随套餐购买</Badge></CardTitle><CardDescription>{homeIpProduct?.description || "按地区与使用需求定制家庭宽带出口 IP。"}</CardDescription></CardHeader>
-            <CardContent className="grid gap-4"><p className="text-sm text-muted-foreground">{homeIpProduct?.addonRegions?.map(region => `${region.name} ${formatMoney(region.price)}`).join(" · ") || "暂无可售地区"}</p><Button asChild variant="outline"><Link to="/account/plans/checkout?product=home-ip">已有周期套餐，单独购买</Link></Button><p className="text-xs text-muted-foreground">新购周期套餐时也可在确认订单页面一起选择。</p></CardContent>
-            </Card>
-            {otherServices.map(product => <Card key={product.group}>
-              <CardHeader><CardTitle className="flex items-center gap-2"><PackagePlus className="size-5" />{product.name || product.group}{product.recommended ? <Badge>推荐</Badge> : null}</CardTitle><CardDescription>{product.title || product.description || "附加服务"}</CardDescription></CardHeader>
-              <CardContent className="grid gap-4"><p className="text-2xl font-semibold">{formatMoney(Number(product.addonPrice || 0))} <span className="text-sm font-normal text-muted-foreground">/ {product.addonUnit || "次"}</span></p>{product.description && product.description !== product.title ? <p className="text-sm text-muted-foreground">{product.description}</p> : null}{product.features?.map(feature => <p key={feature} className="flex items-center gap-2 text-sm"><Check className="size-4" />{feature}</p>)}{product.addonDeliveryDescription ? <p className="text-sm text-muted-foreground">{product.addonDeliveryDescription}</p> : null}<Button variant="outline" onClick={() => toast.info("该商品请联系客服购买")}>联系客服购买</Button></CardContent>
+            {addOnProducts.map(product => <Card key={product.id}>
+              <CardHeader><CardTitle className="flex items-center gap-2"><PackagePlus className="size-5" />{product.name}</CardTitle><CardDescription>{product.description || "附加服务"}</CardDescription></CardHeader>
+              <CardContent className="grid gap-4"><p className="text-2xl font-semibold">{formatMoney(Number(product.priceCents || 0) / 100)} <span className="text-sm font-normal text-muted-foreground">/ 次</span></p>{product.features.filter(feature => feature.isIncluded).map(feature => <p key={feature.label} className="flex items-center gap-2 text-sm"><Check className="size-4" />{feature.label}</p>)}{product.deliveryDescription ? <p className="text-sm text-muted-foreground">{product.deliveryDescription}</p> : null}<Button variant="outline" asChild><Link to={`/account/plans/checkout?option=${encodeURIComponent(`v2:${product.id}`)}`}>购买服务</Link></Button></CardContent>
             </Card>)}
           </div>
         </section> : null}
@@ -213,6 +198,7 @@ type CheckoutQuote = {
   features: string[]
   devices: number
   unlimited?: boolean
+  fulfillment?: { mode: "automatic" | "manual" | null; handler: "traffic_credit" | "manual" | null }
   originalAmount: number
   baseAmount?: number
   trafficTier?: number
@@ -242,7 +228,7 @@ type CheckoutQuote = {
   availableAddOns?: Array<{ id: string; name: string; description: string; amount?: number; available: boolean; unavailableReason?: string; options?: Array<{ id: string; label: string; amount: number }> }>
   couponCode: string
   discountPercent: number
-  cycles: Array<{ optionId: string; label: string; amount: number; devices: number }>
+  cycles: Array<{ optionId: string; label: string; amount: number; devices: number; durationDays?: number | null }>
 }
 
 export function CheckoutPage() {
@@ -351,10 +337,11 @@ export function CheckoutPage() {
 
   if (loading && !quote) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
   if (!quote) return <EmptyState title={trafficPack ? "流量包不可用" : homeIp ? "家宽 IP 不可用" : "套餐不可用"} description={standaloneAddOn ? "请确认当前有生效中的周期性套餐，并检查商品是否已上架。" : "请返回套餐页重新选择。"} />
-  const monthlyPrice = quote.cycles.find(cycle => billingMonths(cycle.optionId) === 1 && cycle.optionId.endsWith("-30"))?.amount || quote.originalAmount
+  const isStandaloneAddOn = standaloneAddOn || quote.purchaseAction === "add_on"
+  const monthlyPrice = quote.cycles.find(cycle => cycle.durationDays === 30 || billingMonths(cycle.optionId) === 1 && cycle.optionId.endsWith("-30"))?.amount || quote.originalAmount
   const couponApplied = Boolean(quote.couponCode && quote.couponCode === couponCode.trim().toUpperCase())
   const actionMessage = quote.purchaseAction === "add_on"
-    ? homeIp ? "支付成功后将进入人工交付，客服会联系确认家宽 IP 使用信息。" : "流量包支付成功后立即加入当前周期，月度重置、续费或更换套餐后失效。"
+    ? quote.fulfillment?.mode === "automatic" ? "支付成功后附加服务将自动发放。" : "支付成功后将进入人工交付。"
     : quote.purchaseAction === "replace"
     ? "新套餐支付成功后将立即覆盖当前套餐，原套餐剩余有效期和流量不再保留。"
     : "付款成功后套餐立即生效。"
@@ -371,7 +358,7 @@ export function CheckoutPage() {
               <div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{quote.traffic}</p>{quote.devices ? <p className="flex items-center gap-2"><Check className="size-4" />可使用设备数：{quote.devices} 台</p> : null}{quote.features.map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}</div>
             </CardContent>
           </Card>
-          {trafficPack ? null : <Card>
+          {isStandaloneAddOn ? null : <Card>
             <CardHeader><CardTitle>{homeIp ? "选择服务地区" : "选择计费周期"}</CardTitle><CardDescription>{homeIp ? "不同地区按后台配置的月费结算，每次服务 30 天。" : "选择适合你的购买周期"}</CardDescription></CardHeader>
             <CardContent><RadioGroup value={optionId} onValueChange={selectCycle} disabled={loading} className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{quote.cycles.map(cycle => <FieldLabel key={cycle.optionId} htmlFor={`cycle-${cycle.optionId}`} className="w-full cursor-pointer sm:min-w-0 sm:flex-1 sm:basis-[calc(50%-0.375rem)]"><Field orientation="horizontal" className="h-full w-full rounded-md border p-4 has-[[data-state=checked]]:border-primary"><FieldContent className="flex-1"><FieldTitle className="flex items-center gap-1.5 leading-[18px]">{quote.unlimited ? <>{cycle.label.replace(/\s*无限流量$/, "")}<Badge variant="outline" className={`${inlinePlanBadgeClass} relative isolate overflow-hidden border-transparent bg-[linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec4899)] bg-clip-padding text-white dark:bg-[linear-gradient(135deg,#0284c7,#7c3aed,#db2777)]`}><span aria-hidden className="premium-shine absolute inset-0" /><span className="relative flex h-full items-center leading-none">无限流量</span></Badge></> : cycle.label}{homeIp ? null : <BillingDiscount monthlyPrice={monthlyPrice} totalPrice={cycle.amount} months={billingMonths(cycle.optionId)} />}</FieldTitle><FieldDescription>{formatMoney(cycle.amount)}{cycle.devices ? ` · 可使用设备数：${cycle.devices} 台` : ""}</FieldDescription></FieldContent><RadioGroupItem id={`cycle-${cycle.optionId}`} value={cycle.optionId} /></Field></FieldLabel>)}</RadioGroup></CardContent>
           </Card>}
@@ -382,7 +369,7 @@ export function CheckoutPage() {
               <Item variant="muted"><ItemContent><ItemDescription>当前选择</ItemDescription><ItemTitle>每月 {(quote.trafficBaseGb || 0) * trafficTier} GB</ItemTitle></ItemContent><ItemActions><span className="text-xl font-semibold tabular-nums">{formatMoney(quote.originalAmount)}</span></ItemActions></Item>
             </CardContent>
           </Card> : null}
-          {standaloneAddOn || quote.lifetime ? null : <Card>
+          {isStandaloneAddOn || quote.lifetime ? null : <Card>
             <CardHeader><CardTitle>附加服务</CardTitle><CardDescription>可与基础套餐合并结算，按需选择。</CardDescription></CardHeader>
             <CardContent><ItemGroup>
               {(quote.availableAddOns || []).map(addOn => <Item key={addOn.id} variant="muted">{addOn.id === "home_ip" ? <HousePlug /> : <PackagePlus />}<ItemContent><ItemTitle>{addOn.name}</ItemTitle><ItemDescription>{addOn.description}{addOn.available ? " · 支付后进入人工交付" : ` · ${addOn.unavailableReason}`}</ItemDescription></ItemContent><ItemActions>{addOn.available && addOn.options?.length ? <Select value={addOns.find(id => id.startsWith(`${addOn.id}:`)) || "none"} onValueChange={value => selectAddOnOption(value === "none" ? "" : value)} disabled={loading || submitting}><SelectTrigger aria-label={`选择${addOn.name}地区`} className="w-full sm:w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">不购买</SelectItem>{addOn.options.map(option => <SelectItem key={option.id} value={option.id}>{option.label} · {formatMoney(option.amount)}</SelectItem>)}</SelectContent></Select> : <Badge variant="secondary">{addOn.unavailableReason}</Badge>}</ItemActions></Item>)}
@@ -390,7 +377,7 @@ export function CheckoutPage() {
           </Card>}
         </section>
         <aside className="grid content-start gap-4 lg:col-span-2">
-          {standaloneAddOn ? null : <Card>
+          {isStandaloneAddOn ? null : <Card>
             <CardHeader><CardTitle>优惠码</CardTitle><CardDescription>优惠码仅适用于基础套餐服务。</CardDescription></CardHeader>
             <CardContent><Field><div className="flex gap-2"><Input aria-label="优惠码" aria-invalid={Boolean(couponError)} aria-describedby={couponError ? "coupon-error" : couponApplied ? "coupon-success" : undefined} placeholder="输入优惠码（如有）" value={couponCode} onChange={event => { setCouponCode(event.target.value); setCouponError("") }} /><Button variant="outline" size="default" onClick={validateCoupon} disabled={loading}>{validatingCoupon ? <Loader2 className="animate-spin" /> : <Tag />}验证</Button></div><FieldError id="coupon-error">{couponError}</FieldError>{couponApplied ? <FieldDescription id="coupon-success" className="text-emerald-600 dark:text-emerald-500">优惠码验证成功</FieldDescription> : null}</Field></CardContent>
           </Card>}
@@ -401,8 +388,8 @@ export function CheckoutPage() {
                 <p className="flex justify-between"><span className="text-muted-foreground">{(quote.trafficTier || 1) > 1 ? `套餐基础价（每月 ${quote.trafficBaseGb} GB）` : "商品原价"}</span><span>{formatMoney(quote.baseAmount ?? quote.originalAmount)}</span></p>
                 {(quote.trafficTier || 1) > 1 ? <p className="flex justify-between"><span className="text-muted-foreground">流量定制至每月 {quote.trafficGb} GB</span><span>+{formatMoney(quote.originalAmount - (quote.baseAmount || 0))}</span></p> : null}
                 {quote.discountAmount ? <p className="flex justify-between"><span className="text-muted-foreground">优惠码 {quote.couponCode}（{quote.discountPercent}%）</span><span>-{formatMoney(quote.discountAmount)}</span></p> : null}
-                {standaloneAddOn ? null : <p className="flex justify-between gap-3"><span className="text-muted-foreground">{quote.vipLevel.replace(/^vip/i, "VIP ")} 专属折扣（{quote.vipDiscountPercent}%）</span><span>-{formatMoney(quote.vipDiscountAmount)}</span></p>}
-                <p className="flex justify-between"><span className="text-muted-foreground">{standaloneAddOn ? "小计" : "优惠后小计"}</span><span>{formatMoney(quote.subtotal)}</span></p>
+                {isStandaloneAddOn ? null : <p className="flex justify-between gap-3"><span className="text-muted-foreground">{quote.vipLevel.replace(/^vip/i, "VIP ")} 专属折扣（{quote.vipDiscountPercent}%）</span><span>-{formatMoney(quote.vipDiscountAmount)}</span></p>}
+                <p className="flex justify-between"><span className="text-muted-foreground">{isStandaloneAddOn ? "小计" : "优惠后小计"}</span><span>{formatMoney(quote.subtotal)}</span></p>
                 {quote.addOnAmount ? <p className="flex justify-between gap-3"><span className="text-muted-foreground">附加服务：{quote.availableAddOns?.filter(addOn => quote.selectedAddOns?.includes(addOn.id)).map(addOn => addOn.name).join("、")}</span><span>+{formatMoney(quote.addOnAmount)}</span></p> : null}
                 <p className="flex justify-between"><span className="text-muted-foreground">税费（{quote.taxRate}%）</span><span>{formatMoney(quote.taxAmount)}</span></p>
                 {quote.walletGiftAmount ? <p className="flex justify-between"><span className="text-muted-foreground">赠送余额</span><span>-{formatMoney(quote.walletGiftAmount)}</span></p> : null}
@@ -414,7 +401,7 @@ export function CheckoutPage() {
               <p className="flex justify-between text-base font-semibold"><span>待付金额</span><span>{formatMoney(quote.amount)}</span></p>
               <Button className="min-h-11" onClick={confirmOrder} disabled={submitting || loading}>{submitting ? <Loader2 className="animate-spin" /> : <Check />}{submitting ? "正在提交订单…" : "提交订单"}</Button>
               <p className="text-xs text-muted-foreground">提交后进入收银台，确认付款后发放服务。</p>
-              <Button variant="outline" onClick={() => navigate(-1)}><ArrowLeft />{standaloneAddOn ? "返回服务列表" : "返回服务选择"}</Button>
+              <Button variant="outline" onClick={() => navigate(-1)}><ArrowLeft />{isStandaloneAddOn ? "返回服务列表" : "返回服务选择"}</Button>
               <p className="text-xs text-muted-foreground">{trafficPack ? "付款成功后流量立即生效，月度重置、续费或更换套餐后失效。" : homeIp ? "付款成功后进入人工交付，服务有效期以订单快照和交付记录为准。" : "付款成功后套餐立即生效，数字商品不支持退款。"}</p>
             </CardContent>
           </Card>

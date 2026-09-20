@@ -79,11 +79,12 @@ async function main() {
       const client = xuiClients.get(decodeURIComponent(clientMatch[1]));
       return sendJson(response, client ? 200 : 404, client ? { success: true, obj: client } : { success: false, msg: "not found" });
     }
+    if (request.url === "/panel/api/server/status") return sendJson(response, 200, { success: true, obj: { panelGuid: "local" } });
     if (request.url === "/panel/api/clients/list") return sendJson(response, 200, { success: true, obj: [...xuiClients.values()] });
     if (request.url === "/panel/api/inbounds/list") return sendJson(response, 200, { success: true, obj: [
-      { id: 1, remark: "套餐节点", protocol: "vless", enable: true },
-      { id: 2, remark: "个人家宽", protocol: "vless", enable: true },
-      { id: 3, remark: "停用家宽", protocol: "vless", enable: false }
+      { id: 1, remark: "套餐节点", protocol: "vless", enable: true, originNodeGuid: "local" },
+      { id: 2, remark: "个人家宽", protocol: "vless", enable: true, originNodeGuid: "local" },
+      { id: 3, remark: "停用家宽", protocol: "vless", enable: false, originNodeGuid: "local" }
     ] });
     if (request.url === "/panel/api/clients/add") {
       const client = { ...body.client, subId: body.client.subId || crypto.randomUUID(), inboundIds: body.inboundIds || [] };
@@ -117,6 +118,7 @@ async function main() {
 
   let app;
   let handler;
+  const catalogV2Ids = { group: `payment-v2-group-${Date.now()}`, product: `payment-v2-plan-${Date.now()}` };
   try {
     const gatewayPort = await listen(gateway);
     const xuiPort = await listen(xui);
@@ -279,6 +281,27 @@ async function main() {
     const shopperPricing = await request("/api/public/pricing");
     assert.ok(adminPricing.data.some(item => item.group === "friends-lifetime-unlimited" && item.internal === true));
     assert.ok(!shopperPricing.data.some(item => item.internal === true));
+
+    const v2Group = await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys: ["local:1"] } });
+    assert.strictEqual(v2Group.response.status, 201, v2Group.text);
+    const v2Product = await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: {
+      id: catalogV2Ids.product, type: "recurring_plan", isEnabled: true, isForSale: true, stock: 2, sortOrder: 0,
+      name: "Payment V2 plan", description: "V2 checkout", features: [], isRecommended: false, lineGroupId: catalogV2Ids.group,
+      trafficCustomization: { enabled: false, stepBytes: null, stepPriceCents: null, maxSteps: 10 },
+      periods: [{ id: "30d", durationDays: 30, trafficBytes: 50 * 1024 ** 3, deviceLimit: 2, priceCents: 100, isEnabled: true, sortOrder: 0 }]
+    } });
+    assert.strictEqual(v2Product.response.status, 201, v2Product.text);
+    const publicV2 = await request("/api/public/catalog-v2");
+    assert.ok(publicV2.data.some(item => item.id === catalogV2Ids.product));
+    const v2Quote = await request("/api/orders/quote", { method: "POST", cookie, body: { optionId: `v2:${catalogV2Ids.product}:30d`, useBalance: false } });
+    assert.deepStrictEqual([v2Quote.response.status, v2Quote.data.catalogVersion, v2Quote.data.amount], [200, 2, 1.03]);
+    const v2Order = await request("/api/orders", { method: "POST", cookie, body: { optionId: `v2:${catalogV2Ids.product}:30d`, useBalance: false } });
+    assert.strictEqual(v2Order.response.status, 201, v2Order.text);
+    assert.strictEqual(v2Order.data.productSnapshot.catalogVersion, 2);
+    assert.strictEqual((await database.query("SELECT status FROM catalog_v2_inventory_reservations WHERE order_id=$1", [v2Order.data.id])).rows[0].status, "reserved");
+    await request(`/api/orders/${v2Order.data.id}`, { method: "DELETE", cookie });
+    assert.strictEqual((await database.query("SELECT status FROM catalog_v2_inventory_reservations WHERE order_id=$1", [v2Order.data.id])).rows[0].status, "released");
+    xuiRequests.length = 0;
 
     const quote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001" } });
     assert.strictEqual(quote.response.status, 200);
@@ -894,6 +917,24 @@ async function main() {
     const raceBills = await database.query("SELECT COUNT(*)::int AS n FROM app_records WHERE collection='bills' AND data->>'paymentOrderId'=$1", [racingOrder.data.id]);
     assert.strictEqual(raceBills.rows[0].n, 1, "concurrent callback and manual collection must only deliver and bill once");
 
+    const v2Registration = await request("/api/auth/register", { method: "POST", body: { email: "v2-sync@example.test", password: "payment-test-password" } });
+    assert.strictEqual(v2Registration.response.status, 201);
+    const v2Account = (await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "v2-sync@example.test");
+    const v2ManualOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.product}:30d`, amount: 1 } });
+    assert.deepStrictEqual([v2ManualOrder.response.status, v2ManualOrder.data.productSnapshot.catalogVersion, v2ManualOrder.data.fulfillmentStatus], [201, 2, "fulfilled"]);
+    const v2User = (await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "v2-sync@example.test");
+    assert.deepStrictEqual([v2User.productCatalogVersion, v2User.v2ProductId, v2User.v2LineGroupId], [2, catalogV2Ids.product, catalogV2Ids.group]);
+    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
+    assert.strictEqual((await database.query("SELECT stock FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.product])).rows[0].stock, 1);
+    const catalogBeforeSync = (await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value;
+    xuiClients.get("v2-sync@example.test").inboundIds = [2];
+    xuiClients.get("v2-sync@example.test").groupName = "panel-change-must-not-write-back";
+    const syncReport = await handler.syncCatalogV2ToXui();
+    assert.deepStrictEqual([syncReport.checked >= 1, syncReport.updated >= 1, syncReport.failed.length], [true, true, 0]);
+    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").groupName, catalogV2Ids.group);
+    assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "3x-ui sync must not write panel state back to V2 catalog data");
+
     const passwordChange = await request("/api/auth/password", {
       method: "PUT",
       cookie,
@@ -908,6 +949,9 @@ async function main() {
 
     console.log("Payment chain checks passed: payments, wallet priority, referral spending, idempotent reversals, snapshots, ledger entries, and validation.");
   } finally {
+    await database.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id=$1", [catalogV2Ids.product]).catch(() => {});
+    await database.query("DELETE FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.product]).catch(() => {});
+    await database.query("DELETE FROM catalog_v2_line_groups WHERE id=$1", [catalogV2Ids.group]).catch(() => {});
     if (app) await close(app);
     if (handler) await handler.closeDataStore();
     await close(gateway);

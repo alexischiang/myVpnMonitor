@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-20
-- Current Objective: 部署 V2 管理功能并完成生产用户数据迁移
+- Current Objective: 将 V2 数据接入其余业务链路并每 5 分钟单向同步 3x-ui
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -214,8 +214,10 @@
 
 - 2026-09-20: main 2b83caa 与 production baa4bae 已推送；GitHub Actions 35501291024 成功；413/413 用户迁移成功，幂等 dry-run 为 alreadyMigrated=413、failed=0；线上 /api/health 全部服务正常
 
+- 2026-09-20: npm run verify、npm run verify:harness、git diff --check 均通过；Playwright 桌面/390x844 无控制台或页面错误；支付集成验证单向同步不反写 V2 商品数据
+
 ## Next Session
 
-- Files: none
+- Files: `commerce/catalog-v2.js`, `feature_list.json`, `server.js`, `src/components/features/catalog-v2.tsx`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/public-pages.tsx`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 监控线上 V2 绑定使用情况；公共销售入口切换仍作为独立功能实施
+- Recommended Next Step: 部署后观察首次 catalog-v2:xui-sync 日志与 V2 订单实际发放；无需再迁移历史流量表
