@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-20
-- Current Objective: 将 V2 数据接入其余业务链路并每 5 分钟单向同步 3x-ui
+- Current Objective: 修复 3x-ui 客户端分组字段映射
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -216,8 +216,10 @@
 
 - 2026-09-20: npm run verify、npm run verify:harness、git diff --check 均通过；Playwright 桌面/390x844 无控制台或页面错误；支付集成验证单向同步不反写 V2 商品数据
 
+- 2026-09-20: npm run verify 通过；真实 API group 已映射到内部 groupName，写请求改为 group
+
 ## Next Session
 
-- Files: `commerce/catalog-v2.js`, `feature_list.json`, `server.js`, `src/components/features/catalog-v2.tsx`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/public-pages.tsx`, `test-payment.js`, `test.js`
+- Files: `server.js`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 部署后观察首次 catalog-v2:xui-sync 日志与 V2 订单实际发放；无需再迁移历史流量表
+- Recommended Next Step: 用户明确要求上线后提交 main、合并 production，并观察连续两轮五分钟同步

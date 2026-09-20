@@ -112,6 +112,10 @@ assert.deepStrictEqual([catalogV2ManualAddon.fulfillment.mode, catalogV2ManualAd
 assert.strictEqual(strictActiveUserGroup({ group: "basic", activeGroup: "ultra" }), "ultra");
 assert.strictEqual(strictActiveUserGroup({ group: "basic" }), "basic");
 assert.strictEqual(strictActiveUserGroup({ group: "invalid", activeGroup: "" }), "");
+assert.strictEqual(normalizeXuiClientResult({ email: "user@example.test", group: "pro" }).groupName, "pro");
+const xuiGroupPayload = xuiClientWritePayload({ email: "user@example.test", group: "" }, { email: "user@example.test", group: "", groupName: "pro" });
+assert.strictEqual(xuiGroupPayload.group, "pro");
+assert.strictEqual(xuiGroupPayload.groupName, undefined);
 assert.strictEqual(isXuiTimeoutError(Object.assign(new Error("request failed"), { code: "XUI_TIMEOUT" })), true);
 assert.strictEqual(isXuiTimeoutError(Object.assign(new Error("request failed"), { statusCode: 504 })), true);
 assert.strictEqual(isXuiTimeoutError(new Error("ordinary failure")), false);

@@ -536,11 +536,11 @@ async function main() {
     assert.deepStrictEqual(xuiClients.get("buyer@example.test").inboundIds, [1]);
     assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/server/status"), "resync should reuse the cached inbound snapshot");
     await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
-    xuiClients.get("buyer@example.test").groupName = "basic";
+    xuiClients.get("buyer@example.test").group = "basic";
     xuiRequests.length = 0;
     const reenabledUser = await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: false } });
     assert.strictEqual(reenabledUser.response.status, 200);
-    assert.strictEqual(xuiRequests.find(entry => entry.url === "/panel/api/clients/update/buyer%40example.test")?.body.groupName, "pro");
+    assert.strictEqual(xuiRequests.find(entry => entry.url === "/panel/api/clients/update/buyer%40example.test")?.body.group, "pro");
     assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/groups/bulkAdd"));
     const customInboundOptions = await request(`/api/users/${managedUser.id}/custom-inbounds`, { cookie: adminCookie });
     assert.strictEqual(customInboundOptions.response.status, 200);
@@ -928,11 +928,11 @@ async function main() {
     assert.strictEqual((await database.query("SELECT stock FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.product])).rows[0].stock, 1);
     const catalogBeforeSync = (await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value;
     xuiClients.get("v2-sync@example.test").inboundIds = [2];
-    xuiClients.get("v2-sync@example.test").groupName = "panel-change-must-not-write-back";
+    xuiClients.get("v2-sync@example.test").group = "panel-change-must-not-write-back";
     const syncReport = await handler.syncCatalogV2ToXui();
     assert.deepStrictEqual([syncReport.checked >= 1, syncReport.updated >= 1, syncReport.failed.length], [true, true, 0]);
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").groupName, catalogV2Ids.group);
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").group, catalogV2Ids.group);
     assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "3x-ui sync must not write panel state back to V2 catalog data");
 
     const passwordChange = await request("/api/auth/password", {
