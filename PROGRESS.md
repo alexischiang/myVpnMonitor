@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-20
-- Current Objective: 将 V2 线路权限组整合到入站管理
+- Current Objective: 部署 V2 管理功能并完成生产用户数据迁移
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -212,8 +212,10 @@
 
 - 2026-09-20: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 验证 V2 卡片、新建/编辑双列窗口、旧路由跳转和 390px 布局，console_errors/page_errors 为空
 
+- 2026-09-20: main 2b83caa 与 production baa4bae 已推送；GitHub Actions 35501291024 成功；413/413 用户迁移成功，幂等 dry-run 为 alreadyMigrated=413、failed=0；线上 /api/health 全部服务正常
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `src/components/features/catalog-v2.tsx`, `src/components/features/details.tsx`, `src/components/features/xui-inbounds.tsx`, `src/main.tsx`, `src/types.ts`
+- Files: none
 - Known risks: none
-- Recommended Next Step: 等待用户验收
+- Recommended Next Step: 监控线上 V2 绑定使用情况；公共销售入口切换仍作为独立功能实施
