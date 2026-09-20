@@ -109,6 +109,93 @@ function publicPricing() {
 function productVariantAvailable(product, variant) {
   return product?.availability?.[variant] === true;
 }
+const CATALOG_V2_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;
+
+function catalogV2Integer(value, { nullable = false, min = 0, label = "数值" } = {}) {
+  if (value === undefined || value === null || value === "") {
+    if (nullable) return null;
+    throw new Error(`${label}不能为空。`);
+  }
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < min) throw new Error(`${label}无效。`);
+  return number;
+}
+
+function normalizeCatalogV2Id(value, label = "标识") {
+  const id = String(value || "").trim();
+  if (!CATALOG_V2_ID_PATTERN.test(id)) throw new Error(`${label}必须为 2-64 位小写字母、数字或短横线，且必须以字母或数字开头。`);
+  return id;
+}
+
+function normalizeCatalogV2Features(value) {
+  return (Array.isArray(value) ? value : []).map((feature, index) => ({
+    label: String(feature?.label || "").trim().slice(0, 120),
+    isIncluded: feature?.isIncluded !== false,
+    sortOrder: catalogV2Integer(feature?.sortOrder ?? index * 10, { label: "权益排序" })
+  })).filter(feature => feature.label).slice(0, 30);
+}
+
+function normalizeCatalogV2LineGroup(input = {}) {
+  const inboundKeys = [...new Set((Array.isArray(input.inboundKeys) ? input.inboundKeys : []).map(value => String(value).trim()).filter(value => /^[^:]+:\d+$/.test(value)))];
+  const name = String(input.name || "").trim().slice(0, 60);
+  if (!name) throw new Error("权限组名称不能为空。");
+  return { id: normalizeCatalogV2Id(input.id, "权限组标识"), name, isEnabled: input.isEnabled !== false, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "权限组排序" }), inboundKeys };
+}
+
+function normalizeCatalogV2Product(input = {}) {
+  const type = ["recurring_plan", "lifetime_plan", "addon"].includes(input.type) ? input.type : "";
+  if (!type) throw new Error("商品类型无效。");
+  const isEnabled = input.isEnabled === true;
+  const name = String(input.name || "").trim().slice(0, 80);
+  if (!name) throw new Error("商品名称不能为空。");
+  const stock = catalogV2Integer(input.stock, { nullable: true, label: "库存" });
+  const lineGroupId = type === "addon" || !input.lineGroupId ? null : normalizeCatalogV2Id(input.lineGroupId, "线路权限组");
+  if (isEnabled && type !== "addon" && !lineGroupId) throw new Error("启用套餐前必须选择线路权限组。");
+  const periods = type === "recurring_plan" ? (Array.isArray(input.periods) ? input.periods : []).map((period, index) => ({
+    id: normalizeCatalogV2Id(period.id, "周期标识"),
+    durationDays: catalogV2Integer(period.durationDays, { min: 1, label: "周期天数" }),
+    trafficBytes: catalogV2Integer(period.trafficBytes, { nullable: true, label: "周期流量" }),
+    deviceLimit: catalogV2Integer(period.deviceLimit, { label: "设备数" }),
+    priceCents: catalogV2Integer(period.priceCents, { label: "周期价格" }),
+    isEnabled: period.isEnabled !== false,
+    sortOrder: catalogV2Integer(period.sortOrder ?? index * 10, { label: "周期排序" })
+  })) : [];
+  if (new Set(periods.map(period => period.id)).size !== periods.length || new Set(periods.map(period => period.durationDays)).size !== periods.length) throw new Error("周期标识和周期天数不能重复。");
+  if (isEnabled && type === "recurring_plan" && !periods.some(period => period.isEnabled)) throw new Error("启用周期套餐前至少需要一个已启用周期。");
+  const customization = input.trafficCustomization || {};
+  const customizationEnabled = type === "recurring_plan" && customization.enabled === true;
+  const normalizedCustomization = {
+    enabled: customizationEnabled,
+    stepBytes: catalogV2Integer(customization.stepBytes, { nullable: true, min: 1, label: "每档流量" }),
+    stepPriceCents: catalogV2Integer(customization.stepPriceCents, { nullable: true, min: 1, label: "每档价格" }),
+    maxSteps: catalogV2Integer(customization.maxSteps ?? 10, { min: 1, label: "最高档数" })
+  };
+  if (customizationEnabled && (!normalizedCustomization.stepBytes || !normalizedCustomization.stepPriceCents)) throw new Error("启用流量定制时必须填写每档流量和每档价格。");
+  if (customizationEnabled && periods.some(period => period.trafficBytes === null)) throw new Error("无限流量周期不能启用流量定制。");
+  const fulfillment = input.fulfillment || {};
+  const isAddon = type === "addon";
+  const fulfillmentMode = isAddon && fulfillment.mode === "automatic" ? "automatic" : isAddon ? "manual" : null;
+  const fulfillmentHandler = isAddon && fulfillmentMode === "automatic" && fulfillment.handler === "traffic_credit" ? "traffic_credit" : isAddon ? "manual" : null;
+  const config = fulfillmentHandler === "traffic_credit" ? { trafficBytes: catalogV2Integer(fulfillment.config?.trafficBytes, { nullable: !isEnabled, min: 1, label: "自动交付流量" }) } : {};
+  const minQuantity = isAddon ? catalogV2Integer(input.minQuantity ?? 1, { min: 1, label: "最少购买数量" }) : 1;
+  const maxQuantity = isAddon ? catalogV2Integer(input.maxQuantity, { nullable: true, min: minQuantity, label: "最多购买数量" }) : null;
+  return {
+    id: normalizeCatalogV2Id(input.id, "商品 ID"), type, isEnabled, isForSale: input.isForSale === true,
+    stock, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "商品排序" }), name,
+    description: String(input.description || "").trim().slice(0, 500), features: normalizeCatalogV2Features(input.features),
+    isRecommended: type !== "addon" && input.isRecommended === true, lineGroupId,
+    durationDays: type === "lifetime_plan" ? null : null,
+    trafficBytes: type === "lifetime_plan" ? catalogV2Integer(input.trafficBytes, { nullable: true, label: "默认流量" }) : null,
+    deviceLimit: type === "lifetime_plan" ? catalogV2Integer(input.deviceLimit, { nullable: !isEnabled, label: "设备数" }) : null,
+    priceCents: type === "lifetime_plan" || isAddon ? catalogV2Integer(input.priceCents, { nullable: !isEnabled, label: "商品价格" }) : null,
+    trafficCustomization: normalizedCustomization, periods,
+    purchaseRequirement: isAddon && input.purchaseRequirement === "requires_recurring_plan" ? "requires_recurring_plan" : isAddon ? "standalone" : null,
+    fulfillment: { mode: fulfillmentMode, handler: fulfillmentHandler, config },
+    deliveryDescription: isAddon ? String(input.deliveryDescription || "").trim().slice(0, 500) : "",
+    serviceDurationDays: isAddon ? catalogV2Integer(input.serviceDurationDays, { nullable: true, min: 1, label: "服务有效天数" }) : null,
+    allowQuantity: isAddon ? input.allowQuantity !== false : false, minQuantity, maxQuantity
+  };
+}
 const PRICING_PERIODS = {
   30: { priceKey: "monthly", duration: "monthly", label: "月付 30天" },
   90: { priceKey: "quarterly", duration: "quarterly", label: "季付 90天" },
@@ -10019,6 +10106,99 @@ async function handleApi(req, res, pathname) {
   }
 
   // ── Pricing ──
+  if (pathname === "/api/catalog-v2/line-groups" && req.method === "GET") {
+    sendJson(res, 200, await dataStore.listCatalogV2LineGroups());
+    return;
+  }
+
+  if (pathname === "/api/catalog-v2/line-groups" && req.method === "POST") {
+    try {
+      const group = normalizeCatalogV2LineGroup(await readJson(req));
+      const management = await refreshXuiInboundManagementData();
+      const validKeys = new Set((management.inbounds || []).filter(inbound => inbound.inboundType !== "custom").map(inbound => inbound.key));
+      if (group.inboundKeys.some(key => !validKeys.has(key))) throw new Error("权限组包含不存在或不可用于套餐的入站。");
+      await dataStore.upsertCatalogV2LineGroup(group, { create: true });
+      sendJson(res, 201, group);
+    } catch (error) {
+      sendJson(res, error.code === "23505" ? 409 : 400, { error: error.code === "23505" ? "权限组标识已存在。" : error.message });
+    }
+    return;
+  }
+
+  const catalogV2LineGroupMatch = pathname.match(/^\/api\/catalog-v2\/line-groups\/([^/]+)$/);
+  if (catalogV2LineGroupMatch) {
+    const id = decodeURIComponent(catalogV2LineGroupMatch[1]);
+    if (req.method === "PUT") {
+      try {
+        const payload = await readJson(req);
+        if (String(payload.id || id) !== id) throw new Error("权限组标识创建后不可修改。");
+        const group = normalizeCatalogV2LineGroup({ ...payload, id });
+        const existing = (await dataStore.listCatalogV2LineGroups()).find(item => item.id === id);
+        if (!existing) { sendJson(res, 404, { error: "权限组不存在。" }); return; }
+        if (existing.isEnabled && !group.isEnabled) {
+          const activeProductIds = new Set((await dataStore.listCatalogV2Products()).filter(product => product.isEnabled && product.lineGroupId === id).map(product => product.id));
+          if (users.some(user => activeProductIds.has(user.currentProductId))) throw new Error("仍有用户正在使用关联该权限组的生效套餐，暂时不能停用。");
+        }
+        const management = await refreshXuiInboundManagementData();
+        const validKeys = new Set((management.inbounds || []).filter(inbound => inbound.inboundType !== "custom").map(inbound => inbound.key));
+        if (group.inboundKeys.some(key => !validKeys.has(key))) throw new Error("权限组包含不存在或不可用于套餐的入站。");
+        await dataStore.upsertCatalogV2LineGroup(group);
+        sendJson(res, 200, group);
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+    if (req.method === "DELETE") {
+      try {
+        const result = await dataStore.deleteCatalogV2LineGroup(id);
+        if (!result.rowCount) { sendJson(res, 404, { error: "权限组不存在。" }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (error) { sendJson(res, error.code === "23503" ? 409 : 400, { error: error.code === "23503" ? "权限组仍被商品引用，不能删除。" : error.message }); }
+      return;
+    }
+  }
+
+  if (pathname === "/api/catalog-v2/products" && req.method === "GET") {
+    sendJson(res, 200, await dataStore.listCatalogV2Products());
+    return;
+  }
+
+  if (pathname === "/api/catalog-v2/products" && req.method === "POST") {
+    try {
+      const product = normalizeCatalogV2Product(await readJson(req));
+      const groups = await dataStore.listCatalogV2LineGroups();
+      if (product.lineGroupId && !groups.some(group => group.id === product.lineGroupId && group.isEnabled)) throw new Error("请选择已启用的线路权限组。");
+      const saved = await dataStore.saveCatalogV2Product(product, { create: true });
+      sendJson(res, 201, saved);
+    } catch (error) {
+      sendJson(res, error.code === "23505" ? 409 : 400, { error: error.code === "23505" ? "商品 ID 或周期配置已存在。" : error.message });
+    }
+    return;
+  }
+
+  const catalogV2ProductMatch = pathname.match(/^\/api\/catalog-v2\/products\/([^/]+)$/);
+  if (catalogV2ProductMatch) {
+    const id = decodeURIComponent(catalogV2ProductMatch[1]);
+    if (req.method === "PUT") {
+      try {
+        const payload = await readJson(req);
+        if (String(payload.id || id) !== id) throw new Error("商品 ID 创建后不可修改。");
+        const product = normalizeCatalogV2Product({ ...payload, id });
+        const groups = await dataStore.listCatalogV2LineGroups();
+        if (product.lineGroupId && !groups.some(group => group.id === product.lineGroupId && group.isEnabled)) throw new Error("请选择已启用的线路权限组。");
+        sendJson(res, 200, await dataStore.saveCatalogV2Product(product));
+      } catch (error) { sendJson(res, error.statusCode || (error.code === "23505" ? 409 : 400), { error: error.message }); }
+      return;
+    }
+    if (req.method === "DELETE") {
+      try {
+        const result = await dataStore.deleteCatalogV2Product(id);
+        if (!result.rowCount) { sendJson(res, 404, { error: "商品不存在。" }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (error) { sendJson(res, error.code === "23503" ? 409 : 400, { error: error.code === "23503" ? "商品已有库存预占记录，不能删除。" : error.message }); }
+      return;
+    }
+  }
+
   if (pathname === "/api/pricing" && req.method === "GET") {
     sendJson(res, 200, publicPricing());
     return;
@@ -11329,6 +11509,8 @@ module.exports = Object.assign(requestHandler, {
   effectiveXuiInboundIds,
   normalizeXuiInboundMetadata,
   normalizeXuiInboundEnable,
+  normalizeCatalogV2LineGroup,
+  normalizeCatalogV2Product,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
   summarizeXuiInboundProbes,
