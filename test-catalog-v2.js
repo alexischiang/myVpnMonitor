@@ -66,7 +66,7 @@ async function main() {
 
     let products = await store.listCatalogV2Products();
     const recurringQuote = resolvePurchase(products, { productId: ids.recurring, periodId: "30d", trafficSteps: 2 }, { taxRate: 3 });
-    assert.deepEqual([recurringQuote.amount, recurringQuote.trafficGb, recurringQuote.duration, recurringQuote.devices], [14.42, 120, "monthly", 2]);
+    assert.deepEqual([recurringQuote.baseAmount, recurringQuote.trafficCustomizationAmount, recurringQuote.originalAmount, recurringQuote.amount, recurringQuote.trafficGb, recurringQuote.duration, recurringQuote.devices], [10, 4, 14, 14.42, 120, "monthly", 2]);
     const lifetimeQuote = resolvePurchase(products, { productId: ids.lifetime }, { taxRate: 3 });
     assert.deepEqual([lifetimeQuote.amount, lifetimeQuote.lifetime, lifetimeQuote.trafficGb], [51.5, true, 200]);
     assert.throws(() => resolvePurchase(products, { productId: ids.traffic }, { taxRate: 3 }), /周期性套餐/);

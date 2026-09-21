@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-20
-- Current Objective: 完成V2套餐同步与订单补关联部署
+- Last Updated: 2026-09-21
+- Current Objective: 发布访客真实IP与V2流量定制金额修复
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -232,8 +232,14 @@
 
 - 2026-09-20: main 646d835已推送；production 0c30483已推送；GitHub Actions 35513041695成功，VPS构建、发布、PM2重启及健康检查通过
 
+- 2026-09-21: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；Playwright 桌面/390x844 无 console/page errors；线上 nginx -t、22 个 Cloudflare 网段、真实 IP 访问日志和服务健康检查通过
+
+- 2026-09-21: npm run verify通过；Playwright桌面和390x844验证基础价49、流量定制154、小计203，console_errors/page_errors为空
+
+- 2026-09-21: npm run agent:init与npm run verify通过；feature_list.json已记录2026-09-21浏览器验收
+
 ## Next Session
 
-- Files: none
+- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `feature_list.json`, `server.js`, `src/components/features/public-pages.tsx`, `test-catalog-v2.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 持续观察catalog-v2:xui-sync日志；真实订单补关联前先核对用户、账单与后续订单
+- Recommended Next Step: 推送production后观察GitHub Actions部署直至完成

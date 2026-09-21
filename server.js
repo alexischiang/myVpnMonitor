@@ -1503,6 +1503,24 @@ function requestIp(req) {
     .split(",")[0].trim().replace(/^::ffff:/, "");
 }
 
+async function lookupIpInfo(ip, { signal, fetchImpl = fetch } = {}) {
+  if (!net.isIP(ip)) throw new Error("无效的访客 IP");
+  const response = await fetchImpl(`https://ipwho.is/${encodeURIComponent(ip)}`, { signal, headers: { Accept: "application/json" } });
+  const payload = await response.json();
+  if (!response.ok || payload?.success === false || !payload?.ip) throw new Error(`IP 信息服务返回 ${response.status}`);
+  return {
+    ip: payload.ip,
+    asn: payload.connection?.asn,
+    asOrganization: payload.connection?.org || payload.connection?.isp,
+    country: payload.country,
+    countryCode: payload.country_code,
+    region: payload.region,
+    regionCode: payload.region_code,
+    city: payload.city,
+    timezone: payload.timezone?.id
+  };
+}
+
 function makePaymentOrderId() {
   return `${Date.now()}${crypto.randomInt(1000, 9999)}`;
 }
@@ -2065,6 +2083,7 @@ function trafficPackQuote(account) {
     devices: 0,
     trafficGb,
     originalAmount: price,
+    trafficCustomizationAmount: 0,
     discountAmount: 0,
     vipLevel: "vip1",
     vipDiscountPercent: 0,
@@ -2115,6 +2134,7 @@ function homeIpQuote(account, requestedOptionId = "") {
     devices: 0,
     originalAmount: amount,
     baseAmount: amount,
+    trafficCustomizationAmount: 0,
     discountAmount: 0,
     vipLevel: "vip1",
     vipDiscountPercent: 0,
@@ -2531,6 +2551,7 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
     optionId: String(optionId),
     baseAmount,
     originalAmount,
+    trafficCustomizationAmount: originalAmount - baseAmount,
     trafficTier,
     trafficBaseGb: trafficConfig.baseGb,
     trafficGb,
@@ -8859,10 +8880,7 @@ async function handleApi(req, res, pathname) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
     try {
-      const response = await fetch("https://my.ippure.com/v1/info", { signal: controller.signal, headers: { Accept: "application/json" } });
-      const payload = await response.json();
-      if (!response.ok || !payload?.ip) throw new Error(`IP 信息服务返回 ${response.status}`);
-      sendJson(res, 200, payload);
+      sendJson(res, 200, await lookupIpInfo(requestIp(req), { signal: controller.signal }));
     } catch (error) {
       sendJson(res, 502, { error: error.name === "AbortError" ? "IP 信息服务响应超时。" : "IP 信息服务暂不可用。" });
     } finally {
@@ -11792,6 +11810,8 @@ module.exports = Object.assign(requestHandler, {
   paymentConfigReady,
   paymentStatusError,
   paymentAmountError,
+  requestIp,
+  lookupIpInfo,
   paymentOrderExpiresAt,
   isPaymentOrderExpired,
   normalizeSalesSettings,
