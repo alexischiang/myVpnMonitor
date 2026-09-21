@@ -48,6 +48,7 @@ function resolvePurchase(products, input = {}, context = {}) {
   let duration = product.type === "lifetime_plan" ? "lifetime" : "";
   let periodId = "";
   let trafficSteps = 0;
+  let trafficCustomizationAmountCents = 0;
 
   if (product.type === "recurring_plan") {
     periodId = String(input.periodId || "").trim();
@@ -63,7 +64,8 @@ function resolvePurchase(products, input = {}, context = {}) {
       if (!product.trafficCustomization.enabled) throw new Error("该商品未启用流量定制。");
       if (trafficBytes === null) throw new Error("无限流量规格不能增加流量档位。");
       if (trafficSteps > product.trafficCustomization.maxSteps) throw new Error("流量档数超过商品上限。");
-      priceCents += trafficSteps * product.trafficCustomization.stepPriceCents;
+      trafficCustomizationAmountCents = trafficSteps * product.trafficCustomization.stepPriceCents;
+      priceCents += trafficCustomizationAmountCents;
       trafficBytes += trafficSteps * product.trafficCustomization.stepBytes;
     }
   }
@@ -110,7 +112,8 @@ function resolvePurchase(products, input = {}, context = {}) {
     devices: deviceLimit,
     quantity,
     inventoryQuantity: quantity,
-    baseAmount: money(unitPriceCents),
+    baseAmount: money(unitPriceCents - trafficCustomizationAmountCents),
+    trafficCustomizationAmount: money(trafficCustomizationAmountCents),
     originalAmount: money(subtotalCents),
     subtotal: money(subtotalCents),
     taxRate,

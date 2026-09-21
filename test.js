@@ -35,6 +35,8 @@ const {
   paymentConfigReady,
   paymentStatusError,
   paymentAmountError,
+  requestIp,
+  lookupIpInfo,
   paymentOrderExpiresAt,
   isPaymentOrderExpired,
   normalizeSalesSettings,
@@ -94,6 +96,19 @@ const {
   clearSubscriptionSourceState,
   ticketTelegramText
 } = require("./server");
+
+assert.strictEqual(requestIp({ headers: { "x-forwarded-for": "203.0.113.8, 172.64.0.1" }, socket: { remoteAddress: "127.0.0.1" } }), "203.0.113.8");
+const ipInfoPromise = lookupIpInfo("203.0.113.8", {
+  fetchImpl: async url => {
+    assert.strictEqual(url, "https://ipwho.is/203.0.113.8");
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ip: "203.0.113.8", success: true, country: "United States", country_code: "US", region: "California", region_code: "CA", city: "Los Angeles", connection: { asn: 64500, org: "Example ISP" }, timezone: { id: "America/Los_Angeles" } })
+    };
+  }
+}).then(info => assert.deepStrictEqual(info, { ip: "203.0.113.8", asn: 64500, asOrganization: "Example ISP", country: "United States", countryCode: "US", region: "California", regionCode: "CA", city: "Los Angeles", timezone: "America/Los_Angeles" }));
+const invalidIpInfoPromise = assert.rejects(() => lookupIpInfo("not-an-ip"), /无效的访客 IP/);
 
 assert.deepStrictEqual(normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", inboundKeys: ["node-a:1", "node-a:1", "invalid"], sortOrder: 10 }), { id: "premium-1", name: "精品线路", isEnabled: true, sortOrder: 10, inboundKeys: ["node-a:1"] });
 assert.throws(() => normalizeCatalogV2LineGroup({ id: "UPPER", name: "无效" }), /小写字母/);
@@ -389,6 +404,7 @@ assert.strictEqual(paymentQuote("pro-lifetime").trafficGb, 200);
 assert.deepStrictEqual(lifetimeQuote.cycles.map(cycle => cycle.optionId), ["basic-lifetime"]);
 const customTrafficQuote = paymentQuote("basic-30", "", undefined, "vip1", "", 3);
 assert.deepStrictEqual([customTrafficQuote.baseAmount, customTrafficQuote.originalAmount, customTrafficQuote.trafficTier, customTrafficQuote.trafficGb], [39, 78, 3, 150]);
+assert.strictEqual(customTrafficQuote.trafficCustomizationAmount, 39);
 assert.throws(() => paymentQuote("basic-30", "", undefined, "vip1", "", 11), /1-10/);
 assert.strictEqual(planTrafficBytes({ activeGroup: "basic", duration: "monthly", purchasedTrafficGb: 150 }), 150 * gib);
 assert.strictEqual(planTrafficBytes({ activeGroup: "basic", duration: "lifetime", purchasedTrafficGb: 300 }), 100 * gib);
@@ -698,6 +714,8 @@ assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chr
 
 let migrationRuns = 0;
 Promise.all([
+  ipInfoPromise,
+  invalidIpInfoPromise,
   centralTrafficPromise,
   aliasedCentralTrafficPromise,
   localMirrorTrafficPromise,

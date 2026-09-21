@@ -502,32 +502,36 @@
     {
       "id": "account-ip-info-card",
       "name": "Show visitor IP information",
-      "description": "Display the current visitor network IP, organization, location, and fraud score in the user account overview.",
+      "description": "Display the current visitor network IP, organization, and location in the user account overview.",
       "status": "passing",
       "ui": true,
       "dependencies": [],
       "done_criteria": [
         "The account overview contains a dedicated visitor IP information card.",
         "The card handles loading, successful data, and API error states.",
-        "The protected server endpoint fetches IP information from my.ippure.com with a timeout.",
+        "The protected server endpoint resolves the Nginx-forwarded visitor IP through an explicit-IP lookup with a timeout.",
         "Users without an active subscription see only the purchase-service action instead of empty traffic and plan-detail sections.",
         "Known Chinese carriers and IP locations are rendered in Chinese."
       ],
       "verification": [
         "2026-09-12: npm run check and git diff --check passed.",
         "2026-09-12: Browser verification rendered the IP card from the protected API payload at desktop and 390px mobile widths with no horizontal overflow, console errors, or page errors.",
-        "2026-09-12: Browser verification confirmed inactive accounts hide traffic and plan details while keeping one purchase-service action; active accounts retain both sections."
+        "2026-09-12: Browser verification confirmed inactive accounts hide traffic and plan details while keeping one purchase-service action; active accounts retain both sections.",
+        "2026-09-21: npm run verify:fast passed; regression coverage confirms the first Nginx-forwarded address is used for an explicit IP lookup and invalid addresses are rejected.",
+        "2026-09-21: Nginx loaded all 22 official Cloudflare ranges, passed nginx -t, reloaded cleanly, and a public probe was logged with the visitor address rather than a Cloudflare or loopback address.",
+        "2026-09-21: Playwright verified the account IP card at desktop and 390x844 with the expected IP, translated organization and location, no horizontal overflow, and no console or page errors."
       ],
       "browser_verification": {
         "routes": ["/account"],
         "interactions": [
           "Opened the authenticated user overview with the IP-info response available.",
-          "Confirmed the IP address, organization, location, and fraud score are visible.",
-          "Checked desktop and 390px mobile layouts for horizontal overflow."
+          "Confirmed the IP address, organization, and location are visible.",
+          "Checked desktop and 390px mobile layouts for horizontal overflow.",
+          "Mocked the corrected explicit-IP response and confirmed 14.216.17.81, 中国电信, and 中国 · 广东省 · 深圳 render at desktop and 390x844."
         ],
         "console_errors": [],
         "page_errors": [],
-        "checked_at": "2026-09-12"
+        "checked_at": "2026-09-21"
       }
     },
     {
@@ -738,10 +742,11 @@
         "2026-09-20: Isolated npm run verify passed; payment regression covers expired-to-lifetime V2 fulfillment, old device-limit replacement, missing-client recreation, missing-email relinking, stale missing-state clearing, and administrator-only manual sync.",
         "2026-09-20: Playwright verified V2 user detail sync dialog and mocked submit at desktop and 390x844, with no console or page errors or mobile horizontal overflow.",
         "2026-09-20: Isolated npm run verify passed; payment regression verified admin-only completed V2 order binding repair, conflict protection, idempotence, and no duplicate bill or wallet settlement.",
-        "2026-09-20: Playwright verified order-detail repair confirmation and mocked success at 1280px and 390px without overflow or console/page errors; mocked conflict displayed an actionable error and retained the repair button."
+        "2026-09-20: Playwright verified order-detail repair confirmation and mocked success at 1280px and 390px without overflow or console/page errors; mocked conflict displayed an actionable error and retained the repair button.",
+        "2026-09-21: npm run verify passed; V2 quote regression confirmed baseAmount 10, trafficCustomizationAmount 4 and originalAmount 14 for two added traffic steps."
       ],
       "browser_verification": {
-        "routes": ["/pricing", "/catalog-v2", "/users/detail/:id", "/orders/:id"],
+        "routes": ["/pricing", "/catalog-v2", "/users/detail/:id", "/orders/:id", "/account/plans/checkout"],
         "interactions": [
           "Verified the public storefront reads V2 only and shows a safe empty state when no V2 products are available.",
           "Logged in as administrator, opened 商品管理, and confirmed the legacy product-management navigation entry is absent.",
@@ -749,11 +754,12 @@
           "Repeated public pricing and product-management checks at 390x844 and confirmed document scroll width did not exceed client width.",
           "Opened an active user's manual-payment dialog with a mocked enabled, unlisted V2 product and quote; confirmed the selector, original amount, and collection amount render on desktop and 390x844 without submitting payment.",
           "Opened a mocked V2 lifetime user's detail at desktop and 390x844, confirmed the sync button is visible even with a missing client, opened its confirmation dialog and submitted to a mocked endpoint. Verified POST /api/users/test-v2/xui-sync and no mobile horizontal overflow; no real 3x-ui mutation.",
-          "Opened the completed V2 order detail at 1280px and 390px, confirmed the repair dialog, mocked POST success and confirmed the repair button disappeared; a separate mocked conflict showed the error and kept retry available. No real order or 3x-ui mutation."
+          "Opened the completed V2 order detail at 1280px and 390px, confirmed the repair dialog, mocked POST success and confirmed the repair button disappeared; a separate mocked conflict showed the error and kept retry available. No real order or 3x-ui mutation.",
+          "Moved the checkout traffic slider from 100 GB to 800 GB at 1280px and 390x844; the summary showed base price ¥49.00, traffic customization +¥154.00 and subtotal ¥203.00 without mobile horizontal overflow."
         ],
         "console_errors": [],
         "page_errors": [],
-        "checked_at": "2026-09-20"
+        "checked_at": "2026-09-21"
       }
     },
     {
