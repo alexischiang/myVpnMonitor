@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-22
-- Current Objective: 发布V2流量权益单一事实来源与管理员单向赠送流量
+- Last Updated: 2026-09-23
+- Current Objective: 发布V2权限组历史失效入站自动清理修复
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -248,8 +248,12 @@
 
 - 2026-09-22: npm run agent:init通过；npm run verify的应用/文档构建与核心测试通过，支付测试因未直接配置TEST_DATABASE_URL在安全门停止；npm run verify:catalog-v2隔离PostgreSQL完整通过并清理临时schema；2026-09-22浏览器验收记录无console/page errors
 
+- 2026-09-23: npm test、npm run verify:fast、git diff --check 通过；回归覆盖历史失效 key 自动清理与新无效 key 继续拒绝
+
+- 2026-09-23: npm run agent:init、npm run verify、git diff --check通过
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 提交并推送main，合并origin/production后推送production，并观察GitHub Actions部署直至完成
+- Recommended Next Step: 推送production后观察GitHub Actions部署直至完成

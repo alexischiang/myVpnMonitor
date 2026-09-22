@@ -142,6 +142,13 @@ function normalizeCatalogV2LineGroup(input = {}) {
   return { id: normalizeCatalogV2Id(input.id, "权限组标识"), name, isEnabled: input.isEnabled !== false, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "权限组排序" }), inboundKeys };
 }
 
+function validateCatalogV2LineGroupInbounds(group, inbounds, existing = null) {
+  const validKeys = new Set((inbounds || []).filter(inbound => inbound.inboundType !== "custom").map(inbound => inbound.key));
+  const existingKeys = new Set(existing?.inboundKeys || []);
+  if (group.inboundKeys.some(key => !validKeys.has(key) && !existingKeys.has(key))) throw new Error("权限组包含不存在或不可用于套餐的入站。");
+  return { ...group, inboundKeys: group.inboundKeys.filter(key => validKeys.has(key)) };
+}
+
 function normalizeCatalogV2Product(input = {}) {
   const type = ["recurring_plan", "lifetime_plan", "addon"].includes(input.type) ? input.type : "";
   if (!type) throw new Error("商品类型无效。");
@@ -10429,10 +10436,9 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/catalog-v2/line-groups" && req.method === "POST") {
     try {
-      const group = normalizeCatalogV2LineGroup(await readJson(req));
+      let group = normalizeCatalogV2LineGroup(await readJson(req));
       const management = await refreshXuiInboundManagementData();
-      const validKeys = new Set((management.inbounds || []).filter(inbound => inbound.inboundType !== "custom").map(inbound => inbound.key));
-      if (group.inboundKeys.some(key => !validKeys.has(key))) throw new Error("权限组包含不存在或不可用于套餐的入站。");
+      group = validateCatalogV2LineGroupInbounds(group, management.inbounds);
       await dataStore.upsertCatalogV2LineGroup(group, { create: true });
       sendJson(res, 201, group);
     } catch (error) {
@@ -10448,7 +10454,7 @@ async function handleApi(req, res, pathname) {
       try {
         const payload = await readJson(req);
         if (String(payload.id || id) !== id) throw new Error("权限组标识创建后不可修改。");
-        const group = normalizeCatalogV2LineGroup({ ...payload, id });
+        let group = normalizeCatalogV2LineGroup({ ...payload, id });
         const existing = (await dataStore.listCatalogV2LineGroups()).find(item => item.id === id);
         if (!existing) { sendJson(res, 404, { error: "权限组不存在。" }); return; }
         if (existing.isEnabled && !group.isEnabled) {
@@ -10456,8 +10462,7 @@ async function handleApi(req, res, pathname) {
           if (users.some(user => activeProductIds.has(user.currentProductId))) throw new Error("仍有用户正在使用关联该权限组的生效套餐，暂时不能停用。");
         }
         const management = await refreshXuiInboundManagementData();
-        const validKeys = new Set((management.inbounds || []).filter(inbound => inbound.inboundType !== "custom").map(inbound => inbound.key));
-        if (group.inboundKeys.some(key => !validKeys.has(key))) throw new Error("权限组包含不存在或不可用于套餐的入站。");
+        group = validateCatalogV2LineGroupInbounds(group, management.inbounds, existing);
         await dataStore.upsertCatalogV2LineGroup(group);
         sendJson(res, 200, group);
       } catch (error) { sendJson(res, 400, { error: error.message }); }
@@ -11913,6 +11918,7 @@ module.exports = Object.assign(requestHandler, {
   normalizeXuiInboundMetadata,
   normalizeXuiInboundEnable,
   normalizeCatalogV2LineGroup,
+  validateCatalogV2LineGroupInbounds,
   normalizeCatalogV2Product,
   xuiActiveInboundKeys,
   probeTcpEndpoint,

@@ -66,6 +66,7 @@ const {
   normalizeXuiInboundMetadata,
   normalizeXuiInboundEnable,
   normalizeCatalogV2LineGroup,
+  validateCatalogV2LineGroupInbounds,
   normalizeCatalogV2Product,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
@@ -114,6 +115,8 @@ const invalidIpInfoPromise = assert.rejects(() => lookupIpInfo("not-an-ip"), /�
 
 assert.deepStrictEqual(normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", inboundKeys: ["node-a:1", "node-a:1", "invalid"], sortOrder: 10 }), { id: "premium-1", name: "精品线路", isEnabled: true, sortOrder: 10, inboundKeys: ["node-a:1"] });
 assert.throws(() => normalizeCatalogV2LineGroup({ id: "UPPER", name: "无效" }), /小写字母/);
+assert.deepStrictEqual(validateCatalogV2LineGroupInbounds({ inboundKeys: ["node-a:1", "deleted-node:2"] }, [{ key: "node-a:1", inboundType: "package" }], { inboundKeys: ["node-a:1", "deleted-node:2"] }), { inboundKeys: ["node-a:1"] });
+assert.throws(() => validateCatalogV2LineGroupInbounds({ inboundKeys: ["node-a:1", "unknown-node:2"] }, [{ key: "node-a:1", inboundType: "package" }], { inboundKeys: ["node-a:1"] }), /不存在或不可用于套餐/);
 const catalogV2Product = normalizeCatalogV2Product({ id: "pro-v2", type: "recurring_plan", isEnabled: true, isForSale: false, stock: 0, name: "PRO", lineGroupId: "premium-1", features: [{ label: "优化线路", isIncluded: true }], periods: [{ id: "30d", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3, priceCents: 4900 }], trafficCustomization: { enabled: true, stepBytes: 50 * 1024 ** 3, stepPriceCents: 2000, maxSteps: 10 } });
 assert.strictEqual(catalogV2Product.isForSale, false);
 assert.strictEqual(catalogV2Product.periods[0].priceCents, 4900);

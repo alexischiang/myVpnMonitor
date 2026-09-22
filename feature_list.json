@@ -794,7 +794,8 @@
         "2026-09-19: Kept recurring-period rows mounted while editing their identifiers; browser verification entered 30d one character at a time with focus retained after every character.",
         "2026-09-19: npm run verify:catalog-v2 passed in a disposable PostgreSQL schema: payment and wallet regression plus recurring, lifetime, automatic add-on and manual add-on creation/purchase, inventory reservation lifecycle, sold-out behavior, late-payment safety, migration dry-run/apply/replay and unmapped-user blocking all passed; the schema was removed afterward.",
         "2026-09-20: npm run check passed; browser verification confirmed new-product defaults, generated period identifiers, ascending period sort orders, and migrated/unmigrated user-detail states without console or page errors.",
-        "2026-09-20: Moved V2 line-group management into inbound management; npm run check, npm run verify:fast and git diff --check passed. Playwright verified V2-only cards/filtering, create/edit two-column dialogs, legacy-route redirect and 390px layout without console or page errors."
+        "2026-09-20: Moved V2 line-group management into inbound management; npm run check, npm run verify:fast and git diff --check passed. Playwright verified V2-only cards/filtering, create/edit two-column dialogs, legacy-route redirect and 390px layout without console or page errors.",
+        "2026-09-23: Existing line-group updates now remove inbound keys that became missing or custom while still rejecting newly submitted invalid keys; npm test, npm run verify:fast and git diff --check passed."
       ],
       "browser_verification": {
         "routes": ["/catalog-v2", "/catalog-v2/products/new", "/catalog-v2/products/v2-browser-product", "/catalog-v2/line-groups", "/catalog-v2/line-groups/new", "/users/detail/ce6fb1f9-5e6a-4e2b-a24d-5168cb46e42d", "/xui-inbounds"],
