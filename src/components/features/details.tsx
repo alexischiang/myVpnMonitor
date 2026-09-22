@@ -269,6 +269,11 @@ export function UserDetailPage() {
   const [giftBalanceNote, setGiftBalanceNote] = React.useState("")
   const [giftBalanceError, setGiftBalanceError] = React.useState("")
   const [giftBalanceSaving, setGiftBalanceSaving] = React.useState(false)
+  const [trafficGiftOpen, setTrafficGiftOpen] = React.useState(false)
+  const [trafficGiftGb, setTrafficGiftGb] = React.useState("")
+  const [trafficGiftNote, setTrafficGiftNote] = React.useState("")
+  const [trafficGiftError, setTrafficGiftError] = React.useState("")
+  const [trafficGiftSaving, setTrafficGiftSaving] = React.useState(false)
   const [manualPaymentOpen, setManualPaymentOpen] = React.useState(false)
   const [manualPaymentOption, setManualPaymentOption] = React.useState("")
   const [manualPaymentQuote, setManualPaymentQuote] = React.useState<ManualPaymentQuote | null>(null)
@@ -525,6 +530,29 @@ export function UserDetailPage() {
       toast.error(error instanceof Error ? error.message : "赠送余额失败")
     } finally {
       setGiftBalanceSaving(false)
+    }
+  }
+
+  async function giftTraffic(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const trafficGb = Number(trafficGiftGb)
+    if (!Number.isFinite(trafficGb) || trafficGb <= 0 || trafficGb > 102400) {
+      setTrafficGiftError("请输入大于 0 GB 且不超过 100 TB 的流量。")
+      return
+    }
+    setTrafficGiftSaving(true)
+    setTrafficGiftError("")
+    try {
+      await postJson(`/api/users/${user.id}/traffic-gift`, { trafficGb, note: trafficGiftNote })
+      await refreshUserDetails()
+      setTrafficGiftOpen(false)
+      setTrafficGiftGb("")
+      setTrafficGiftNote("")
+      toast.success(`已单向赠送 ${trafficGb} GB 流量`)
+    } catch (error) {
+      setTrafficGiftError(error instanceof Error ? error.message : "赠送流量失败")
+    } finally {
+      setTrafficGiftSaving(false)
     }
   }
 
@@ -819,6 +847,16 @@ export function UserDetailPage() {
           </form>
         </DialogContent>
       </Dialog>
+      <Dialog open={trafficGiftOpen} onOpenChange={setTrafficGiftOpen}>
+        <DialogContent>
+          <form className="grid gap-4" onSubmit={giftTraffic}>
+            <DialogHeader><DialogTitle>单向赠送流量</DialogTitle><DialogDescription>只会增加用户额度，不能覆盖或扣减。最终额度始终由本地套餐、已购流量包和赠送记录计算，不读取 3x-ui 额度。</DialogDescription></DialogHeader>
+            <Field><FieldLabel htmlFor="traffic-gift-gb">赠送流量（GB）</FieldLabel><Input id="traffic-gift-gb" type="number" min="0.01" max="102400" step="0.01" value={trafficGiftGb} onChange={event => { setTrafficGiftGb(event.target.value); setTrafficGiftError("") }} aria-invalid={Boolean(trafficGiftError)} autoFocus required /><FieldError>{trafficGiftError}</FieldError></Field>
+            <Field><FieldLabel htmlFor="traffic-gift-note">备注</FieldLabel><Input id="traffic-gift-note" maxLength={200} placeholder="可选" value={trafficGiftNote} onChange={event => setTrafficGiftNote(event.target.value)} /></Field>
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={trafficGiftSaving}>取消</Button></DialogClose><Button type="submit" disabled={trafficGiftSaving}>{trafficGiftSaving ? <Loader2 className="animate-spin" /> : <Gift />}{trafficGiftSaving ? "赠送中..." : "确认单向赠送"}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
         <DialogContent>
           <form className="grid gap-4" onSubmit={sendAccountInvite} noValidate>
@@ -994,6 +1032,7 @@ export function UserDetailPage() {
                 {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => void openCustomInbounds()}><Network />管理个人定制入站</Button> : null}
                 {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={openPlanDialog}><ArrowRightLeft />更改套餐</Button> : null}
                 {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => setTrafficResetOpen(true)}><RotateCcw />重置流量</Button> : null}
+                {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={() => { setTrafficGiftError(""); setTrafficGiftOpen(true) }}><Gift />单向赠送流量</Button> : null}
                 {user.lineType === "self_hosted" && (user.productCatalogVersion === 2 || user.xuiClientPresent === false) ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)} disabled={xuiRecoverSaving}><RefreshCw />{user.productCatalogVersion === 2 ? "同步V2套餐到3x-ui" : "恢复3x-ui客户端"}</Button> : null}
                 {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
                 <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>

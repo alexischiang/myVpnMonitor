@@ -67,7 +67,7 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
 
   const preview = {
     email: user.email || "将创建新的 Client",
-    totalBytes: user.xuiTrafficLimitBytes || 100 * 1024 ** 3,
+    totalBytes: user.xuiTrafficLimitBytes ?? 0,
     limitIp: user.deviceLimit ?? user.xuiIpLimit ?? 0,
     expiresAt: user.expiresAt || "",
     resetDay: user.xuiTrafficResetAnchorDay || (user.purchasedAt ? new Date(user.purchasedAt).getDate() : new Date().getDate())
@@ -129,7 +129,7 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
         {mode === "import" ? <Item variant="outline">
           <ItemContent><ItemTitle>{preview.email}</ItemTitle><ItemGroup className="mt-2 grid-cols-2"><Item variant="muted" size="sm"><ItemContent><ItemDescription>流量限额</ItemDescription><ItemTitle>{formatBytes(preview.totalBytes)}</ItemTitle></ItemContent></Item><Item variant="muted" size="sm"><ItemContent><ItemDescription>可使用设备数</ItemDescription><ItemTitle>{preview.limitIp || "不限"}</ItemTitle></ItemContent></Item><Item variant="muted" size="sm"><ItemContent><ItemDescription>到期日</ItemDescription><ItemTitle>{preview.expiresAt ? formatDate(preview.expiresAt) : "不限"}</ItemTitle></ItemContent></Item><Item variant="muted" size="sm"><ItemContent><ItemDescription>流量重置日</ItemDescription><ItemTitle>每月 {preview.resetDay} 日</ItemTitle></ItemContent></Item></ItemGroup></ItemContent>
         </Item> : selectedClient ? <Item variant="outline">
-          <ItemContent><ItemTitle>{selectedClient.email}</ItemTitle><ItemDescription>关联后邮箱设为 {user.email} · {selectedClient.totalBytes ? `原额度 ${formatBytes(selectedClient.totalBytes)}` : "原额度不限，将使用 100 GB"} · 可使用设备数 {selectedClient.limitIp || "不限"} · {selectedClient.expiryTime ? formatDate(new Date(selectedClient.expiryTime).toISOString()) : "永不过期"}</ItemDescription></ItemContent>
+          <ItemContent><ItemTitle>{selectedClient.email}</ItemTitle><ItemDescription>关联后邮箱设为 {user.email} · 3x-ui 原额度 {selectedClient.totalBytes ? formatBytes(selectedClient.totalBytes) : "不限"}，将按 App 当前套餐额度 {preview.totalBytes ? formatBytes(preview.totalBytes) : "不限流量"} 覆盖 · 可使用设备数 {selectedClient.limitIp || "不限"} · {selectedClient.expiryTime ? formatDate(new Date(selectedClient.expiryTime).toISOString()) : "永不过期"}</ItemDescription></ItemContent>
         </Item> : null}
         <Alert><Network /><AlertDescription>确认后旧订阅池停止交付；3x-ui 原生额度改为不限，由后台按节点倍率计费、停用并按购买日重置。</AlertDescription></Alert>
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
