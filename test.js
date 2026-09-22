@@ -19,6 +19,7 @@ const {
   recurringPlanOption,
   resolvePlanChangeOption,
   planTrafficBytes,
+  xuiTrafficLimitBytes,
   planChangeState,
   restorePlanChangeState,
   bindUserProduct,
@@ -83,6 +84,7 @@ const {
   xuiBillingPayload,
   xuiMonthlyResetAt,
   legacyMigrationTrafficLimitBytes,
+  initializeXuiTrafficSchedule,
   withXuiUserMigrationLock,
   xuiNodeBaseUrl,
   sealXuiNodeToken,
@@ -230,6 +232,8 @@ const missingXuiUser = { xuiClientPresent: true, xuiLastError: "" };
 assert.deepStrictEqual(markMissingXuiClients(new Map([["missing@example.com", missingXuiUser]]), new Set(), "2026-08-22T00:00:00.000Z"), [missingXuiUser]);
 assert.deepStrictEqual(missingXuiUser, { xuiClientPresent: false, xuiClientMissingAt: "2026-08-22T00:00:00.000Z", xuiLastError: "3x-ui Client 已被删除或不存在。" });
 const trafficPackUser = {
+  productCatalogVersion: 2,
+  v2ProductSnapshot: { trafficBytes: 700 * gib },
   xuiTrafficCycleKey: "cycle-1",
   xuiLastTraffic: { usedBytes: 55 * gib, remainingBytes: 645 * gib, totalBytes: 700 * gib },
   xuiWeightedTraffic: { usedBytes: 55 * gib, remainingBytes: 645 * gib, totalBytes: 700 * gib, depleted: false }
@@ -239,6 +243,41 @@ assert.strictEqual(trafficPackUser.xuiTrafficLimitBytes, 800 * gib);
 assert.strictEqual(trafficPackUser.xuiLastTraffic.remainingBytes, 745 * gib);
 assert.deepStrictEqual(grantTrafficPack(trafficPackUser, "order-1"), { replayed: true });
 assert.strictEqual(trafficPackUser.xuiTrafficLimitBytes, 800 * gib);
+
+const linkedXuiUser = {
+  productCatalogVersion: 2,
+  v2ProductSnapshot: { trafficBytes: 50 * gib },
+  xuiTrafficLimitBytes: 80 * gib,
+  purchasedAt: "2026-08-22T00:00:00.000Z"
+};
+initializeXuiTrafficSchedule(linkedXuiUser, { totalGB: 900 * gib }, "link", Date.parse("2026-09-22T00:00:00.000Z"));
+assert.strictEqual(linkedXuiUser.xuiTrafficLimitBytes, 50 * gib, "an unexplained cached quota must not override product entitlements");
+
+const linkedXuiUserWithAdminGift = {
+  productCatalogVersion: 2,
+  v2ProductSnapshot: { trafficBytes: 50 * gib },
+  xuiTrafficLimitBytes: 900 * gib,
+  xuiAdminGiftBytes: 500 * gib,
+  xuiAdminTrafficGifts: [
+    { id: "gift-1", kind: "admin_traffic_gift", bytes: 10 * gib, createdAt: "2026-09-22T00:00:00.000Z" },
+    { id: "gift-2", kind: "admin_traffic_gift", bytes: 20 * gib, createdAt: "2026-09-22T01:00:00.000Z" },
+    { id: "invalid-negative-gift", kind: "admin_traffic_gift", bytes: -100 * gib, createdAt: "2026-09-22T02:00:00.000Z" },
+    { id: "untrusted-shape", bytes: 500 * gib, createdAt: "2026-09-22T03:00:00.000Z" }
+  ],
+  purchasedAt: "2026-08-22T00:00:00.000Z"
+};
+initializeXuiTrafficSchedule(linkedXuiUserWithAdminGift, { totalGB: 900 * gib }, "link", Date.parse("2026-09-22T00:00:00.000Z"));
+assert.strictEqual(linkedXuiUserWithAdminGift.xuiTrafficLimitBytes, 80 * gib, "only the product and explicit admin gift may contribute to quota");
+
+const linkedXuiUserWithoutManagedQuota = {
+  productCatalogVersion: 2,
+  v2ProductSnapshot: { trafficBytes: 50 * gib },
+  purchasedAt: "2026-08-22T00:00:00.000Z"
+};
+initializeXuiTrafficSchedule(linkedXuiUserWithoutManagedQuota, { totalGB: 900 * gib }, "link", Date.parse("2026-09-22T00:00:00.000Z"));
+assert.strictEqual(linkedXuiUserWithoutManagedQuota.xuiTrafficLimitBytes, 50 * gib, "a missing local quota must be derived from the app plan snapshot, not 3x-ui");
+assert.strictEqual(xuiTrafficLimitBytes({ productCatalogVersion: 2, v2ProductSnapshot: { trafficBytes: 50 * gib } }, { totalGB: 900 * gib }), 50 * gib);
+assert.throws(() => xuiTrafficLimitBytes({}, { totalGB: 900 * gib }), /App 本地缺少可验证的套餐流量权益/);
 
 assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: 20 }).status, "high");
 assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: 21 }).status, "adjust");
@@ -727,7 +766,7 @@ Promise.all([
       return new Response("proxies: []\n", { status: 200, headers: { "content-type": "text/yaml" } });
     };
     try {
-      const user = { id: "stored-user", xuiSubId: "stored/sub id", expiresAt: "2099-01-01T00:00:00.000Z", xuiLastTraffic: { uploadBytes: 1, downloadBytes: 2, totalBytes: 3 }, showUserInfo: false };
+      const user = { id: "stored-user", xuiSubId: "stored/sub id", expiresAt: "2099-01-01T00:00:00.000Z", productCatalogVersion: 2, v2ProductSnapshot: { trafficBytes: 3 }, xuiLastTraffic: { uploadBytes: 1, downloadBytes: 2, totalBytes: 3 }, showUserInfo: false };
       assert.ok(selfHostedSubscriptionUrl(user).endsWith("/clash/stored%2Fsub%20id"));
       assert.throws(() => selfHostedSubscriptionUrl({}), /subId/);
       const liveConfig = await fetchSelfHostedSubscription(user);

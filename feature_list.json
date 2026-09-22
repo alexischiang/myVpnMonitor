@@ -729,6 +729,7 @@
         "Orders reserve, consume and release V2 inventory and persist immutable V2 snapshots.",
         "Paid plans and add-ons update V2 user bindings and entitlements without using legacy pricing as authority.",
         "A five-minute task pushes V2 line-group access from PostgreSQL to 3x-ui without importing 3x-ui access changes into catalog tables.",
+        "A user's effective 3x-ui traffic entitlement is derived only from the local plan, purchased traffic packs, and append-only administrator traffic gifts; remote quota and unexplained cached totals are never entitlement sources.",
         "Existing traffic history remains intact and new rows retain product attribution.",
         "Relevant automated and browser verification passes without console or page errors."
       ],
@@ -743,7 +744,10 @@
         "2026-09-20: Playwright verified V2 user detail sync dialog and mocked submit at desktop and 390x844, with no console or page errors or mobile horizontal overflow.",
         "2026-09-20: Isolated npm run verify passed; payment regression verified admin-only completed V2 order binding repair, conflict protection, idempotence, and no duplicate bill or wallet settlement.",
         "2026-09-20: Playwright verified order-detail repair confirmation and mocked success at 1280px and 390px without overflow or console/page errors; mocked conflict displayed an actionable error and retained the repair button.",
-        "2026-09-21: npm run verify passed; V2 quote regression confirmed baseAmount 10, trafficCustomizationAmount 4 and originalAmount 14 for two added traffic steps."
+        "2026-09-21: npm run verify passed; V2 quote regression confirmed baseAmount 10, trafficCustomizationAmount 4 and originalAmount 14 for two added traffic steps.",
+        "2026-09-22: Core regression coverage confirmed remote totalGB, the old 100 GB fallback, unexplained cached totals, and legacy scalar gift values cannot contribute to effective quota; local V2 plan snapshots, fulfilled traffic packs, and append-only administrator gift records are the only contributors.",
+        "2026-09-22: npm run check, npm run verify:fast, npm run verify:catalog-v2 and git diff --check passed; the general npm run verify reached the payment database safety gate because TEST_DATABASE_URL was not configured.",
+        "2026-09-22: Isolated payment regression polluted the stored quota and traffic summaries with 900 GB, then confirmed manual V2 sync restored the local cache and both summaries from the V2 entitlement while correcting the mocked 3x-ui Client."
       ],
       "browser_verification": {
         "routes": ["/pricing", "/catalog-v2", "/users/detail/:id", "/orders/:id", "/account/plans/checkout"],
@@ -755,11 +759,12 @@
           "Opened an active user's manual-payment dialog with a mocked enabled, unlisted V2 product and quote; confirmed the selector, original amount, and collection amount render on desktop and 390x844 without submitting payment.",
           "Opened a mocked V2 lifetime user's detail at desktop and 390x844, confirmed the sync button is visible even with a missing client, opened its confirmation dialog and submitted to a mocked endpoint. Verified POST /api/users/test-v2/xui-sync and no mobile horizontal overflow; no real 3x-ui mutation.",
           "Opened the completed V2 order detail at 1280px and 390px, confirmed the repair dialog, mocked POST success and confirmed the repair button disappeared; a separate mocked conflict showed the error and kept retry available. No real order or 3x-ui mutation.",
-          "Moved the checkout traffic slider from 100 GB to 800 GB at 1280px and 390x844; the summary showed base price ¥49.00, traffic customization +¥154.00 and subtotal ¥203.00 without mobile horizontal overflow."
+          "Moved the checkout traffic slider from 100 GB to 800 GB at 1280px and 390x844; the summary showed base price ¥49.00, traffic customization +¥154.00 and subtotal ¥203.00 without mobile horizontal overflow.",
+          "Opened a live self-hosted V2 user detail and the 单向赠送流量 dialog; confirmed it states the operation can only increase quota and that the total is calculated from the local plan, purchased traffic packs, and gift records without reading 3x-ui quota. No gift was submitted."
         ],
         "console_errors": [],
         "page_errors": [],
-        "checked_at": "2026-09-21"
+        "checked_at": "2026-09-22"
       }
     },
     {

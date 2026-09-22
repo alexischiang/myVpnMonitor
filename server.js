@@ -61,7 +61,6 @@ const XUI_PROVISION_RETRY_DELAYS_MS = [300, 1000];
 // Default OFF (0) — the total=0 migration is opt-in via XUI_PANEL_QUOTA_CLEAR_PER_SYNC>0, and
 // even then only a few per sync so clients migrate to "unlimited on panel" gradually.
 const XUI_PANEL_QUOTA_CLEAR_PER_SYNC = Math.max(0, Number(process.env.XUI_PANEL_QUOTA_CLEAR_PER_SYNC) || 0);
-const XUI_DEFAULT_TRAFFIC_BYTES = 100 * 1024 ** 3;
 const XUI_VISION_FLOW = "xtls-rprx-vision";
 const LEGACY_RECURRING_TRAFFIC_GB = Object.freeze({ basic: 50, pro: 100, ultra: 100 });
 const TRAFFIC_PACK_BYTES = 100 * 1024 ** 3;
@@ -2594,7 +2593,7 @@ async function fulfillTrafficPackOrderOnce(order, req) {
   syncWalletVip(account, wallet);
   const trafficPackBytes = Math.round(Number(order.trafficGb || trafficPackConfig().trafficGb) * 1024 ** 3);
   const grant = grantTrafficPack(user, order.id, trafficPackBytes);
-  await enableXuiClientAfterTrafficPack(user);
+  await enableXuiClientAfterTrafficIncrease(user);
   if (!grant.replayed) {
     appendUserLogToUser(user, createUserLog({
       event: "user-action",
@@ -2640,7 +2639,7 @@ async function fulfillStandaloneAddOnOrderOnce(order, req) {
     const bytes = Math.max(0, Number(v2.fulfillment.config?.trafficBytes) || 0) * Math.max(1, Number(v2.quantity) || 1);
     if (!bytes) throw new Error("自动交付流量配置无效。");
     grantTrafficPack(user, order.id, bytes);
-    await enableXuiClientAfterTrafficPack(user);
+    await enableXuiClientAfterTrafficIncrease(user);
     order.trafficPackBytes = bytes;
     order.fulfilledAt = new Date().toISOString();
     order.fulfillmentStatus = "fulfilled";
@@ -3603,12 +3602,25 @@ function planTrafficBytes(user = {}) {
   return Math.round(Number(match[1]) * factors[match[2].toUpperCase()]);
 }
 
-function xuiTrafficLimitBytes(user = {}, remote = {}) {
-  const managed = Number(user.xuiTrafficLimitBytes);
-  if (Number.isFinite(managed) && managed >= 0) return Math.round(managed);
-  if (user.unlimited) return 0;
-  const remoteLimit = Number(remote.totalGB);
-  return Number.isFinite(remoteLimit) && remoteLimit > 0 ? Math.round(remoteLimit) : planTrafficBytes(user) || XUI_DEFAULT_TRAFFIC_BYTES;
+function xuiTrafficLimitBytes(user = {}) {
+  const hasLocalProductEntitlement = Boolean(
+    user.productCatalogVersion === 2 && user.v2ProductSnapshot
+    || String(user.currentProductId || user.currentOptionId || user.activeGroup || user.group || "").trim()
+  );
+  if (!hasLocalProductEntitlement) throw new Error("App 本地缺少可验证的套餐流量权益，不能从3x-ui或默认值推导额度。");
+  if (user.unlimited || user.productCatalogVersion === 2 && user.v2ProductSnapshot?.trafficBytes === null) return 0;
+  const productBytes = planTrafficBytes(user);
+  const hasExplicitV2Traffic = user.productCatalogVersion === 2
+    && Number.isFinite(Number(user.v2ProductSnapshot?.trafficBytes))
+    && Number(user.v2ProductSnapshot.trafficBytes) >= 0;
+  if (productBytes > 0 || hasExplicitV2Traffic) {
+    const trafficPackBytes = Math.max(0, Number(user.xuiTrafficPackBytes) || 0);
+    const adminGiftBytes = (Array.isArray(user.xuiAdminTrafficGifts) ? user.xuiAdminTrafficGifts : [])
+      .filter(gift => gift?.kind === "admin_traffic_gift" && gift.id && gift.createdAt)
+      .reduce((total, gift) => total + Math.max(0, Number(gift?.bytes) || 0), 0);
+    return Math.round(productBytes + trafficPackBytes + adminGiftBytes);
+  }
+  throw new Error("App 本地缺少可验证的套餐流量权益，不能从3x-ui或默认值推导额度。");
 }
 
 function grantTrafficPack(user, orderId, trafficPackBytes = Math.round(trafficPackConfig().trafficGb * 1024 ** 3)) {
@@ -3616,24 +3628,25 @@ function grantTrafficPack(user, orderId, trafficPackBytes = Math.round(trafficPa
   if (appliedOrderIds.includes(orderId)) return { replayed: true };
   const usedBytes = Math.max(0, Number(user.xuiLastTraffic?.usedBytes) || 0);
   const remainingBytesBefore = Math.max(0, Number(user.xuiLastTraffic?.remainingBytes) || 0);
-  const totalBytes = usedBytes + remainingBytesBefore + trafficPackBytes;
-  user.xuiTrafficLimitBytes = totalBytes;
   user.xuiTrafficPackBytes = Math.max(0, Number(user.xuiTrafficPackBytes) || 0) + trafficPackBytes;
+  const totalBytes = xuiTrafficLimitBytes(user);
+  const remainingBytesAfter = Math.max(totalBytes - usedBytes, 0);
+  user.xuiTrafficLimitBytes = totalBytes;
   user.xuiTrafficPackCycleKey = currentXuiCycleStartKey(user) || user.xuiTrafficCycleKey || "";
   user.xuiTrafficPackOrderIds = [...appliedOrderIds, orderId];
   if (user.xuiWeightedTraffic) {
     user.xuiWeightedTraffic.totalBytes = totalBytes;
-    user.xuiWeightedTraffic.remainingBytes = remainingBytesBefore + trafficPackBytes;
+    user.xuiWeightedTraffic.remainingBytes = remainingBytesAfter;
     user.xuiWeightedTraffic.usagePercent = totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null;
     user.xuiWeightedTraffic.depleted = false;
   }
   if (user.xuiLastTraffic) {
     user.xuiLastTraffic.totalBytes = totalBytes;
-    user.xuiLastTraffic.remainingBytes = remainingBytesBefore + trafficPackBytes;
+    user.xuiLastTraffic.remainingBytes = remainingBytesAfter;
     user.xuiLastTraffic.usagePercent = totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null;
     user.xuiLastTraffic.status = "active";
   }
-  return { replayed: false, remainingBytesBefore, remainingBytesAfter: remainingBytesBefore + trafficPackBytes, totalBytes };
+  return { replayed: false, remainingBytesBefore, remainingBytesAfter, totalBytes };
 }
 
 function ensureTrafficPackSnapshot(user) {
@@ -3648,11 +3661,11 @@ function ensureTrafficPackSnapshot(user) {
 
 function expireUserTrafficPacks(user) {
   if (!(Number(user.xuiTrafficPackBytes) > 0)) return false;
-  const totalBytes = planTrafficBytes(user);
   const usedBytes = Math.max(0, Number(user.xuiLastTraffic?.usedBytes) || 0);
-  user.xuiTrafficLimitBytes = totalBytes;
   user.xuiTrafficPackBytes = 0;
   user.xuiTrafficPackCycleKey = "";
+  const totalBytes = xuiTrafficLimitBytes(user);
+  user.xuiTrafficLimitBytes = totalBytes;
   if (user.xuiWeightedTraffic) {
     user.xuiWeightedTraffic.totalBytes = totalBytes;
     user.xuiWeightedTraffic.remainingBytes = Math.max(totalBytes - usedBytes, 0);
@@ -3668,22 +3681,33 @@ function expireUserTrafficPacks(user) {
 }
 
 function refreshUserPlanTraffic(user) {
-  const totalBytes = planTrafficBytes(user) + Math.max(0, Number(user.xuiTrafficPackBytes) || 0);
+  const before = JSON.stringify([
+    user.xuiTrafficLimitBytes,
+    user.xuiWeightedTraffic?.totalBytes,
+    user.xuiLastTraffic?.totalBytes
+  ]);
+  const totalBytes = xuiTrafficLimitBytes(user);
   const usedBytes = Math.max(0, Number(user.xuiWeightedTraffic?.usedBytes ?? user.xuiLastTraffic?.usedBytes) || 0);
   const remainingBytes = totalBytes ? Math.max(totalBytes - usedBytes, 0) : null;
   user.xuiTrafficLimitBytes = totalBytes;
   if (user.xuiWeightedTraffic) Object.assign(user.xuiWeightedTraffic, { totalBytes, remainingBytes, usagePercent: totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null, depleted: totalBytes > 0 && usedBytes >= totalBytes });
   if (user.xuiLastTraffic) Object.assign(user.xuiLastTraffic, { totalBytes, remainingBytes, usagePercent: totalBytes ? Math.min(100, Math.round(usedBytes / totalBytes * 1000) / 10) : null, status: totalBytes > 0 && usedBytes >= totalBytes ? "depleted" : "active", nextResetAt: user.xuiNextTrafficResetAt || "", expiresAt: user.expiresAt });
+  return before !== JSON.stringify([
+    user.xuiTrafficLimitBytes,
+    user.xuiWeightedTraffic?.totalBytes,
+    user.xuiLastTraffic?.totalBytes
+  ]);
 }
 
-async function enableXuiClientAfterTrafficPack(user) {
+async function enableXuiClientAfterTrafficIncrease(user) {
   const email = xuiClientEmail(user);
   const remote = await getXuiClientByEmail(email);
-  await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: user.xuiTrafficLimitBytes, reset: 0, flow: XUI_VISION_FLOW, enable: true }) });
+  const totalBytes = xuiTrafficLimitBytes(user);
+  await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: totalBytes, reset: 0, flow: XUI_VISION_FLOW, enable: true }) });
   await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [email] } });
   const state = await getXuiBillingState();
   if (state.users[email]) {
-    state.users[email].totalBytes = user.xuiTrafficLimitBytes;
+    state.users[email].totalBytes = totalBytes;
     state.users[email].disabled = false;
     await saveXuiBillingState(state);
   }
@@ -3711,12 +3735,12 @@ function xuiMonthlyResetAt(anchorDay, after = Date.now()) {
   return "";
 }
 
-function initializeXuiTrafficSchedule(user, remote = {}, mode = "import", now = Date.now()) {
+function initializeXuiTrafficSchedule(user, _remote = {}, mode = "import", now = Date.now()) {
   const purchased = chinaDateParts(user.purchasedAt || user.createdAt || now);
   user.xuiManagementMode = mode;
-  user.xuiTrafficLimitBytes = mode === "link" && Number(remote.totalGB) > 0
-    ? Math.round(Number(remote.totalGB))
-    : XUI_DEFAULT_TRAFFIC_BYTES;
+  // Application entitlements are authoritative. Linking an existing 3x-ui client
+  // must never import the panel's quota into the local user record.
+  user.xuiTrafficLimitBytes = xuiTrafficLimitBytes(user);
   user.xuiTrafficResetAnchorDay = purchased?.day || chinaDateParts(now).day;
   user.xuiTrafficCycleKey = `linked:${new Date(now).toISOString()}`;
   user.xuiNextTrafficResetAt = xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
@@ -4725,7 +4749,7 @@ async function syncXuiWeightedTraffic(snapshot = {}) {
       remoteEmails.add(email);
       const user = appUsersByEmail.get(email);
       const previous = state.users[email];
-      const totalBytes = user ? xuiTrafficLimitBytes(user, remote) : Math.max(0, Number(previous?.totalBytes ?? remote.totalGB) || 0);
+      const totalBytes = user ? xuiTrafficLimitBytes(user) : Math.max(0, Number(previous?.totalBytes ?? remote.totalGB) || 0);
       const cycleStartKey = user ? (cycleStartByEmail.get(email) || "") : "";
       const cycleUsage = cycleByEmail.get(email) || { nodes: {}, up: 0, down: 0 };
       const ledger = xuiTraffic.xuiLedgerFromCycle(cycleUsage.nodes, nodeMultipliers, { cycleKey: cycleStartKey, nodeNames, updatedAt: new Date().toISOString(), previous });
@@ -5109,11 +5133,15 @@ async function syncCatalogV2ToXui() {
     for (const user of users.filter(item => item.productCatalogVersion === 2 && isSelfHostedUser(item))) {
       report.checked++;
       try {
+        const repairedTrafficLimit = refreshUserPlanTraffic(user);
         const email = xuiClientEmail(user);
         const existing = clientsByEmail.get(email);
         if (!existing) {
           report.missing++;
-          if (isUserExpired(user) || isUserAccountDisabled(user)) continue;
+          if (isUserExpired(user) || isUserAccountDisabled(user)) {
+            if (repairedTrafficLimit) await saveUsers();
+            continue;
+          }
           await provisionXuiClient(user, { allowLegacyEmail: false, allInboundIds, groupInboundIds: desiredByGroup.get(String(user.v2LineGroupId || "")) || [] });
           user.xuiClientPresent = true;
           delete user.xuiClientMissingAt;
@@ -5133,7 +5161,7 @@ async function syncCatalogV2ToXui() {
         const desired = {
           ...existing,
           email,
-          totalGB: xuiTrafficLimitBytes(user, existing),
+          totalGB: xuiTrafficLimitBytes(user),
           expiryTime: new Date(user.expiresAt).getTime(),
           limitIp: planDeviceLimit(user),
           reset: 0,
@@ -5152,6 +5180,8 @@ async function syncCatalogV2ToXui() {
         if (user.xuiClientPresent === false) {
           user.xuiClientPresent = true;
           delete user.xuiClientMissingAt;
+          await saveUsers();
+        } else if (repairedTrafficLimit) {
           await saveUsers();
         }
       } catch (error) {
@@ -5237,7 +5267,7 @@ async function provisionXuiClientOnce(user, options = {}) {
   const desired = {
     ...(existing || {}),
     email,
-    totalGB: xuiTrafficLimitBytes(user, existing || {}),
+    totalGB: xuiTrafficLimitBytes(user),
     expiryTime: new Date(user.expiresAt).getTime(),
     limitIp: user.productCatalogVersion === 2 ? planDeviceLimit(user) : Number.isFinite(Number(user.xuiIpLimit)) ? Math.max(0, Number(user.xuiIpLimit)) : planDeviceLimit(user),
     reset: 0,
@@ -5979,7 +6009,6 @@ function renewUser(user, input) {
     activeGroup: group,
     unlimited: input.unlimited !== undefined ? Boolean(input.unlimited) : Boolean(user.unlimited),
     trafficTier: Number(input.trafficTier || 1),
-    ...(Number.isFinite(Number(input.trafficLimitBytes)) && Number(input.trafficLimitBytes) >= 0 ? { xuiTrafficLimitBytes: Math.round(Number(input.trafficLimitBytes)) } : {}),
     cashValue: Math.round((replace ? addedCashValue : currentCashValue + addedCashValue) * 100) / 100,
     cashValueAt: renewedAt.toISOString(),
     lineType: selfHosted ? "self_hosted" : "upstream",
@@ -6252,6 +6281,7 @@ function publicUser(user, subscriptionMap = null) {
     customerID: user.customerID,
     email: user.email || linkedAccount?.email || "",
     activeGroup: activeUserGroup(user),
+    xuiTrafficLimitBytes: xuiTrafficLimitBytes(user),
     deviceLimit: planDeviceLimit(user),
     vipLevel: userVipLevel(user),
     accountStatus: linkedAccount?.status || "unclaimed",
@@ -7040,7 +7070,7 @@ function userSnapshotForLog(user = {}) {
     unlimited: Boolean(user.unlimited),
     trafficTier: Number(user.trafficTier || 1),
     purchasedTrafficGb: user.purchasedTrafficGb ?? null,
-    xuiTrafficLimitBytes: Number(user.xuiTrafficLimitBytes) || 0,
+    xuiTrafficLimitBytes: isSelfHostedUser(user) ? xuiTrafficLimitBytes(user) : Number(user.xuiTrafficLimitBytes) || 0,
     currentProductId: user.currentProductId || "",
     currentOptionId: user.currentOptionId || "",
     currentProductOrderId: user.currentProductOrderId || "",
@@ -7681,7 +7711,7 @@ async function fallbackToUsableSubscription(user, currentSubscription, reason, r
 function selfHostedUserinfo(user) {
   const upload = Math.max(0, Number(user?.xuiLastTraffic?.uploadBytes) || 0);
   const download = Math.max(0, Number(user?.xuiLastTraffic?.downloadBytes) || 0);
-  const total = Math.max(0, Number(user?.xuiLastTraffic?.totalBytes ?? user?.xuiTrafficLimitBytes) || planTrafficBytes(user));
+  const total = xuiTrafficLimitBytes(user);
   const expire = Math.floor(new Date(user.expiresAt).getTime() / 1000);
   return `upload=${upload}; download=${download}; total=${total}; expire=${expire}`;
 }
@@ -9452,7 +9482,7 @@ async function handleApi(req, res, pathname) {
       const resetDay = chinaDateParts(user.purchasedAt || user.createdAt || Date.now())?.day || 1;
       sendJson(res, 200, { importPreview: {
         email: nexoraUserEmail(user),
-        totalBytes: XUI_DEFAULT_TRAFFIC_BYTES,
+        totalBytes: xuiTrafficLimitBytes(user),
         limitIp: planDeviceLimit(user),
         expiresAt: user.expiresAt || "",
         resetDay
@@ -10823,7 +10853,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -11076,6 +11106,49 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
+    if (action === "traffic-gift" && req.method === "POST") {
+      const previousUserState = structuredClone(item);
+      try {
+        if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以赠送流量。");
+        const payload = await readJson(req);
+        const trafficGb = Number(payload.trafficGb);
+        if (!Number.isFinite(trafficGb) || trafficGb <= 0 || trafficGb > 102400) throw new Error("赠送流量必须大于 0 GB，且不能超过 100 TB。");
+        // Validate that the base entitlement comes from a local product before
+        // recording the only non-product quota source: an append-only admin gift.
+        xuiTrafficLimitBytes(item);
+        const actor = currentSession(req)?.account || "admin";
+        const gift = {
+          id: crypto.randomUUID(),
+          kind: "admin_traffic_gift",
+          bytes: Math.round(trafficGb * 1024 ** 3),
+          note: String(payload.note || "").trim().slice(0, 200),
+          actor,
+          createdAt: new Date().toISOString()
+        };
+        item.xuiAdminTrafficGifts = [...(Array.isArray(item.xuiAdminTrafficGifts) ? item.xuiAdminTrafficGifts : []), gift];
+        refreshUserPlanTraffic(item);
+        item.updatedAt = new Date().toISOString();
+        if (item.xuiClientEmail) await enableXuiClientAfterTrafficIncrease(item);
+        appendUserLogToUser(item, createUserLog({
+          event: "user-action",
+          status: "recorded",
+          reason: "admin-traffic-gifted",
+          req,
+          message: `管理员 ${actor} 单向赠送 ${trafficGb} GB 流量。`,
+          details: { actor, giftId: gift.id, trafficGb, bytes: gift.bytes, note: gift.note, totalBytes: xuiTrafficLimitBytes(item) }
+        }));
+        await saveUsers();
+        sendJson(res, 200, publicUser(item));
+      } catch (error) {
+        if (item && previousUserState) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previousUserState);
+        }
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
     if (action === "account-status" && req.method === "POST") {
       try {
         const account = registeredAccount || accounts.find(entry => entry.linkedUserId === item.id);
@@ -11267,6 +11340,7 @@ async function handleApi(req, res, pathname) {
       const previous = item ? structuredClone(item) : null;
       try {
         if (!item || !isSelfHostedUser(item) || item.productCatalogVersion !== 2 || !item.v2ProductSnapshot) throw new Error("仅已绑定V2套餐的自研线路用户可以同步3x-ui。");
+        refreshUserPlanTraffic(item);
         await provisionXuiClient(item, { allowLegacyEmail: false });
         item.xuiClientPresent = true;
         delete item.xuiClientMissingAt;
@@ -11792,6 +11866,7 @@ module.exports = Object.assign(requestHandler, {
   recurringPlanOption,
   resolvePlanChangeOption,
   planTrafficBytes,
+  xuiTrafficLimitBytes,
   planChangeState,
   restorePlanChangeState,
   bindUserProduct,
@@ -11856,6 +11931,7 @@ module.exports = Object.assign(requestHandler, {
   xuiBillingPayload,
   xuiMonthlyResetAt,
   legacyMigrationTrafficLimitBytes,
+  initializeXuiTrafficSchedule,
   strictActiveUserGroup,
   isXuiTimeoutError,
   provisionXuiClient,

@@ -89,6 +89,7 @@ export type User = {
   xuiRecoveredAt?: string
   xuiIpLimit?: number
   xuiTrafficLimitBytes?: number
+  xuiAdminTrafficGifts?: Array<{ id: string; kind: "admin_traffic_gift"; bytes: number; note?: string; actor?: string; createdAt: string }>
   xuiTrafficPackBytes?: number
   xuiTrafficResetAnchorDay?: number
   xuiTrafficCycleKey?: string

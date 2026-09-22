@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-21
-- Current Objective: 发布访客真实IP与V2流量定制金额修复
+- Last Updated: 2026-09-22
+- Current Objective: 发布V2流量权益单一事实来源与管理员单向赠送流量
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -238,8 +238,18 @@
 
 - 2026-09-21: npm run agent:init与npm run verify通过；feature_list.json已记录2026-09-21浏览器验收
 
+- 2026-09-22: node test.js、npm run verify:fast、git diff --check通过；回归覆盖远端额度不得覆盖本地额度及本地缺失时从V2快照推导
+
+- 2026-09-22: npm run check、npm run verify:fast、npm run verify:harness、npm run verify:catalog-v2、git diff --check 均通过；浏览器验证用户详情和单向赠送流量弹窗无控制台错误，未提交真实赠送
+
+- 2026-09-22: 最终 npm run check、npm run verify:fast、npm run verify:harness、npm run verify:catalog-v2、git diff --check 均通过；隔离支付测试覆盖管理员赠送覆盖远端900GB值；浏览器验证无错误且未提交真实赠送
+
+- 2026-09-22: npm run verify:fast、npm run verify:catalog-v2、npm run verify:harness、git diff --check 通过；隔离测试将本地缓存和流量摘要污染为900GB后，手动V2同步成功恢复为V2本地权益并纠正模拟3x-ui Client
+
+- 2026-09-22: npm run agent:init通过；npm run verify的应用/文档构建与核心测试通过，支付测试因未直接配置TEST_DATABASE_URL在安全门停止；npm run verify:catalog-v2隔离PostgreSQL完整通过并清理临时schema；2026-09-22浏览器验收记录无console/page errors
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `feature_list.json`, `server.js`, `src/components/features/public-pages.tsx`, `test-catalog-v2.js`, `test.js`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 推送production后观察GitHub Actions部署直至完成
+- Recommended Next Step: 提交并推送main，合并origin/production后推送production，并观察GitHub Actions部署直至完成

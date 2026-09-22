@@ -967,9 +967,13 @@ async function main() {
     const unlinkedReport = await handler.syncCatalogV2ToXui();
     assert.strictEqual(unlinkedReport.failed.length, 0);
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, "v2-sync@example.test", "five-minute V2 sync must relink an existing client");
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiTrafficLimitBytes: 900 * 1024 ** 3, xuiWeightedTraffic: { totalBytes: 900 * 1024 ** 3, usedBytes: 0 }, xuiLastTraffic: { totalBytes: 900 * 1024 ** 3, usedBytes: 0 } })]);
     xuiClients.get("v2-sync@example.test").expiryTime = 0;
     const manualSync = await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: adminCookie, body: {} });
     assert.strictEqual(manualSync.response.status, 200, manualSync.text);
+    assert.strictEqual(manualSync.data.xuiTrafficLimitBytes, lifetimeUser.xuiTrafficLimitBytes, "manual V2 sync must replace a polluted local quota cache from the product entitlement");
+    assert.strictEqual(manualSync.data.xuiWeightedTraffic.totalBytes, lifetimeUser.xuiTrafficLimitBytes);
+    assert.strictEqual(manualSync.data.xuiLastTraffic.totalBytes, lifetimeUser.xuiTrafficLimitBytes);
     assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
     assert.strictEqual(xuiClients.get("v2-sync@example.test").limitIp, 3, "manual sync must use V2 device limits");
     xuiClients.delete("v2-sync@example.test");
@@ -1010,6 +1014,16 @@ async function main() {
     assert.strictEqual(newerPlan.data.fulfillmentStatus, "fulfilled", newerPlan.text);
     assert.strictEqual((await request(repairPath, { method: "POST", cookie: adminCookie, body: {} })).response.status, 400, "an older order must not override a later paid plan");
     assert.strictEqual((await request(`/api/admin/orders/${lifetimeOrder.data.id}`, { cookie: adminCookie })).data.bindingNeedsRepair, false, "older completed orders must not offer repair");
+
+    const currentV2User = (await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data;
+    const v2QuotaBeforeGift = currentV2User.xuiTrafficLimitBytes;
+    xuiClients.get("v2-sync@example.test").totalGB = 900 * 1024 ** 3;
+    const trafficGift = await request(`/api/users/${v2User.id}/traffic-gift`, { method: "POST", cookie: adminCookie, body: { trafficGb: 5, note: "integration gift" } });
+    assert.strictEqual(trafficGift.response.status, 200, trafficGift.text);
+    assert.strictEqual(trafficGift.data.xuiTrafficLimitBytes, v2QuotaBeforeGift + 5 * 1024 ** 3, "admin gifts must add to the local product quota, not the remote panel quota");
+    assert.deepStrictEqual(trafficGift.data.xuiAdminTrafficGifts.map(item => [item.bytes, item.note]), [[5 * 1024 ** 3, "integration gift"]]);
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").totalGB, v2QuotaBeforeGift + 5 * 1024 ** 3);
+    assert.strictEqual((await request(`/api/users/${v2User.id}/traffic-gift`, { method: "POST", cookie: v2Registration.response.headers.get("set-cookie").split(";", 1)[0], body: { trafficGb: 5 } })).response.status, 403);
 
     const passwordChange = await request("/api/auth/password", {
       method: "PUT",
