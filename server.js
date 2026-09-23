@@ -4425,7 +4425,7 @@ function xuiClientCycleKey(client = {}, now = Date.now()) {
 }
 
 let xuiBillingMutation = Promise.resolve();
-let xuiTrafficSyncMutation = Promise.resolve();
+let xuiSyncMutation = Promise.resolve();
 
 function withXuiBillingLock(operation) {
   const next = xuiBillingMutation.catch(() => undefined).then(operation);
@@ -4433,9 +4433,9 @@ function withXuiBillingLock(operation) {
   return next;
 }
 
-function withXuiTrafficSyncLock(operation) {
-  const next = xuiTrafficSyncMutation.catch(() => undefined).then(operation);
-  xuiTrafficSyncMutation = next;
+function withXuiSyncLock(operation) {
+  const next = xuiSyncMutation.catch(() => undefined).then(operation);
+  xuiSyncMutation = next;
   return next;
 }
 
@@ -4689,7 +4689,7 @@ async function auditXuiClientGroups(clients, allInboundIds, groupInboundIdsByGro
 
 async function syncXuiWeightedTraffic(snapshot = {}) {
   if (!XUI_BASE_URL || !XUI_API_TOKEN) return getXuiBillingState();
-  return withXuiTrafficSyncLock(async () => {
+  return withXuiSyncLock(async () => {
     await loadLatestData();
     if (!XUI_READ_ONLY) await resetDueXuiTraffic();
     const [status, nodes, inbounds, clients, clientIpsByGuid, onlinesByGuid, lastOnline] = await Promise.all([
@@ -5125,7 +5125,7 @@ async function resyncXuiInboundGroups(groups, allInboundIds) {
 let catalogV2XuiSync = null;
 async function syncCatalogV2ToXui() {
   if (catalogV2XuiSync) return catalogV2XuiSync;
-  catalogV2XuiSync = (async () => {
+  catalogV2XuiSync = withXuiSyncLock(async () => {
     await loadLatestData({ force: true });
     const [groups, management, clients] = await Promise.all([
       dataStore.listCatalogV2LineGroups(),
@@ -5197,7 +5197,7 @@ async function syncCatalogV2ToXui() {
     }
     console.log(`[catalog-v2:xui-sync] ${JSON.stringify(report)}`);
     return report;
-  })().finally(() => { catalogV2XuiSync = null; });
+  }).finally(() => { catalogV2XuiSync = null; });
   return catalogV2XuiSync;
 }
 
@@ -11943,6 +11943,7 @@ module.exports = Object.assign(requestHandler, {
   provisionXuiClient,
   auditXuiClientGroups,
   syncCatalogV2ToXui,
+  withXuiSyncLock,
   withXuiUserMigrationLock,
   xuiNodeBaseUrl,
   sealXuiNodeToken,

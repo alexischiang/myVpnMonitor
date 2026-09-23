@@ -86,6 +86,7 @@ const {
   xuiMonthlyResetAt,
   legacyMigrationTrafficLimitBytes,
   initializeXuiTrafficSchedule,
+  withXuiSyncLock,
   withXuiUserMigrationLock,
   xuiNodeBaseUrl,
   sealXuiNodeToken,
@@ -781,6 +782,14 @@ Promise.all([
     } finally {
       global.fetch = originalFetch;
     }
+  })(),
+  (async () => {
+    const order = [];
+    await Promise.all([
+      withXuiSyncLock(async () => { order.push("traffic:start"); await new Promise(resolve => setImmediate(resolve)); order.push("traffic:end"); }),
+      withXuiSyncLock(async () => { order.push("catalog"); })
+    ]);
+    assert.deepStrictEqual(order, ["traffic:start", "traffic:end", "catalog"]);
   })(),
   (async () => {
     const results = await Promise.all([
