@@ -747,7 +747,8 @@
         "2026-09-21: npm run verify passed; V2 quote regression confirmed baseAmount 10, trafficCustomizationAmount 4 and originalAmount 14 for two added traffic steps.",
         "2026-09-22: Core regression coverage confirmed remote totalGB, the old 100 GB fallback, unexplained cached totals, and legacy scalar gift values cannot contribute to effective quota; local V2 plan snapshots, fulfilled traffic packs, and append-only administrator gift records are the only contributors.",
         "2026-09-22: npm run check, npm run verify:fast, npm run verify:catalog-v2 and git diff --check passed; the general npm run verify reached the payment database safety gate because TEST_DATABASE_URL was not configured.",
-        "2026-09-22: Isolated payment regression polluted the stored quota and traffic summaries with 900 GB, then confirmed manual V2 sync restored the local cache and both summaries from the V2 entitlement while correcting the mocked 3x-ui Client."
+        "2026-09-22: Isolated payment regression polluted the stored quota and traffic summaries with 900 GB, then confirmed manual V2 sync restored the local cache and both summaries from the V2 entitlement while correcting the mocked 3x-ui Client.",
+        "2026-09-24: Shared the existing 3x-ui synchronization queue between traffic sampling and Catalog V2 access repair so their aligned five-minute timers cannot issue competing panel reads; npm run verify, npm run verify:fast and git diff --check passed."
       ],
       "browser_verification": {
         "routes": ["/pricing", "/catalog-v2", "/users/detail/:id", "/orders/:id", "/account/plans/checkout"],
