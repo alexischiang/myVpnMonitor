@@ -682,6 +682,24 @@ async function loadLatestData({ force = false } = {}) {
   return _doLoad();
 }
 
+// Background xui syncs only read users and accounts. Reload just those two collections, and
+// leave lastLoadedAt alone because the other collections were not refreshed.
+async function loadLatestUsersAndAccounts({ force = false } = {}) {
+  if (commerceActive) return;
+  if (!force && Date.now() - lastLoadedAt < DATA_CACHE_TTL_MS) return;
+  if (_loadingPromise) return _loadingPromise;
+  const gen = _writeGen;
+  try {
+    const state = await dataStore.loadCollections(["users", "accounts"]);
+    if (gen !== _writeGen) return;
+    users = state.users;
+    accounts = state.accounts || [];
+  } catch (error) {
+    if (lastLoadedAt > 0) return console.warn(`[data] users/accounts reload failed; using cached in-memory data: ${error.message}`);
+    throw error;
+  }
+}
+
 function _markWritten() { _writeGen++; lastLoadedAt = Date.now(); }
 
 async function saveData() {
@@ -4689,164 +4707,177 @@ async function auditXuiClientGroups(clients, allInboundIds, groupInboundIdsByGro
 
 async function syncXuiWeightedTraffic(snapshot = {}) {
   if (!XUI_BASE_URL || !XUI_API_TOKEN) return getXuiBillingState();
-  return withXuiSyncLock(async () => {
-    await loadLatestData();
-    if (!XUI_READ_ONLY) await resetDueXuiTraffic();
-    const [status, nodes, inbounds, clients, clientIpsByGuid, onlinesByGuid, lastOnline] = await Promise.all([
-      snapshot.status || xuiRequest("/panel/api/server/status"),
-      snapshot.nodes || xuiRequest("/panel/api/nodes/list"),
-      snapshot.inbounds || xuiRequest("/panel/api/inbounds/list"),
-      snapshot.clients || xuiRequest("/panel/api/clients/list"),
-      xuiRequest("/panel/api/clients/clientIpsByGuid", { method: "POST" }).catch(() => null),
-      xuiRequest("/panel/api/clients/onlinesByGuid", { method: "POST" }).catch(() => null),
-      xuiRequest("/panel/api/clients/lastOnline", { method: "POST" }).catch(() => null)
-    ]);
-    const state = await getXuiBillingState();
-    const nodeTokens = await getXuiNodeTokens(state.nodeTokens);
-    const { monotonicTraffic, nodeResults, localGuid } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
-    const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
-    const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
-    try {
-      await updateSalesTrafficState(current => ({ ...current, nodeNames: { ...current.nodeNames, ...nodeNames } }), state);
-    } catch (error) {
-      console.warn(`[sales-traffic] Failed to persist application traffic settings: ${error.message}`);
-    }
-    // Record this sampling round into the daily traffic table (the source of truth going
-    // forward). recordXuiTrafficSamples diffs the MONOTONIC per-node counters against the
-    // per-(user,node) cursor — the local guid carries the client's global counter and its own
-    // usage is derived as Δglobal − ΣΔremote inside the sampler (Plan B). First observation only
-    // seeds the cursor; later rounds add per-day growth.
-    try {
-      await dataStore.recordXuiTrafficSamples(chinaDateKey(), xuiTrafficSamples(monotonicTraffic, appUsersByEmail, nodeNames), localGuid);
-    } catch (error) {
-      console.warn(`[xui-traffic] Failed to record daily samples: ${error.message}`);
-    }
-    const allInboundIds = normalizeXuiInboundIds(inbounds);
-    const configuredGroups = await getXuiInboundGroups();
-    const groupAudit = await auditXuiClientGroups(clients, allInboundIds, new Map(Object.entries(configuredGroups)));
-    if (groupAudit.mismatched) console.log(`[xui-group] checked=${groupAudit.checked} mismatched=${groupAudit.mismatched} repaired=${groupAudit.repaired} failed=${groupAudit.failed} skipped=${groupAudit.skipped}`);
-    const nodeMultipliers = state.multipliers || {};
-    // Current-cycle usage per user comes from the daily table (single source of truth).
-    // Fetch every app user's per-node cycle sums in one query, keyed by email.
-    const cycleStartByEmail = new Map([...appUsersByEmail].map(([email, item]) => [email, currentXuiCycleStartKey(item)]));
-    const cycleByEmail = new Map();
-    try {
-      const cutoffs = [...cycleStartByEmail].map(([email, fromDate]) => ({ email, fromDate: fromDate || "" }));
-      for (const row of await dataStore.sumXuiCyclesByUser(cutoffs)) {
-        const entry = cycleByEmail.get(row.email) || { nodes: {}, up: 0, down: 0 };
-        entry.nodes[row.nodeGuid] = (entry.nodes[row.nodeGuid] || 0) + row.up + row.down;
-        entry.up += row.up;
-        entry.down += row.down;
-        cycleByEmail.set(row.email, entry);
-      }
-    } catch (error) {
-      console.warn(`[xui-traffic] Failed to load cycle sums: ${error.message}`);
-    }
-    let panelQuotaClears = 0;
-    const disableEmails = [];
-    const enableEmails = [];
-    const changedUsers = [];
-    const trafficAlerts = [];
-    const alertSettings = currentSalesSettings().alertSettings;
-    const remoteEmails = new Set();
+  return withXuiSyncLock(() => runXuiWeightedTrafficSync(snapshot));
+}
 
-    for (const remote of Array.isArray(clients) ? clients : []) {
-      const email = String(remote?.email || "").trim().toLowerCase();
-      if (!email) continue;
-      remoteEmails.add(email);
-      const user = appUsersByEmail.get(email);
-      const previous = state.users[email];
-      const totalBytes = user ? xuiTrafficLimitBytes(user) : Math.max(0, Number(previous?.totalBytes ?? remote.totalGB) || 0);
-      const cycleStartKey = user ? (cycleStartByEmail.get(email) || "") : "";
-      const cycleUsage = cycleByEmail.get(email) || { nodes: {}, up: 0, down: 0 };
-      const ledger = xuiTraffic.xuiLedgerFromCycle(cycleUsage.nodes, nodeMultipliers, { cycleKey: cycleStartKey, nodeNames, updatedAt: new Date().toISOString(), previous });
-      const expired = user ? isUserExpired(user) : Number(remote.expiryTime) > 0 && Number(remote.expiryTime) < Date.now();
-      const depleted = totalBytes > 0 && ledger.weightedBytes >= totalBytes;
-      if (depleted && remote.enable !== false && !expired) disableEmails.push(email);
-      // Self-healing re-enable: if the panel has the client disabled but they are no longer
-      // over quota (traffic pack, cycle reset, or the from-zero launch) and are otherwise
-      // valid, re-enable them. Independent of any stored ledger flag.
-      if (user && remote.enable === false && !depleted && !expired && !isUserAccountDisabled(user)) enableEmails.push(email);
-      ledger.disabled = ledger.disabled || depleted;
-      ledger.totalBytes = totalBytes;
-      state.users[email] = ledger;
-      const trafficAlert = user ? pendingXuiTrafficAlert(ledger, totalBytes, alertSettings.trafficThresholdPercent, alertSettings.traffic) : null;
-      if (trafficAlert) trafficAlerts.push({ user, ledger, totalBytes, ...trafficAlert });
-      const weightedTraffic = {
-        rawUsedBytes: ledger.rawBytes,
-        usedBytes: ledger.weightedBytes,
-        uploadBytes: cycleUsage.up,
-        downloadBytes: cycleUsage.down,
-        totalBytes,
-        remainingBytes: totalBytes ? Math.max(totalBytes - ledger.weightedBytes, 0) : null,
-        usagePercent: totalBytes ? Math.min(100, Math.round(ledger.weightedBytes / totalBytes * 1000) / 10) : null,
-        depleted,
-        nodes: [
-          ...(ledger.carriedRawBytes || ledger.carriedWeightedBytes ? [{ key: "legacy", name: "历史节点统计结转", multiplier: 1, rawBytes: ledger.carriedRawBytes, weightedBytes: ledger.carriedWeightedBytes }] : []),
-          ...Object.entries(ledger.nodes).map(([key, item]) => ({ key, name: nodeNames[key] || (item.name ? `${item.name}（已删除节点）` : "（已删除节点）"), multiplier: xuiMultiplier(nodeMultipliers[key]), rawBytes: item.rawBytes, weightedBytes: item.weightedBytes }))
-        ],
-        lastSyncedAt: ledger.updatedAt
-      };
-      if (user) {
-        user.xuiClientPresent = true;
-        delete user.xuiClientMissingAt;
-        user.xuiWeightedTraffic = weightedTraffic;
-        user.xuiLastTraffic = xuiTrafficPayload(user, remote, clientIpsByGuid ? normalizeXuiConnectedIps(clientIpsByGuid, email).length : null);
-        user.xuiLastSyncedAt = weightedTraffic.lastSyncedAt;
-        user.xuiLastError = "";
-        changedUsers.push(user);
-      }
+// Caller must hold withXuiSyncLock.
+async function runXuiWeightedTrafficSync(snapshot = {}) {
+  await loadLatestData();
+  if (!XUI_READ_ONLY) await resetDueXuiTraffic();
+  const [status, nodes, inbounds, clients, clientIpsByGuid, onlinesByGuid, lastOnline] = await Promise.all([
+    snapshot.status || xuiRequest("/panel/api/server/status"),
+    snapshot.nodes || xuiRequest("/panel/api/nodes/list"),
+    snapshot.inbounds || xuiRequest("/panel/api/inbounds/list"),
+    snapshot.clients || xuiRequest("/panel/api/clients/list"),
+    xuiRequest("/panel/api/clients/clientIpsByGuid", { method: "POST" }).catch(() => null),
+    xuiRequest("/panel/api/clients/onlinesByGuid", { method: "POST" }).catch(() => null),
+    xuiRequest("/panel/api/clients/lastOnline", { method: "POST" }).catch(() => null)
+  ]);
+  const state = await getXuiBillingState();
+  const nodeTokens = await getXuiNodeTokens(state.nodeTokens);
+  const { monotonicTraffic, nodeResults, localGuid } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
+  const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
+  const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
+  try {
+    await updateSalesTrafficState(current => ({ ...current, nodeNames: { ...current.nodeNames, ...nodeNames } }), state);
+  } catch (error) {
+    console.warn(`[sales-traffic] Failed to persist application traffic settings: ${error.message}`);
+  }
+  // Record this sampling round into the daily traffic table (the source of truth going
+  // forward). recordXuiTrafficSamples diffs the MONOTONIC per-node counters against the
+  // per-(user,node) cursor — the local guid carries the client's global counter and its own
+  // usage is derived as Δglobal − ΣΔremote inside the sampler (Plan B). First observation only
+  // seeds the cursor; later rounds add per-day growth.
+  try {
+    await dataStore.recordXuiTrafficSamples(chinaDateKey(), xuiTrafficSamples(monotonicTraffic, appUsersByEmail, nodeNames), localGuid);
+  } catch (error) {
+    console.warn(`[xui-traffic] Failed to record daily samples: ${error.message}`);
+  }
+  const allInboundIds = normalizeXuiInboundIds(inbounds);
+  const configuredGroups = await getXuiInboundGroups();
+  const groupAudit = await auditXuiClientGroups(clients, allInboundIds, new Map(Object.entries(configuredGroups)));
+  if (groupAudit.mismatched) console.log(`[xui-group] checked=${groupAudit.checked} mismatched=${groupAudit.mismatched} repaired=${groupAudit.repaired} failed=${groupAudit.failed} skipped=${groupAudit.skipped}`);
+  const nodeMultipliers = state.multipliers || {};
+  // Current-cycle usage per user comes from the daily table (single source of truth).
+  // Fetch every app user's per-node cycle sums in one query, keyed by email.
+  const cycleStartByEmail = new Map([...appUsersByEmail].map(([email, item]) => [email, currentXuiCycleStartKey(item)]));
+  const cycleByEmail = new Map();
+  try {
+    const cutoffs = [...cycleStartByEmail].map(([email, fromDate]) => ({ email, fromDate: fromDate || "" }));
+    for (const row of await dataStore.sumXuiCyclesByUser(cutoffs)) {
+      const entry = cycleByEmail.get(row.email) || { nodes: {}, up: 0, down: 0 };
+      entry.nodes[row.nodeGuid] = (entry.nodes[row.nodeGuid] || 0) + row.up + row.down;
+      entry.up += row.up;
+      entry.down += row.down;
+      cycleByEmail.set(row.email, entry);
+    }
+  } catch (error) {
+    console.warn(`[xui-traffic] Failed to load cycle sums: ${error.message}`);
+  }
+  let panelQuotaClears = 0;
+  const disableEmails = [];
+  const enableEmails = [];
+  const changedUsers = [];
+  const trafficAlerts = [];
+  const alertSettings = currentSalesSettings().alertSettings;
+  const remoteEmails = new Set();
 
-      // Decision X: the panel must not enforce quota itself — since we never reset its counter,
-      // a finite total would eventually make the panel permanently disable the client. Push
-      // totalGB=0 (unlimited on the panel) so depletion is enforced solely by our bulkDisable/
-      // bulkEnable below. Only fires while the panel still carries a finite total; enable state
-      // is left untouched here and driven by the disable/enable batches.
-      if (!XUI_READ_ONLY && user && Number(remote.totalGB) !== 0 && !isUserAccountDisabled(user) && panelQuotaClears < XUI_PANEL_QUOTA_CLEAR_PER_SYNC) {
-        try {
-          await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable: remote.enable !== false }) });
-          panelQuotaClears += 1;
-        } catch (error) {
-          console.warn(`[xui-billing] Failed to clear panel quota for ${email}: ${error.message}`);
-        }
-      }
+  for (const remote of Array.isArray(clients) ? clients : []) {
+    const email = String(remote?.email || "").trim().toLowerCase();
+    if (!email) continue;
+    remoteEmails.add(email);
+    const user = appUsersByEmail.get(email);
+    const previous = state.users[email];
+    const totalBytes = user ? xuiTrafficLimitBytes(user) : Math.max(0, Number(previous?.totalBytes ?? remote.totalGB) || 0);
+    const cycleStartKey = user ? (cycleStartByEmail.get(email) || "") : "";
+    const cycleUsage = cycleByEmail.get(email) || { nodes: {}, up: 0, down: 0 };
+    const ledger = xuiTraffic.xuiLedgerFromCycle(cycleUsage.nodes, nodeMultipliers, { cycleKey: cycleStartKey, nodeNames, updatedAt: new Date().toISOString(), previous });
+    const expired = user ? isUserExpired(user) : Number(remote.expiryTime) > 0 && Number(remote.expiryTime) < Date.now();
+    const depleted = totalBytes > 0 && ledger.weightedBytes >= totalBytes;
+    if (depleted && remote.enable !== false && !expired) disableEmails.push(email);
+    // Self-healing re-enable: if the panel has the client disabled but they are no longer
+    // over quota (traffic pack, cycle reset, or the from-zero launch) and are otherwise
+    // valid, re-enable them. Independent of any stored ledger flag.
+    if (user && remote.enable === false && !depleted && !expired && !isUserAccountDisabled(user)) enableEmails.push(email);
+    ledger.disabled = ledger.disabled || depleted;
+    ledger.totalBytes = totalBytes;
+    state.users[email] = ledger;
+    const trafficAlert = user ? pendingXuiTrafficAlert(ledger, totalBytes, alertSettings.trafficThresholdPercent, alertSettings.traffic) : null;
+    if (trafficAlert) trafficAlerts.push({ user, ledger, totalBytes, ...trafficAlert });
+    const weightedTraffic = {
+      rawUsedBytes: ledger.rawBytes,
+      usedBytes: ledger.weightedBytes,
+      uploadBytes: cycleUsage.up,
+      downloadBytes: cycleUsage.down,
+      totalBytes,
+      remainingBytes: totalBytes ? Math.max(totalBytes - ledger.weightedBytes, 0) : null,
+      usagePercent: totalBytes ? Math.min(100, Math.round(ledger.weightedBytes / totalBytes * 1000) / 10) : null,
+      depleted,
+      nodes: [
+        ...(ledger.carriedRawBytes || ledger.carriedWeightedBytes ? [{ key: "legacy", name: "历史节点统计结转", multiplier: 1, rawBytes: ledger.carriedRawBytes, weightedBytes: ledger.carriedWeightedBytes }] : []),
+        ...Object.entries(ledger.nodes).map(([key, item]) => ({ key, name: nodeNames[key] || (item.name ? `${item.name}（已删除节点）` : "（已删除节点）"), multiplier: xuiMultiplier(nodeMultipliers[key]), rawBytes: item.rawBytes, weightedBytes: item.weightedBytes }))
+      ],
+      lastSyncedAt: ledger.updatedAt
+    };
+    if (user) {
+      user.xuiClientPresent = true;
+      delete user.xuiClientMissingAt;
+      user.xuiWeightedTraffic = weightedTraffic;
+      user.xuiLastTraffic = xuiTrafficPayload(user, remote, clientIpsByGuid ? normalizeXuiConnectedIps(clientIpsByGuid, email).length : null);
+      user.xuiLastSyncedAt = weightedTraffic.lastSyncedAt;
+      user.xuiLastError = "";
+      changedUsers.push(user);
     }
 
-    const activeUsersByEmail = new Map([...appUsersByEmail].filter(([, user]) => !isUserExpired(user) && !isUserAccountDisabled(user)));
-    for (const user of markMissingXuiClients(activeUsersByEmail, remoteEmails)) if (!changedUsers.includes(user)) changedUsers.push(user);
-
-    if (!XUI_READ_ONLY && disableEmails.length) {
-      await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: disableEmails } });
-      for (const email of disableEmails) state.users[email].disabled = true;
-    }
-    if (!XUI_READ_ONLY && enableEmails.length) await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: enableEmails } });
-    for (const alert of trafficAlerts) {
-      const sent = await sendAdminAlert("traffic", {
-        subject: `用户流量达到 ${alertSettings.trafficThresholdPercent}%：${alert.user.email || alert.user.xuiClientEmail}`,
-        text: xuiTrafficAlertText(alert.user, alert.ledger, alert.totalBytes, alertSettings.trafficThresholdPercent)
-      }, alert.channels);
-      if (alert.channels.includes("userMail") && notifier.isMailConfigured()) {
-        try {
-          await notifier.sendMail({
-            to: alert.user.email || alert.user.xuiClientEmail,
-            subject: `流量使用已达到 ${alertSettings.trafficThresholdPercent}%`,
-            text: xuiUserTrafficAlertText(alert.ledger, alert.totalBytes, alertSettings.trafficThresholdPercent)
-          });
-          sent.push("userMail");
-        } catch (error) {
-          console.error(`[alerts] traffic user mail failed for ${alert.user.email || alert.user.xuiClientEmail}:`, error.message);
-        }
+    // Decision X: the panel must not enforce quota itself — since we never reset its counter,
+    // a finite total would eventually make the panel permanently disable the client. Push
+    // totalGB=0 (unlimited on the panel) so depletion is enforced solely by our bulkDisable/
+    // bulkEnable below. Only fires while the panel still carries a finite total; enable state
+    // is left untouched here and driven by the disable/enable batches.
+    if (!XUI_READ_ONLY && user && Number(remote.totalGB) !== 0 && !isUserAccountDisabled(user) && panelQuotaClears < XUI_PANEL_QUOTA_CLEAR_PER_SYNC) {
+      try {
+        await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable: remote.enable !== false }) });
+        Object.assign(remote, { totalGB: 0, reset: 0, flow: XUI_VISION_FLOW });
+        panelQuotaClears += 1;
+      } catch (error) {
+        console.warn(`[xui-billing] Failed to clear panel quota for ${email}: ${error.message}`);
       }
-      if (!sent.length) continue;
-      alert.ledger.trafficAlerts[alert.key] = [...new Set([...(alert.ledger.trafficAlerts[alert.key] || []), ...sent])];
     }
-    state.nodeResults = nodeResults;
-    state.nodeNames = nodeNames;
-    state.presence = { ...normalizeXuiPresence(onlinesByGuid, lastOnline, nodes, status), checkedAt: new Date().toISOString() };
-    await saveXuiBillingState(state);
-    await Promise.all(changedUsers.map(saveUser));
-    return { ...state, nodeResults, nodeNames };
-  });
+  }
+
+  const activeUsersByEmail = new Map([...appUsersByEmail].filter(([, user]) => !isUserExpired(user) && !isUserAccountDisabled(user)));
+  for (const user of markMissingXuiClients(activeUsersByEmail, remoteEmails)) if (!changedUsers.includes(user)) changedUsers.push(user);
+
+  // Mirror applied enable changes onto the fetched client objects, so a caller sharing this
+  // snapshot (syncXuiPanel's Catalog V2 step) diffs against the panel's current state.
+  const remoteByEmail = new Map((Array.isArray(clients) ? clients : []).map(remote => [String(remote?.email || "").trim().toLowerCase(), remote]));
+  if (!XUI_READ_ONLY && disableEmails.length) {
+    await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: disableEmails } });
+    for (const email of disableEmails) {
+      state.users[email].disabled = true;
+      remoteByEmail.get(email).enable = false;
+    }
+  }
+  if (!XUI_READ_ONLY && enableEmails.length) {
+    await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: enableEmails } });
+    for (const email of enableEmails) remoteByEmail.get(email).enable = true;
+  }
+  for (const alert of trafficAlerts) {
+    const sent = await sendAdminAlert("traffic", {
+      subject: `用户流量达到 ${alertSettings.trafficThresholdPercent}%：${alert.user.email || alert.user.xuiClientEmail}`,
+      text: xuiTrafficAlertText(alert.user, alert.ledger, alert.totalBytes, alertSettings.trafficThresholdPercent)
+    }, alert.channels);
+    if (alert.channels.includes("userMail") && notifier.isMailConfigured()) {
+      try {
+        await notifier.sendMail({
+          to: alert.user.email || alert.user.xuiClientEmail,
+          subject: `流量使用已达到 ${alertSettings.trafficThresholdPercent}%`,
+          text: xuiUserTrafficAlertText(alert.ledger, alert.totalBytes, alertSettings.trafficThresholdPercent)
+        });
+        sent.push("userMail");
+      } catch (error) {
+        console.error(`[alerts] traffic user mail failed for ${alert.user.email || alert.user.xuiClientEmail}:`, error.message);
+      }
+    }
+    if (!sent.length) continue;
+    alert.ledger.trafficAlerts[alert.key] = [...new Set([...(alert.ledger.trafficAlerts[alert.key] || []), ...sent])];
+  }
+  state.nodeResults = nodeResults;
+  state.nodeNames = nodeNames;
+  state.presence = { ...normalizeXuiPresence(onlinesByGuid, lastOnline, nodes, status), checkedAt: new Date().toISOString() };
+  await saveXuiBillingState(state);
+  await Promise.all(changedUsers.map(saveUser));
+  return { ...state, nodeResults, nodeNames };
 }
 
 async function getAllXuiInboundIds() {
@@ -4862,12 +4893,43 @@ async function getAllXuiInboundIds() {
   throw new Error(lastError ? `无法读取3x-ui入站列表：${lastError.message}` : "3x-ui中没有可关联的入站。");
 }
 
+// Applies per-client inbound changes ([{ email, attach, detach }]) with one bulk request per
+// distinct sorted inbound set. All attaches run first; a client whose attach failed is not
+// detached, so a partial failure never leaves it with fewer inbounds than before.
+// Returns Map<email, error> of clients whose change did not fully apply.
+async function applyXuiInboundChanges(changes = []) {
+  const failed = new Map();
+  for (const type of ["attach", "detach"]) {
+    const buckets = new Map();
+    for (const change of changes) {
+      const email = String(change?.email || "").trim();
+      const inboundIds = normalizeXuiInboundIdList(change?.[type]).sort((a, b) => a - b);
+      if (!email || !inboundIds.length || failed.has(email)) continue;
+      const key = inboundIds.join(",");
+      if (!buckets.has(key)) buckets.set(key, { emails: [], inboundIds });
+      buckets.get(key).emails.push(email);
+    }
+    for (const bucket of buckets.values()) {
+      try {
+        await xuiRequest(`/panel/api/clients/${type === "attach" ? "bulkAttach" : "bulkDetach"}`, { method: "POST", body: bucket });
+      } catch (error) {
+        for (const email of bucket.emails) failed.set(email, error);
+      }
+    }
+  }
+  return failed;
+}
+
+async function applyXuiInboundChangesOrThrow(changes) {
+  const failed = await applyXuiInboundChanges(changes);
+  if (failed.size) throw failed.values().next().value;
+}
+
 async function syncXuiClientAccess(emails, inboundIds, allInboundIds = null) {
   if (!emails.length) return;
   const allIds = allInboundIds || await getAllXuiInboundIds();
   const detachIds = allIds.filter(id => !inboundIds.includes(id));
-  if (inboundIds.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails, inboundIds } });
-  if (detachIds.length) await xuiRequest("/panel/api/clients/bulkDetach", { method: "POST", body: { emails, inboundIds: detachIds } });
+  await applyXuiInboundChangesOrThrow(emails.map(email => ({ email, attach: inboundIds, detach: detachIds })));
 }
 
 async function getXuiClientByEmail(email) {
@@ -4927,8 +4989,7 @@ async function xuiInboundIdsForUser(user, groupInboundIds = null, allInboundIds 
   let inheritedIds = groupInboundIds;
   if (!inheritedIds && user.productCatalogVersion === 2 && user.v2LineGroupId) {
     const group = (await dataStore.listCatalogV2LineGroups()).find(item => item.id === user.v2LineGroupId && item.isEnabled);
-    const management = await refreshXuiInboundManagementData();
-    const idsByKey = new Map(management.inbounds.map(inbound => [inbound.key, inbound.id]));
+    const idsByKey = new Map((await xuiInboundRows()).map(inbound => [inbound.key, inbound.id]));
     inheritedIds = (group?.inboundKeys || []).map(key => idsByKey.get(key)).filter(Boolean);
   }
   inheritedIds ||= await xuiInboundIdsForGroup(activeUserGroup(user));
@@ -4936,17 +4997,10 @@ async function xuiInboundIdsForUser(user, groupInboundIds = null, allInboundIds 
   return effectiveXuiInboundIds(inheritedIds, user.xuiExtraInboundIds, validIds);
 }
 
-let xuiInboundProbeSummary = { configured: Boolean(XUI_BASE_URL && XUI_API_TOKEN), totalNodes: 0, onlineNodes: 0, offlineNodes: 0, checkedAt: "" };
-let xuiInboundProbeSnapshot = { configured: Boolean(XUI_BASE_URL && XUI_API_TOKEN), groups: normalizeXuiInboundGroups(), inbounds: [], checkedAt: "" };
-let xuiInboundManagementRefresh = null;
+let xuiInboundCatalogRefresh = null;
+let xuiInboundProbeRun = null;
 
-function summarizeXuiInboundProbes(probes, checkedAt = new Date().toISOString()) {
-  const totalNodes = probes.length;
-  const onlineNodes = probes.filter(probe => probe.status === "online").length;
-  return { configured: true, totalNodes, onlineNodes, offlineNodes: totalNodes - onlineNodes, checkedAt };
-}
-
-function publicAccountNodeStatus(user, management = xuiInboundProbeSnapshot, v2Group = null) {
+function publicAccountNodeStatus(user, management, v2Group = null) {
   const currentGroup = accessGroupForUser(user) || activeUserGroup(user);
   const extraIds = new Set(normalizeXuiInboundIdList(user?.xuiExtraInboundIds));
   const idsByKey = new Map((management.inbounds || []).map(inbound => [inbound.key, inbound.id]));
@@ -4983,33 +5037,23 @@ function publicAccountNodeStatus(user, management = xuiInboundProbeSnapshot, v2G
   };
 }
 
-async function xuiInboundManagementData() {
-  if (!XUI_BASE_URL || !XUI_API_TOKEN) {
-    xuiInboundProbeSnapshot = { configured: false, groups: normalizeXuiInboundGroups(), metadata: {}, inbounds: [], checkedAt: new Date().toISOString() };
-    return xuiInboundProbeSnapshot;
-  }
-  const [status, nodes, inbounds, settings, activeInbounds] = await Promise.all([
-    xuiRequest("/panel/api/server/status"),
-    xuiRequest("/panel/api/nodes/list"),
-    xuiRequest("/panel/api/inbounds/list"),
-    getXuiState("inbound-groups", "xuiInboundGroups"),
-    xuiRequest("/panel/api/clients/activeInbounds", { method: "POST" }).catch(() => null)
-  ]);
-  const groups = normalizeXuiInboundGroups(settings || {});
-  const metadata = normalizeXuiInboundMetadata(settings || {});
+// Inbound table rows from one 3x-ui read: status (local panel guid), nodes (remote node names and
+// hosts), inbounds/list, and the optional activeInbounds activity map.
+function xuiInboundCatalogRows({ status, nodes, inbounds, activeInbounds = null }) {
   const localGuid = String(status?.panelGuid || "node:local");
-  const nodeNames = Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(node => [String(node?.guid || `node:${node?.id}`), String(node?.remark || node?.name || node?.address || node?.guid || node?.id)]));
-  const nodeHosts = Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(node => [String(node?.guid || `node:${node?.id}`), String(node?.address || "")]));
+  const nodeList = Array.isArray(nodes) ? nodes : [];
+  const nodeNames = Object.fromEntries(nodeList.map(node => [String(node?.guid || `node:${node?.id}`), String(node?.remark || node?.name || node?.address || node?.guid || node?.id)]));
+  const nodeHosts = Object.fromEntries(nodeList.map(node => [String(node?.guid || `node:${node?.id}`), String(node?.address || "")]));
   nodeNames[localGuid] = XUI_PANEL_NAME;
   nodeHosts[localGuid] = new URL(XUI_BASE_URL).hostname;
-  const activeInboundKeys = activeInbounds === null ? null : xuiActiveInboundKeys(activeInbounds);
-  const rows = (Array.isArray(inbounds) ? inbounds : []).map(inbound => {
+  const activity = activeInbounds ?? null;
+  const activeInboundKeys = activity === null ? null : xuiActiveInboundKeys(activity);
+  return (Array.isArray(inbounds) ? inbounds : []).map(inbound => {
     const nodeGuid = String(inbound?.originNodeGuid || `node:${inbound?.nodeId || "local"}`);
-    const key = `${nodeGuid}:${inbound.id}`;
-    const activityReported = activeInbounds !== null && Object.prototype.hasOwnProperty.call(activeInbounds, nodeGuid);
+    const activityReported = activity !== null && Object.prototype.hasOwnProperty.call(activity, nodeGuid);
     return {
       id: Number(inbound.id),
-      key,
+      key: xuiInboundKey(inbound),
       name: String(inbound.remark || inbound.name || inbound.tag || `Inbound ${inbound.id}`),
       tag: String(inbound.tag || ""),
       protocol: String(inbound.protocol || ""),
@@ -5019,31 +5063,92 @@ async function xuiInboundManagementData() {
       recentlyActive: activityReported ? activeInboundKeys.has(`${nodeGuid}:${String(inbound.tag || "")}`) : null,
       nodeGuid,
       nodeName: nodeNames[nodeGuid] || nodeGuid,
-      clientCount: Array.isArray(inbound.clientStats) ? inbound.clientStats.length : 0,
-      networkLevel: metadata[key]?.networkLevel || "",
-      region: metadata[key]?.region || "",
-      inboundType: metadata[key]?.inboundType === "custom" ? "custom" : "package"
+      nodeHost: nodeHosts[nodeGuid] || "",
+      clientCount: Array.isArray(inbound.clientStats) ? inbound.clientStats.length : 0
     };
   }).filter(inbound => Number.isSafeInteger(inbound.id) && inbound.id > 0);
-  const probes = await Promise.all(rows.map(inbound => inbound.enabled
-    ? probeTcpEndpoint(nodeHosts[inbound.nodeGuid], inbound.port)
-    : Promise.resolve({ status: "disabled", latencyMs: null, checkedAt: new Date().toISOString(), error: "" })));
-  xuiInboundProbeSummary = summarizeXuiInboundProbes(probes);
-  xuiInboundProbeSnapshot = {
+}
+
+// Replaces the xui_inbounds table from 3x-ui. syncXuiPanel passes the reads it already made; write
+// paths that must validate against the live inbound list call it without a snapshot.
+function refreshXuiInboundCatalog(snapshot = null) {
+  if (!snapshot && xuiInboundCatalogRefresh) return xuiInboundCatalogRefresh;
+  const run = (async () => {
+    const source = snapshot || await Promise.all([
+      xuiRequest("/panel/api/server/status"),
+      xuiRequest("/panel/api/nodes/list"),
+      xuiRequest("/panel/api/inbounds/list"),
+      xuiRequest("/panel/api/clients/activeInbounds", { method: "POST" }).catch(() => null)
+    ]).then(([status, nodes, inbounds, activeInbounds]) => ({ status, nodes, inbounds, activeInbounds }));
+    const rows = xuiInboundCatalogRows(source);
+    await dataStore.replaceXuiInbounds(rows);
+    return rows;
+  })();
+  if (snapshot) return run;
+  xuiInboundCatalogRefresh = run.finally(() => { xuiInboundCatalogRefresh = null; });
+  return xuiInboundCatalogRefresh;
+}
+
+// Inbound list from the app table: no 3x-ui request and no probe. Before the first panel sync has
+// filled the table, it is filled once from 3x-ui.
+async function xuiInboundRows() {
+  const rows = await dataStore.listXuiInbounds();
+  if (rows.length || !XUI_BASE_URL || !XUI_API_TOKEN) return rows;
+  await refreshXuiInboundCatalog();
+  return dataStore.listXuiInbounds();
+}
+
+// Inbound management view (groups, metadata, inbounds with their latest probe result), read from
+// the app table.
+async function xuiInboundManagementView() {
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) return { configured: false, groups: normalizeXuiInboundGroups(), metadata: {}, inbounds: [], checkedAt: "" };
+  const [rows, settings] = await Promise.all([xuiInboundRows(), getXuiState("inbound-groups", "xuiInboundGroups")]);
+  const groups = normalizeXuiInboundGroups(settings || {});
+  const metadata = normalizeXuiInboundMetadata(settings || {});
+  return {
     configured: true,
     groups,
     metadata,
-    checkedAt: xuiInboundProbeSummary.checkedAt,
-    inbounds: rows.map((inbound, index) => ({ ...inbound, probeStatus: probes[index].status, probeLatencyMs: probes[index].latencyMs, probeCheckedAt: probes[index].checkedAt, probeError: probes[index].error }))
+    checkedAt: rows.reduce((latest, row) => row.probeCheckedAt > latest ? row.probeCheckedAt : latest, ""),
+    inbounds: rows.map(row => ({
+      id: row.id,
+      key: row.key,
+      name: row.name,
+      tag: row.tag,
+      protocol: row.protocol,
+      port: row.port,
+      subSortIndex: row.subSortIndex,
+      enabled: row.enabled,
+      recentlyActive: row.recentlyActive,
+      nodeGuid: row.nodeGuid,
+      nodeName: row.nodeName,
+      clientCount: row.clientCount,
+      networkLevel: metadata[row.key]?.networkLevel || "",
+      region: metadata[row.key]?.region || "",
+      inboundType: metadata[row.key]?.inboundType === "custom" ? "custom" : "package",
+      probeStatus: row.enabled ? row.probeStatus : "disabled",
+      probeLatencyMs: row.probeLatencyMs,
+      probeCheckedAt: row.probeCheckedAt,
+      probeError: row.probeError
+    }))
   };
-  return xuiInboundProbeSnapshot;
 }
 
-function refreshXuiInboundManagementData() {
-  if (!xuiInboundManagementRefresh) {
-    xuiInboundManagementRefresh = xuiInboundManagementData().finally(() => { xuiInboundManagementRefresh = null; });
-  }
-  return xuiInboundManagementRefresh;
+// Two-minute TCP probe: targets come only from the app inbound table (never 3x-ui) and each result
+// is written back to it.
+function probeXuiInbounds() {
+  if (xuiInboundProbeRun) return xuiInboundProbeRun;
+  xuiInboundProbeRun = (async () => {
+    const rows = await dataStore.listXuiInbounds();
+    const results = await Promise.all(rows.map(async row => ({
+      key: row.key,
+      ...(row.enabled
+        ? await probeTcpEndpoint(row.nodeHost, row.port)
+        : { status: "disabled", latencyMs: null, checkedAt: new Date().toISOString(), error: "" })
+    })));
+    await dataStore.recordXuiInboundProbes(results);
+  })().finally(() => { xuiInboundProbeRun = null; });
+  return xuiInboundProbeRun;
 }
 
 async function syncXuiInboundGroup(group, previousInboundIds, inboundIds, allInboundIds) {
@@ -5055,22 +5160,10 @@ async function syncXuiInboundGroup(group, previousInboundIds, inboundIds, allInb
     return strictActiveUserGroup(user) === group;
   });
   if (!targets.length) return { group, users: 0 };
-  const emails = targets.map(user => String(user.xuiClientEmail).toLowerCase());
-  if (addedIds.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails, inboundIds: addedIds } });
-  if (removedIds.length) {
-    const detachBuckets = new Map();
-    for (const user of targets) {
-      const extraIds = new Set(normalizeXuiInboundIdList(user.xuiExtraInboundIds));
-      const ids = removedIds.filter(id => !extraIds.has(id));
-      if (!ids.length) continue;
-      const key = ids.join(",");
-      if (!detachBuckets.has(key)) detachBuckets.set(key, { inboundIds: ids, emails: [] });
-      detachBuckets.get(key).emails.push(String(user.xuiClientEmail).toLowerCase());
-    }
-    for (const bucket of detachBuckets.values()) {
-      await xuiRequest("/panel/api/clients/bulkDetach", { method: "POST", body: bucket });
-    }
-  }
+  await applyXuiInboundChangesOrThrow(targets.map(user => {
+    const extraIds = new Set(normalizeXuiInboundIdList(user.xuiExtraInboundIds));
+    return { email: String(user.xuiClientEmail).toLowerCase(), attach: addedIds, detach: removedIds.filter(id => !extraIds.has(id)) };
+  }));
   const syncedAt = new Date().toISOString();
   for (const user of targets) {
     user.xuiInboundIds = effectiveXuiInboundIds(inboundIds, user.xuiExtraInboundIds, allInboundIds);
@@ -5088,7 +5181,6 @@ async function resyncXuiInboundGroups(groups, allInboundIds) {
     .map(client => normalizeXuiClientResult(client))
     .filter(client => client.email)
     .map(client => [client.email.trim().toLowerCase(), client]));
-  const buckets = new Map();
   const discrepancies = [];
   for (const user of users) {
     if (!isSelfHostedUser(user) || !user.xuiClientEmail) continue;
@@ -5103,102 +5195,162 @@ async function resyncXuiInboundGroups(groups, allInboundIds) {
     const attach = desired.filter(id => !actual.includes(id));
     const detach = actual.filter(id => !desired.includes(id) && !normalizeXuiInboundIdList(user.xuiExtraInboundIds).includes(id));
     if (attach.length || detach.length) discrepancies.push({ email, group, attach, detach });
-    if (attach.length) {
-      const key = `attach:${attach.join(",")}`;
-      if (!buckets.has(key)) buckets.set(key, { type: "attach", inboundIds: attach, emails: [] });
-      buckets.get(key).emails.push(email);
-    }
-    if (detach.length) {
-      const key = `detach:${detach.join(",")}`;
-      if (!buckets.has(key)) buckets.set(key, { type: "detach", inboundIds: detach, emails: [] });
-      buckets.get(key).emails.push(email);
-    }
     user.xuiInboundIds = desired;
     user.xuiLastSyncedAt = new Date().toISOString();
     user.xuiLastError = "";
   }
-  for (const bucket of buckets.values()) await xuiRequest(`/panel/api/clients/${bucket.type === "attach" ? "bulkAttach" : "bulkDetach"}`, { method: "POST", body: { emails: bucket.emails, inboundIds: bucket.inboundIds } });
+  await applyXuiInboundChangesOrThrow(discrepancies);
   await saveUsers();
   return { checked: users.filter(user => isSelfHostedUser(user) && user.xuiClientEmail).length, repaired: discrepancies.length, discrepancies };
 }
 
 let catalogV2XuiSync = null;
-async function syncCatalogV2ToXui() {
-  if (catalogV2XuiSync) return catalogV2XuiSync;
-  catalogV2XuiSync = withXuiSyncLock(async () => {
-    await loadLatestData({ force: true });
-    const [groups, management, clients] = await Promise.all([
-      dataStore.listCatalogV2LineGroups(),
-      refreshXuiInboundManagementData(),
-      xuiRequest("/panel/api/clients/list")
-    ]);
-    const inboundByKey = new Map(management.inbounds.map(inbound => [inbound.key, inbound.id]));
-    const allInboundIds = normalizeXuiInboundIdList(management.inbounds.map(inbound => inbound.id));
-    const desiredByGroup = new Map(groups.filter(group => group.isEnabled).map(group => [group.id, effectiveXuiInboundIds(group.inboundKeys.map(key => inboundByKey.get(key)).filter(Boolean), [], allInboundIds)]));
-    const clientsByEmail = new Map((Array.isArray(clients) ? clients : []).map(client => normalizeXuiClientResult(client)).filter(client => client.email).map(client => [client.email.trim().toLowerCase(), client]));
-    const report = { checked: 0, updated: 0, missing: 0, failed: [] };
-    for (const user of users.filter(item => item.productCatalogVersion === 2 && isSelfHostedUser(item))) {
-      report.checked++;
-      try {
-        const repairedTrafficLimit = refreshUserPlanTraffic(user);
-        const email = xuiClientEmail(user);
-        const existing = clientsByEmail.get(email);
-        if (!existing) {
-          report.missing++;
-          if (isUserExpired(user) || isUserAccountDisabled(user)) {
-            if (repairedTrafficLimit) await saveUsers();
-            continue;
-          }
-          await provisionXuiClient(user, { allowLegacyEmail: false, allInboundIds, groupInboundIds: desiredByGroup.get(String(user.v2LineGroupId || "")) || [] });
-          user.xuiClientPresent = true;
-          delete user.xuiClientMissingAt;
-          await saveUsers();
-          report.updated++;
+// forceReload re-reads users/accounts from the database first (for data changed outside this
+// process); the five-minute timer relies on the in-memory cache and its TTL instead.
+async function syncCatalogV2ToXui({ forceReload = false, readOnly = XUI_READ_ONLY } = {}) {
+  // A forced run must not reuse an in-flight run that may have read stale data; the shared
+  // lock queues it behind that run instead.
+  if (catalogV2XuiSync && !forceReload) return catalogV2XuiSync;
+  const run = withXuiSyncLock(() => runCatalogV2Sync({ forceReload, readOnly })).finally(() => { if (catalogV2XuiSync === run) catalogV2XuiSync = null; });
+  catalogV2XuiSync = run;
+  return run;
+}
+
+// Caller must hold withXuiSyncLock. snapshot.inbounds/clients reuse panel reads already made in
+// this run (syncXuiPanel); inbound keys come straight from inbounds/list without a TCP probe.
+// readOnly still computes every difference but sends nothing to 3x-ui; users that would have
+// been written are counted in report.skipped. App-database-only repairs still save.
+async function runCatalogV2Sync({ forceReload = false, snapshot = {}, readOnly = XUI_READ_ONLY } = {}) {
+  await loadLatestUsersAndAccounts({ force: forceReload });
+  const [groups, inbounds, clients] = await Promise.all([
+    dataStore.listCatalogV2LineGroups(),
+    snapshot.inbounds || xuiRequest("/panel/api/inbounds/list"),
+    snapshot.clients || xuiRequest("/panel/api/clients/list")
+  ]);
+  const inboundRows = (Array.isArray(inbounds) ? inbounds : []).map(inbound => ({ id: Number(inbound?.id), key: xuiInboundKey(inbound) })).filter(inbound => Number.isSafeInteger(inbound.id) && inbound.id > 0);
+  const inboundByKey = new Map(inboundRows.map(inbound => [inbound.key, inbound.id]));
+  const allInboundIds = normalizeXuiInboundIdList(inboundRows.map(inbound => inbound.id));
+  const desiredByGroup = new Map(groups.filter(group => group.isEnabled).map(group => [group.id, effectiveXuiInboundIds(group.inboundKeys.map(key => inboundByKey.get(key)).filter(Boolean), [], allInboundIds)]));
+  const clientsByEmail = new Map((Array.isArray(clients) ? clients : []).map(client => normalizeXuiClientResult(client)).filter(client => client.email).map(client => [client.email.trim().toLowerCase(), client]));
+  const report = { checked: 0, updated: 0, missing: 0, skipped: 0, failed: [] };
+  // Inbound changes are collected per user and sent in batches after the loop.
+  const inboundChanges = [];
+  for (const user of users.filter(item => item.productCatalogVersion === 2 && isSelfHostedUser(item))) {
+    report.checked++;
+    try {
+      const repairedTrafficLimit = refreshUserPlanTraffic(user);
+      const email = xuiClientEmail(user);
+      const existing = clientsByEmail.get(email);
+      if (!existing) {
+        report.missing++;
+        if (readOnly || isUserExpired(user) || isUserAccountDisabled(user)) {
+          if (readOnly && !isUserExpired(user) && !isUserAccountDisabled(user)) report.skipped++;
+          if (repairedTrafficLimit) await saveUser(user);
           continue;
         }
-        if (!user.xuiClientEmail) {
-          await provisionXuiClient(user, { allowLegacyEmail: false, allInboundIds, groupInboundIds: desiredByGroup.get(String(user.v2LineGroupId || "")) || [], existingClient: existing });
-          user.xuiClientPresent = true;
-          await saveUsers();
-          report.updated++;
-          continue;
-        }
-        const inherited = desiredByGroup.get(String(user.v2LineGroupId || "")) || [];
-        const desiredInboundIds = effectiveXuiInboundIds(inherited, user.xuiExtraInboundIds, allInboundIds);
-        const desired = {
-          ...existing,
-          email,
-          totalGB: xuiTrafficLimitBytes(user),
-          expiryTime: new Date(user.expiresAt).getTime(),
-          limitIp: planDeviceLimit(user),
-          reset: 0,
-          flow: XUI_VISION_FLOW,
-          groupName: accessGroupForUser(user),
-          comment: xuiClientComment(user),
-          enable: !isUserExpired(user) && !isUserAccountDisabled(user)
-        };
-        if (xuiClientNeedsUpdate(existing, desired)) await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(existing, desired) });
-        const actualInboundIds = normalizeXuiInboundIdList(existing.inboundIds);
-        const attach = desiredInboundIds.filter(id => !actualInboundIds.includes(id));
-        const detach = actualInboundIds.filter(id => allInboundIds.includes(id) && !desiredInboundIds.includes(id));
-        if (attach.length) await xuiRequest("/panel/api/clients/bulkAttach", { method: "POST", body: { emails: [email], inboundIds: attach } });
-        if (detach.length) await xuiRequest("/panel/api/clients/bulkDetach", { method: "POST", body: { emails: [email], inboundIds: detach } });
-        if (xuiClientNeedsUpdate(existing, desired) || attach.length || detach.length) report.updated++;
-        if (user.xuiClientPresent === false) {
-          user.xuiClientPresent = true;
-          delete user.xuiClientMissingAt;
-          await saveUsers();
-        } else if (repairedTrafficLimit) {
-          await saveUsers();
-        }
-      } catch (error) {
-        report.failed.push({ userId: user.id, error: error.message });
+        await provisionXuiClient(user, { allowLegacyEmail: false, allInboundIds, groupInboundIds: desiredByGroup.get(String(user.v2LineGroupId || "")) || [] });
+        user.xuiClientPresent = true;
+        delete user.xuiClientMissingAt;
+        await saveUser(user);
+        report.updated++;
+        continue;
       }
+      if (!user.xuiClientEmail) {
+        if (readOnly) {
+          report.skipped++;
+          if (repairedTrafficLimit) await saveUser(user);
+          continue;
+        }
+        await provisionXuiClient(user, { allowLegacyEmail: false, allInboundIds, groupInboundIds: desiredByGroup.get(String(user.v2LineGroupId || "")) || [], existingClient: existing });
+        user.xuiClientPresent = true;
+        await saveUser(user);
+        report.updated++;
+        continue;
+      }
+      const inherited = desiredByGroup.get(String(user.v2LineGroupId || "")) || [];
+      const desiredInboundIds = effectiveXuiInboundIds(inherited, user.xuiExtraInboundIds, allInboundIds);
+      const desired = {
+        ...existing,
+        email,
+        totalGB: xuiTrafficLimitBytes(user),
+        expiryTime: new Date(user.expiresAt).getTime(),
+        limitIp: planDeviceLimit(user),
+        reset: 0,
+        flow: XUI_VISION_FLOW,
+        groupName: accessGroupForUser(user),
+        comment: xuiClientComment(user),
+        // Same rule as syncXuiWeightedTraffic: depleted clients stay disabled until traffic
+        // is available again (refreshUserPlanTraffic above recomputed the flag).
+        enable: !isUserExpired(user) && !isUserAccountDisabled(user) && !user.xuiWeightedTraffic?.depleted
+      };
+      const needsUpdate = xuiClientNeedsUpdate(existing, desired);
+      const actualInboundIds = normalizeXuiInboundIdList(existing.inboundIds);
+      const attach = desiredInboundIds.filter(id => !actualInboundIds.includes(id));
+      const detach = actualInboundIds.filter(id => allInboundIds.includes(id) && !desiredInboundIds.includes(id));
+      const inboundsDiffer = attach.length > 0 || detach.length > 0;
+      if (readOnly) {
+        if (needsUpdate || inboundsDiffer) report.skipped++;
+      } else {
+        if (needsUpdate) await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(existing, desired) });
+        // Users with pending inbound changes are counted after the batch settles.
+        if (inboundsDiffer) inboundChanges.push({ email, attach, detach, user });
+        else if (needsUpdate) report.updated++;
+      }
+      if (user.xuiClientPresent === false) {
+        user.xuiClientPresent = true;
+        delete user.xuiClientMissingAt;
+        await saveUser(user);
+      } else if (repairedTrafficLimit) {
+        await saveUser(user);
+      }
+    } catch (error) {
+      report.failed.push({ userId: user.id, error: error.message });
     }
-    console.log(`[catalog-v2:xui-sync] ${JSON.stringify(report)}`);
-    return report;
-  }).finally(() => { catalogV2XuiSync = null; });
-  return catalogV2XuiSync;
+  }
+  const inboundFailures = await applyXuiInboundChanges(inboundChanges);
+  for (const { email, user } of inboundChanges) {
+    const error = inboundFailures.get(email);
+    if (error) report.failed.push({ userId: user.id, error: error.message });
+    else report.updated++;
+  }
+  console.log(`[catalog-v2:xui-sync] ${JSON.stringify(report)}`);
+  return report;
+}
+
+// The five-minute job: one panel read shared by the inbound table, traffic billing and Catalog V2
+// access sync. Traffic runs before V2 so the V2 step sees this round's depletion state; each
+// step's failure is isolated so one never skips the others.
+async function syncXuiPanel() {
+  return withXuiSyncLock(async () => {
+    const [status, nodes, inbounds, clients, activeInbounds] = await Promise.all([
+      xuiRequest("/panel/api/server/status"),
+      xuiRequest("/panel/api/nodes/list"),
+      xuiRequest("/panel/api/inbounds/list"),
+      xuiRequest("/panel/api/clients/list"),
+      xuiRequest("/panel/api/clients/activeInbounds", { method: "POST" }).catch(() => null)
+    ]);
+    const snapshot = { status, nodes, inbounds, clients };
+    const result = { inboundCatalogError: null, trafficError: null, catalogV2: null, catalogV2Error: null };
+    try {
+      await refreshXuiInboundCatalog({ status, nodes, inbounds, activeInbounds });
+    } catch (error) {
+      result.inboundCatalogError = error;
+      console.error("3x-ui inbound table refresh failed:", error);
+    }
+    try {
+      await runXuiWeightedTrafficSync(snapshot);
+    } catch (error) {
+      result.trafficError = error;
+      console.error("3x-ui traffic billing sync failed:", error);
+    }
+    try {
+      result.catalogV2 = await runCatalogV2Sync({ snapshot });
+    } catch (error) {
+      result.catalogV2Error = error;
+      console.error("Catalog V2 to 3x-ui sync failed:", error);
+    }
+    return result;
+  });
 }
 
 function xuiClientNeedsUpdate(existing, desired) {
@@ -8905,7 +9057,7 @@ async function handleApi(req, res, pathname) {
       sendJson(res, 403, { error: "仅有效套餐用户可以查看节点状态。" });
       return;
     }
-    const management = xuiInboundProbeSnapshot.checkedAt ? xuiInboundProbeSnapshot : await refreshXuiInboundManagementData();
+    const management = await xuiInboundManagementView();
     const v2Group = user.productCatalogVersion === 2 ? (await dataStore.listCatalogV2LineGroups()).find(group => group.id === user.v2LineGroupId && group.isEnabled) : null;
     sendJson(res, 200, publicAccountNodeStatus(user, management, v2Group));
     return;
@@ -9517,7 +9669,7 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/xui-inbounds" && req.method === "GET") {
     try {
-      sendJson(res, 200, await refreshXuiInboundManagementData());
+      sendJson(res, 200, await xuiInboundManagementView());
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }
@@ -9530,6 +9682,7 @@ async function handleApi(req, res, pathname) {
       const payload = await readJson(req);
       const { id, enable } = normalizeXuiInboundEnable(xuiInboundEnableMatch[1], payload.enable);
       await xuiRequest(`/panel/api/inbounds/setEnable/${id}`, { method: "POST", body: { enable } });
+      await dataStore.setXuiInboundEnabled(id, enable);
       sendJson(res, 200, { id, enabled: enable });
     } catch (error) {
       sendJson(res, error.statusCode === 400 ? 400 : 502, { error: error.message });
@@ -9539,13 +9692,7 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/xui-inbound-groups/resync" && req.method === "POST") {
     try {
-      // The page has already loaded the management snapshot (including TCP probes).
-      // Reusing it keeps this repair action bounded to the client list and writes.
-      const groups = await getXuiInboundGroups();
-      const cachedInbounds = Array.isArray(xuiInboundProbeSnapshot.inbounds) ? xuiInboundProbeSnapshot.inbounds : [];
-      const allInboundIds = cachedInbounds.length
-        ? cachedInbounds.map(inbound => inbound.id)
-        : await getAllXuiInboundIds();
+      const [groups, allInboundIds] = await Promise.all([getXuiInboundGroups(), getAllXuiInboundIds()]);
       sendJson(res, 200, await resyncXuiInboundGroups(groups, allInboundIds));
     } catch (error) {
       sendJson(res, error.statusCode || 502, { error: error.message });
@@ -9564,7 +9711,8 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 200, { groups, metadata, synced: [] });
         return;
       }
-      const management = await refreshXuiInboundManagementData();
+      await refreshXuiInboundCatalog();
+      const management = await xuiInboundManagementView();
       const allInboundIds = management.inbounds.map(inbound => inbound.id);
       const validIds = new Set(allInboundIds);
       // Drop IDs for inbounds removed directly in 3x-ui so metadata edits remain usable.
@@ -10437,7 +10585,8 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/catalog-v2/line-groups" && req.method === "POST") {
     try {
       let group = normalizeCatalogV2LineGroup(await readJson(req));
-      const management = await refreshXuiInboundManagementData();
+      await refreshXuiInboundCatalog();
+      const management = await xuiInboundManagementView();
       group = validateCatalogV2LineGroupInbounds(group, management.inbounds);
       await dataStore.upsertCatalogV2LineGroup(group, { create: true });
       sendJson(res, 201, group);
@@ -10461,7 +10610,8 @@ async function handleApi(req, res, pathname) {
           const activeProductIds = new Set((await dataStore.listCatalogV2Products()).filter(product => product.isEnabled && product.lineGroupId === id).map(product => product.id));
           if (users.some(user => activeProductIds.has(user.currentProductId))) throw new Error("仍有用户正在使用关联该权限组的生效套餐，暂时不能停用。");
         }
-        const management = await refreshXuiInboundManagementData();
+        await refreshXuiInboundCatalog();
+        const management = await xuiInboundManagementView();
         group = validateCatalogV2LineGroupInbounds(group, management.inbounds, existing);
         await dataStore.upsertCatalogV2LineGroup(group);
         sendJson(res, 200, group);
@@ -10892,7 +11042,7 @@ async function handleApi(req, res, pathname) {
     if (action === "custom-inbounds" && req.method === "GET") {
       try {
         if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以管理个人定制入站。");
-        const management = await refreshXuiInboundManagementData();
+        const management = await xuiInboundManagementView();
         const inheritedInboundIds = item.productCatalogVersion === 2
           ? await xuiInboundIdsForUser({ ...item, xuiExtraInboundIds: [] }, null, management.inbounds.map(inbound => inbound.id))
           : effectiveXuiInboundIds(management.groups[activeUserGroup(item)] || [], [], management.inbounds.map(inbound => inbound.id));
@@ -10931,7 +11081,8 @@ async function handleApi(req, res, pathname) {
           sendJson(res, 200, publicUser(item));
           return;
         }
-        const management = await refreshXuiInboundManagementData();
+        await refreshXuiInboundCatalog();
+        const management = await xuiInboundManagementView();
         const inboundsById = new Map(management.inbounds.map(inbound => [inbound.id, inbound]));
         for (const id of addedIds) {
           const inbound = inboundsById.get(id);
@@ -11807,18 +11958,17 @@ async function main() {
     settleReferralRewards().catch(error => console.error("Referral settlement failed:", error));
   }, 60 * 1000);
   if (XUI_BASE_URL && XUI_API_TOKEN) {
-    refreshXuiInboundManagementData().catch(error => console.error("3x-ui inbound probe failed:", error));
+    // The first probe waits for the first panel sync to fill the inbound table.
+    syncXuiPanel()
+      .catch(error => console.error("3x-ui panel sync failed:", error))
+      .then(() => probeXuiInbounds())
+      .catch(error => console.error("3x-ui inbound probe failed:", error));
     setInterval(() => {
-      refreshXuiInboundManagementData().catch(error => console.error("3x-ui inbound probe failed:", error));
+      probeXuiInbounds().catch(error => console.error("3x-ui inbound probe failed:", error));
     }, XUI_INBOUND_PROBE_INTERVAL_MS);
-    syncXuiWeightedTraffic().catch(error => console.error("3x-ui traffic billing sync failed:", error));
     setInterval(() => {
-      syncXuiWeightedTraffic().catch(error => console.error("3x-ui traffic billing sync failed:", error));
+      syncXuiPanel().catch(error => console.error("3x-ui panel sync failed:", error));
     }, XUI_TRAFFIC_SYNC_INTERVAL_MS);
-    syncCatalogV2ToXui().catch(error => console.error("Catalog V2 to 3x-ui sync failed:", error));
-    setInterval(() => {
-      syncCatalogV2ToXui().catch(error => console.error("Catalog V2 to 3x-ui sync failed:", error));
-    }, 5 * 60 * 1000);
     pruneXuiDailyTrafficRetention().catch(error => console.error("3x-ui daily traffic prune failed:", error));
     setInterval(() => {
       pruneXuiDailyTrafficRetention().catch(error => console.error("3x-ui daily traffic prune failed:", error));
@@ -11922,7 +12072,6 @@ module.exports = Object.assign(requestHandler, {
   normalizeCatalogV2Product,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
-  summarizeXuiInboundProbes,
   publicAccountNodeStatus,
   normalizeXuiPresence,
   xuiTrafficByUser,
@@ -11943,6 +12092,9 @@ module.exports = Object.assign(requestHandler, {
   provisionXuiClient,
   auditXuiClientGroups,
   syncCatalogV2ToXui,
+  syncXuiPanel,
+  probeXuiInbounds,
+  applyXuiInboundChanges,
   withXuiSyncLock,
   withXuiUserMigrationLock,
   xuiNodeBaseUrl,

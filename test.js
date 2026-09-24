@@ -70,7 +70,6 @@ const {
   normalizeCatalogV2Product,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
-  summarizeXuiInboundProbes,
   publicAccountNodeStatus,
   normalizeXuiPresence,
   xuiTrafficByUser,
@@ -198,13 +197,6 @@ assert.deepStrictEqual(adminReferralDetails(
   invitedUsers: [{ id: "invitee", email: "invitee@example.com", status: "active", createdAt: "2026-08-27T00:00:00.000Z", orderCount: 1, totalPaid: 50 }],
   orders: [{ id: "order", number: "ORDER-1", inviteeEmail: "invitee@example.com", planName: "PRO", amount: 50, status: "paid", createdAt: "2026-08-27T01:00:00.000Z" }],
   rewards: [{ id: "reward", sourceOrderId: "order", orderNumber: "ORDER-1", inviteeEmail: "invitee@example.com", baseAmount: 50, rate: 10, rewardAmount: 5, status: "available", availableAt: "2026-08-29T01:00:00.000Z" }]
-});
-assert.deepStrictEqual(summarizeXuiInboundProbes([{ status: "online" }, { status: "offline" }, { status: "disabled" }], "2026-08-26T00:00:00.000Z"), {
-  configured: true,
-  totalNodes: 3,
-  onlineNodes: 1,
-  offlineNodes: 2,
-  checkedAt: "2026-08-26T00:00:00.000Z"
 });
 assert.deepStrictEqual(publicAccountNodeStatus(
   { activeGroup: "basic", xuiExtraInboundIds: [3] },
