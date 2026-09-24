@@ -911,6 +911,25 @@
         "2026-09-24: test-payment now confirms read-only runs send no write request for enable/inbound drift or a missing client, report skipped 1 with updated 0 and no failures, and a following normal run repairs the drift and recreates the client.",
         "2026-09-24: npm run verify, npm run verify:fast and git diff --check passed."
       ]
+    },
+    {
+      "id": "xui-panel-quota-zero",
+      "name": "Keep 3x-ui panel quota unlimited",
+      "description": "Push totalGB=0 to 3x-ui from Catalog V2 sync, provisioning and traffic-pack re-enable so quota is enforced only by the app's bulkDisable/bulkEnable, ending the panel-disable/app-enable loop for clients whose never-reset panel counter exceeds the plan quota.",
+      "status": "in_progress",
+      "ui": false,
+      "dependencies": ["xui-panel-sync-merge"],
+      "done_criteria": [
+        "Catalog V2 sync, provisioning and traffic-pack re-enable write totalGB=0 to the panel.",
+        "A client whose panel counter exceeds its former panel quota but whose app cycle usage is within quota stays enabled across panel sync rounds without repeated bulkEnable.",
+        "App-side quota (xuiTrafficLimitBytes, gifts, traffic packs) and app-enforced depletion are unchanged.",
+        "Production is monitored after deployment until the two affected clients stay enabled."
+      ],
+      "verification": [
+        "2026-09-24: Production diagnosis (read-only): two non-expired V2 clients (app cycle usage 12.9/100 GiB and 47.5/50 GiB) had panel counters of 190.9 and 50.8 GiB against panel totalGB 100 and 50 GiB, so 3x-ui disabled them and every panel sync re-enabled them with bulkEnable.",
+        "2026-09-24: Reproduced before the fix with a mock panel that enforces totalGB: after two syncXuiPanel rounds the client kept totalGB 50 GiB (53687091200 !== 0).",
+        "2026-09-24: test-payment now confirms the client ends with totalGB 0, stays enabled and gets no bulkEnable in the second round; purchase and admin-gift paths leave panel totalGB 0 while the app quota still grows; depleted clients stay disabled by the app. npm run verify, npm run verify:fast and git diff --check passed."
+      ]
     }
   ]
 }
