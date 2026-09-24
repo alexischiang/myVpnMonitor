@@ -80,7 +80,14 @@ async function main() {
       return sendJson(response, client ? 200 : 404, client ? { success: true, obj: client } : { success: false, msg: "not found" });
     }
     if (request.url === "/panel/api/server/status") return sendJson(response, 200, { success: true, obj: { panelGuid: "local" } });
-    if (request.url === "/panel/api/clients/list") return sendJson(response, 200, { success: true, obj: [...xuiClients.values()].map(client => ({ traffic: { up: 0, down: 0, enable: true }, ...client })) });
+    if (request.url === "/panel/api/clients/list") {
+      // Like 3x-ui: a finite totalGB reached by the never-reset panel counter disables the client.
+      for (const client of xuiClients.values()) {
+        const panelUsed = Number(client.traffic?.up || 0) + Number(client.traffic?.down || 0);
+        if (Number(client.totalGB) > 0 && panelUsed >= Number(client.totalGB)) client.enable = false;
+      }
+      return sendJson(response, 200, { success: true, obj: [...xuiClients.values()].map(client => ({ traffic: { up: 0, down: 0, enable: true }, ...client })) });
+    }
     if (request.url === "/panel/api/inbounds/list") return sendJson(response, 200, { success: true, obj: [
       { id: 1, remark: "套餐节点", protocol: "vless", enable: true, originNodeGuid: "local" },
       { id: 2, remark: "个人家宽", protocol: "vless", enable: true, originNodeGuid: "local" },
@@ -475,7 +482,7 @@ async function main() {
     assert.strictEqual(createdUser.userId, "buyer@example.test");
     assert.strictEqual(createdUser.email, "buyer@example.test");
     assert.deepStrictEqual([createdUser.currentProductId, createdUser.currentOptionId, createdUser.currentProductOrderId], ["pro", "pro-test-001", paidOrder.data.id]);
-    assert.deepStrictEqual([xuiClients.get("buyer@example.test").flow, xuiClients.get("buyer@example.test").totalGB], ["xtls-rprx-vision", 200 * 1024 ** 3]);
+    assert.deepStrictEqual([xuiClients.get("buyer@example.test").flow, xuiClients.get("buyer@example.test").totalGB], ["xtls-rprx-vision", 0], "the panel quota stays unlimited; the app enforces the plan quota");
     const adminBills = await request("/api/bills", { cookie: adminCookie });
     const initialBill = adminBills.data.find(item => item.paymentOrderId === paidOrder.data.id);
     assert.deepStrictEqual([initialBill.type, initialBill.merOrderTid, initialBill.productSnapshot?.planName], ["initial", paidOrder.data.merOrderTid, paidOrder.data.planName]);
@@ -999,6 +1006,15 @@ async function main() {
     assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/update/v2-sync%40example.test"), "the V2 step must see the traffic step's re-enable in the shared snapshot and not resend it");
     assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true);
 
+    Object.assign(xuiClients.get("v2-sync@example.test"), { totalGB: 50 * 1024 ** 3, traffic: { up: 60 * 1024 ** 3, down: 0, enable: true } });
+    await handler.syncXuiPanel();
+    xuiRequests.length = 0;
+    await handler.syncXuiPanel();
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").totalGB, 0, "the panel quota must stay unlimited; the app enforces quota");
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true, "a client within its app quota must stay enabled even when the panel counter exceeds the old panel quota");
+    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/bulkEnable" && entry.body.emails.includes("v2-sync@example.test")), "no panel-disable/app-enable loop across rounds");
+    delete xuiClients.get("v2-sync@example.test").traffic;
+
     xuiClients.get("v2-sync@example.test").inboundIds = [2];
     xuiClients.get("v2-sync@example.test").enable = false;
     xuiRequests.length = 0;
@@ -1101,7 +1117,7 @@ async function main() {
     assert.strictEqual(trafficGift.response.status, 200, trafficGift.text);
     assert.strictEqual(trafficGift.data.xuiTrafficLimitBytes, v2QuotaBeforeGift + 5 * 1024 ** 3, "admin gifts must add to the local product quota, not the remote panel quota");
     assert.deepStrictEqual(trafficGift.data.xuiAdminTrafficGifts.map(item => [item.bytes, item.note]), [[5 * 1024 ** 3, "integration gift"]]);
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").totalGB, v2QuotaBeforeGift + 5 * 1024 ** 3);
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").totalGB, 0, "gifts raise only the app quota; the panel quota stays unlimited");
     assert.strictEqual((await request(`/api/users/${v2User.id}/traffic-gift`, { method: "POST", cookie: v2Registration.response.headers.get("set-cookie").split(";", 1)[0], body: { trafficGb: 5 } })).response.status, 403);
 
     const passwordChange = await request("/api/auth/password", {

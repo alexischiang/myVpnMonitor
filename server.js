@@ -3728,7 +3728,7 @@ async function enableXuiClientAfterTrafficIncrease(user) {
   const email = xuiClientEmail(user);
   const remote = await getXuiClientByEmail(email);
   const totalBytes = xuiTrafficLimitBytes(user);
-  await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: totalBytes, reset: 0, flow: XUI_VISION_FLOW, enable: true }) });
+  await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable: true }) });
   await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [email] } });
   const state = await getXuiBillingState();
   if (state.users[email]) {
@@ -5272,7 +5272,9 @@ async function runCatalogV2Sync({ forceReload = false, snapshot = {}, readOnly =
       const desired = {
         ...existing,
         email,
-        totalGB: xuiTrafficLimitBytes(user),
+        // Decision X: the panel quota stays unlimited. Its counter is never reset, so a finite
+        // totalGB would make 3x-ui disable clients the app still considers within quota.
+        totalGB: 0,
         expiryTime: new Date(user.expiresAt).getTime(),
         limitIp: planDeviceLimit(user),
         reset: 0,
@@ -5423,10 +5425,13 @@ async function provisionXuiClientOnce(user, options = {}) {
       }
     }
   }
+  // The panel gets no quota, but a user without a verifiable local plan entitlement is still rejected.
+  xuiTrafficLimitBytes(user);
   const desired = {
     ...(existing || {}),
     email,
-    totalGB: xuiTrafficLimitBytes(user),
+    // Decision X: quota is enforced by the app, never by the panel (see syncCatalogV2ToXui).
+    totalGB: 0,
     expiryTime: new Date(user.expiresAt).getTime(),
     limitIp: user.productCatalogVersion === 2 ? planDeviceLimit(user) : Number.isFinite(Number(user.xuiIpLimit)) ? Math.max(0, Number(user.xuiIpLimit)) : planDeviceLimit(user),
     reset: 0,
