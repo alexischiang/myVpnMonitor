@@ -80,7 +80,7 @@ async function main() {
       return sendJson(response, client ? 200 : 404, client ? { success: true, obj: client } : { success: false, msg: "not found" });
     }
     if (request.url === "/panel/api/server/status") return sendJson(response, 200, { success: true, obj: { panelGuid: "local" } });
-    if (request.url === "/panel/api/clients/list") return sendJson(response, 200, { success: true, obj: [...xuiClients.values()] });
+    if (request.url === "/panel/api/clients/list") return sendJson(response, 200, { success: true, obj: [...xuiClients.values()].map(client => ({ traffic: { up: 0, down: 0, enable: true }, ...client })) });
     if (request.url === "/panel/api/inbounds/list") return sendJson(response, 200, { success: true, obj: [
       { id: 1, remark: "套餐节点", protocol: "vless", enable: true, originNodeGuid: "local" },
       { id: 2, remark: "个人家宽", protocol: "vless", enable: true, originNodeGuid: "local" },
@@ -100,9 +100,17 @@ async function main() {
       return sendJson(response, 200, { success: true, obj: client });
     }
     if (request.url === "/panel/api/clients/bulkAttach") {
+      if ((body.inboundIds || []).includes(999)) return sendJson(response, 500, { success: false, msg: "simulated attach failure" });
       for (const email of body.emails || []) {
         const client = xuiClients.get(email);
         if (client) client.inboundIds = [...new Set([...(client.inboundIds || []), ...(body.inboundIds || [])])];
+      }
+      return sendJson(response, 200, { success: true, obj: {} });
+    }
+    if (request.url === "/panel/api/clients/bulkEnable" || request.url === "/panel/api/clients/bulkDisable") {
+      for (const email of body.emails || []) {
+        const client = xuiClients.get(email);
+        if (client) client.enable = request.url.endsWith("bulkEnable");
       }
       return sendJson(response, 200, { success: true, obj: {} });
     }
@@ -942,12 +950,79 @@ async function main() {
     xuiClients.get("v2-sync@example.test").inboundIds = [2];
     xuiClients.get("v2-sync@example.test").group = "panel-change-must-not-write-back";
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiClientPresent: false, xuiClientMissingAt: "2026-01-01T00:00:00.000Z" })]);
-    const syncReport = await handler.syncCatalogV2ToXui();
+    const syncReport = await handler.syncCatalogV2ToXui({ forceReload: true });
     assert.deepStrictEqual([syncReport.checked >= 1, syncReport.updated >= 1, syncReport.failed.length], [true, true, 0]);
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
     assert.strictEqual(xuiClients.get("v2-sync@example.test").group, catalogV2Ids.group);
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientPresent, true);
     assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "3x-ui sync must not write panel state back to V2 catalog data");
+
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 60 * 1024 ** 3 } })]);
+    xuiClients.get("v2-sync@example.test").enable = false;
+    await handler.syncCatalogV2ToXui({ forceReload: true });
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, false, "five-minute V2 sync must not re-enable a client whose traffic is depleted");
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 0 } })]);
+    await handler.syncCatalogV2ToXui({ forceReload: true });
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true, "five-minute V2 sync must re-enable a client once traffic is available again");
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 60 * 1024 ** 3 } })]);
+    await handler.syncCatalogV2ToXui();
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true, "the timer path must use the fresh in-memory cache instead of re-reading the database");
+    await handler.syncCatalogV2ToXui({ forceReload: true });
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, false, "forceReload must pick up database changes made outside the process");
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 0 } })]);
+    await handler.syncCatalogV2ToXui({ forceReload: true });
+
+    xuiClients.get("v2-sync@example.test").inboundIds = [2];
+    xuiRequests.length = 0;
+    const panelSync = await handler.syncXuiPanel();
+    assert.deepStrictEqual([panelSync.inboundCatalogError?.message, panelSync.trafficError?.message, panelSync.catalogV2Error?.message, panelSync.catalogV2.failed.length], [undefined, undefined, undefined, 0]);
+    const panelReads = ["/panel/api/server/status", "/panel/api/nodes/list", "/panel/api/inbounds/list", "/panel/api/clients/list", "/panel/api/clients/activeInbounds"]
+      .map(url => xuiRequests.filter(entry => entry.url === url).length);
+    assert.deepStrictEqual(panelReads, [1, 1, 1, 1, 1], "the merged five-minute job must read each shared panel endpoint once");
+    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1], "the merged job must still repair V2 inbound drift");
+    const inboundTable = (await database.query("SELECT key, inbound_id, enabled FROM xui_inbounds ORDER BY inbound_id")).rows;
+    assert.deepStrictEqual(inboundTable.map(row => [row.key, row.inbound_id, row.enabled]), [["local:1", 1, true], ["local:2", 2, true], ["local:3", 3, false]], "the panel sync must replace the inbound table");
+
+    xuiRequests.length = 0;
+    await handler.probeXuiInbounds();
+    assert.strictEqual(xuiRequests.length, 0, "the TCP probe must read targets from the inbound table only");
+    const probedRows = (await database.query("SELECT inbound_id, probe_status, probe_checked_at FROM xui_inbounds ORDER BY inbound_id")).rows;
+    assert.deepStrictEqual(probedRows.map(row => [row.inbound_id, row.probe_status, Boolean(row.probe_checked_at)]), [[1, "unknown", true], [2, "unknown", true], [3, "disabled", true]], "probe results must be written back (the mock inbounds have no port)");
+    const inboundView = await request("/api/xui-inbounds", { cookie: adminCookie });
+    assert.strictEqual(inboundView.response.status, 200);
+    assert.strictEqual(xuiRequests.length, 0, "the inbound management page must not call 3x-ui or probe");
+    assert.deepStrictEqual(inboundView.data.inbounds.map(inbound => [inbound.key, inbound.probeStatus, inbound.name]), [["local:1", "unknown", "套餐节点"], ["local:2", "unknown", "个人家宽"], ["local:3", "disabled", "停用家宽"]]);
+    xuiClients.get("v2-sync@example.test").enable = false;
+    xuiRequests.length = 0;
+    await handler.syncXuiPanel();
+    assert.ok(xuiRequests.some(entry => entry.url === "/panel/api/clients/bulkEnable" && entry.body.emails.includes("v2-sync@example.test")));
+    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/update/v2-sync%40example.test"), "the V2 step must see the traffic step's re-enable in the shared snapshot and not resend it");
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true);
+
+    xuiClients.get("v2-sync@example.test").inboundIds = [2];
+    xuiClients.get("v2-sync@example.test").enable = false;
+    xuiRequests.length = 0;
+    const readOnlyReport = await handler.syncCatalogV2ToXui({ forceReload: true, readOnly: true });
+    const writeUrls = /\/panel\/api\/clients\/(update\/|add$|bulkAttach$|bulkDetach$|bulkEnable$|bulkDisable$)/;
+    assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "read-only V2 sync must not write to 3x-ui");
+    assert.deepStrictEqual([readOnlyReport.updated, readOnlyReport.skipped, readOnlyReport.failed.length], [0, 1, 0]);
+    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").inboundIds, xuiClients.get("v2-sync@example.test").enable], [[2], false]);
+    const repairedReport = await handler.syncCatalogV2ToXui({ forceReload: true });
+    assert.deepStrictEqual([repairedReport.updated, repairedReport.skipped], [1, 0]);
+    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").inboundIds, xuiClients.get("v2-sync@example.test").enable], [[1], true]);
+
+    xuiRequests.length = 0;
+    const batchFailures = await handler.applyXuiInboundChanges([
+      { email: "batch-a@example.test", attach: [2, 1], detach: [3] },
+      { email: "batch-b@example.test", attach: [1, 2] },
+      { email: "batch-c@example.test", attach: [999], detach: [3] }
+    ]);
+    assert.deepStrictEqual(xuiRequests.map(entry => entry.url === "/panel/api/clients/bulkAttach" || entry.url === "/panel/api/clients/bulkDetach" ? entry : null).filter(Boolean), [
+      { url: "/panel/api/clients/bulkAttach", body: { emails: ["batch-a@example.test", "batch-b@example.test"], inboundIds: [1, 2] } },
+      { url: "/panel/api/clients/bulkAttach", body: { emails: ["batch-c@example.test"], inboundIds: [999] } },
+      { url: "/panel/api/clients/bulkDetach", body: { emails: ["batch-a@example.test"], inboundIds: [3] } }
+    ], "clients with the same sorted inbound set share one request, and a failed attach skips that client's detach");
+    assert.deepStrictEqual([...batchFailures.keys()], ["batch-c@example.test"]);
 
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ expiresAt: "2020-01-01T00:00:00.000Z", xuiIpLimit: 1 })]);
     const lifetimeOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.lifetime}`, amount: 1 } });
@@ -959,12 +1034,16 @@ async function main() {
     assert.strictEqual(xuiClients.get("v2-sync@example.test").limitIp, 3, "a new V2 plan must replace the previous device limit");
 
     xuiClients.delete("v2-sync@example.test");
-    const missingReport = await handler.syncCatalogV2ToXui();
+    xuiRequests.length = 0;
+    const readOnlyMissing = await handler.syncCatalogV2ToXui({ forceReload: true, readOnly: true });
+    assert.deepStrictEqual([readOnlyMissing.missing, readOnlyMissing.skipped, xuiClients.has("v2-sync@example.test")], [1, 1, false]);
+    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/add"), "read-only V2 sync must not recreate a missing client");
+    const missingReport = await handler.syncCatalogV2ToXui({ forceReload: true });
     assert.strictEqual(missingReport.failed.length, 0);
     assert.ok(xuiClients.has("v2-sync@example.test"), "five-minute V2 sync must restore a missing client");
     assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
     await database.query("UPDATE app_records SET data=data-'xuiClientEmail' WHERE collection='users' AND id=$1", [v2User.id]);
-    const unlinkedReport = await handler.syncCatalogV2ToXui();
+    const unlinkedReport = await handler.syncCatalogV2ToXui({ forceReload: true });
     assert.strictEqual(unlinkedReport.failed.length, 0);
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, "v2-sync@example.test", "five-minute V2 sync must relink an existing client");
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiTrafficLimitBytes: 900 * 1024 ** 3, xuiWeightedTraffic: { totalBytes: 900 * 1024 ** 3, usedBytes: 0 }, xuiLastTraffic: { totalBytes: 900 * 1024 ** 3, usedBytes: 0 } })]);

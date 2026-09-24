@@ -817,6 +817,100 @@
         "page_errors": [],
         "checked_at": "2026-09-20"
       }
+    },
+    {
+      "id": "xui-inbound-batch-sync",
+      "name": "Batched client inbound synchronization",
+      "description": "Route every client inbound attach/detach through one helper that groups clients by identical inbound sets, and make the five-minute Catalog V2 sync save per user and respect traffic depletion.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["xui-inbound-delta-sync", "catalog-v2-business-cutover"],
+      "done_criteria": [
+        "A single helper sends one bulkAttach or bulkDetach request per distinct sorted inbound set, and every client inbound synchronization path uses it.",
+        "A client whose attach request failed is never detached in the same round.",
+        "The five-minute Catalog V2 sync defers inbound changes until the loop ends and reports failed users individually.",
+        "The five-minute Catalog V2 sync persists changed users with per-record saves instead of rewriting the users collection.",
+        "The five-minute Catalog V2 sync keeps traffic-depleted clients disabled and re-enables them once traffic is available.",
+        "The five-minute Catalog V2 sync relies on the in-memory cache TTL; syncCatalogV2ToXui({ forceReload: true }) re-reads only the users and accounts collections."
+      ],
+      "verification": [
+        "2026-09-24: Reproduced before the fix: test-payment failed with the depleted V2 client re-enabled by syncCatalogV2ToXui (true !== false).",
+        "2026-09-24: test-payment now confirms the depleted client stays disabled and is re-enabled after usage drops, two clients with the same unsorted inbound set share one bulkAttach, and a failed attach skips that client's detach; existing group-sync request assertions stay unchanged.",
+        "2026-09-24: npm run verify, npm run verify:fast and git diff --check passed.",
+        "2026-09-24: Replaced the forced full reload with a users/accounts-only reload behind forceReload; test-payment confirms the timer path keeps the fresh cache while forceReload picks up direct database edits. npm run verify, npm run verify:fast and git diff --check passed."
+      ]
+    },
+    {
+      "id": "xui-panel-sync-merge",
+      "name": "Single five-minute 3x-ui panel sync",
+      "description": "Replace the separate five-minute traffic billing and Catalog V2 timers with one job that reads the panel once and runs both steps in order.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["xui-inbound-batch-sync"],
+      "done_criteria": [
+        "One five-minute timer reads server/status, nodes/list, inbounds/list and clients/list once per run and shares them with traffic billing and Catalog V2 sync.",
+        "Catalog V2 sync derives inbound keys from inbounds/list and no longer triggers the TCP inbound probe.",
+        "Traffic billing runs first; a failure in either step does not skip the other.",
+        "Enable changes applied by traffic billing are reflected in the shared snapshot so Catalog V2 sync does not resend them.",
+        "Standalone syncXuiWeightedTraffic and syncCatalogV2ToXui calls keep working under the shared lock."
+      ],
+      "verification": [
+        "2026-09-24: test-payment runs syncXuiPanel against the mock panel: both steps succeed, server/status, nodes/list, inbounds/list and clients/list are each requested once, clients/activeInbounds is never called, and V2 inbound drift is repaired.",
+        "2026-09-24: test-payment confirms a client re-enabled by the traffic step is not re-sent by the V2 step (no clients/update) and ends enabled; the mock panel now returns clients/list traffic fields and applies bulkEnable/bulkDisable like the real panel.",
+        "2026-09-24: npm run verify, npm run verify:fast and git diff --check passed."
+      ]
+    },
+    {
+      "id": "xui-inbound-table-probe-split",
+      "name": "Database inbound table with decoupled TCP probe",
+      "description": "Persist the 3x-ui inbound list in an app table refreshed by the five-minute panel sync, probe only from that table, and stop inbound-list consumers from triggering TCP probes.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["xui-panel-sync-merge"],
+      "done_criteria": [
+        "A xui_inbounds table stores each inbound's key, id, node, host, port, protocol, name, tag, enabled state, client count and recent activity, and is replaced from the five-minute panel sync snapshot.",
+        "The two-minute TCP probe reads only the xui_inbounds table, writes probe results back to it, and sends no 3x-ui requests.",
+        "Read-only inbound consumers (inbound management page, account node status, provisioning inbound lookup, custom-inbound view, group resync) read the table and never probe.",
+        "Write paths that validate inbound existence refresh the table from 3x-ui without probing; toggling an inbound's enable state updates the table immediately.",
+        "The /api/xui-inbounds and /api/account/node-status response shapes are unchanged and both pages render without console or page errors."
+      ],
+      "verification": [
+        "2026-09-24: test-payment confirms syncXuiPanel reads status, nodes, inbounds, clients and activeInbounds once each and replaces the xui_inbounds table; probeXuiInbounds sends no 3x-ui request and writes probe results back; GET /api/xui-inbounds sends no 3x-ui request.",
+        "2026-09-24: npm run verify, npm run verify:fast and git diff --check passed.",
+        "2026-09-24: Local server against the live panel with XUI_READ_ONLY=true filled 25 inbounds (all with port and host); the table-only probe recorded 24 online and 1 disabled. xui_audit_logs showed only read-only POSTs (activeInbounds, clientIpsByGuid, lastOnline, onlinesByGuid) and no blocked or write requests."
+      ],
+      "browser_verification": {
+        "routes": ["/xui-inbounds", "/account/nodes"],
+        "interactions": [
+          "Logged in as administrator, opened inbound management and confirmed 25 inbounds with probe latency, recent activity and client counts.",
+          "Clicked the refresh button; the server log showed only GET /api/xui-inbounds with no 3x-ui request.",
+          "Reloaded inbound management at 375px with no horizontal overflow.",
+          "Logged in as a self-hosted user in a fresh tab, opened node status at desktop width and 375px: 7 nodes, 6 online, the disabled inbound shown as disabled, no horizontal overflow, and GET /api/account/node-status sent no 3x-ui request.",
+          "Unrelated to the affected routes: /api/account/ip-info returned 502 on the account overview page because the external IP lookup cannot resolve the loopback visitor locally; that code is unchanged."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-24"
+      }
+    },
+    {
+      "id": "xui-v2-sync-read-only",
+      "name": "Catalog V2 sync honors 3x-ui read-only mode",
+      "description": "In XUI_READ_ONLY mode the Catalog V2 step still computes differences but sends no client update, provisioning or inbound attach/detach request, and reports the skipped users.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["xui-panel-sync-merge"],
+      "done_criteria": [
+        "With read-only enabled, syncCatalogV2ToXui sends no clients/update, clients/add, bulkAttach or bulkDetach request.",
+        "Users whose panel state differs are counted in report.skipped instead of report.updated or report.failed.",
+        "App-database-only repairs such as the local traffic quota cache still save in read-only mode.",
+        "Read-only defaults to XUI_READ_ONLY and can be passed explicitly."
+      ],
+      "verification": [
+        "2026-09-24: Reproduced before the fix: test-payment with readOnly: true observed clients/update, bulkAttach and bulkDetach requests.",
+        "2026-09-24: test-payment now confirms read-only runs send no write request for enable/inbound drift or a missing client, report skipped 1 with updated 0 and no failures, and a following normal run repairs the drift and recreates the client.",
+        "2026-09-24: npm run verify, npm run verify:fast and git diff --check passed."
+      ]
     }
   ]
 }

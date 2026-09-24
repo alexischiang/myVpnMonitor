@@ -170,6 +170,28 @@ class PostgresDataStore {
       )
       `), "xui daily traffic init");
       await withPgRetry(() => pool.query(`
+      CREATE TABLE IF NOT EXISTS xui_inbounds (
+        key TEXT PRIMARY KEY,
+        inbound_id INTEGER NOT NULL,
+        node_guid TEXT NOT NULL,
+        node_name TEXT NOT NULL DEFAULT '',
+        node_host TEXT NOT NULL DEFAULT '',
+        port INTEGER,
+        protocol TEXT NOT NULL DEFAULT '',
+        name TEXT NOT NULL DEFAULT '',
+        tag TEXT NOT NULL DEFAULT '',
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        sub_sort_index INTEGER NOT NULL DEFAULT 1,
+        client_count INTEGER NOT NULL DEFAULT 0,
+        recently_active BOOLEAN,
+        synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        probe_status TEXT NOT NULL DEFAULT 'unknown',
+        probe_latency_ms INTEGER,
+        probe_checked_at TIMESTAMPTZ,
+        probe_error TEXT NOT NULL DEFAULT ''
+      )
+      `), "xui inbounds init");
+      await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS catalog_v2_line_groups (
         id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9-]{1,63}$'),
         name TEXT NOT NULL,
@@ -619,12 +641,16 @@ class PostgresDataStore {
   }
 
   async loadAll() {
+    return this.loadCollections(COLLECTIONS);
+  }
+
+  async loadCollections(collections) {
     const result = {};
-    for (const collection of COLLECTIONS) {
+    for (const collection of collections) {
       result[collection] = [];
     }
     const query = "SELECT collection, data FROM app_records WHERE collection = ANY($1::text[]) ORDER BY collection ASC, position ASC";
-    const rows = await withPgRetry(() => this.pool.query(query, [COLLECTIONS]), "load all collections");
+    const rows = await withPgRetry(() => this.pool.query(query, [collections]), "load collections");
     for (const row of rows.rows) {
       if (Array.isArray(result[row.collection])) result[row.collection].push(row.data);
     }
@@ -1052,6 +1078,64 @@ class PostgresDataStore {
     return { deleted: result.rowCount || 0 };
   }
 
+  // Inbound catalog, replaced from each five-minute 3x-ui sync. Probe columns belong to the
+  // TCP probe and survive catalog refreshes; inbounds no longer in 3x-ui are removed.
+  async replaceXuiInbounds(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    return withPgRetry(async () => {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("DELETE FROM xui_inbounds WHERE NOT (key = ANY($1::text[]))", [list.map(row => row.key)]);
+        if (list.length) {
+          await client.query(
+            `INSERT INTO xui_inbounds (key, inbound_id, node_guid, node_name, node_host, port, protocol, name, tag, enabled, sub_sort_index, client_count, recently_active, synced_at)
+             SELECT r.key, r.id, r."nodeGuid", r."nodeName", r."nodeHost", r.port, r.protocol, r.name, r.tag, r.enabled, r."subSortIndex", r."clientCount", r."recentlyActive", NOW()
+             FROM jsonb_to_recordset($1::jsonb) AS r(key TEXT, id INTEGER, "nodeGuid" TEXT, "nodeName" TEXT, "nodeHost" TEXT, port INTEGER, protocol TEXT, name TEXT, tag TEXT, enabled BOOLEAN, "subSortIndex" INTEGER, "clientCount" INTEGER, "recentlyActive" BOOLEAN)
+             ON CONFLICT (key) DO UPDATE SET inbound_id = EXCLUDED.inbound_id, node_guid = EXCLUDED.node_guid, node_name = EXCLUDED.node_name, node_host = EXCLUDED.node_host,
+               port = EXCLUDED.port, protocol = EXCLUDED.protocol, name = EXCLUDED.name, tag = EXCLUDED.tag, enabled = EXCLUDED.enabled, sub_sort_index = EXCLUDED.sub_sort_index,
+               client_count = EXCLUDED.client_count, recently_active = EXCLUDED.recently_active, synced_at = EXCLUDED.synced_at`,
+            [JSON.stringify(list)]
+          );
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {}
+        throw error;
+      } finally {
+        client.release();
+      }
+    }, "replace xui inbounds");
+  }
+
+  async listXuiInbounds() {
+    const result = await withPgRetry(() => this.pool.query("SELECT * FROM xui_inbounds ORDER BY node_guid, inbound_id"), "list xui inbounds");
+    return result.rows.map(row => ({
+      id: row.inbound_id, key: row.key, name: row.name, tag: row.tag, protocol: row.protocol, port: row.port,
+      subSortIndex: row.sub_sort_index, enabled: row.enabled, recentlyActive: row.recently_active,
+      nodeGuid: row.node_guid, nodeName: row.node_name, nodeHost: row.node_host, clientCount: row.client_count,
+      syncedAt: row.synced_at ? row.synced_at.toISOString() : "",
+      probeStatus: row.probe_status, probeLatencyMs: row.probe_latency_ms,
+      probeCheckedAt: row.probe_checked_at ? row.probe_checked_at.toISOString() : "", probeError: row.probe_error
+    }));
+  }
+
+  async recordXuiInboundProbes(results) {
+    const list = Array.isArray(results) ? results : [];
+    if (!list.length) return;
+    await withPgRetry(() => this.pool.query(
+      `UPDATE xui_inbounds AS i SET probe_status = r.status, probe_latency_ms = r."latencyMs", probe_checked_at = r."checkedAt", probe_error = r.error
+       FROM jsonb_to_recordset($1::jsonb) AS r(key TEXT, status TEXT, "latencyMs" INTEGER, "checkedAt" TIMESTAMPTZ, error TEXT)
+       WHERE i.key = r.key`,
+      [JSON.stringify(list)]
+    ), "record xui inbound probes");
+  }
+
+  async setXuiInboundEnabled(inboundId, enabled) {
+    await withPgRetry(() => this.pool.query("UPDATE xui_inbounds SET enabled = $2 WHERE inbound_id = $1", [inboundId, enabled]), "set xui inbound enabled");
+  }
 }
 
 function createDataStore({ databaseUrl, ssl = process.env.DATABASE_SSL === "true" }) {

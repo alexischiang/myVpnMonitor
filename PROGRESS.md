@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-24
-- Current Objective: 修复并发布五分钟V2客户端权限同步与流量任务并发冲突
+- Current Objective: V2同步在只读模式下跳过3x-ui写入
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -254,8 +254,18 @@
 
 - 2026-09-24: 共享3x-ui同步队列回归通过；npm run verify、npm run verify:fast、npm run verify:harness、git diff --check通过
 
+- 2026-09-24: npm run verify、npm run verify:fast、git diff --check 通过；test-payment复现并验证耗尽用户保持禁用、入站按组合批量发送、attach失败跳过detach
+
+- 2026-09-24: npm run verify、npm run verify:fast、git diff --check 通过；V2同步默认用缓存，forceReload仅重载users/accounts
+
+- 2026-09-24: npm run verify、npm run verify:fast、git diff --check 通过；syncXuiPanel每轮四个面板读取各一次且不触发入站探测
+
+- 2026-09-24: npm run verify、verify:fast、verify:harness、git diff --check 通过；本地只读连接真实面板写入25个入站，探测只读表；/xui-inbounds与/account/nodes桌面和375px浏览器验证无控制台错误
+
+- 2026-09-24: npm run verify、verify:fast、verify:harness、git diff --check 通过；只读模式下V2同步不发送任何写请求，差异计入skipped
+
 ## Next Session
 
-- Files: `feature_list.json`, `server.js`, `test.js`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `test-payment.js`, `test.js`, `.claude/`
 - Known risks: none
-- Recommended Next Step: 通过GitHub Actions部署production并核对日本S01客户端同步结果
+- Recommended Next Step: 等待用户审阅后决定是否提交与部署
