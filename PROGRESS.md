@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-24
-- Current Objective: V2同步在只读模式下跳过3x-ui写入
+- Current Objective: 面板额度保持不限量，由app执行额度（已上线并确认修复）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -264,8 +264,10 @@
 
 - 2026-09-24: npm run verify、verify:fast、verify:harness、git diff --check 通过；只读模式下V2同步不发送任何写请求，差异计入skipped
 
+- 2026-09-24: da8fed5 上线：282个V2用户面板totalGB改为0；两个受影响client保持启用，完整5分钟间隔后无bulkEnable、无失败请求
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `test-payment.js`, `test.js`, `.claude/`
+- Files: `feature_list.json`, `.claude/`
 - Known risks: none
-- Recommended Next Step: 等待用户审阅后决定是否提交与部署
+- Recommended Next Step: 可继续讨论定时任务执行记录的管理端页面

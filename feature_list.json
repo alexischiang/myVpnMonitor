@@ -916,7 +916,7 @@
       "id": "xui-panel-quota-zero",
       "name": "Keep 3x-ui panel quota unlimited",
       "description": "Push totalGB=0 to 3x-ui from Catalog V2 sync, provisioning and traffic-pack re-enable so quota is enforced only by the app's bulkDisable/bulkEnable, ending the panel-disable/app-enable loop for clients whose never-reset panel counter exceeds the plan quota.",
-      "status": "in_progress",
+      "status": "passing",
       "ui": false,
       "dependencies": ["xui-panel-sync-merge"],
       "done_criteria": [
@@ -928,7 +928,8 @@
       "verification": [
         "2026-09-24: Production diagnosis (read-only): two non-expired V2 clients (app cycle usage 12.9/100 GiB and 47.5/50 GiB) had panel counters of 190.9 and 50.8 GiB against panel totalGB 100 and 50 GiB, so 3x-ui disabled them and every panel sync re-enabled them with bulkEnable.",
         "2026-09-24: Reproduced before the fix with a mock panel that enforces totalGB: after two syncXuiPanel rounds the client kept totalGB 50 GiB (53687091200 !== 0).",
-        "2026-09-24: test-payment now confirms the client ends with totalGB 0, stays enabled and gets no bulkEnable in the second round; purchase and admin-gift paths leave panel totalGB 0 while the app quota still grows; depleted clients stay disabled by the app. npm run verify, npm run verify:fast and git diff --check passed."
+        "2026-09-24: test-payment now confirms the client ends with totalGB 0, stays enabled and gets no bulkEnable in the second round; purchase and admin-gift paths leave panel totalGB 0 while the app quota still grows; depleted clients stay disabled by the app. npm run verify, npm run verify:fast and git diff --check passed.",
+        "2026-09-24: Deployed da8fed5. The first panel sync updated 282 of 307 V2 users to totalGB 0 in about 18 minutes (one 504 response whose update had still been applied); the remaining 6 finite-quota panel clients are not linked to app users. Both affected clients became enabled with totalGB 0, and through the 08:29:33 round (a full five-minute gap) there was no further bulkEnable, V2 updated 0, failed 0, no failed 3x-ui request and no process restart."
       ]
     }
   ]
