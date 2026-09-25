@@ -7,7 +7,7 @@
       "id": "harness-minimum-loop",
       "name": "Minimum agent harness loop",
       "description": "Make startup, scoped work, verification, and session handoff restartable.",
-      "status": "in_progress",
+      "status": "passing",
       "ui": false,
       "dependencies": [],
       "done_criteria": [
@@ -916,7 +916,7 @@
       "id": "xui-panel-quota-zero",
       "name": "Keep 3x-ui panel quota unlimited",
       "description": "Push totalGB=0 to 3x-ui from Catalog V2 sync, provisioning and traffic-pack re-enable so quota is enforced only by the app's bulkDisable/bulkEnable, ending the panel-disable/app-enable loop for clients whose never-reset panel counter exceeds the plan quota.",
-      "status": "in_progress",
+      "status": "passing",
       "ui": false,
       "dependencies": ["xui-panel-sync-merge"],
       "done_criteria": [
@@ -928,8 +928,104 @@
       "verification": [
         "2026-09-24: Production diagnosis (read-only): two non-expired V2 clients (app cycle usage 12.9/100 GiB and 47.5/50 GiB) had panel counters of 190.9 and 50.8 GiB against panel totalGB 100 and 50 GiB, so 3x-ui disabled them and every panel sync re-enabled them with bulkEnable.",
         "2026-09-24: Reproduced before the fix with a mock panel that enforces totalGB: after two syncXuiPanel rounds the client kept totalGB 50 GiB (53687091200 !== 0).",
-        "2026-09-24: test-payment now confirms the client ends with totalGB 0, stays enabled and gets no bulkEnable in the second round; purchase and admin-gift paths leave panel totalGB 0 while the app quota still grows; depleted clients stay disabled by the app. npm run verify, npm run verify:fast and git diff --check passed."
+        "2026-09-24: test-payment now confirms the client ends with totalGB 0, stays enabled and gets no bulkEnable in the second round; purchase and admin-gift paths leave panel totalGB 0 while the app quota still grows; depleted clients stay disabled by the app. npm run verify, npm run verify:fast and git diff --check passed.",
+        "2026-09-24: Deployed da8fed5. The first panel sync updated 282 of 307 V2 users to totalGB 0 in about 18 minutes (one 504 response whose update had still been applied); the remaining 6 finite-quota panel clients are not linked to app users. Both affected clients became enabled with totalGB 0, and through the 08:29:33 round (a full five-minute gap) there was no further bulkEnable, V2 updated 0, failed 0, no failed 3x-ui request and no process restart."
       ]
+    },
+    {
+      "id": "sync-job-monitor",
+      "name": "Sync job monitor page",
+      "description": "Persist every background sync job run in a sync_job_runs table and show job status, history and a run-now action on an admin page grouped by module.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["xui-panel-sync-merge", "xui-inbound-table-probe-split"],
+      "done_criteria": [
+        "Scheduled, startup, cron and manual runs of the panel sync, inbound probe, traffic prune, subscription refresh and referral settlement write a sync_job_runs row with status, duration, summary and error.",
+        "Panel sync reports partial when only some steps fail and failed when all fail; the summary includes the Catalog V2 report.",
+        "Referral settlement runs that settle nothing are not stored; runs older than 14 days are pruned; rows left running by a restart become interrupted.",
+        "GET /api/sync-jobs groups jobs by module, GET /api/sync-jobs/:id/runs lists history, POST /api/sync-jobs/:id/run starts a job and returns 409 while it is running; all are admin-only.",
+        "The /sync-jobs page shows one card per module, a run-now button and a history sheet, works at desktop and 390px, and has no console or page errors.",
+        "Data flows app -> 3x-ui only: a V2 user without xuiClientEmail whose email matches an existing panel client is reported as a conflict (panel sync partial, emails listed with delete-then-rebuild guidance) and the panel client is left untouched; after the admin deletes it, the next sync recreates it from app data."
+      ],
+      "verification": [
+        "2026-09-25: npm run verify passed; test-payment covers the unlinked same-email conflict (no panel writes, panel client unchanged, xuiClientEmail not written back, partial run listing the email) and recreation on the next sync after the panel client is deleted.",
+        "2026-09-25: npm run check, npm run verify:fast and git diff --check passed after the /sync-jobs layout fixes (desktop task column min width, mobile rows wrap actions, full conflict error text without line clamp).",
+        "2026-09-25: test-payment now also covers a startup-triggered xui-traffic-prune run, pruneSyncJobHistory deleting runs older than 14 days while keeping newer ones, and /api/cron/refresh (503 without CRON_SECRET, 401 with a wrong token, a recorded cron subscription-refresh run on success); npm run verify, verify:harness and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": ["/sync-jobs"],
+        "interactions": [
+          "Ran server.js against TEST_DATABASE_URL with 3x-ui unconfigured, logged in as a local administrator and seeded one partial xui-panel-sync run generated by xuiPanelSyncJobResult with two conflicts.",
+          "At 800px desktop, confirmed the task column stays readable, the conflict error lists both emails, and the history sheet shows 冲突 2 and the full error without clamping.",
+          "At 390x844, confirmed every mobile row content is 306px wide with actions on their own line, no horizontal overflow, and the history sheet shows the full error.",
+          "Opened a fresh tab on /sync-jobs, opened the panel sync history and read the console: no messages.",
+          "In a fresh tab clicked 立即执行 on 订阅池刷新 at desktop: the button switched to a disabled 执行中 state, the toast 已开始执行：订阅池刷新 appeared, the last-run cell changed from 外部定时 to 手动, and the history sheet listed the new manual runs.",
+          "At 390x844 clicked the mobile 立即执行 (149x44px): toast shown, row updated to 手动, no horizontal overflow; console had no messages. The pane was hidden, so document.hidden was overridden in that tab to trigger the page load."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-25"
+      }
+    },
+    {
+      "id": "xui-client-single-write-path",
+      "name": "Single app-to-3x-ui client write path",
+      "description": "All creates and updates of an app user's 3x-ui client go through writeXuiClient, which enforces the app -> panel data direction and reports unlinked panel clients as conflicts instead of adopting them.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["sync-job-monitor"],
+      "done_criteria": [
+        "provisionXuiClient and runCatalogV2Sync both write through writeXuiClient; the sync keeps its snapshot lookups, batched inbound changes and read-only dry run.",
+        "A same-email panel client not linked to the app user raises XUI_CLIENT_CONFLICT (409) before any panel write, from every provisionXuiClient entry point; the sync records it in report.conflicts.",
+        "With checkLegacyEmail (default), a legacy nexora_* panel client is reported as a conflict instead of being adopted and renamed; callers that opted out keep ignoring it.",
+        "A created client claims user.xuiClientEmail before clients/add, so a retry after a timed-out add updates that client instead of reporting a conflict.",
+        "Legacy pool migration on subscription refresh uses the same conflict check: a same-email panel client fails the migration (user stays on the pool, no panel writes, limitIp not copied into the app) and the next refresh after deleting it creates the client from app data."
+      ],
+      "verification": [
+        "2026-09-25: npm run verify passed (check, core, 3x-ui service, traffic, checkout, payment, wallet and Catalog V2 tests); existing payment regressions pass unchanged through the shared write path.",
+        "2026-09-25: test-payment covers the unlinked conflict via the sync and via POST /api/users/:id/xui-sync (409, no panel writes, panel client unchanged, xuiClientEmail not written back), legacy-email conflict and opt-out, and recreation after the panel client is deleted.",
+        "2026-09-25: git diff --check passed.",
+        "2026-09-25: writeXuiClient split into lookupXuiClient, assertNoUnlinkedXuiClient, desiredXuiClient, xuiInboundChange and applyXuiClientWrite (syncXuiClientAccess also reuses xuiInboundChange); test-payment covers each helper directly; npm run verify, verify:harness and git diff --check passed.",
+        "2026-09-25: migrateLegacyUserOnSubscriptionRefresh reuses lookupXuiClient and assertNoUnlinkedXuiClient; test-payment requests /sub/:token for a legacy pool user with a same-email panel client (migration failed with the conflict, user still upstream, no panel writes, client unchanged), then deletes the client and confirms the next refresh migrates with a newly created client; npm run verify and git diff --check passed."
+      ]
+    },
+    {
+      "id": "payments-checkout-v2-only",
+      "name": "All payments use checkout v2",
+      "description": "Wallet recharge and every other payment go through checkoutWorkflow and payment attempts; the legacy v1 direct-gateway order code is removed and legacy pending orders are closed.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "POST /api/wallet/recharge only submits a pending recharge order through checkoutWorkflow (no gateway call, no wallet hold); payment starts from the cashier via POST /api/payments/orders/:id/start and the paid recharge credits the wallet once.",
+        "No server code branches on checkoutVersion: refresh, cancel, test-status, GET order and the payment callback each have a single v2 path; createRechargeOrder, refreshPaymentOrder and the v1 callback branch are removed.",
+        "A callback with no payment attempt never fulfills: a correctly signed paid callback for an unpaid legacy order marks it abnormal for manual handling; invalid signatures return 400; unknown orders return success.",
+        "On startup every pending order without checkoutVersion 2 is closed with its wallet hold released; the step is idempotent.",
+        "The wallet page creates a recharge order and opens the cashier; the cashier shows the recharge and links to the wallet when paid; legacy order detail and result pages redirect to the cashier; desktop and 390px have no console or page errors."
+      ],
+      "verification": [
+        "2026-09-25: npm run verify passed (check, core tests, test-checkout + test-payment, test-wallet, test-catalog-v2). test-payment now submits a recharge with no gateway call and no wallet hold, pays it through /start plus two concurrent callbacks (credited once), strips checkoutVersion from a pending order to simulate a legacy order, confirms closeLegacyPendingPaymentOrders closes it and releases the hold (1 then 0 on the second run), and confirms a signed paid callback without a payment attempt marks it abnormal without crediting the wallet while a bad signature returns 400.",
+        "2026-09-25: grep confirms server.js and src no longer branch on checkoutVersion except the startup legacy close; createRechargeOrder now uses checkoutWorkflow.submit; refreshPaymentOrder, the v1 callback branch, the v1 test-status branch, the GET gateway query and paymentStatusError are removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/wallet",
+          "/cashier/:id",
+          "/account/orders",
+          "/account/orders/:id",
+          "/account/payment/result"
+        ],
+        "interactions": [
+          "Ran server.js against TEST_DATABASE_URL with 3x-ui, notifications and the env gateway disabled and a test payment platform, registered wallet-browser@example.test.",
+          "At 1280x720: an empty amount shows the validation toast; 12.50 creates a pending recharge and opens the cashier (账户余额 · 充值 ¥12.50); started the test attempt via /start (the pane blocks the payment pop-up), simulated payment success, the cashier showed 付款与发放已完成 with 查看账户余额, and the wallet showed ¥12.50 with one 充值 ledger entry.",
+          "/account/orders/:id and /account/payment/result?paymentOrder=:id redirect to the cashier; /account/payment/result without an order goes to /account/orders.",
+          "In a fresh tab: recharged 3.21, cancelled it from the cashier (该订单已关闭, orders list shows 已关闭), revisited the result link; console had only info messages.",
+          "At 390x844: 去付款 is 290x44 with no horizontal overflow; recharged 8 through the cashier and test payment, wallet showed ¥20.50; no console errors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-25"
+      }
     }
   ]
 }

@@ -34,7 +34,6 @@ const {
   paymentSign,
   verifyPaymentSign,
   paymentConfigReady,
-  paymentStatusError,
   paymentAmountError,
   requestIp,
   lookupIpInfo,
@@ -553,8 +552,6 @@ assert.strictEqual(configuredPaymentChannel({ alipayChannelCode: "ali-code", wec
 assert.strictEqual(paymentMethodForPlatform({ enabled: true, merchantId: "merchant", merchantSecret: "secret", alipayChannelCode: "ali-code", wechatChannelCode: "wx-code", alipayEnabled: false, wechatEnabled: true }), "200");
 assert.throws(() => configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code", alipayEnabled: false }, "100"), /支付宝支付维护中/);
 assert.throws(() => configuredPaymentChannel({ alipayChannelCode: "ali-code", wechatChannelCode: "wx-code", wechatEnabled: false }, "200"), /微信支付维护中/);
-assert.strictEqual(paymentStatusError("failed"), "支付平台返回支付失败。");
-assert.strictEqual(paymentStatusError("paid"), "");
 assert.strictEqual(paymentAmountError(10, "10.00"), "");
 assert.match(paymentAmountError(10, "9.99"), /应付 ¥10.00.*¥9.99/);
 assert.match(paymentAmountError(10, undefined), /无效金额/);

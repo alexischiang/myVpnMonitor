@@ -738,11 +738,18 @@ async function main() {
     });
     assert.strictEqual(giftedWallet.data.giftBalance, 0.4);
 
+    const gatewayCallsBeforeRecharge = gatewayRequests.length;
     const rechargeOrder = await request("/api/wallet/recharge", {
       method: "POST",
       cookie: inviteeCookie,
-      body: { amount: 2, channelCode: "100" }
+      body: { amount: 2 }
     });
+    assert.strictEqual(rechargeOrder.response.status, 201);
+    assert.deepStrictEqual([rechargeOrder.data.status, rechargeOrder.data.purpose, rechargeOrder.data.amount, rechargeOrder.data.walletAmount, rechargeOrder.data.payUrl], ["pending", "recharge", 2, 0, ""]);
+    assert.strictEqual(gatewayRequests.length, gatewayCallsBeforeRecharge, "submitting a recharge must not contact the gateway");
+    assert.strictEqual((await request("/api/account/wallet", { cookie: inviteeCookie })).data.heldBalance, 0, "a recharge never reserves existing balance");
+    const startedRecharge = await request(`/api/payments/orders/${rechargeOrder.data.id}/start`, { method: "POST", cookie: inviteeCookie, body: { channelCode: "100" } });
+    assert.deepStrictEqual([startedRecharge.response.status, startedRecharge.data.status, Boolean(startedRecharge.data.payUrl)], [200, "pending", true]);
     await Promise.all([
       callback(rechargeOrder.data, 1, "2.00", true),
       callback(rechargeOrder.data, 1, "2.00", true)
@@ -752,6 +759,28 @@ async function main() {
       [inviteeWallet.data.cashBalance, inviteeWallet.data.giftBalance, inviteeWallet.data.vipSpend],
       [2, 0.4, 3.03]
     );
+
+    assert.strictEqual((await request(`/api/payments/orders/${rechargeOrder.data.id}`, { cookie: inviteeCookie })).data.fulfillmentStatus, "fulfilled");
+
+    // Legacy (pre checkout v2) pending orders are closed on startup and can never collect.
+    const legacyOrder = await request("/api/orders", { method: "POST", cookie: inviteeCookie, body: { optionId: "pro-test-001", confirmReplacement: true } });
+    assert.strictEqual(legacyOrder.response.status, 201);
+    assert.ok((await request("/api/account/wallet", { cookie: inviteeCookie })).data.heldBalance > 0);
+    await database.query("UPDATE app_records SET data = data - 'checkoutVersion' WHERE collection = 'paymentOrders' AND id = $1", [legacyOrder.data.id]);
+    assert.deepStrictEqual([await handler.closeLegacyPendingPaymentOrders(), await handler.closeLegacyPendingPaymentOrders()], [1, 0]);
+    let legacyState = await request(`/api/payments/orders/${legacyOrder.data.id}`, { cookie: inviteeCookie });
+    assert.strictEqual(legacyState.data.status, "closed");
+    assert.strictEqual((await request("/api/account/wallet", { cookie: inviteeCookie })).data.heldBalance, 0, "closing a legacy order releases its wallet hold");
+    const walletBeforeLegacyCallback = (await request("/api/account/wallet", { cookie: inviteeCookie })).data;
+    const legacyCallback = await callback(legacyOrder.data, 1, String(legacyOrder.data.amount), true);
+    assert.deepStrictEqual([legacyCallback.response.status, legacyCallback.text], [200, "success"]);
+    legacyState = await request(`/api/payments/orders/${legacyOrder.data.id}`, { cookie: inviteeCookie });
+    assert.deepStrictEqual([legacyState.data.status, legacyState.data.fulfilledAt], ["abnormal", ""], "a receipt without a payment attempt is left for manual handling");
+    assert.match(legacyState.data.paymentError, /联系客服/);
+    const walletAfterLegacyCallback = (await request("/api/account/wallet", { cookie: inviteeCookie })).data;
+    assert.deepStrictEqual([walletAfterLegacyCallback.cashBalance, walletAfterLegacyCallback.vipSpend], [walletBeforeLegacyCallback.cashBalance, walletBeforeLegacyCallback.vipSpend]);
+    const forgedLegacy = { merOrderTid: legacyOrder.data.merOrderTid, tid: "forged", status: 1, money: "1.00", sign: "bad" };
+    assert.strictEqual((await request("/api/payments/callback", { method: "POST", body: forgedLegacy })).response.status, 400);
 
     const walletOrder = await purchase({
       method: "POST",
@@ -999,6 +1028,63 @@ async function main() {
     assert.strictEqual(inboundView.response.status, 200);
     assert.strictEqual(xuiRequests.length, 0, "the inbound management page must not call 3x-ui or probe");
     assert.deepStrictEqual(inboundView.data.inbounds.map(inbound => [inbound.key, inbound.probeStatus, inbound.name]), [["local:1", "unknown", "套餐节点"], ["local:2", "unknown", "个人家宽"], ["local:3", "disabled", "停用家宽"]]);
+
+    // Sync job monitor: run history, manual runs and status rules.
+    await database.query("DELETE FROM sync_job_runs");
+    assert.strictEqual((await request("/api/sync-jobs")).response.status, 403, "the sync job monitor must be admin-only");
+    const waitForSyncJob = async jobId => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const payload = await request("/api/sync-jobs", { cookie: adminCookie });
+        if (!payload.data.modules.flatMap(module => module.jobs).find(job => job.id === jobId).running) return payload;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      throw new Error(`${jobId} did not finish`);
+    };
+    // Holding the shared lock keeps a manual panel sync running so the duplicate request is deterministic.
+    let releaseSyncLock;
+    const heldSyncLock = handler.withXuiSyncLock(() => new Promise(resolve => { releaseSyncLock = resolve; }));
+    const manualPanel = await request("/api/sync-jobs/xui-panel-sync/run", { method: "POST", cookie: adminCookie, body: {} });
+    assert.deepStrictEqual([manualPanel.response.status, Boolean(manualPanel.data.runId)], [202, true]);
+    const duplicatePanel = await request("/api/sync-jobs/xui-panel-sync/run", { method: "POST", cookie: adminCookie, body: {} });
+    assert.deepStrictEqual([duplicatePanel.response.status, duplicatePanel.data.code], [409, "SYNC_JOB_RUNNING"]);
+    const runningPanel = await request("/api/sync-jobs", { cookie: adminCookie });
+    assert.deepStrictEqual([runningPanel.data.modules[0].jobs[0].id, runningPanel.data.modules[0].jobs[0].running, runningPanel.data.modules[0].jobs[0].lastRun.status], ["xui-panel-sync", true, "running"]);
+    releaseSyncLock();
+    await heldSyncLock;
+    await waitForSyncJob("xui-panel-sync");
+    assert.strictEqual((await request("/api/sync-jobs/unknown-job/run", { method: "POST", cookie: adminCookie, body: {} })).response.status, 404);
+    const manualProbe = await request("/api/sync-jobs/xui-inbound-probe/run", { method: "POST", cookie: adminCookie, body: {} });
+    assert.strictEqual(manualProbe.response.status, 202);
+    const syncJobs = await waitForSyncJob("xui-inbound-probe");
+    assert.deepStrictEqual(syncJobs.data.modules.map(module => module.id), ["xui", "traffic", "subscriptions", "referrals"]);
+    const probeJob = syncJobs.data.modules[0].jobs.find(job => job.id === "xui-inbound-probe");
+    assert.deepStrictEqual([probeJob.configured, probeJob.running, probeJob.lastRun.status, probeJob.lastRun.trigger, probeJob.stats24h.total], [true, false, "success", "manual", 1]);
+    const probeRuns = await request("/api/sync-jobs/xui-inbound-probe/runs?limit=10", { cookie: adminCookie });
+    assert.deepStrictEqual(probeRuns.data.runs.map(run => [run.id, run.status, run.summary.total, run.summary.byStatus.disabled]), [[manualProbe.data.runId, "success", 3, 1]]);
+    const panelRuns = await handler.listSyncJobRuns("xui-panel-sync");
+    assert.deepStrictEqual([panelRuns.length, panelRuns[0].id, panelRuns[0].status, panelRuns[0].summary.steps.map(step => step.status), panelRuns[0].summary.catalogV2.failed], [1, manualPanel.data.runId, "success", ["success", "success", "success"], 0]);
+    const stepError = new Error("boom");
+    assert.strictEqual(handler.xuiPanelSyncJobResult({ inboundCatalogError: null, trafficError: stepError, catalogV2: { checked: 1, updated: 0, missing: 0, skipped: 0, failed: [] }, catalogV2Error: null }).status, "partial");
+    assert.strictEqual(handler.xuiPanelSyncJobResult({ inboundCatalogError: null, trafficError: null, catalogV2: { checked: 2, updated: 0, missing: 0, skipped: 0, failed: [{ userId: "u", error: "x" }] }, catalogV2Error: null }).status, "partial");
+    const allFailed = handler.xuiPanelSyncJobResult({ inboundCatalogError: stepError, trafficError: stepError, catalogV2: null, catalogV2Error: stepError });
+    assert.deepStrictEqual([allFailed.status, allFailed.error.includes("流量计费：boom")], ["failed", true]);
+    await handler.trackSyncJobRun({ id: "test-failing-job", run: async () => { throw new Error("prune failed"); } }, "schedule");
+    assert.deepStrictEqual((await handler.listSyncJobRuns("test-failing-job")).map(run => [run.status, run.error]), [["failed", "prune failed"]]);
+    await handler.runTrackedSyncJob("referral-settlement", "schedule");
+    assert.deepStrictEqual(await handler.listSyncJobRuns("referral-settlement"), [], "referral settlement rounds that settle nothing must not be stored");
+    await database.query("INSERT INTO sync_job_runs (job_id, trigger, status) VALUES ('test-interrupted-job', 'schedule', 'running')");
+    await handler.recoverInterruptedSyncJobRuns();
+    assert.strictEqual((await handler.listSyncJobRuns("test-interrupted-job"))[0].status, "interrupted");
+    await handler.runTrackedSyncJob("xui-traffic-prune", "startup");
+    const pruneRun = (await handler.listSyncJobRuns("xui-traffic-prune"))[0];
+    assert.deepStrictEqual([pruneRun.trigger, pruneRun.status, Number.isInteger(pruneRun.summary.deleted)], ["startup", "success", true], "the startup daily traffic prune must be recorded");
+    await database.query(`INSERT INTO sync_job_runs (job_id, trigger, status, started_at) VALUES
+      ('test-prune-old', 'schedule', 'success', NOW() - INTERVAL '15 days'),
+      ('test-prune-kept', 'schedule', 'success', NOW() - INTERVAL '13 days')`);
+    assert.ok(await handler.pruneSyncJobHistory() >= 1);
+    assert.deepStrictEqual([(await handler.listSyncJobRuns("test-prune-old")).length, (await handler.listSyncJobRuns("test-prune-kept")).length], [0, 1], "runs older than 14 days are pruned and newer ones kept");
+    await database.query("DELETE FROM sync_job_runs WHERE job_id LIKE 'test-%'");
+
     xuiClients.get("v2-sync@example.test").enable = false;
     xuiRequests.length = 0;
     await handler.syncXuiPanel();
@@ -1059,9 +1145,64 @@ async function main() {
     assert.ok(xuiClients.has("v2-sync@example.test"), "five-minute V2 sync must restore a missing client");
     assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
     await database.query("UPDATE app_records SET data=data-'xuiClientEmail' WHERE collection='users' AND id=$1", [v2User.id]);
+    const unlinkedPanelClient = structuredClone(xuiClients.get("v2-sync@example.test"));
+    xuiRequests.length = 0;
     const unlinkedReport = await handler.syncCatalogV2ToXui({ forceReload: true });
-    assert.strictEqual(unlinkedReport.failed.length, 0);
-    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, "v2-sync@example.test", "five-minute V2 sync must relink an existing client");
+    assert.deepStrictEqual([unlinkedReport.failed.length, unlinkedReport.updated, unlinkedReport.conflicts], [0, 0, [{ userId: v2User.id, email: "v2-sync@example.test" }]]);
+    assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "an unlinked user must not take over a same-email panel client");
+    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test"), unlinkedPanelClient);
+    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, undefined, "panel data must not flow back into the app user");
+    const conflictRun = handler.xuiPanelSyncJobResult({ inboundCatalogError: null, trafficError: null, catalogV2: unlinkedReport, catalogV2Error: null });
+    assert.deepStrictEqual([conflictRun.status, conflictRun.summary.catalogV2.conflicts, conflictRun.summary.catalogV2.conflictEmails], ["partial", 1, ["v2-sync@example.test"]]);
+    assert.match(conflictRun.error, /请在面板删除.*v2-sync@example\.test/);
+    xuiRequests.length = 0;
+    const unlinkedManualSync = await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: adminCookie, body: {} });
+    assert.deepStrictEqual([unlinkedManualSync.response.status, /未与该用户关联/.test(unlinkedManualSync.data.error)], [409, true], unlinkedManualSync.text);
+    assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "provisionXuiClient entry points must not take over an unlinked panel client either");
+    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test"), unlinkedPanelClient);
+    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, undefined);
+    const legacyUser = { id: "legacy-conflict", customerID: "900001", email: "legacy-owner@example.test", lineType: "self_hosted", group: "pro", activeGroup: "pro", expiresAt: "2099-01-01T00:00:00.000Z", xuiTrafficLimitBytes: 1024 ** 3 };
+    const legacyClients = new Map([["nexora_900001@internal", { email: "nexora_900001@internal", inboundIds: [1] }]]);
+    const legacyFind = async email => legacyClients.get(email) || null;
+    await assert.rejects(handler.writeXuiClient(structuredClone(legacyUser), { findClient: legacyFind, allInboundIds: [1, 2], groupInboundIds: [1], dryRun: true }), error => error.code === "XUI_CLIENT_CONFLICT" && error.email === "nexora_900001@internal", "a legacy-email panel client must be reported, not adopted");
+    const legacyIgnored = await handler.writeXuiClient(structuredClone(legacyUser), { findClient: legacyFind, allInboundIds: [1, 2], groupInboundIds: [1], checkLegacyEmail: false, dryRun: true });
+    assert.deepStrictEqual([legacyIgnored.created, legacyIgnored.email, legacyIgnored.inboundChange], [true, "legacy-owner@example.test", { email: "legacy-owner@example.test", attach: [1], detach: [2] }]);
+    // The helpers writeXuiClient is built from.
+    assert.deepStrictEqual(handler.xuiInboundChange("a@example.test", [1, 2], [1, 2, 3], [2, 3]), { email: "a@example.test", attach: [1], detach: [3] }, "known inbounds send only differences");
+    assert.deepStrictEqual(handler.xuiInboundChange("a@example.test", [1], [1, 2, 3]), { email: "a@example.test", attach: [1], detach: [2, 3] }, "unknown inbounds attach the full set and detach the rest");
+    assert.strictEqual(handler.xuiInboundChange("a@example.test", [1], [1, 2], [1, 99]), null, "inbounds outside allInboundIds are never detached");
+    const depletedUser = { ...legacyUser, xuiClientEmail: "legacy-owner@example.test", xuiWeightedTraffic: { depleted: true } };
+    const desiredClient = handler.desiredXuiClient(depletedUser, { email: "legacy-owner@example.test", group: "pro", existing: { subId: "keep-sub", uuid: "keep-uuid", traffic: { up: 1 }, inboundIds: [1], totalGB: 50 } });
+    assert.deepStrictEqual([desiredClient.subId, desiredClient.uuid, desiredClient.totalGB, desiredClient.enable, "traffic" in desiredClient, "inboundIds" in desiredClient], ["keep-sub", "keep-uuid", 0, true, false, false], "the desired client keeps panel-owned identity and drops read-only fields");
+    assert.strictEqual(handler.desiredXuiClient(depletedUser, { email: "legacy-owner@example.test", group: "pro", depletionDisables: true }).enable, false);
+    await handler.assertNoUnlinkedXuiClient(depletedUser, { email: "legacy-owner@example.test", existing: { email: "legacy-owner@example.test" }, findClient: legacyFind });
+    await assert.rejects(handler.assertNoUnlinkedXuiClient(legacyUser, { email: "legacy-owner@example.test", existing: { email: "legacy-owner@example.test" }, findClient: legacyFind }), error => error.code === "XUI_CLIENT_CONFLICT" && error.statusCode === 409);
+    xuiClients.delete("v2-sync@example.test");
+    const rebuiltReport = await handler.syncCatalogV2ToXui({ forceReload: true });
+    assert.deepStrictEqual([rebuiltReport.failed.length, rebuiltReport.conflicts.length, rebuiltReport.missing], [0, 0, 1]);
+    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime(), "the next sync must recreate the deleted client from app data");
+    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, "v2-sync@example.test");
+
+    // Legacy pool migration on subscription refresh follows the same rule: a same-email panel
+    // client is reported, not adopted, and the next refresh after deleting it creates one.
+    const legacyPool = { id: "legacy-pool-user", userId: "legacy-pool@example.test", email: "legacy-pool@example.test", wechatName: "legacy", customerID: "900002", lineType: "upstream", subscriptionId: subscription.id, subscriptionToken: "legacy-pool-token", group: "pro", activeGroup: "pro", duration: "monthly", purchasedAt: new Date().toISOString(), expiresAt: "2099-01-01T00:00:00.000Z", createdAt: new Date().toISOString() };
+    await database.query("INSERT INTO app_records (collection, id, data) VALUES ('users', $1, $2::jsonb)", [legacyPool.id, JSON.stringify(legacyPool)]);
+    xuiClients.set("legacy-pool@example.test", { email: "legacy-pool@example.test", subId: "panel-only-sub", limitIp: 9, inboundIds: [2], enable: true });
+    const panelOnlyClient = structuredClone(xuiClients.get("legacy-pool@example.test"));
+    await handler.syncCatalogV2ToXui({ forceReload: true });
+    const legacyPoolState = async () => (await database.query("SELECT data FROM app_records WHERE collection = 'users' AND id = $1", [legacyPool.id])).rows[0].data;
+    xuiRequests.length = 0;
+    await request("/sub/legacy-pool-token");
+    const blockedMigration = await legacyPoolState();
+    assert.deepStrictEqual([blockedMigration.lineType, blockedMigration.xuiMigrationStatus, blockedMigration.xuiClientEmail, blockedMigration.xuiIpLimit], ["upstream", "failed", undefined, undefined]);
+    assert.match(blockedMigration.xuiMigrationError, /未与该用户关联/);
+    assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "legacy migration must not take over a same-email panel client");
+    assert.deepStrictEqual(xuiClients.get("legacy-pool@example.test"), panelOnlyClient);
+    xuiClients.delete("legacy-pool@example.test");
+    await request("/sub/legacy-pool-token");
+    const migratedPool = await legacyPoolState();
+    assert.deepStrictEqual([migratedPool.lineType, migratedPool.xuiMigrationStatus, migratedPool.xuiMigrationSource, migratedPool.xuiClientEmail], ["self_hosted", "completed", "created", "legacy-pool@example.test"], migratedPool.xuiMigrationError);
+    assert.notStrictEqual(xuiClients.get("legacy-pool@example.test").subId, "panel-only-sub", "the recreated client comes from app data, not the deleted panel client");
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiTrafficLimitBytes: 900 * 1024 ** 3, xuiWeightedTraffic: { totalBytes: 900 * 1024 ** 3, usedBytes: 0 }, xuiLastTraffic: { totalBytes: 900 * 1024 ** 3, usedBytes: 0 } })]);
     xuiClients.get("v2-sync@example.test").expiryTime = 0;
     const manualSync = await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: adminCookie, body: {} });
@@ -1131,6 +1272,18 @@ async function main() {
     assert.strictEqual(oldPasswordLogin.response.status, 401);
     const newPasswordLogin = await request("/api/auth/login", { method: "POST", body: { account: "buyer@example.test", password: "payment-test-password-new" } });
     assert.strictEqual(newPasswordLogin.response.status, 200);
+
+    // Runs last: the cron subscription refresh fetches the test pools' upstream URLs, which
+    // fail and mark the pools with lastError.
+    delete process.env.CRON_SECRET;
+    assert.strictEqual((await request("/api/cron/refresh")).response.status, 503, "the cron refresh is disabled without CRON_SECRET");
+    process.env.CRON_SECRET = "cron-test-secret";
+    assert.strictEqual((await request("/api/cron/refresh", { headers: { authorization: "Bearer wrong" } })).response.status, 401);
+    const cronRefresh = await request("/api/cron/refresh", { headers: { authorization: "Bearer cron-test-secret" } });
+    assert.strictEqual(cronRefresh.response.status, 200, cronRefresh.text);
+    const cronRun = (await handler.listSyncJobRuns("subscription-refresh"))[0];
+    assert.deepStrictEqual([cronRun.trigger, ["success", "partial"].includes(cronRun.status), cronRun.summary.total], ["cron", true, cronRefresh.data.refreshed], "the cron subscription refresh must be recorded");
+    delete process.env.CRON_SECRET;
 
     console.log("Payment chain checks passed: payments, wallet priority, referral spending, idempotent reversals, snapshots, ledger entries, and validation.");
   } finally {

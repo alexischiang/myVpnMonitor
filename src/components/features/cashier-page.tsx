@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Link, Navigate, useParams } from "react-router-dom"
+import { Link, useParams } from "react-router-dom"
 import { Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { fetchJson } from "@/api"
@@ -26,7 +26,6 @@ export function CashierPage() {
       .catch(cause => { if (!cancelled) setError(cause instanceof Error ? cause.message : "订单暂时无法加载") })
     return () => { cancelled = true }
   }, [id, attempt])
-  if (order && order.checkoutVersion !== 2) return <Navigate to={`/account/orders/${encodeURIComponent(id)}`} replace />
   return <main className="min-h-svh bg-muted/20 px-4 py-6 sm:py-12">
     <div className="hidden sm:absolute sm:right-6 sm:top-5 sm:flex">
       <Button variant="ghost" size="icon" className="min-h-11 min-w-11 rounded-full" aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>{resolvedTheme === "dark" ? <Sun /> : <Moon />}</Button>

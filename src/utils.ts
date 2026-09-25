@@ -84,6 +84,20 @@ export function formatDateTime(value?: string | Date | null) {
   })
 }
 
+export function formatDuration(ms?: number | null) {
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "-"
+  if (ms < 1000) return `${Math.round(ms)} ms`
+  const seconds = ms / 1000
+  if (seconds < 60) return `${seconds.toFixed(1)} 秒`
+  const totalSeconds = Math.round(seconds)
+  const minutes = Math.floor(totalSeconds / 60)
+  if (minutes < 60) return totalSeconds % 60 ? `${minutes} 分 ${totalSeconds % 60} 秒` : `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return minutes % 60 ? `${hours} 小时 ${minutes % 60} 分` : `${hours} 小时`
+  const days = Math.floor(hours / 24)
+  return hours % 24 ? `${days} 天 ${hours % 24} 小时` : `${days} 天`
+}
+
 export function formatMoney(value?: number | string | null) {
   const amount = Number(value) || 0
   return amount.toLocaleString("zh-CN", { style: "currency", currency: "CNY", minimumFractionDigits: 2 })

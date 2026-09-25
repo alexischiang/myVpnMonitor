@@ -1,12 +1,12 @@
 # Current State
 
-- Last Updated: 2026-09-24
-- Current Objective: V2同步在只读模式下跳过3x-ui写入
+- Last Updated: 2026-09-25
+- Current Objective: 所有支付走 checkout v2：充值改走 checkoutWorkflow，删除 v1 代码，启动时关闭历史 pending 订单
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
-- Active feature: harness-minimum-loop
+- Active feature: none
 - Blockers: none
 
 ## Verification Evidence
@@ -264,8 +264,18 @@
 
 - 2026-09-24: npm run verify、verify:fast、verify:harness、git diff --check 通过；只读模式下V2同步不发送任何写请求，差异计入skipped
 
+- 2026-09-24: da8fed5 上线：282个V2用户面板totalGB改为0；两个受影响client保持启用，完整5分钟间隔后无bulkEnable、无失败请求
+
+- 2026-09-25: npm run verify、verify:harness、git diff --check 通过
+
+- 2026-09-25: npm run verify、verify:harness、git diff --check 通过
+
+- 2026-09-25: npm run verify、verify:harness、git diff --check 通过；/sync-jobs 立即执行 桌面与 390px 浏览器验证无控制台错误
+
+- 2026-09-25: npm run verify、verify:harness、git diff --check 通过；浏览器验证钱包充值→收银台→测试付款/取消，桌面与 390px 无 console/page errors
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `test-payment.js`, `test.js`, `.claude/`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/cashier-page.tsx`, `src/components/features/cashier-types.ts`, `src/components/features/cashier.tsx`, `src/components/features/navigation.ts`, `src/main.tsx`, `src/utils.ts`, `test-payment.js`, `test.js`, `~/.claude/skills/hue`, `.claude/`, `src/components/features/sync-jobs.tsx`
 - Known risks: none
-- Recommended Next Step: 等待用户审阅后决定是否提交与部署
+- Recommended Next Step: 用户确认后提交并部署；部署后检查启动日志里历史订单关闭数量；另有收银台刷新被重定向到 /account 的旧问题待修

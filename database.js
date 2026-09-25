@@ -192,6 +192,20 @@ class PostgresDataStore {
       )
       `), "xui inbounds init");
       await withPgRetry(() => pool.query(`
+      CREATE TABLE IF NOT EXISTS sync_job_runs (
+        id BIGSERIAL PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        finished_at TIMESTAMPTZ,
+        duration_ms INTEGER,
+        summary JSONB NOT NULL DEFAULT '{}',
+        error TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS sync_job_runs_job_started_idx ON sync_job_runs (job_id, started_at DESC)
+      `), "sync job runs init");
+      await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS catalog_v2_line_groups (
         id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9-]{1,63}$'),
         name TEXT NOT NULL,
@@ -1136,6 +1150,85 @@ class PostgresDataStore {
   async setXuiInboundEnabled(inboundId, enabled) {
     await withPgRetry(() => this.pool.query("UPDATE xui_inbounds SET enabled = $2 WHERE inbound_id = $1", [inboundId, enabled]), "set xui inbound enabled");
   }
+
+  // Background job run history shown on the sync job monitor page.
+  async startSyncJobRun(jobId, trigger) {
+    const result = await withPgRetry(() => this.pool.query(
+      "INSERT INTO sync_job_runs (job_id, trigger, status) VALUES ($1, $2, 'running') RETURNING id",
+      [jobId, trigger]
+    ), "start sync job run");
+    return String(result.rows[0].id);
+  }
+
+  async finishSyncJobRun(id, { status, summary = {}, error = "" }) {
+    await withPgRetry(() => this.pool.query(
+      `UPDATE sync_job_runs SET status = $2, summary = $3::jsonb, error = $4, finished_at = NOW(),
+         duration_ms = GREATEST(0, ROUND(EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000))::int
+       WHERE id = $1`,
+      [id, status, JSON.stringify(summary || {}), String(error || "")]
+    ), "finish sync job run");
+  }
+
+  // Inserts an already finished run in one statement (runs whose start was not recorded).
+  async recordSyncJobRun(jobId, trigger, { status, summary = {}, error = "", startedAt, durationMs }) {
+    const result = await withPgRetry(() => this.pool.query(
+      `INSERT INTO sync_job_runs (job_id, trigger, status, started_at, finished_at, duration_ms, summary, error)
+       VALUES ($1, $2, $3, $4, NOW(), $5, $6::jsonb, $7) RETURNING id`,
+      [jobId, trigger, status, startedAt, durationMs, JSON.stringify(summary || {}), String(error || "")]
+    ), "record sync job run");
+    return String(result.rows[0].id);
+  }
+
+  async listSyncJobRuns(jobId, limit = 50) {
+    const result = await withPgRetry(() => this.pool.query(
+      "SELECT * FROM sync_job_runs WHERE job_id = $1 ORDER BY started_at DESC, id DESC LIMIT $2",
+      [jobId, Math.min(200, Math.max(1, Number(limit) || 50))]
+    ), "list sync job runs");
+    return result.rows.map(syncJobRunFromRow);
+  }
+
+  async syncJobOverview(since) {
+    const [latest, success, stats] = await withPgRetry(() => Promise.all([
+      this.pool.query("SELECT DISTINCT ON (job_id) * FROM sync_job_runs ORDER BY job_id, started_at DESC, id DESC"),
+      this.pool.query("SELECT job_id, MAX(finished_at) AS at FROM sync_job_runs WHERE status = 'success' GROUP BY job_id"),
+      this.pool.query(
+        "SELECT job_id, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status IN ('failed', 'partial', 'interrupted'))::int AS failed FROM sync_job_runs WHERE started_at >= $1 GROUP BY job_id",
+        [since]
+      )
+    ]), "sync job overview");
+    const overview = {};
+    const entry = jobId => (overview[jobId] ||= { lastRun: null, lastSuccessAt: "", stats24h: { total: 0, failed: 0 } });
+    for (const row of latest.rows) entry(row.job_id).lastRun = syncJobRunFromRow(row);
+    for (const row of success.rows) entry(row.job_id).lastSuccessAt = row.at ? row.at.toISOString() : "";
+    for (const row of stats.rows) entry(row.job_id).stats24h = { total: row.total, failed: row.failed };
+    return overview;
+  }
+
+  async markInterruptedSyncJobRuns() {
+    const result = await withPgRetry(() => this.pool.query(
+      "UPDATE sync_job_runs SET status = 'interrupted', finished_at = NOW(), error = '进程重启，执行被中断' WHERE status = 'running'"
+    ), "mark interrupted sync job runs");
+    return result.rowCount || 0;
+  }
+
+  async pruneSyncJobRuns(cutoff) {
+    const result = await withPgRetry(() => this.pool.query("DELETE FROM sync_job_runs WHERE started_at < $1", [cutoff]), "prune sync job runs");
+    return result.rowCount || 0;
+  }
+}
+
+function syncJobRunFromRow(row) {
+  return {
+    id: String(row.id),
+    jobId: row.job_id,
+    trigger: row.trigger,
+    status: row.status,
+    startedAt: row.started_at ? row.started_at.toISOString() : "",
+    finishedAt: row.finished_at ? row.finished_at.toISOString() : "",
+    durationMs: row.duration_ms,
+    summary: row.summary || {},
+    error: row.error || ""
+  };
 }
 
 function createDataStore({ databaseUrl, ssl = process.env.DATABASE_SSL === "true" }) {
