@@ -1441,7 +1441,6 @@ function publicPaymentOrder(order) {
     purchaseCountBefore: Number(order.purchaseCountBefore) || 0,
     channelCode: order.channelCode || "",
     paymentProvider: order.paymentProvider || "",
-    checkoutVersion: order.checkoutVersion || 1,
     paymentAttemptId: order.paymentAttemptId || "",
     manualPaidAt: order.manualPaidAt || "",
     couponCode: order.couponCode || "",
@@ -1500,14 +1499,6 @@ function platformStatusToOrderStatus(value) {
   if (status === 3) return "abnormal";
   if (status === 4) return "closed";
   return "pending";
-}
-
-function paymentStatusError(status) {
-  return ({
-    failed: "支付平台返回支付失败。",
-    abnormal: "支付平台返回支付异常。",
-    closed: "订单已超时关闭。"
-  })[status] || "";
 }
 
 function paymentAmountError(expected, actual) {
@@ -1956,10 +1947,12 @@ function referralRewardBaseCents(order) {
 async function settleReferralRewards() {
   const now = Date.now();
   let changed = false;
+  let settled = 0;
+  let rejected = 0;
   for (const reward of referralRewards) {
     if (reward.status !== "pending" || new Date(reward.availableAt).getTime() > now) continue;
     const account = accounts.find(item => item.id === reward.inviterAccountId);
-    if (!account) { reward.status = "rejected"; reward.reason = "inviter-missing"; changed = true; continue; }
+    if (!account) { reward.status = "rejected"; reward.reason = "inviter-missing"; changed = true; rejected++; continue; }
     await dataStore.creditReferralReward({
       id: crypto.randomUUID(), accountId: account.id, sourceId: reward.id,
       amountCents: reward.rewardCents, idempotencyKey: `referral:${reward.id}`,
@@ -1968,8 +1961,10 @@ async function settleReferralRewards() {
     reward.status = "available";
     reward.settledAt = new Date().toISOString();
     changed = true;
+    settled++;
   }
   if (changed) await saveReferralRewards();
+  return { settled, rejected };
 }
 
 async function createReferralReward(order, account) {
@@ -3196,109 +3191,29 @@ async function refreshCheckoutOrder(order, req) {
   return order;
 }
 
+// Recharge orders only buy wallet cash, so they never reserve existing balance.
 async function createRechargeOrder(payload, req, account) {
   assertPendingPaymentOrderLimit(account.id);
   const amountCents = moneyCents(payload.amount, "充值金额");
   if (amountCents > 1000000) throw new Error("单次充值不能超过 ¥10,000.00。");
-  const config = requirePaymentConfig(payload.channelCode);
-  const channelCode = configuredPaymentChannel(config, payload.channelCode);
-  const id = crypto.randomUUID();
-  const merOrderTid = makePaymentOrderId();
-  const amount = (amountCents / 100).toFixed(2);
-  const notifyUrl = config.notifyUrl || `${requestOrigin(req)}/api/payments/callback`;
-  if (!/^https?:\/\//i.test(notifyUrl)) throw new Error("Payment notify URL is unavailable.");
-  const requestParams = {
-    mid: config.merchantId,
-    merOrderTid,
-    money: amount,
-    channelCode,
-    notifyUrl,
-    clientUserPayRemark: "余额充值",
-    returnUrl: paymentReturnUrl(config, req, id, payload.returnUrl),
-    ...(config.provider === "xinhui" ? { clientip: requestIp(req) } : {})
-  };
-  const { result, requestParams: compactParams } = await createGatewayPayment(config, requestParams);
+  const amount = amountCents / 100;
   const now = new Date().toISOString();
-  const order = {
-    id,
-    merOrderTid,
-    tid: result.tid || "",
-    purpose: "recharge",
-    planId: "wallet",
-    planName: "账户余额",
-    optionId: "wallet-recharge",
-    optionLabel: `充值 ¥${amount}`,
-    amount: Number(amount),
-    totalAmount: Number(amount),
-    vipSpendAmount: Number(amount),
-    channelCode,
-    paymentPlatformId: config.id,
-    paymentPlatformName: config.name,
-    paymentProvider: config.provider,
-    email: normalizePaymentEmail(account.email),
-    accountId: account.id,
-    payUrl: result.payUrl || "",
-    status: platformStatusToOrderStatus(result.payOrderStatus),
-    platformStatus: result.payOrderStatus ?? null,
-    requestParams: compactParams,
-    paidAt: "",
-    createdAt: now,
-    expiresAt: new Date(Date.now() + PAYMENT_ORDER_TTL_MS).toISOString(),
-    updatedAt: now
-  };
-  paymentOrders.unshift(order);
-  try {
-    await savePaymentOrders();
-  } catch (error) {
-    paymentOrders = paymentOrders.filter(item => item.id !== order.id);
-    throw error;
-  }
-  await recordPendingPaymentOrderLog(account, order, req);
-  if (order.status === "paid") {
-    order.paidAt = now;
-    await fulfillPaymentOrder(order, req);
-  }
-  return order;
-}
-
-async function refreshPaymentOrder(order, req) {
-  if (order.checkoutVersion === 2) return refreshCheckoutOrder(order, req);
-  if (order.status !== "pending" || order.manualPaidAt) return order;
-  if (order.paymentProvider === "test") return order;
-  const config = requirePaymentConfig("", order.paymentPlatformId);
-  const result = await queryGatewayPayment(config, order);
-  order.tid = result.tid || order.tid || "";
-  order.payUrl = result.payUrl || order.payUrl || "";
-  order.platformStatus = result.payOrderStatus ?? order.platformStatus;
-  order.status = platformStatusToOrderStatus(result.payOrderStatus);
-  if (order.status === "pending" && isPaymentOrderExpired(order)) order.status = "closed";
-  const amountError = order.status === "paid" ? paymentAmountError(order.amount, result.money) : "";
-  if (amountError) order.status = "abnormal";
-  order.paymentError = amountError || paymentStatusError(order.status);
-  order.updatedAt = new Date().toISOString();
-  if (order.status === "paid" && !order.paidAt) order.paidAt = order.updatedAt;
-  if (["failed", "abnormal", "closed"].includes(order.status)) await dataStore.releaseWalletHold(order.id);
-  await savePaymentOrders();
-  return order;
+  return checkoutWorkflow(account, req).submit({
+    id: crypto.randomUUID(), number: makePaymentOrderId(), accountId: account.id,
+    email: normalizePaymentEmail(account.email), purpose: "recharge",
+    quote: { planId: "wallet", planName: "账户余额", optionId: "wallet-recharge", optionLabel: `充值 ¥${amount.toFixed(2)}`,
+      amount, subtotal: amount, beforeCreditAmount: amount, originalAmount: amount },
+    purchaseCount: Number(account.purchaseCount) || 0,
+    now, expiresAt: new Date(Date.now() + PAYMENT_ORDER_TTL_MS).toISOString()
+  }, { totalCents: amountCents, planCents: 0, useBalance: false, initialVipCents: initialWalletVipCents(account) });
 }
 
 async function cancelPaymentOrder(order, req) {
   if (order.status !== "pending" || isPaymentOrderExpired(order)) throw new Error("只有待支付订单可以取消。");
-  const refreshedOrder = await refreshPaymentOrder(order, req);
-  if (refreshedOrder.status === "paid") {
-    await fulfillPaymentOrder(refreshedOrder, req);
-    throw new Error("订单已经支付，无法取消。");
-  }
-  if (refreshedOrder.status !== "pending") throw new Error("订单已经关闭，无法取消。");
-  if (order.checkoutVersion === 2) return checkoutWorkflow(null, req).cancel(order, new Date().toISOString());
-  const now = new Date().toISOString();
-  refreshedOrder.status = "closed";
-  refreshedOrder.cancelledAt = now;
-  refreshedOrder.paymentError = "";
-  refreshedOrder.updatedAt = now;
-  await dataStore.releaseWalletHold(refreshedOrder.id);
-  await savePaymentOrders();
-  return refreshedOrder;
+  await refreshCheckoutOrder(order, req);
+  if (order.status === "paid") throw new Error("订单已经支付，无法取消。");
+  if (order.status !== "pending") throw new Error("订单已经关闭，无法取消。");
+  return checkoutWorkflow(null, req).cancel(order, new Date().toISOString());
 }
 
 async function markPaymentOrderPaidManually(order, req, note = "") {
@@ -3334,55 +3249,32 @@ async function handlePaymentCallback(req) {
   const merOrderTid = String(payload.out_trade_no || payload.merOrderTid || "").trim();
   const attempt = await onlinePayments().get(merOrderTid);
   if (attempt) return handleCheckoutCallback(attempt, payload, req);
+  const config = paymentConfigs().find(item => verifyPaymentSign(payload, item));
+  if (!config) return { ok: false, statusCode: 400, body: "invalid sign" };
+  // Only payment attempts collect money. A receipt without one (a closed legacy
+  // order) is never fulfilled automatically and is left for manual handling.
   const order = paymentOrders.find(item => item.merOrderTid === merOrderTid);
-  if (order?.manualPaidAt) return { ok: true, statusCode: 200, body: "success" };
-  let config = order?.paymentPlatformId
-    ? paymentConfigs().find(item => item.id === order.paymentPlatformId)
-    : paymentConfigs().find(item => item.merchantId === String(payload.pid || payload.mid || ""));
-  if (!config) config = paymentConfigs().find(item => verifyPaymentSign(payload, item));
-  if (!config || !verifyPaymentSign(payload, config)) {
-    if (order) {
-      order.paymentError = "支付通知签名验证失败，请点击检测支付状态或联系客服。";
-      order.updatedAt = new Date().toISOString();
-      await savePaymentOrders();
-    }
-    return { ok: false, statusCode: 400, body: "invalid sign" };
-  }
-  if (order) {
-    const now = new Date().toISOString();
-    order.tid = String(payload.trade_no || payload.tid || order.tid || "");
-    const xinhuiSuccess = config.provider === "xinhui" && payload.trade_status === "TRADE_SUCCESS";
-    order.platformStatus = config.provider === "xinhui" ? (xinhuiSuccess ? 1 : 0) : Number(payload.status);
-    const callbackStatus = config.provider === "xinhui" ? (xinhuiSuccess ? "paid" : "pending") : platformStatusToOrderStatus(payload.status);
-    const paidAfterCancellation = Boolean(order.cancelledAt) && callbackStatus === "paid";
-    order.status = order.cancelledAt ? (paidAfterCancellation ? "abnormal" : "closed") : callbackStatus;
-    const amountError = callbackStatus === "paid" && !paidAfterCancellation ? paymentAmountError(order.amount, payload.money) : "";
-    if (paidAfterCancellation) {
-      order.fulfillmentStatus = "failed";
-      order.paymentError = "订单取消后支付平台仍收到款项，请联系客服退款。";
-    } else if (amountError) {
-      order.status = "abnormal";
-      order.fulfillmentStatus = "failed";
-    }
-    if (!paidAfterCancellation) order.paymentError = amountError || paymentStatusError(order.status);
-    order.callbackPayload = payload;
-    order.updatedAt = now;
-    if (order.status === "paid" && !order.paidAt) order.paidAt = now;
-    if (["failed", "abnormal", "closed"].includes(order.status)) await dataStore.releaseWalletHold(order.id);
+  const paid = config.provider === "xinhui" ? payload.trade_status === "TRADE_SUCCESS" : platformStatusToOrderStatus(payload.status) === "paid";
+  if (order && paid && order.status !== "paid" && !order.reversedAt) {
+    Object.assign(order, { status: "abnormal", paymentError: "订单关闭后支付平台仍收到款项，请联系客服处理。",
+      tid: String(payload.trade_no || payload.tid || order.tid || ""), callbackPayload: payload, updatedAt: new Date().toISOString() });
     await savePaymentOrders();
-    if (order.status === "paid") {
-      try {
-        await fulfillPaymentOrder(order, req);
-      } catch (error) {
-        order.fulfillmentStatus = "failed";
-        order.fulfillmentError = error.message;
-        order.updatedAt = new Date().toISOString();
-        await savePaymentOrders();
-        console.error(`Payment fulfillment failed for ${order.merOrderTid}:`, error.message);
-      }
-    }
+    await dataStore.releaseWalletHold(order.id);
   }
   return { ok: true, statusCode: 200, body: "success" };
+}
+
+// Orders created before checkout v2 cannot collect payments any more. Close the
+// ones still pending so their wallet holds are released; safe to run repeatedly.
+async function closeLegacyPendingPaymentOrders() {
+  await loadLatestData({ force: true });
+  const legacy = paymentOrders.filter(order => order.checkoutVersion !== 2 && order.status === "pending");
+  if (!legacy.length) return 0;
+  const now = new Date().toISOString();
+  for (const order of legacy) Object.assign(order, { status: "closed", cancelledAt: now, paymentError: "", updatedAt: now });
+  await savePaymentOrders();
+  for (const order of legacy) await dataStore.releaseWalletHold(order.id);
+  return legacy.length;
 }
 
 function subscriptionSourceType(item = {}) {
@@ -4649,13 +4541,10 @@ async function pruneXuiDailyTrafficRetention(now = Date.now()) {
   const periodicEmails = [...new Set(users
     .filter(item => isSelfHostedUser(item) && item.xuiClientEmail && xuiTraffic.isPeriodicPlan(item))
     .map(item => String(item.xuiClientEmail).trim().toLowerCase()))];
-  if (!cutoff || !periodicEmails.length) return;
-  try {
-    const { deleted } = await dataStore.pruneXuiDailyTraffic(cutoff, periodicEmails);
-    if (deleted) console.log(`[xui-traffic] Pruned ${deleted} daily rows older than ${cutoff} (periodic-plan users; lifetime kept).`);
-  } catch (error) {
-    console.warn(`[xui-traffic] Daily traffic prune failed: ${error.message}`);
-  }
+  if (!cutoff || !periodicEmails.length) return { deleted: 0, cutoff };
+  const { deleted } = await dataStore.pruneXuiDailyTraffic(cutoff, periodicEmails);
+  if (deleted) console.log(`[xui-traffic] Pruned ${deleted} daily rows older than ${cutoff} (periodic-plan users; lifetime kept).`);
+  return { deleted, cutoff };
 }
 
 function markMissingXuiClients(appUsersByEmail, remoteEmails, checkedAt = new Date().toISOString()) {
@@ -4686,7 +4575,7 @@ async function auditXuiClientGroups(clients, allInboundIds, groupInboundIdsByGro
       continue;
     }
     const existingClient = actualClientsByEmail.get(email);
-    if (existingClient && normalizeUserGroup(existingClient.groupName, "") !== expected) repairTargets.push({ user, email, expected, existingClient });
+    if (existingClient && normalizeUserGroup(existingClient.groupName, "") !== expected) repairTargets.push({ user, email, expected });
   }
   const result = { checked: activeUsers.length, mismatched: repairTargets.length, repaired: 0, failed: 0, skipped: XUI_READ_ONLY ? repairTargets.length : 0 };
   if (XUI_READ_ONLY) return result;
@@ -4695,7 +4584,7 @@ async function auditXuiClientGroups(clients, allInboundIds, groupInboundIdsByGro
       const groupInboundIds = groupInboundIdsByGroup.get(target.expected)
         || await xuiInboundIdsForGroup(target.expected);
       groupInboundIdsByGroup.set(target.expected, groupInboundIds);
-      await provisionXuiClient(target.user, { allInboundIds, groupInboundIds, existingClient: target.existingClient });
+      await provisionXuiClient(target.user, { allInboundIds, groupInboundIds, findClient: async email => actualClientsByEmail.get(email) || null });
       result.repaired += 1;
     } catch (error) {
       result.failed += 1;
@@ -4928,8 +4817,7 @@ async function applyXuiInboundChangesOrThrow(changes) {
 async function syncXuiClientAccess(emails, inboundIds, allInboundIds = null) {
   if (!emails.length) return;
   const allIds = allInboundIds || await getAllXuiInboundIds();
-  const detachIds = allIds.filter(id => !inboundIds.includes(id));
-  await applyXuiInboundChangesOrThrow(emails.map(email => ({ email, attach: inboundIds, detach: detachIds })));
+  await applyXuiInboundChangesOrThrow(emails.map(email => xuiInboundChange(email, inboundIds, allIds)).filter(Boolean));
 }
 
 async function getXuiClientByEmail(email) {
@@ -5147,6 +5035,7 @@ function probeXuiInbounds() {
         : { status: "disabled", latencyMs: null, checkedAt: new Date().toISOString(), error: "" })
     })));
     await dataStore.recordXuiInboundProbes(results);
+    return results;
   })().finally(() => { xuiInboundProbeRun = null; });
   return xuiInboundProbeRun;
 }
@@ -5232,71 +5121,41 @@ async function runCatalogV2Sync({ forceReload = false, snapshot = {}, readOnly =
   const allInboundIds = normalizeXuiInboundIdList(inboundRows.map(inbound => inbound.id));
   const desiredByGroup = new Map(groups.filter(group => group.isEnabled).map(group => [group.id, effectiveXuiInboundIds(group.inboundKeys.map(key => inboundByKey.get(key)).filter(Boolean), [], allInboundIds)]));
   const clientsByEmail = new Map((Array.isArray(clients) ? clients : []).map(client => normalizeXuiClientResult(client)).filter(client => client.email).map(client => [client.email.trim().toLowerCase(), client]));
-  const report = { checked: 0, updated: 0, missing: 0, skipped: 0, failed: [] };
+  const report = { checked: 0, updated: 0, missing: 0, skipped: 0, failed: [], conflicts: [] };
+  // Every panel write goes through writeXuiClient, reading from this run's client snapshot.
+  const findClient = async email => clientsByEmail.get(String(email).trim().toLowerCase()) || null;
   // Inbound changes are collected per user and sent in batches after the loop.
   const inboundChanges = [];
   for (const user of users.filter(item => item.productCatalogVersion === 2 && isSelfHostedUser(item))) {
     report.checked++;
+    let repairedTrafficLimit = false;
     try {
-      const repairedTrafficLimit = refreshUserPlanTraffic(user);
-      const email = xuiClientEmail(user);
-      const existing = clientsByEmail.get(email);
-      if (!existing) {
+      repairedTrafficLimit = refreshUserPlanTraffic(user);
+      const groupInboundIds = desiredByGroup.get(String(user.v2LineGroupId || "")) || [];
+      if (!clientsByEmail.has(xuiClientEmail(user))) {
         report.missing++;
         if (readOnly || isUserExpired(user) || isUserAccountDisabled(user)) {
           if (readOnly && !isUserExpired(user) && !isUserAccountDisabled(user)) report.skipped++;
           if (repairedTrafficLimit) await saveUser(user);
           continue;
         }
-        await provisionXuiClient(user, { allowLegacyEmail: false, allInboundIds, groupInboundIds: desiredByGroup.get(String(user.v2LineGroupId || "")) || [] });
+        await provisionXuiClient(user, { findClient, checkLegacyEmail: false, allInboundIds, groupInboundIds });
         user.xuiClientPresent = true;
         delete user.xuiClientMissingAt;
         await saveUser(user);
         report.updated++;
         continue;
       }
-      if (!user.xuiClientEmail) {
-        if (readOnly) {
-          report.skipped++;
-          if (repairedTrafficLimit) await saveUser(user);
-          continue;
-        }
-        await provisionXuiClient(user, { allowLegacyEmail: false, allInboundIds, groupInboundIds: desiredByGroup.get(String(user.v2LineGroupId || "")) || [], existingClient: existing });
-        user.xuiClientPresent = true;
-        await saveUser(user);
-        report.updated++;
-        continue;
-      }
-      const inherited = desiredByGroup.get(String(user.v2LineGroupId || "")) || [];
-      const desiredInboundIds = effectiveXuiInboundIds(inherited, user.xuiExtraInboundIds, allInboundIds);
-      const desired = {
-        ...existing,
-        email,
-        // Decision X: the panel quota stays unlimited. Its counter is never reset, so a finite
-        // totalGB would make 3x-ui disable clients the app still considers within quota.
-        totalGB: 0,
-        expiryTime: new Date(user.expiresAt).getTime(),
-        limitIp: planDeviceLimit(user),
-        reset: 0,
-        flow: XUI_VISION_FLOW,
-        groupName: accessGroupForUser(user),
-        comment: xuiClientComment(user),
-        // Same rule as syncXuiWeightedTraffic: depleted clients stay disabled until traffic
-        // is available again (refreshUserPlanTraffic above recomputed the flag).
-        enable: !isUserExpired(user) && !isUserAccountDisabled(user) && !user.xuiWeightedTraffic?.depleted
-      };
-      const needsUpdate = xuiClientNeedsUpdate(existing, desired);
-      const actualInboundIds = normalizeXuiInboundIdList(existing.inboundIds);
-      const attach = desiredInboundIds.filter(id => !actualInboundIds.includes(id));
-      const detach = actualInboundIds.filter(id => allInboundIds.includes(id) && !desiredInboundIds.includes(id));
-      const inboundsDiffer = attach.length > 0 || detach.length > 0;
+      // depletionDisables: same rule as syncXuiWeightedTraffic, so depleted clients stay disabled
+      // until traffic is available again (refreshUserPlanTraffic above recomputed the flag).
+      const write = await writeXuiClient(user, { findClient, checkLegacyEmail: false, allInboundIds, groupInboundIds, inboundsKnown: true, deferInboundChanges: true, depletionDisables: true, dryRun: readOnly });
       if (readOnly) {
-        if (needsUpdate || inboundsDiffer) report.skipped++;
-      } else {
-        if (needsUpdate) await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(existing, desired) });
+        if (write.updated || write.inboundChange) report.skipped++;
+      } else if (write.inboundChange) {
         // Users with pending inbound changes are counted after the batch settles.
-        if (inboundsDiffer) inboundChanges.push({ email, attach, detach, user });
-        else if (needsUpdate) report.updated++;
+        inboundChanges.push({ ...write.inboundChange, user });
+      } else if (write.updated) {
+        report.updated++;
       }
       if (user.xuiClientPresent === false) {
         user.xuiClientPresent = true;
@@ -5306,7 +5165,12 @@ async function runCatalogV2Sync({ forceReload = false, snapshot = {}, readOnly =
         await saveUser(user);
       }
     } catch (error) {
-      report.failed.push({ userId: user.id, error: error.message });
+      if (error.code !== "XUI_CLIENT_CONFLICT") {
+        report.failed.push({ userId: user.id, error: error.message });
+        continue;
+      }
+      report.conflicts.push({ userId: user.id, email: error.email });
+      if (repairedTrafficLimit) await saveUser(user).catch(saveError => report.failed.push({ userId: user.id, error: saveError.message }));
     }
   }
   const inboundFailures = await applyXuiInboundChanges(inboundChanges);
@@ -5355,6 +5219,168 @@ async function syncXuiPanel() {
   });
 }
 
+// Background job registry for the sync job monitor page. Each run() resolves to
+// { status, summary, error }; a thrown error is recorded as a failed run.
+const SYNC_JOB_MODULES = [
+  { id: "xui", name: "3x-ui" },
+  { id: "traffic", name: "流量" },
+  { id: "subscriptions", name: "订阅" },
+  { id: "referrals", name: "钱包与返利" }
+];
+const SYNC_JOB_RETENTION_DAYS = 14;
+
+// Deletes sync job runs older than the retention window; returns the number removed.
+function pruneSyncJobHistory(now = Date.now()) {
+  return dataStore.pruneSyncJobRuns(new Date(now - SYNC_JOB_RETENTION_DAYS * 24 * 60 * 60 * 1000));
+}
+const SYNC_JOBS = [
+  {
+    id: "xui-panel-sync", module: "xui", name: "3x-ui 面板同步", description: "读取面板一次，依次刷新入站表、流量计费和 V2 权益。",
+    intervalMs: XUI_TRAFFIC_SYNC_INTERVAL_MS, requiresXui: true,
+    run: async () => xuiPanelSyncJobResult(await syncXuiPanel())
+  },
+  {
+    id: "xui-inbound-probe", module: "xui", name: "入站 TCP 探测", description: "按入站表探测每个入站端口的连通性，不请求 3x-ui。",
+    intervalMs: XUI_INBOUND_PROBE_INTERVAL_MS, requiresXui: true,
+    run: async () => {
+      const results = await probeXuiInbounds();
+      const byStatus = {};
+      for (const result of results) byStatus[result.status] = (byStatus[result.status] || 0) + 1;
+      return { status: "success", summary: { total: results.length, byStatus } };
+    }
+  },
+  {
+    id: "xui-traffic-prune", module: "traffic", name: "每日流量清理", description: `删除周期套餐用户超过 ${XUI_DAILY_TRAFFIC_RETENTION_DAYS} 天的每日流量记录，不限时套餐保留。`,
+    intervalMs: 24 * 60 * 60 * 1000, requiresXui: true,
+    run: async () => ({ status: "success", summary: await pruneXuiDailyTrafficRetention() })
+  },
+  {
+    id: "subscription-refresh", module: "subscriptions", name: "订阅池刷新", description: "刷新全部订阅池的上游配置，由外部定时任务调用 /api/cron/refresh 触发。",
+    intervalMs: null, requiresXui: false,
+    run: async () => {
+      await loadLatestData();
+      await refreshAll();
+      const failed = subscriptions.filter(item => item.lastError).length;
+      return { status: failed ? "partial" : "success", summary: { total: subscriptions.length, failed } };
+    }
+  },
+  {
+    id: "referral-settlement", module: "referrals", name: "邀请返利结算", description: "将到期的待结算返利计入邀请人钱包；未结算任何返利的轮次不记录。",
+    intervalMs: 60 * 1000, requiresXui: false, recordOnlyWhenChanged: true,
+    run: async () => {
+      const summary = await settleReferralRewards();
+      return { status: "success", summary, changed: summary.settled + summary.rejected > 0 };
+    }
+  }
+];
+const syncJobRunning = new Map();
+const syncJobLastCheckedAt = new Map();
+
+function xuiPanelSyncJobResult(result) {
+  const steps = [
+    { id: "inbounds", name: "入站表", error: result.inboundCatalogError },
+    { id: "traffic", name: "流量计费", error: result.trafficError },
+    { id: "catalogV2", name: "V2 权益", error: result.catalogV2Error }
+  ];
+  const failedSteps = steps.filter(step => step.error);
+  const report = result.catalogV2;
+  const failedUsers = report?.failed?.length || 0;
+  const conflictEmails = (report?.conflicts || []).map(conflict => conflict.email);
+  const errors = failedSteps.map(step => `${step.name}：${step.error.message}`);
+  if (failedUsers) errors.push(`V2 权益：${failedUsers} 个用户同步失败`);
+  if (conflictEmails.length) errors.push(`V2 权益：${conflictEmails.length} 个用户在 3x-ui 面板已有同邮箱 Client 但未与 app 关联，未做修改。请在面板删除这些 Client，下一轮同步会按 app 数据自动重建：${conflictEmails.join("、")}`);
+  return {
+    status: failedSteps.length === steps.length ? "failed" : failedSteps.length || failedUsers || conflictEmails.length ? "partial" : "success",
+    summary: {
+      steps: steps.map(step => ({ id: step.id, name: step.name, status: step.error ? "failed" : "success", error: step.error?.message || "" })),
+      catalogV2: report ? { checked: report.checked, updated: report.updated, missing: report.missing, skipped: report.skipped, failed: failedUsers, conflicts: conflictEmails.length, conflictEmails } : null
+    },
+    error: errors.join("；")
+  };
+}
+
+function isSyncJobConfigured(job) {
+  return !job.requiresXui || Boolean(XUI_BASE_URL && XUI_API_TOKEN);
+}
+
+// Runs a job and records it in sync_job_runs. History writes are best-effort: a database
+// failure is logged and never blocks or fails the job itself.
+// onStarted receives the history row id once it exists (not called for recordOnlyWhenChanged jobs).
+async function trackSyncJobRun(job, trigger, { onStarted } = {}) {
+  const startedAt = new Date();
+  syncJobRunning.set(job.id, { trigger, startedAt: startedAt.toISOString() });
+  let runId = "";
+  const history = async write => {
+    try {
+      return await write();
+    } catch (error) {
+      console.warn(`[sync-jobs] ${job.id} history write failed: ${error.message}`);
+      return "";
+    }
+  };
+  try {
+    if (!job.recordOnlyWhenChanged) {
+      runId = await history(() => dataStore.startSyncJobRun(job.id, trigger));
+      onStarted?.(runId);
+    }
+    let outcome;
+    try {
+      outcome = await job.run();
+    } catch (error) {
+      outcome = { status: "failed", summary: {}, error: error.message || String(error) };
+    }
+    syncJobLastCheckedAt.set(job.id, new Date().toISOString());
+    const { status, summary = {}, error = "" } = outcome;
+    if (runId) await history(() => dataStore.finishSyncJobRun(runId, { status, summary, error }));
+    else if (!job.recordOnlyWhenChanged || outcome.changed || status !== "success") {
+      runId = await history(() => dataStore.recordSyncJobRun(job.id, trigger, { status, summary, error, startedAt, durationMs: Date.now() - startedAt.getTime() }));
+    }
+    if (status === "failed") console.error(`[sync-jobs] ${job.id} failed: ${error}`);
+    return { runId, status, summary, error };
+  } finally {
+    syncJobRunning.delete(job.id);
+  }
+}
+
+function runTrackedSyncJob(jobId, trigger) {
+  const job = SYNC_JOBS.find(item => item.id === jobId);
+  if (!job) return Promise.reject(new Error(`Unknown sync job: ${jobId}`));
+  return trackSyncJobRun(job, trigger);
+}
+
+async function recoverInterruptedSyncJobRuns() {
+  const count = await dataStore.markInterruptedSyncJobRuns();
+  if (count) console.warn(`[sync-jobs] Marked ${count} unfinished run(s) as interrupted.`);
+  return count;
+}
+
+async function listSyncJobRuns(jobId, limit) {
+  return dataStore.listSyncJobRuns(jobId, limit);
+}
+
+async function syncJobsPayload() {
+  const overview = await dataStore.syncJobOverview(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  return {
+    checkedAt: new Date().toISOString(),
+    modules: SYNC_JOB_MODULES.map(module => ({
+      ...module,
+      jobs: SYNC_JOBS.filter(job => job.module === module.id).map(job => ({
+        id: job.id,
+        name: job.name,
+        description: job.description,
+        intervalMs: job.intervalMs,
+        configured: isSyncJobConfigured(job),
+        running: syncJobRunning.has(job.id),
+        runningSince: syncJobRunning.get(job.id)?.startedAt || "",
+        lastCheckedAt: syncJobLastCheckedAt.get(job.id) || "",
+        lastRun: overview[job.id]?.lastRun || null,
+        lastSuccessAt: overview[job.id]?.lastSuccessAt || "",
+        stats24h: overview[job.id]?.stats24h || { total: 0, failed: 0 }
+      }))
+    }))
+  };
+}
+
 function xuiClientNeedsUpdate(existing, desired) {
   return ["email", "totalGB", "expiryTime", "limitIp", "reset", "flow", "groupName", "comment", "enable"]
     .some(key => String(existing?.[key] ?? "") !== String(desired[key] ?? ""));
@@ -5392,45 +5418,45 @@ function isXuiTimeoutError(error) {
     || /tim(?:e|ed)[ -]?out|timeout|超时/i.test(String(error?.message || ""));
 }
 
-async function provisionXuiClientOnce(user, options = {}) {
-  const {
-    allowLegacyEmail = true,
-    allInboundIds: providedAllInboundIds = null,
-    groupInboundIds: providedGroupInboundIds = null,
-    existingClient: providedExistingClient,
-  } = options;
-  if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
-  const email = xuiClientEmail(user);
-  const group = accessGroupForUser(user);
-  if (!group) throw new Error("Self-hosted user is missing a valid access group.");
-  const groupInboundIds = providedGroupInboundIds || (user.productCatalogVersion === 2 ? null : await xuiInboundIdsForGroup(group));
-  const allInboundIds = providedAllInboundIds || await getAllXuiInboundIds();
-  const inboundIds = await xuiInboundIdsForUser(user, groupInboundIds, allInboundIds);
-  const existingClientProvided = Object.prototype.hasOwnProperty.call(options, "existingClient");
-  let existing = existingClientProvided
-    ? (providedExistingClient ? normalizeXuiClientResult(providedExistingClient, email) : null)
-    : null;
-  let existingEmail = email;
-  if (!existingClientProvided) try { existing = await getXuiClientByEmail(email); } catch (error) {
+function xuiClientConflictError(email) {
+  return Object.assign(new Error(`3x-ui 面板已有 Client ${email}，但它未与该用户关联。app 不会接管面板数据，请在面板删除该 Client，之后会按 app 数据自动重建。`), { code: "XUI_CLIENT_CONFLICT", statusCode: 409, email });
+}
+
+async function findXuiClientByEmail(email) {
+  try {
+    return await getXuiClientByEmail(email);
+  } catch (error) {
     if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
+    return null;
   }
-  if (!existing && allowLegacyEmail) {
-    const legacyEmail = legacyXuiClientEmail(user);
-    if (legacyEmail !== email) {
-      try {
-        existing = await getXuiClientByEmail(legacyEmail);
-        existingEmail = legacyEmail;
-      } catch (error) {
-        if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
-      }
-    }
-  }
+}
+
+// Looks a client up with findClient (a live read or a panel snapshot); normalized or null.
+async function lookupXuiClient(email, findClient = findXuiClientByEmail) {
+  const found = await findClient(email);
+  return found ? normalizeXuiClientResult(found, email) : null;
+}
+
+// Data only flows app -> panel: throws XUI_CLIENT_CONFLICT when the panel holds a client the
+// app would otherwise adopt — a same-email client this user was never linked to, or (with
+// checkLegacyEmail) a client under the user's legacy nexora_* email when theirs is missing.
+async function assertNoUnlinkedXuiClient(user, { email, existing, findClient = findXuiClientByEmail, checkLegacyEmail = true }) {
+  if (existing && !user.xuiClientEmail) throw xuiClientConflictError(email);
+  if (existing || !checkLegacyEmail) return;
+  const legacyEmail = legacyXuiClientEmail(user);
+  if (legacyEmail !== email && await findClient(legacyEmail)) throw xuiClientConflictError(legacyEmail);
+}
+
+// The client the panel should hold for this user, built from app data only; fields the app
+// does not own (uuid, subId, ...) are kept from the existing client.
+function desiredXuiClient(user, { email, group, existing = null, depletionDisables = false }) {
   // The panel gets no quota, but a user without a verifiable local plan entitlement is still rejected.
   xuiTrafficLimitBytes(user);
   const desired = {
     ...(existing || {}),
     email,
-    // Decision X: quota is enforced by the app, never by the panel (see syncCatalogV2ToXui).
+    // Decision X: the panel quota stays unlimited. Its counter is never reset, so a finite
+    // totalGB would make 3x-ui disable clients the app still considers within quota.
     totalGB: 0,
     expiryTime: new Date(user.expiresAt).getTime(),
     limitIp: user.productCatalogVersion === 2 ? planDeviceLimit(user) : Number.isFinite(Number(user.xuiIpLimit)) ? Math.max(0, Number(user.xuiIpLimit)) : planDeviceLimit(user),
@@ -5438,19 +5464,88 @@ async function provisionXuiClientOnce(user, options = {}) {
     flow: XUI_VISION_FLOW,
     groupName: group,
     comment: xuiClientComment(user),
-    enable: !isUserExpired(user) && !isUserAccountDisabled(user)
+    enable: !isUserExpired(user) && !isUserAccountDisabled(user) && !(depletionDisables && user.xuiWeightedTraffic?.depleted)
   };
   delete desired.traffic;
   delete desired.inboundIds;
-  let mutationResult = null;
-  if (existing?.email) {
-    if (xuiClientNeedsUpdate(existing, desired)) {
-      mutationResult = await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(existingEmail)}`, { method: "POST", body: xuiClientWritePayload(existing, desired) });
-    }
-  } else {
-    mutationResult = await xuiRequest("/panel/api/clients/add", { method: "POST", body: { client: xuiClientWritePayload(null, desired), inboundIds } });
+  return desired;
+}
+
+// The inbound change that gives a client exactly inboundIds. With actualInboundIds only the
+// differences are sent; without them the full set is attached and every other inbound in
+// allInboundIds detached. Returns { email, attach, detach }, or null when nothing changes.
+function xuiInboundChange(email, inboundIds, allInboundIds, actualInboundIds = null) {
+  const actual = actualInboundIds ? normalizeXuiInboundIdList(actualInboundIds) : null;
+  const attach = actual ? inboundIds.filter(id => !actual.includes(id)) : inboundIds;
+  const detach = (actual || allInboundIds).filter(id => allInboundIds.includes(id) && !inboundIds.includes(id));
+  return attach.length || detach.length ? { email, attach, detach } : null;
+}
+
+// Sends the add or update planned by writeXuiClient; returns the panel's response, or null
+// when the existing client already matches.
+async function applyXuiClientWrite(user, { email, existing, desired, inboundIds, created, updated }) {
+  if (created) {
+    // Claim the email before adding, so a retry after a timed-out add updates the client it
+    // created instead of reporting it as a conflict.
+    user.xuiClientEmail = email;
+    return xuiRequest("/panel/api/clients/add", { method: "POST", body: { client: xuiClientWritePayload(null, desired), inboundIds } });
   }
-  await syncXuiClientAccess([email], inboundIds, allInboundIds);
+  if (updated) return xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(existing, desired) });
+  return null;
+}
+
+// The single write path from an app user to their 3x-ui client; data only flows app -> panel.
+// A panel client the user was never linked to is not adopted: XUI_CLIENT_CONFLICT is thrown
+// before any write, and an admin deletes that client so the next write recreates it.
+// Options:
+// - findClient(email): client lookup, e.g. from a panel snapshot; defaults to a live read.
+// - inboundsKnown: the found client's inboundIds are current, so only differences are sent;
+//   otherwise the full desired set is attached and every other inbound detached.
+// - deferInboundChanges: return inboundChange for the caller to batch instead of sending it.
+// - depletionDisables: a user who has used up their traffic gets a disabled client.
+// - checkLegacyEmail: a client under the legacy nexora_* email also counts as a conflict.
+// - dryRun: compute the result without writing (read-only mode).
+// Returns { email, existing, created, updated, inboundChange, inboundIds, desired, mutationResult }.
+async function writeXuiClient(user, {
+  findClient = findXuiClientByEmail,
+  allInboundIds,
+  groupInboundIds = null,
+  inboundsKnown = false,
+  deferInboundChanges = false,
+  depletionDisables = false,
+  checkLegacyEmail = true,
+  dryRun = false
+}) {
+  const email = xuiClientEmail(user);
+  const group = accessGroupForUser(user);
+  if (!group) throw new Error("Self-hosted user is missing a valid access group.");
+  const existing = await lookupXuiClient(email, findClient);
+  await assertNoUnlinkedXuiClient(user, { email, existing, findClient, checkLegacyEmail });
+  const inboundIds = await xuiInboundIdsForUser(user, groupInboundIds, allInboundIds);
+  const desired = desiredXuiClient(user, { email, group, existing, depletionDisables });
+  const result = {
+    email,
+    existing,
+    created: !existing,
+    updated: Boolean(existing) && xuiClientNeedsUpdate(existing, desired),
+    inboundChange: xuiInboundChange(email, inboundIds, allInboundIds, existing && inboundsKnown ? existing.inboundIds : null),
+    inboundIds,
+    desired,
+    mutationResult: null
+  };
+  if (dryRun) return result;
+  result.mutationResult = await applyXuiClientWrite(user, result);
+  if (result.inboundChange && !deferInboundChanges) await applyXuiInboundChangesOrThrow([result.inboundChange]);
+  return result;
+}
+
+async function provisionXuiClientOnce(user, options = {}) {
+  if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
+  const group = accessGroupForUser(user);
+  if (!group) throw new Error("Self-hosted user is missing a valid access group.");
+  const groupInboundIds = options.groupInboundIds || (user.productCatalogVersion === 2 ? null : await xuiInboundIdsForGroup(group));
+  const allInboundIds = options.allInboundIds || await getAllXuiInboundIds();
+  const { email, desired, inboundIds, mutationResult } = await writeXuiClient(user, { ...options, groupInboundIds, allInboundIds });
   let remote;
   try {
     remote = await getXuiClientAfterMutation({ ...user, xuiClientEmail: email });
@@ -5471,13 +5566,15 @@ async function provisionXuiClientOnce(user, options = {}) {
   return remote;
 }
 
+// Creates or updates the user's 3x-ui client through writeXuiClient, retrying timeouts, then
+// stores the panel's subId and sync state on the user. Takes writeXuiClient's options.
 async function provisionXuiClient(user, options = {}) {
   let lastError;
   for (let attempt = 1; attempt <= XUI_PROVISION_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const attemptOptions = attempt === 1 ? options : { ...options };
-      if (attemptOptions.existingClient == null) delete attemptOptions.existingClient;
-      if (attempt > 1) delete attemptOptions.existingClient;
+      // A timed-out attempt may have written, so later attempts read the panel live
+      // instead of trusting a caller's snapshot.
+      const attemptOptions = attempt === 1 ? options : { ...options, findClient: undefined };
       return await provisionXuiClientOnce(user, attemptOptions);
     } catch (error) {
       lastError = error;
@@ -5532,15 +5629,14 @@ async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
     try {
       const conflict = users.find(item => item.id !== user.id && String(item.xuiClientEmail || "").trim().toLowerCase() === email);
       if (conflict) throw new Error("该邮箱对应的3x-ui Client已关联其他用户。");
-      let existing = null;
-      try { existing = await getXuiClientByEmail(email); } catch (error) {
-        if (error.statusCode !== 404 && !/not found|不存在|找不到/i.test(error.message)) throw error;
-      }
+      // Same rule as every other write: a same-email panel client is only reused when this
+      // user was already linked to it; otherwise the migration fails with a conflict.
+      const existing = await lookupXuiClient(email);
+      await assertNoUnlinkedXuiClient(user, { email, existing, checkLegacyEmail: false });
       user.email ||= email;
       user.xuiClientEmail = email;
-      if (existing) user.xuiIpLimit = Math.max(0, Number(existing.limitIp) || 0);
       initializeLegacyXuiMigration(user, existing);
-      const remote = await provisionXuiClient(user, { allowLegacyEmail: false });
+      const remote = await provisionXuiClient(user, { checkLegacyEmail: false });
       await clearXuiBillingLedger(email);
       user.xuiMigrationStatus = "completed";
       user.xuiMigrationSource = existing ? "linked_existing" : "created";
@@ -9273,8 +9369,11 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    await loadLatestData();
-    await refreshAll();
+    const result = await runTrackedSyncJob("subscription-refresh", "cron");
+    if (result.status === "failed") {
+      sendJson(res, 500, { error: result.error });
+      return;
+    }
     sendJson(res, 200, { ok: true, refreshed: subscriptions.length });
     return;
   }
@@ -9418,11 +9517,9 @@ async function handleApi(req, res, pathname) {
     const order = paymentOrders.find(item => item.id === cashierMatch[1] && item.accountId === session.accountId);
     if (!order) return sendJson(res, 404, { error: "订单不存在。" });
     try {
-      if (cashierMatch[2] === "start") {
-        if (order.checkoutVersion !== 2) throw new Error("请通过原支付链接完成该订单。");
-        await startOrderPayment(order, await readJson(req), req);
-      } else {
-        await refreshPaymentOrder(order, req);
+      if (cashierMatch[2] === "start") await startOrderPayment(order, await readJson(req), req);
+      else {
+        await refreshCheckoutOrder(order, req);
         await checkoutWorkflow(null, req).fulfill(order, req);
       }
       sendJson(res, 200, publicPaymentOrder(order));
@@ -9440,33 +9537,14 @@ async function handleApi(req, res, pathname) {
       if (order.status !== "pending" || isPaymentOrderExpired(order)) throw new Error("只能设置有效的待付款测试订单的状态。");
       const { status } = await readJson(req);
       if (!["paid", "failed", "closed"].includes(status)) throw new Error("不支持的测试付款状态。");
-      if (order.checkoutVersion === 2) {
-        const attempt = await onlinePayments().get(order.paymentAttemptId);
-        if (!attempt || attempt.provider !== "test") throw new Error("测试交易不存在。");
-        attempt.status = status;
-        attempt.error = status === "paid" ? "" : "测试交易未完成付款，可以重试。";
-        await onlinePayments().put(attempt);
-        projectAttempt(order, attempt);
-        await savePaymentOrders();
-        await acceptAttemptReceipt(order, attempt, req);
-        sendJson(res, 200, publicPaymentOrder(order));
-        return;
-      }
-      order.status = status;
-      order.platformStatus = ({ paid: 1, failed: 2, closed: 4 })[status];
-      order.paidAt = status === "paid" ? new Date().toISOString() : "";
-      order.updatedAt = new Date().toISOString();
-      order.paymentError = paymentStatusError(status);
+      const attempt = await onlinePayments().get(order.paymentAttemptId);
+      if (!attempt || attempt.provider !== "test") throw new Error("测试交易不存在。");
+      attempt.status = status;
+      attempt.error = status === "paid" ? "" : "测试交易未完成付款，可以重试。";
+      await onlinePayments().put(attempt);
+      projectAttempt(order, attempt);
       await savePaymentOrders();
-      if (status === "paid") {
-        try {
-          await fulfillPaymentOrder(order, req);
-        } catch (error) {
-          order.fulfillmentStatus = "failed";
-          order.fulfillmentError = error.message;
-          await savePaymentOrders();
-        }
-      } else await dataStore.releaseWalletHold(order.id);
+      await acceptAttemptReceipt(order, attempt, req);
       sendJson(res, 200, publicPaymentOrder(order));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -9505,21 +9583,8 @@ async function handleApi(req, res, pathname) {
           return;
         }
       }
-      if (order.checkoutVersion === 2 && order.status === "pending" && isPaymentOrderExpired(order)) await refreshCheckoutOrder(order, req);
-      const config = paymentConfig(order.paymentPlatformId);
-      const shouldQueryGateway = order.checkoutVersion !== 2 && order.status === "pending" && order.paymentProvider !== "test" && paymentConfigCredentialsReady(config);
-      const refreshedOrder = shouldQueryGateway ? await refreshPaymentOrder(order, req) : order;
-      if (refreshedOrder.status === "paid" && order.checkoutVersion !== 2) {
-        try {
-          await fulfillPaymentOrder(refreshedOrder, req);
-        } catch (error) {
-          refreshedOrder.fulfillmentStatus = "failed";
-          refreshedOrder.fulfillmentError = error.message;
-          refreshedOrder.updatedAt = new Date().toISOString();
-          await savePaymentOrders();
-        }
-      }
-      sendJson(res, 200, publicPaymentOrder(refreshedOrder));
+      if (order.status === "pending" && isPaymentOrderExpired(order)) await refreshCheckoutOrder(order, req);
+      sendJson(res, 200, publicPaymentOrder(order));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -9735,6 +9800,51 @@ async function handleApi(req, res, pathname) {
     } catch (error) {
       sendJson(res, error.statusCode || 400, { error: error.message });
     }
+    return;
+  }
+
+  if (pathname === "/api/sync-jobs" && req.method === "GET") {
+    sendJson(res, 200, await syncJobsPayload());
+    return;
+  }
+
+  const syncJobRunsMatch = pathname.match(/^\/api\/sync-jobs\/([^/]+)\/runs$/);
+  if (syncJobRunsMatch && req.method === "GET") {
+    const jobId = decodeURIComponent(syncJobRunsMatch[1]);
+    if (!SYNC_JOBS.some(job => job.id === jobId)) {
+      sendJson(res, 404, { error: "同步任务不存在。" });
+      return;
+    }
+    const limit = new URL(req.url, "http://localhost").searchParams.get("limit");
+    sendJson(res, 200, { runs: await listSyncJobRuns(jobId, limit) });
+    return;
+  }
+
+  const syncJobRunMatch = pathname.match(/^\/api\/sync-jobs\/([^/]+)\/run$/);
+  if (syncJobRunMatch && req.method === "POST") {
+    const job = SYNC_JOBS.find(item => item.id === decodeURIComponent(syncJobRunMatch[1]));
+    if (!job) {
+      sendJson(res, 404, { error: "同步任务不存在。" });
+      return;
+    }
+    if (!isSyncJobConfigured(job)) {
+      sendJson(res, 400, { error: "3x-ui 未配置，无法执行该任务。", code: "SYNC_JOB_NOT_CONFIGURED" });
+      return;
+    }
+    if (syncJobRunning.has(job.id)) {
+      sendJson(res, 409, { error: "该任务正在执行，请等待本次执行结束。", code: "SYNC_JOB_RUNNING" });
+      return;
+    }
+    // Long jobs (a full panel sync can take minutes) run in the background; the page polls.
+    const runId = await new Promise(resolve => {
+      trackSyncJobRun(job, "manual", { onStarted: resolve })
+        .then(result => resolve(result.runId))
+        .catch(error => {
+          console.error(`[sync-jobs] ${job.id} manual run failed:`, error);
+          resolve("");
+        });
+    });
+    sendJson(res, 202, { ok: true, runId });
     return;
   }
 
@@ -10215,7 +10325,7 @@ async function handleApi(req, res, pathname) {
         const repaired = structuredClone(user);
         Object.assign(repaired, target, { purchasedTrafficGb: order.trafficGb ?? null, updatedAt: new Date().toISOString() });
         bindUserProductFromOrder(repaired, order);
-        await provisionXuiClient(repaired, { allowLegacyEmail: false });
+        await provisionXuiClient(repaired, { checkLegacyEmail: false });
         repaired.xuiClientPresent = true;
         delete repaired.xuiClientMissingAt;
         appendUserLogToUser(repaired, createUserLog({ event: "user-action", status: "recorded", reason: "payment-order-binding-repaired", req, message: `已按订单 ${order.merOrderTid} 补关联V2套餐并同步3x-ui。`, details: { paymentOrderId: order.id, productId: repaired.v2ProductId } }));
@@ -11502,7 +11612,7 @@ async function handleApi(req, res, pathname) {
       try {
         if (!item || !isSelfHostedUser(item) || item.productCatalogVersion !== 2 || !item.v2ProductSnapshot) throw new Error("仅已绑定V2套餐的自研线路用户可以同步3x-ui。");
         refreshUserPlanTraffic(item);
-        await provisionXuiClient(item, { allowLegacyEmail: false });
+        await provisionXuiClient(item, { checkLegacyEmail: false });
         item.xuiClientPresent = true;
         delete item.xuiClientMissingAt;
         appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "xui-v2-synced", req, message: "已按当前V2套餐同步3x-ui客户端。", details: { email: item.xuiClientEmail, productId: item.v2ProductId, inboundIds: item.xuiInboundIds || [] } }));
@@ -11526,7 +11636,7 @@ async function handleApi(req, res, pathname) {
         if (isUserAccountDisabled(item)) throw new Error("账户已停用，不能恢复3x-ui Client。");
         if (!item.xuiClientEmail) throw new Error("用户尚未关联3x-ui Client。");
         const previousSubId = item.xuiSubId || "";
-        const remote = await provisionXuiClient(item, { allowLegacyEmail: false });
+        const remote = await provisionXuiClient(item, { checkLegacyEmail: false });
         item.xuiClientPresent = true;
         item.xuiRecoveredAt = new Date().toISOString();
         item.xuiLastSyncedAt = item.xuiRecoveredAt;
@@ -11959,25 +12069,28 @@ async function main() {
     console.log(`VPN subscription monitor is running at http://localhost:${PORT}`);
   });
 
-  setInterval(() => {
-    settleReferralRewards().catch(error => console.error("Referral settlement failed:", error));
-  }, 60 * 1000);
+  await recoverInterruptedSyncJobRuns().catch(error => console.error("Sync job history recovery failed:", error));
+  await closeLegacyPendingPaymentOrders()
+    .then(count => { if (count) console.log(`Closed ${count} legacy pending payment order(s).`); })
+    .catch(error => console.error("Closing legacy payment orders failed:", error));
+  // Scheduled runs go through the sync job monitor; trackSyncJobRun records failures itself.
+  // A tick is skipped while the previous run of the same job is still going.
+  const scheduleSyncJob = (jobId, trigger = "schedule") => {
+    if (syncJobRunning.has(jobId)) return Promise.resolve();
+    return runTrackedSyncJob(jobId, trigger).catch(error => console.error(`[sync-jobs] ${jobId} failed:`, error));
+  };
+  const pruneSyncJobHistoryInBackground = () => pruneSyncJobHistory().catch(error => console.error("Sync job history prune failed:", error));
+  pruneSyncJobHistoryInBackground();
+  setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000);
+
+  setInterval(() => scheduleSyncJob("referral-settlement"), 60 * 1000);
   if (XUI_BASE_URL && XUI_API_TOKEN) {
     // The first probe waits for the first panel sync to fill the inbound table.
-    syncXuiPanel()
-      .catch(error => console.error("3x-ui panel sync failed:", error))
-      .then(() => probeXuiInbounds())
-      .catch(error => console.error("3x-ui inbound probe failed:", error));
-    setInterval(() => {
-      probeXuiInbounds().catch(error => console.error("3x-ui inbound probe failed:", error));
-    }, XUI_INBOUND_PROBE_INTERVAL_MS);
-    setInterval(() => {
-      syncXuiPanel().catch(error => console.error("3x-ui panel sync failed:", error));
-    }, XUI_TRAFFIC_SYNC_INTERVAL_MS);
-    pruneXuiDailyTrafficRetention().catch(error => console.error("3x-ui daily traffic prune failed:", error));
-    setInterval(() => {
-      pruneXuiDailyTrafficRetention().catch(error => console.error("3x-ui daily traffic prune failed:", error));
-    }, 24 * 60 * 60 * 1000);
+    scheduleSyncJob("xui-panel-sync", "startup").then(() => scheduleSyncJob("xui-inbound-probe", "startup"));
+    setInterval(() => scheduleSyncJob("xui-inbound-probe"), XUI_INBOUND_PROBE_INTERVAL_MS);
+    setInterval(() => scheduleSyncJob("xui-panel-sync"), XUI_TRAFFIC_SYNC_INTERVAL_MS);
+    scheduleSyncJob("xui-traffic-prune", "startup");
+    setInterval(() => scheduleSyncJob("xui-traffic-prune"), 24 * 60 * 60 * 1000);
   }
 }
 
@@ -12043,7 +12156,7 @@ module.exports = Object.assign(requestHandler, {
   paymentSign,
   verifyPaymentSign,
   paymentConfigReady,
-  paymentStatusError,
+  closeLegacyPendingPaymentOrders,
   paymentAmountError,
   requestIp,
   lookupIpInfo,
@@ -12095,10 +12208,20 @@ module.exports = Object.assign(requestHandler, {
   strictActiveUserGroup,
   isXuiTimeoutError,
   provisionXuiClient,
+  writeXuiClient,
+  assertNoUnlinkedXuiClient,
+  desiredXuiClient,
+  xuiInboundChange,
   auditXuiClientGroups,
   syncCatalogV2ToXui,
   syncXuiPanel,
   probeXuiInbounds,
+  xuiPanelSyncJobResult,
+  trackSyncJobRun,
+  runTrackedSyncJob,
+  recoverInterruptedSyncJobRuns,
+  pruneSyncJobHistory,
+  listSyncJobRuns,
   applyXuiInboundChanges,
   withXuiSyncLock,
   withXuiUserMigrationLock,

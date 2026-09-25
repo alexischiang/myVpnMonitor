@@ -1,25 +1,23 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, BadgeCheck, BookOpen, Check, CheckCircle2, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Globe2, HardDrive, HousePlug, Info, Loader2, PackagePlus, Percent, RefreshCw, Star, Users, WalletCards, XCircle, Zap, type LucideIcon } from "lucide-react"
+import { BadgeCheck, BookOpen, Check, CheckCircle2, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Globe2, HardDrive, HousePlug, Info, Loader2, PackagePlus, Percent, Star, Users, WalletCards, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
-import { clearJsonCache, deleteJson, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
+import { clearJsonCache, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { Button, buttonVariants } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { type CarouselApi, Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
-import { BackButton } from "@/components/features/back-button"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -380,27 +378,23 @@ export function AccountWalletPage() {
   const navigate = useNavigate()
   const { data, error } = useCachedAccountData<WalletData>("/api/account/wallet")
   const [amount, setAmount] = React.useState("")
-  const [paying, setPaying] = React.useState("")
+  const [paying, setPaying] = React.useState(false)
 
-  async function recharge(channelCode: "100" | "200") {
+  async function recharge() {
     const value = Number(amount)
     if (!/^\d+(\.\d{1,2})?$/.test(amount.trim()) || value <= 0 || value > 10000) {
       toast.error("请输入 0.01 至 10,000.00 元，最多两位小数")
       return
     }
-    setPaying(channelCode)
+    setPaying(true)
     try {
-      const order = await postJson<PaymentOrder>("/api/wallet/recharge", {
-        amount: value,
-        channelCode,
-        returnUrl: `${window.location.origin}/account/payment/result`,
-      })
+      const order = await postJson<PaymentOrder>("/api/wallet/recharge", { amount: value })
       clearJsonCache()
-      if (order.status === "pending") window.dispatchEvent(new CustomEvent("payment-order-updated", { detail: { id: order.id, status: order.status } }))
-      navigate(`/account/orders/${encodeURIComponent(order.id)}`)
+      window.dispatchEvent(new CustomEvent("payment-order-updated", { detail: { id: order.id, status: order.status } }))
+      navigate(`/cashier/${encodeURIComponent(order.id)}`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "创建充值订单失败")
-      setPaying("")
+      setPaying(false)
     }
   }
 
@@ -415,7 +409,7 @@ export function AccountWalletPage() {
       {data.heldBalance ? <p className="text-sm text-muted-foreground">可用总额 {formatMoney(data.availableBalance)}，订单冻结中 {formatMoney(data.heldBalance)}</p> : null}
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><WalletCards />充值余额</CardTitle><CardDescription>支持任意金额充值，充值成功后立即累计 VIP 成长值。</CardDescription></CardHeader>
-        <CardContent><Field><FieldLabel htmlFor="recharge-amount">充值金额</FieldLabel><Input id="recharge-amount" inputMode="decimal" placeholder="0.00" value={amount} onChange={event => setAmount(event.target.value)} disabled={Boolean(paying)} /><FieldDescription>单次充值范围 ¥0.01–¥10,000.00</FieldDescription><div className="flex flex-col gap-2 sm:flex-row"><Button type="button" onClick={() => recharge("100")} disabled={Boolean(paying) || !data.paymentMethods.alipay}>{paying === "100" ? <Loader2 className="animate-spin" /> : null}{data.paymentMethods.alipay ? "支付宝充值" : "支付宝维护中"}</Button><Button type="button" variant="outline" onClick={() => recharge("200")} disabled={Boolean(paying) || !data.paymentMethods.wechat}>{paying === "200" ? <Loader2 className="animate-spin" /> : null}{data.paymentMethods.wechat ? "微信充值" : "微信支付维护中"}</Button></div></Field></CardContent>
+        <CardContent><Field><FieldLabel htmlFor="recharge-amount">充值金额</FieldLabel><Input id="recharge-amount" inputMode="decimal" placeholder="0.00" value={amount} onChange={event => setAmount(event.target.value)} disabled={paying} /><FieldDescription>单次充值范围 ¥0.01–¥10,000.00，下一步在收银台选择支付宝或微信付款。</FieldDescription><Button type="button" className="min-h-11 sm:w-fit" onClick={() => void recharge()} disabled={paying || !(data.paymentMethods.alipay || data.paymentMethods.wechat)}>{paying ? <Loader2 className="animate-spin" /> : null}{data.paymentMethods.alipay || data.paymentMethods.wechat ? "去付款" : "在线充值维护中"}</Button></Field></CardContent>
       </Card>
       <Card>
         <CardHeader><CardTitle>余额流水</CardTitle><CardDescription>充值、赠送、消费和返利都会保留不可删除的记录。</CardDescription></CardHeader>
@@ -467,163 +461,10 @@ export function AccountOrdersPage() {
   return <div className="px-4 lg:px-6"><Card className="contents md:flex"><CardHeader className="hidden md:grid"><CardTitle>订单记录</CardTitle><CardDescription>所有商品订单</CardDescription></CardHeader><CardContent className="px-0 md:px-6">{orders.length ? <OrdersTable orders={orders} /> : <p className="text-sm text-muted-foreground">仅展示2026年7月15日后的订单</p>}</CardContent></Card></div>
 }
 
+// Every order is paid and tracked in the cashier; these routes keep old links working.
 export function AccountOrderDetailPage() {
   const { id = "" } = useParams()
-  const [order, setOrder] = React.useState<PaymentOrder | null>(null)
-  const [loading, setLoading] = React.useState(false)
-  const [loadError, setLoadError] = React.useState("")
-  const [cancelling, setCancelling] = React.useState(false)
-  const [cancelOpen, setCancelOpen] = React.useState(false)
-  const [testOpen, setTestOpen] = React.useState(false)
-  const [testStatus, setTestStatus] = React.useState("paid")
-  const [settingTestStatus, setSettingTestStatus] = React.useState(false)
-  const [now, setNow] = React.useState(Date.now())
-  async function refresh(showToast = false) {
-    setLoading(true)
-    setLoadError("")
-    try {
-      const nextOrder = await fetchJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(id)}`)
-      setOrder(nextOrder)
-      if (nextOrder.paymentProvider === "test" && nextOrder.status === "pending") setTestOpen(true)
-      if (order?.status === "pending" && nextOrder.status !== "pending") window.dispatchEvent(new Event("payment-order-updated"))
-      if (showToast) nextOrder.status === "paid" ? toast.success("支付成功") : toast.info(`当前状态：${nextOrder.statusText}`)
-    } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "查询订单失败")
-    } finally {
-      setLoading(false)
-    }
-  }
-  React.useEffect(() => { void refresh() }, [id])
-  React.useEffect(() => {
-    if (order?.status !== "pending") return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [order?.status])
-  const remainingSeconds = order?.status === "pending" ? Math.max(0, Math.ceil((new Date(order.expiresAt).getTime() - now) / 1000)) : 0
-  React.useEffect(() => {
-    if (order?.status === "pending" && remainingSeconds === 0) void refresh()
-  }, [order?.status, remainingSeconds])
-  async function cancelOrder() {
-    setCancelling(true)
-    try {
-      const nextOrder = await deleteJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(id)}`)
-      setOrder(nextOrder)
-      clearJsonCache()
-      window.dispatchEvent(new Event("payment-order-updated"))
-      toast.success("订单已关闭")
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "取消订单失败")
-      await refresh()
-    } finally {
-      setCancelling(false)
-      setCancelOpen(false)
-    }
-  }
-  async function setLocalPaymentStatus() {
-    setSettingTestStatus(true)
-    try {
-      const nextOrder = await putJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(id)}/test-status`, { status: testStatus })
-      setOrder(nextOrder)
-      setTestOpen(false)
-      clearJsonCache()
-      window.dispatchEvent(new Event("payment-order-updated"))
-      toast.success(`测试订单已设为${nextOrder.statusText}`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "测试付款状态设置失败")
-    } finally {
-      setSettingTestStatus(false)
-    }
-  }
-  if (!order && loadError) return <div className="px-4 lg:px-6"><Alert variant="warning"><AlertTitle>订单暂时无法加载</AlertTitle><AlertDescription>{loadError}</AlertDescription></Alert><Button variant="outline" className="mt-4 min-h-11" disabled={loading} onClick={() => void refresh()}>重新加载订单</Button></div>
-  if (!order) return <PageLoading />
-  if (order.checkoutVersion === 2) return <Navigate to={`/cashier/${encodeURIComponent(order.id)}`} replace />
-  const countdown = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`
-  return (
-    <div className="px-4 lg:px-6">
-      <Card className="mx-auto max-w-3xl">
-        <CardHeader className="grid gap-4 sm:grid-cols-[1fr_auto]">
-          <div className="grid gap-1"><CardTitle className="text-2xl">订单详情</CardTitle><CardDescription className="font-mono">订单号 {order.merOrderTid}</CardDescription></div>
-          <Badge className="w-fit sm:justify-self-end" variant={order.status === "paid" ? "success" : order.status === "pending" ? "warning" : "destructive"}>{order.statusText}</Badge>
-        </CardHeader>
-        <CardContent className="grid gap-5">
-          {order.status === "pending" ? <Alert variant="warning"><Clock3 /><AlertDescription className="block">请在 <strong className="font-mono text-foreground">{countdown}</strong> 内完成付款，超时后订单将自动关闭。</AlertDescription></Alert> : null}
-          {order.paymentError || order.fulfillmentError ? <PaymentOrderErrorAlert order={order} /> : null}
-          <Separator />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <OrderInfo label="套餐" value={`${order.planName} / ${order.optionLabel}`} />
-            <OrderInfo label="订单金额" value={formatMoney(order.totalAmount ?? order.amount)} emphasis />
-            {order.walletAmount ? <OrderInfo label="余额支付" value={formatMoney(order.walletAmount)} /> : null}
-            {order.walletGiftAmount ? <OrderInfo label="赠送余额" value={formatMoney(order.walletGiftAmount)} /> : null}
-            {order.walletReferralAmount ? <OrderInfo label="返利余额" value={formatMoney(order.walletReferralAmount)} /> : null}
-            {order.walletCashAmount ? <OrderInfo label="充值余额" value={formatMoney(order.walletCashAmount)} /> : null}
-            {order.walletAmount ? <OrderInfo label="第三方支付" value={formatMoney(order.amount)} /> : null}
-            <OrderInfo label="创建时间" value={formatDateTime(order.createdAt)} />
-            <OrderInfo label="支付时间" value={order.paidAt ? formatDateTime(order.paidAt) : "尚未支付"} />
-          </div>
-          {order.purpose !== "recharge" ? <>
-            <Separator />
-            <section className="grid gap-3"><h3 className="font-medium">商品快照</h3><ItemGroup className="sm:grid-cols-2">
-              <OrderInfo label="购买类型" value={order.purchaseAction === "replace" ? "覆盖套餐" : order.purchaseAction === "extend" ? "续费" : order.purchaseAction === "add_on" ? "附加服务" : "新购"} />
-              <OrderInfo label="基础商品" value={`${order.planName} / ${order.optionLabel}`} />
-              {order.trafficGb ? <OrderInfo label="流量规格" value={`每月 ${order.trafficGb} GB`} /> : null}
-              {order.trafficTierMarkupPercent && (order.trafficTier || 1) > 1 ? <OrderInfo label="流量定制计价" value={`每增加 ${order.trafficBaseGb} GB，加收周期原价的 ${order.trafficTierMarkupPercent}%`} /> : null}
-              {(order.addOnSnapshots || []).map(addOn => <OrderInfo key={addOn.optionId} label="附加服务" value={`${addOn.name}${addOn.regionName ? ` · ${addOn.regionName}` : ""} · ${formatMoney(addOn.amount)}${addOn.durationDays ? ` / ${addOn.durationDays} 天` : ""}`} />)}
-            </ItemGroup></section>
-            <Separator />
-            <section className="grid gap-3"><h3 className="font-medium">金额明细</h3><ItemGroup className="sm:grid-cols-2">
-              <OrderInfo label="套餐基础价" value={formatMoney(order.baseAmount ?? order.originalAmount ?? order.totalAmount ?? order.amount)} />
-              {(order.originalAmount || 0) > (order.baseAmount || order.originalAmount || 0) ? <OrderInfo label="流量定制加价" value={`+${formatMoney((order.originalAmount || 0) - (order.baseAmount || 0))}`} /> : null}
-              {order.discountAmount ? <OrderInfo label={`优惠码${order.couponCode ? ` ${order.couponCode}` : ""}`} value={`-${formatMoney(order.discountAmount)}`} /> : null}
-              {order.vipDiscountAmount ? <OrderInfo label="VIP 折扣" value={`-${formatMoney(order.vipDiscountAmount)}`} /> : null}
-              {order.taxAmount ? <OrderInfo label="税费" value={`+${formatMoney(order.taxAmount)}`} /> : null}
-              {order.addOnAmount ? <OrderInfo label="附加服务合计" value={`+${formatMoney(order.addOnAmount)}`} /> : null}
-              <OrderInfo label="订单支付合计" value={formatMoney(order.totalAmount ?? order.amount)} emphasis />
-            </ItemGroup></section>
-            <Separator />
-            <section className="grid gap-3"><h3 className="font-medium">处理记录</h3><ItemGroup className="sm:grid-cols-2">
-              <OrderInfo label="创建订单" value={formatDateTime(order.createdAt)} />
-              <OrderInfo label="支付确认" value={order.paidAt ? formatDateTime(order.paidAt) : "等待支付"} />
-              <OrderInfo label="套餐发放" value={order.fulfilledAt ? formatDateTime(order.fulfilledAt) : order.fulfillmentStatus === "manual_pending" ? "基础套餐已发放，附加服务待人工交付" : order.fulfillmentStatus || "等待处理"} />
-              <OrderInfo label="最后更新" value={order.updatedAt ? formatDateTime(order.updatedAt) : "-"} />
-            </ItemGroup></section>
-          </> : null}
-        </CardContent>
-        <CardFooter className="grid gap-2 sm:flex sm:flex-wrap">
-          {order.status === "pending" && order.payUrl ? <Button asChild className="w-full sm:w-auto"><a href={order.payUrl} target="_blank" rel="noreferrer"><ExternalLink />打开支付页面</a></Button> : null}
-          {order.status === "pending" && order.paymentProvider === "test" ? <Button className="w-full sm:w-auto" onClick={() => setTestOpen(true)}>设置测试付款状态</Button> : null}
-          {order.status === "pending" ? <Button className="w-full sm:w-auto" variant="outline" onClick={() => refresh(true)} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}检测支付状态</Button> : null}
-          {order.status === "pending" ? <Button className="w-full sm:w-auto" variant="destructive" onClick={() => setCancelOpen(true)} disabled={cancelling}><XCircle />取消订单</Button> : null}
-          <BackButton fallback="/account/orders" className="w-full sm:ml-auto sm:w-auto" />
-        </CardFooter>
-      </Card>
-      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>取消这个订单？</AlertDialogTitle><AlertDialogDescription>订单将立即关闭，已冻结的账户余额会被释放。支付平台无法关闭旧支付链接，请勿再通过该链接付款。</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={cancelling}>保留订单</AlertDialogCancel><AlertDialogAction className={buttonVariants({ variant: "destructive" })} onClick={() => void cancelOrder()} disabled={cancelling}>{cancelling ? <Loader2 className="animate-spin" /> : <XCircle />}确认取消</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <Dialog open={testOpen} onOpenChange={setTestOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>测试付款</DialogTitle><DialogDescription>仅更新本地订单，不会向线上支付平台创建订单或扣款。</DialogDescription></DialogHeader>
-          <RadioGroup value={testStatus} onValueChange={setTestStatus}>
-            <Label className="flex items-center gap-3"><RadioGroupItem value="paid" />已支付</Label>
-            <Label className="flex items-center gap-3"><RadioGroupItem value="failed" />支付失败</Label>
-            <Label className="flex items-center gap-3"><RadioGroupItem value="closed" />已关闭</Label>
-          </RadioGroup>
-          <DialogFooter><DialogClose asChild><Button variant="outline" disabled={settingTestStatus}>取消</Button></DialogClose><Button onClick={() => void setLocalPaymentStatus()} disabled={settingTestStatus}>{settingTestStatus ? <Loader2 className="animate-spin" /> : null}确认状态</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
-function OrderInfo({ label, value, emphasis = false }: { label: string; value: React.ReactNode; emphasis?: boolean }) {
-  return <Item variant="muted"><ItemContent><ItemDescription>{label}</ItemDescription><ItemTitle className={emphasis ? "text-lg" : "text-base"}>{value}</ItemTitle></ItemContent></Item>
-}
-
-function PaymentOrderErrorAlert({ order }: { order: PaymentOrder }) {
-  if (order.fulfillmentError) return <Alert variant="error"><AlertCircle /><AlertTitle>{order.purpose === "recharge" ? "充值处理失败" : order.purpose === "traffic_pack" ? "流量包发放失败" : order.purpose === "addon" ? "附加服务处理失败" : "套餐发放失败"}</AlertTitle><AlertDescription><strong>支付已成功，款项已经扣除。</strong> <strong>{order.fulfillmentError}</strong> <strong>请勿再次下单。</strong> 请联系网页右下角的 <strong>在线客服</strong> 处理。</AlertDescription></Alert>
-  return <Alert variant="error"><AlertCircle /><AlertTitle>支付处理失败</AlertTitle><AlertDescription>{order.paymentError}</AlertDescription></Alert>
+  return <Navigate to={`/cashier/${encodeURIComponent(id)}`} replace />
 }
 
 export function AccountSettingsPage() {
@@ -653,68 +494,7 @@ export function AccountSettingsPage() {
 export function PaymentResultPage() {
   const [searchParams] = useSearchParams()
   const orderId = searchParams.get("paymentOrder") || ""
-  const [order, setOrder] = React.useState<PaymentOrder | null>(null)
-  const [loading, setLoading] = React.useState(false)
-  async function refresh() {
-    if (!orderId) return
-    setLoading(true)
-    try {
-      const nextOrder = await fetchJson<PaymentOrder>(`/api/payments/orders/${encodeURIComponent(orderId)}`)
-      setOrder(nextOrder)
-      if (order?.status === "pending" && nextOrder.status !== "pending") window.dispatchEvent(new Event("payment-order-updated"))
-    } catch (error) { toast.error(error instanceof Error ? error.message : "查询失败") } finally { setLoading(false) }
-  }
-  React.useEffect(() => { void refresh() }, [orderId])
-  if (!orderId) return <Navigate to="/account/orders" replace />
-  if (order?.checkoutVersion === 2) return <Navigate to={`/cashier/${encodeURIComponent(order.id)}`} replace />
-  const error = order?.paymentError || order?.fulfillmentError
-  const paid = order?.status === "paid" && !error
-  const failed = order && !["pending", "paid"].includes(order.status)
-  if (paid && order) return (
-    <div className="px-4 lg:px-6">
-      <Card className="mx-auto max-w-xl overflow-hidden py-0">
-        <CardContent className="grid justify-items-center gap-5 py-6 text-center">
-          <span className="relative flex size-16 items-center justify-center rounded-full border border-primary/30 bg-primary/10 shadow-sm">
-            <span className="absolute inset-2 rounded-full border-2 border-primary/30 motion-safe:animate-ping" />
-            <CheckCircle2 className="relative size-10 text-emerald-600 dark:text-emerald-500" />
-          </span>
-          <header className="grid gap-2"><h1 className="text-2xl font-semibold tracking-tight">支付成功 🎉</h1><p className="text-sm text-muted-foreground">{order.purpose === "recharge" ? "充值金额已存入账户余额" : order.purpose === "traffic_pack" ? "流量已加入当前周期" : order.purpose === "addon" ? "订单已进入人工交付流程" : "您的套餐已成功开通"}</p></header>
-          <section className="grid gap-1" aria-label="支付信息"><strong className="text-4xl font-semibold tracking-tight">{formatMoney(order.totalAmount ?? order.amount)}</strong><p className="text-xs text-muted-foreground">已支付 · {order.planName} / {order.optionLabel}</p></section>
-          <PaymentVipProgress order={order} />
-          <Button asChild size="lg" className="w-full"><Link to={order.purpose === "recharge" ? "/account/wallet" : "/account"}>{order.purpose === "recharge" ? "查看账户余额 →" : order.purpose === "traffic_pack" ? "查看当前流量 →" : order.purpose === "addon" ? "查看附加服务 →" : "开始畅游网络 →"}</Link></Button>
-        </CardContent>
-      </Card>
-    </div>
-  )
-  return <div className="px-4 lg:px-6"><Card className="mx-auto max-w-xl"><CardHeader className="text-center">{failed || error ? <AlertCircle className="mx-auto size-10" /> : <Clock3 className="mx-auto size-10" />}<CardTitle>{order?.statusText || "正在确认支付"}</CardTitle><CardDescription>{order?.optionLabel || "正在确认订单状态"}</CardDescription></CardHeader><CardContent className="grid gap-4">{order && error ? <PaymentOrderErrorAlert order={order} /> : null}<div className="flex justify-center gap-2"><Button onClick={refresh} disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : null}刷新状态</Button><Button asChild variant="outline"><Link to="/account/orders">查看订单</Link></Button></div></CardContent></Card></div>
-}
-
-function PaymentVipProgress({ order }: { order: PaymentOrder }) {
-  const before = Math.max(Number(order.vipSpendBefore) || 0, 0)
-  const after = Math.max(Number(order.vipSpendAfter) || before, before)
-  const [spend, setSpend] = React.useState(before)
-  const tier = after >= 900
-    ? { level: "vip3", start: 0, target: 900, label: "已达到最高等级" }
-    : after >= 360
-      ? { level: "vip2", start: 360, target: 900, label: "距离 VIP 3" }
-      : { level: "vip1", start: 0, target: 360, label: "距离 VIP 2" }
-  const progress = Math.min(100, Math.max(0, (spend - tier.start) / (tier.target - tier.start) * 100))
-
-  React.useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setSpend(after))
-    return () => window.cancelAnimationFrame(frame)
-  }, [after])
-
-  return (
-    <>
-      <Separator className="w-full" />
-      <section className="grid w-full gap-3 text-left" aria-label="成长进度">
-        <header className="flex items-center justify-between gap-3"><span className="flex items-center gap-2"><VipBadge level={tier.level} /><span className="text-sm font-medium">成长进度</span></span><span className="text-xs text-muted-foreground">{tier.label}</span></header>
-        <Progress value={progress} className="[&_[data-slot=progress-indicator]]:duration-1000 motion-reduce:[&_[data-slot=progress-indicator]]:transition-none" aria-label={`VIP 累计消费 ${formatMoney(after)}`} />
-        <footer className="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>本次消费 +{formatMoney(order.vipSpendAmount || 0)}</span><span>{formatMoney(after)} / {formatMoney(tier.target)}</span></footer>
-      </section>
-    </>
-  )
+  return <Navigate to={orderId ? `/cashier/${encodeURIComponent(orderId)}` : "/account/orders"} replace />
 }
 
 function Metric({ label, value, description }: { label: string; value: React.ReactNode; description?: string }) {
