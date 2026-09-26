@@ -3466,11 +3466,6 @@ function effectiveXuiInboundIds(groupInboundIds = [], extraInboundIds = [], vali
     .filter(id => !valid || valid.has(id));
 }
 
-function normalizeXuiInboundGroups(value = {}) {
-  const source = value.groups || value;
-  return Object.fromEntries(USER_GROUPS.map(group => [group, normalizeXuiInboundIdList(source?.[group])]));
-}
-
 function normalizeXuiInboundMetadata(value = {}) {
   const source = value.metadata || value;
   const levels = new Set(["premium", "optimized", "standard"]);
@@ -4559,41 +4554,6 @@ function markMissingXuiClients(appUsersByEmail, remoteEmails, checkedAt = new Da
   return changed;
 }
 
-async function auditXuiClientGroups(clients, allInboundIds, groupInboundIdsByGroup = new Map()) {
-  const activeUsers = users.filter(user => isSelfHostedUser(user) && user.xuiClientEmail && !isUserExpired(user) && !isUserAccountDisabled(user));
-  const actualClientsByEmail = new Map((Array.isArray(clients) ? clients : [])
-    .map(client => normalizeXuiClientResult(client))
-    .filter(client => client.email)
-    .map(client => [String(client.email).trim().toLowerCase(), client]));
-  const repairTargets = [];
-  for (const user of activeUsers) {
-    if (user.productCatalogVersion === 2) continue;
-    const email = String(user.xuiClientEmail).trim().toLowerCase();
-    const expected = strictActiveUserGroup(user);
-    if (!expected) {
-      console.warn(`[xui-group] Skipping ${email}: local user has no valid activeGroup or group.`);
-      continue;
-    }
-    const existingClient = actualClientsByEmail.get(email);
-    if (existingClient && normalizeUserGroup(existingClient.groupName, "") !== expected) repairTargets.push({ user, email, expected });
-  }
-  const result = { checked: activeUsers.length, mismatched: repairTargets.length, repaired: 0, failed: 0, skipped: XUI_READ_ONLY ? repairTargets.length : 0 };
-  if (XUI_READ_ONLY) return result;
-  for (const target of repairTargets) {
-    try {
-      const groupInboundIds = groupInboundIdsByGroup.get(target.expected)
-        || await xuiInboundIdsForGroup(target.expected);
-      groupInboundIdsByGroup.set(target.expected, groupInboundIds);
-      await provisionXuiClient(target.user, { allInboundIds, groupInboundIds, findClient: async email => actualClientsByEmail.get(email) || null });
-      result.repaired += 1;
-    } catch (error) {
-      result.failed += 1;
-      console.warn(`[xui-group] Failed to repair ${target.email}: ${error.message}`);
-    }
-  }
-  return result;
-}
-
 async function syncXuiWeightedTraffic(snapshot = {}) {
   if (!XUI_BASE_URL || !XUI_API_TOKEN) return getXuiBillingState();
   return withXuiSyncLock(() => runXuiWeightedTrafficSync(snapshot));
@@ -4632,10 +4592,6 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   } catch (error) {
     console.warn(`[xui-traffic] Failed to record daily samples: ${error.message}`);
   }
-  const allInboundIds = normalizeXuiInboundIds(inbounds);
-  const configuredGroups = await getXuiInboundGroups();
-  const groupAudit = await auditXuiClientGroups(clients, allInboundIds, new Map(Object.entries(configuredGroups)));
-  if (groupAudit.mismatched) console.log(`[xui-group] checked=${groupAudit.checked} mismatched=${groupAudit.mismatched} repaired=${groupAudit.repaired} failed=${groupAudit.failed} skipped=${groupAudit.skipped}`);
   const nodeMultipliers = state.multipliers || {};
   // Current-cycle usage per user comes from the daily table (single source of truth).
   // Fetch every app user's per-node cycle sums in one query, keyed by email.
@@ -4865,14 +4821,8 @@ function xuiClientWritePayload(existing, desired) {
   return payload;
 }
 
-async function getXuiInboundGroups() {
-  return normalizeXuiInboundGroups((await getXuiState("inbound-groups", "xuiInboundGroups")) || {});
-}
-
-async function xuiInboundIdsForGroup(group) {
-  return (await getXuiInboundGroups())[normalizeUserGroup(group, "")] || [];
-}
-
+// A user's inbounds: their V2 line group's inbounds plus personal custom inbounds. Users without
+// a V2 line group inherit nothing.
 async function xuiInboundIdsForUser(user, groupInboundIds = null, allInboundIds = null) {
   let inheritedIds = groupInboundIds;
   if (!inheritedIds && user.productCatalogVersion === 2 && user.v2LineGroupId) {
@@ -4880,9 +4830,8 @@ async function xuiInboundIdsForUser(user, groupInboundIds = null, allInboundIds 
     const idsByKey = new Map((await xuiInboundRows()).map(inbound => [inbound.key, inbound.id]));
     inheritedIds = (group?.inboundKeys || []).map(key => idsByKey.get(key)).filter(Boolean);
   }
-  inheritedIds ||= await xuiInboundIdsForGroup(activeUserGroup(user));
   const validIds = allInboundIds || await getAllXuiInboundIds();
-  return effectiveXuiInboundIds(inheritedIds, user.xuiExtraInboundIds, validIds);
+  return effectiveXuiInboundIds(inheritedIds || [], user.xuiExtraInboundIds, validIds);
 }
 
 let xuiInboundCatalogRefresh = null;
@@ -4892,10 +4841,10 @@ function publicAccountNodeStatus(user, management, v2Group = null) {
   const currentGroup = accessGroupForUser(user) || activeUserGroup(user);
   const extraIds = new Set(normalizeXuiInboundIdList(user?.xuiExtraInboundIds));
   const idsByKey = new Map((management.inbounds || []).map(inbound => [inbound.key, inbound.id]));
-  const inheritedIds = v2Group ? v2Group.inboundKeys.map(key => idsByKey.get(key)).filter(Boolean) : management.groups?.[currentGroup] || [];
+  const inheritedIds = v2Group ? v2Group.inboundKeys.map(key => idsByKey.get(key)).filter(Boolean) : [];
   const currentIds = new Set(effectiveXuiInboundIds(inheritedIds, [...extraIds], management.inbounds?.map(inbound => inbound.id) || []));
   const inbounds = (management.inbounds || []).flatMap(inbound => {
-    const permissionGroups = user.productCatalogVersion === 2 ? (v2Group?.inboundKeys.includes(inbound.key) ? [v2Group.name] : []) : USER_GROUPS.filter(group => (management.groups?.[group] || []).includes(inbound.id));
+    const permissionGroups = v2Group?.inboundKeys.includes(inbound.key) ? [v2Group.name] : [];
     const custom = inbound.inboundType === "custom";
     if (custom ? !extraIds.has(inbound.id) : !permissionGroups.length) return [];
     return [{
@@ -4986,16 +4935,14 @@ async function xuiInboundRows() {
   return dataStore.listXuiInbounds();
 }
 
-// Inbound management view (groups, metadata, inbounds with their latest probe result), read from
-// the app table.
+// Inbound management view (metadata, inbounds with their latest probe result), read from the
+// app table.
 async function xuiInboundManagementView() {
-  if (!XUI_BASE_URL || !XUI_API_TOKEN) return { configured: false, groups: normalizeXuiInboundGroups(), metadata: {}, inbounds: [], checkedAt: "" };
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) return { configured: false, metadata: {}, inbounds: [], checkedAt: "" };
   const [rows, settings] = await Promise.all([xuiInboundRows(), getXuiState("inbound-groups", "xuiInboundGroups")]);
-  const groups = normalizeXuiInboundGroups(settings || {});
   const metadata = normalizeXuiInboundMetadata(settings || {});
   return {
     configured: true,
-    groups,
     metadata,
     checkedAt: rows.reduce((latest, row) => row.probeCheckedAt > latest ? row.probeCheckedAt : latest, ""),
     inbounds: rows.map(row => ({
@@ -5038,59 +4985,6 @@ function probeXuiInbounds() {
     return results;
   })().finally(() => { xuiInboundProbeRun = null; });
   return xuiInboundProbeRun;
-}
-
-async function syncXuiInboundGroup(group, previousInboundIds, inboundIds, allInboundIds) {
-  const addedIds = inboundIds.filter(id => !previousInboundIds.includes(id));
-  const removedIds = previousInboundIds.filter(id => !inboundIds.includes(id));
-  if (!addedIds.length && !removedIds.length) return { group, users: 0 };
-  const targets = users.filter(user => {
-    if (!isSelfHostedUser(user) || !user.xuiClientEmail) return false;
-    return strictActiveUserGroup(user) === group;
-  });
-  if (!targets.length) return { group, users: 0 };
-  await applyXuiInboundChangesOrThrow(targets.map(user => {
-    const extraIds = new Set(normalizeXuiInboundIdList(user.xuiExtraInboundIds));
-    return { email: String(user.xuiClientEmail).toLowerCase(), attach: addedIds, detach: removedIds.filter(id => !extraIds.has(id)) };
-  }));
-  const syncedAt = new Date().toISOString();
-  for (const user of targets) {
-    user.xuiInboundIds = effectiveXuiInboundIds(inboundIds, user.xuiExtraInboundIds, allInboundIds);
-    user.xuiLastSyncedAt = syncedAt;
-    user.xuiLastError = "";
-    await saveXuiClientProjection(user, !isUserExpired(user) && !isUserAccountDisabled(user));
-  }
-  await saveUsers();
-  return { group, users: targets.length };
-}
-
-async function resyncXuiInboundGroups(groups, allInboundIds) {
-  const clients = await xuiRequest("/panel/api/clients/list");
-  const clientsByEmail = new Map((Array.isArray(clients) ? clients : [])
-    .map(client => normalizeXuiClientResult(client))
-    .filter(client => client.email)
-    .map(client => [client.email.trim().toLowerCase(), client]));
-  const discrepancies = [];
-  for (const user of users) {
-    if (!isSelfHostedUser(user) || !user.xuiClientEmail) continue;
-    const email = String(user.xuiClientEmail).trim().toLowerCase();
-    const group = strictActiveUserGroup(user);
-    if (!group) {
-      discrepancies.push({ email, group: "", attach: [], detach: [], reason: "missing-active-group" });
-      continue;
-    }
-    const desired = effectiveXuiInboundIds(groups[group] || [], user.xuiExtraInboundIds, allInboundIds);
-    const actual = normalizeXuiInboundIdList(clientsByEmail.get(email)?.inboundIds);
-    const attach = desired.filter(id => !actual.includes(id));
-    const detach = actual.filter(id => !desired.includes(id) && !normalizeXuiInboundIdList(user.xuiExtraInboundIds).includes(id));
-    if (attach.length || detach.length) discrepancies.push({ email, group, attach, detach });
-    user.xuiInboundIds = desired;
-    user.xuiLastSyncedAt = new Date().toISOString();
-    user.xuiLastError = "";
-  }
-  await applyXuiInboundChangesOrThrow(discrepancies);
-  await saveUsers();
-  return { checked: users.filter(user => isSelfHostedUser(user) && user.xuiClientEmail).length, repaired: discrepancies.length, discrepancies };
 }
 
 let catalogV2XuiSync = null;
@@ -5528,7 +5422,8 @@ async function writeXuiClient(user, {
     existing,
     created: !existing,
     updated: Boolean(existing) && xuiClientNeedsUpdate(existing, desired),
-    inboundChange: xuiInboundChange(email, inboundIds, allInboundIds, existing && inboundsKnown ? existing.inboundIds : null),
+    // A new client gets inboundIds from clients/add itself, so there is nothing to attach.
+    inboundChange: existing ? xuiInboundChange(email, inboundIds, allInboundIds, inboundsKnown ? existing.inboundIds : null) : null,
     inboundIds,
     desired,
     mutationResult: null
@@ -5541,11 +5436,9 @@ async function writeXuiClient(user, {
 
 async function provisionXuiClientOnce(user, options = {}) {
   if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
-  const group = accessGroupForUser(user);
-  if (!group) throw new Error("Self-hosted user is missing a valid access group.");
-  const groupInboundIds = options.groupInboundIds || (user.productCatalogVersion === 2 ? null : await xuiInboundIdsForGroup(group));
+  if (!accessGroupForUser(user)) throw new Error("Self-hosted user is missing a valid access group.");
   const allInboundIds = options.allInboundIds || await getAllXuiInboundIds();
-  const { email, desired, inboundIds, mutationResult } = await writeXuiClient(user, { ...options, groupInboundIds, allInboundIds });
+  const { email, desired, inboundIds, mutationResult } = await writeXuiClient(user, { ...options, allInboundIds });
   let remote;
   try {
     remote = await getXuiClientAfterMutation({ ...user, xuiClientEmail: email });
@@ -5671,7 +5564,6 @@ async function connectXuiClient(user, { mode, email = "", importedIpLimit } = {}
   const group = accessGroupForUser(user);
   if (!group) throw new Error("Self-hosted user is missing a valid access group.");
   if (user.productCatalogVersion === 2) await xuiInboundIdsForUser(user);
-  else await xuiInboundIdsForGroup(group);
   const userEmail = nexoraUserEmail(user);
   if (!userEmail) throw new Error("自研线路用户缺少有效的注册邮箱。");
   user.email = userEmail;
@@ -9118,6 +9010,8 @@ async function handleApi(req, res, pathname) {
         purchasedAt: user.purchasedAt || "",
         duration: user.duration || "",
         unlimited: Boolean(user.unlimited),
+        // Plan-only quota per cycle, excluding traffic packs and admin gifts.
+        planTrafficBytes: planTrafficBytes(user),
         traffic: user.unlimited || user.productCatalogVersion === 2 && user.v2ProductSnapshot?.trafficBytes === null ? "无限流量" : user.productCatalogVersion === 2 ? `${Number((planTrafficBytes(user) / 1024 ** 3).toFixed(2))} GB` : Number(user.purchasedTrafficGb) > 0 ? `每月 ${user.purchasedTrafficGb} GB` : (plan?.traffic || "-"),
         devices: user.productCatalogVersion === 2 ? planDeviceLimit(user) : plan?.[`${user.duration}Devices`] || "-",
         productName: user.productCatalogVersion === 2 ? user.v2ProductSnapshot?.name || user.v2ProductId : plan?.name || activeUserGroup(user)
@@ -9760,43 +9654,13 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (pathname === "/api/xui-inbound-groups/resync" && req.method === "POST") {
-    try {
-      const [groups, allInboundIds] = await Promise.all([getXuiInboundGroups(), getAllXuiInboundIds()]);
-      sendJson(res, 200, await resyncXuiInboundGroups(groups, allInboundIds));
-    } catch (error) {
-      sendJson(res, error.statusCode || 502, { error: error.message });
-    }
-    return;
-  }
-
+  // Inbound metadata (region, network level, package/custom) is app-only and never sent to 3x-ui.
   if (pathname === "/api/xui-inbound-groups" && req.method === "PUT") {
     try {
       const payload = await readJson(req);
-      if (payload.syncGroups === false && payload.metadata !== undefined) {
-        const stored = await getXuiState("inbound-groups", "xuiInboundGroups");
-        const groups = payload.groupsChanged === true ? normalizeXuiInboundGroups(payload) : normalizeXuiInboundGroups(stored || {});
-        const metadata = normalizeXuiInboundMetadata(payload.metadata);
-        await setXuiState("inbound-groups", "xuiInboundGroups", { groups, metadata });
-        sendJson(res, 200, { groups, metadata, synced: [] });
-        return;
-      }
-      await refreshXuiInboundCatalog();
-      const management = await xuiInboundManagementView();
-      const allInboundIds = management.inbounds.map(inbound => inbound.id);
-      const validIds = new Set(allInboundIds);
-      // Drop IDs for inbounds removed directly in 3x-ui so metadata edits remain usable.
-      const next = Object.fromEntries(Object.entries(normalizeXuiInboundGroups(payload)).map(([group, ids]) => [group, ids.filter(id => validIds.has(id))]));
-      const validKeys = new Set(management.inbounds.map(inbound => inbound.key));
-      const metadata = Object.fromEntries(Object.entries(normalizeXuiInboundMetadata(payload.metadata === undefined ? management.metadata : payload.metadata)).filter(([key]) => validKeys.has(key)));
-      const packageInboundIds = new Set(management.inbounds.filter(inbound => (metadata[inbound.key]?.inboundType || inbound.inboundType) !== "custom").map(inbound => inbound.id));
-      for (const [group, ids] of Object.entries(next)) {
-        if (ids.some(id => !packageInboundIds.has(id))) throw new Error(`${group.toUpperCase()} 包含定制节点；定制节点不能加入套餐分组。`);
-      }
-      await setXuiState("inbound-groups", "xuiInboundGroups", { groups: next, metadata });
-      const synced = [];
-      if (payload.syncGroups !== false) for (const group of USER_GROUPS) synced.push(await syncXuiInboundGroup(group, (management.groups[group] || []).filter(id => validIds.has(id)), next[group], allInboundIds));
-      sendJson(res, 200, { groups: next, metadata, synced });
+      const metadata = normalizeXuiInboundMetadata(payload.metadata);
+      await setXuiState("inbound-groups", "xuiInboundGroups", { metadata });
+      sendJson(res, 200, { metadata });
     } catch (error) {
       sendJson(res, error.statusCode || 400, { error: error.message });
     }
@@ -10729,7 +10593,19 @@ async function handleApi(req, res, pathname) {
         const management = await xuiInboundManagementView();
         group = validateCatalogV2LineGroupInbounds(group, management.inbounds, existing);
         await dataStore.upsertCatalogV2LineGroup(group);
-        sendJson(res, 200, group);
+        // Push changed inbounds to 3x-ui now instead of waiting for the five-minute sync. The group
+        // is already saved, so a failed push is reported and left to the next scheduled run.
+        const sameKeys = (left, right) => [...left].sort().join("\n") === [...right].sort().join("\n");
+        let xuiSync = null;
+        if (!sameKeys(existing.inboundKeys || [], group.inboundKeys || [])) {
+          try {
+            const report = await syncCatalogV2ToXui({ forceReload: true });
+            xuiSync = { updated: report.updated, skipped: report.skipped, failed: report.failed.length + report.conflicts.length };
+          } catch (error) {
+            xuiSync = { error: error.message };
+          }
+        }
+        sendJson(res, 200, xuiSync ? { ...group, xuiSync } : group);
       } catch (error) { sendJson(res, 400, { error: error.message }); }
       return;
     }
@@ -11158,9 +11034,7 @@ async function handleApi(req, res, pathname) {
       try {
         if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以管理个人定制入站。");
         const management = await xuiInboundManagementView();
-        const inheritedInboundIds = item.productCatalogVersion === 2
-          ? await xuiInboundIdsForUser({ ...item, xuiExtraInboundIds: [] }, null, management.inbounds.map(inbound => inbound.id))
-          : effectiveXuiInboundIds(management.groups[activeUserGroup(item)] || [], [], management.inbounds.map(inbound => inbound.id));
+        const inheritedInboundIds = await xuiInboundIdsForUser({ ...item, xuiExtraInboundIds: [] }, null, management.inbounds.map(inbound => inbound.id));
         const extraInboundIds = normalizeXuiInboundIdList(item.xuiExtraInboundIds);
         const effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, extraInboundIds, management.inbounds.map(inbound => inbound.id));
         const assignmentCounts = users.reduce((counts, user) => {
@@ -11205,9 +11079,7 @@ async function handleApi(req, res, pathname) {
           if (!inbound.enabled) throw new Error(`${inbound.name} 已停用，无法新增授权。`);
         }
         const allInboundIds = management.inbounds.map(inbound => inbound.id);
-        const inheritedInboundIds = item.productCatalogVersion === 2
-          ? await xuiInboundIdsForUser({ ...item, xuiExtraInboundIds: [] }, null, allInboundIds)
-          : effectiveXuiInboundIds(management.groups[activeUserGroup(item)] || [], [], allInboundIds);
+        const inheritedInboundIds = await xuiInboundIdsForUser({ ...item, xuiExtraInboundIds: [] }, null, allInboundIds);
         const effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, nextIds, allInboundIds);
         await syncXuiClientAccess([String(item.xuiClientEmail).toLowerCase()], effectiveInboundIds, allInboundIds);
         item.xuiExtraInboundIds = nextIds;
@@ -12180,7 +12052,6 @@ module.exports = Object.assign(requestHandler, {
   normalizeXuiConnectedIps,
   normalizeXuiMonitor,
   normalizeXuiInbounds,
-  normalizeXuiInboundGroups,
   normalizeXuiInboundIdList,
   effectiveXuiInboundIds,
   normalizeXuiInboundMetadata,
@@ -12212,7 +12083,6 @@ module.exports = Object.assign(requestHandler, {
   assertNoUnlinkedXuiClient,
   desiredXuiClient,
   xuiInboundChange,
-  auditXuiClientGroups,
   syncCatalogV2ToXui,
   syncXuiPanel,
   probeXuiInbounds,

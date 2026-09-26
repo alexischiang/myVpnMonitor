@@ -1026,6 +1026,68 @@
         "page_errors": [],
         "checked_at": "2026-09-25"
       }
+    },
+    {
+      "id": "xui-inbound-sync-v2-only",
+      "name": "3x-ui inbound association is V2-only and pushed immediately",
+      "description": "Client-inbound association in 3x-ui comes only from V2 line groups plus personal custom inbounds. Saving a V2 line group with changed inbounds pushes the change to 3x-ui at once; a newly created client gets its inbounds from clients/add without a redundant bulkAttach/bulkDetach; all V1 group inbound logic is removed.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "PUT /api/catalog-v2/line-groups/:id runs syncCatalogV2ToXui({ forceReload: true }) when inboundKeys change, returns xuiSync { updated, skipped, failed } (or { error }), and skips the sync when inboundKeys are unchanged.",
+        "writeXuiClient returns inboundChange null for a created client; clients/add carries inboundIds.",
+        "syncXuiInboundGroup, resyncXuiInboundGroups, POST /api/xui-inbound-groups/resync, auditXuiClientGroups, getXuiInboundGroups, xuiInboundIdsForGroup and normalizeXuiInboundGroups are removed; PUT /api/xui-inbound-groups only stores metadata; users without a V2 line group inherit no inbounds.",
+        "/xui-inbounds loads and saves inbound metadata and line groups with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-25: npm run verify passed (check, npm test, test-checkout + test-payment, test-wallet, test-catalog-v2). test-payment saves the V2 line group with an added inbound (one bulkAttach [2], xuiSync.updated 1), then a removed inbound (one bulkDetach [2]), then unchanged keys (no bulk request, no xuiSync); a created client has inboundChange null; the resync route returns 404; a V1 user inherits no inbounds. git diff --check passed.",
+        "2026-09-25: Browser verification on the local dev server (XUI_READ_ONLY=true) after the admin logged in: see browser_verification."
+      ],
+      "browser_verification": {
+        "routes": ["/xui-inbounds", "/users"],
+        "interactions": [
+          "/xui-inbounds loaded with no console errors.",
+          "Edited V2 line group test: added 美国洛杉矶 S02 and saved; PUT /api/catalog-v2/line-groups/test returned 200 with two inboundKeys and xuiSync {updated:0, skipped:0, failed:0} (the dev DB has no V2 users). Removed it again and saved; the response had the original single inboundKey and xuiSync, so the group is restored.",
+          "Edited inbound 美国洛杉矶 S01: set region 验证地区 and saved; only PUT /api/xui-inbound-groups was issued and the table showed the region; cleared it and saved again, restoring 未设置.",
+          "Opened a user detail page and 管理个人定制入站: GET /api/users/:id/custom-inbounds returned 200 and the dialog listed inbounds with no inherited grants for the V1 user; closed without saving."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-25"
+      }
+    },
+    {
+      "id": "account-overview-bento",
+      "name": "Account overview bento layout",
+      "description": "Rebuild the /account overview cards as a bento layout on an 8-column grid, with a reusable BentoCard (span 1-8, large radius, tone variants) and BentoButton (same radius) built on shadcn Card/Button, a hello banner with the user email, and an orange-400 plan details card.",
+      "status": "in_progress",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "BentoGrid splits the row into 8 equal columns; BentoCard takes span 1-8 and stacks full width on phones.",
+        "BentoCard and BentoButton share one radius constant (rounded-4xl, derived from --radius).",
+        "BentoCard renders its own header from title, optional icon and action, in one shared title style with no subtitle.",
+        "On screens 1280px and wider every BentoGrid row is one --bento-row unit tall and BentoCard takes rowSpan units; narrower screens size rows by content.",
+        "/account shows a banner reading hello, <email>!",
+        "The plan details card uses #fed230 and the traffic usage card uses #58e057, both legible in light and dark themes.",
+        "The plan details card name and quota show plan-only traffic (excluding traffic packs and admin gifts); the traffic usage card shows the cycle total.",
+        "/account renders with no console or page errors at desktop and mobile widths."
+      ],
+      "verification": [
+        "2026-09-25: npm run check (vite build + docs build), npm run verify:fast and git diff --check passed.",
+        "2026-09-25: Browser check with test@admin.com (expired plan) at desktop, 375x812 and dark mode: 8 columns, 4/3/5-span widths 522/387/656px of 1059px, shared 26px radius, orange-400 plan card, hello banner, announcement dialog opens. Plan badge contrast on the orange card was fixed for dark mode.",
+        "2026-09-26: Added fixed row heights: --bento-row (7.5rem) in styles.css, BentoGrid xl:auto-rows-(--bento-row), BentoCard rowSpan 1-6 (xl only). npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-26: Browser check with an account that has an active lifetime self-hosted plan at 1428px wide: every card height is a whole number of row units (2 rows = 256px, 3 rows = 392px) and no card overflows (scrollHeight - clientHeight = 0 for all 9 cards). At 1100px rows are auto and no card overflows; at 375x812 cards stack full width with no horizontal page scroll. Fixed the banner email to break at @ and show 永久有效 for lifetime plans instead of a day count.",
+        "2026-09-26: BentoCard gained title, icon (optional, none by default) and action props and renders every header itself: text-lg (18px) font-bold in text-foreground, black on the orange card. All overview cards and the traffic chart use it with no subtitles; the node check time, subscription sharing warning and chart traffic total moved into the card content. Browser check: 8 titles at 18px/700, oklch(0.145 0 0) in light and oklch(0.985 0 0) in dark, orange card title rgb(0,0,0) in both; no card-description left in bento cards; no card overflows; no uncaught errors, React warnings or Vite errors. npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-26: Plan details card now uses #fed230 and traffic usage #58e057 via --color-bento-yellow / --color-bento-green tokens and BentoCard tones yellow / green (the orange tone was removed). Both tones apply the bento-light-surface utility so text, muted text (oklch 0.35), buttons and the progress bar stay dark in both themes. Browser check: backgrounds rgb(254,210,48) and rgb(88,224,87), titles oklch(0.145), muted text oklch(0.35), button and progress oklch(0.205) in light and dark. Fixed a plan card overflow at 768-1023px (items and home-IP button were 68px wider than the 258px card) with a container query and a wrapping button; at 900, 1100, 1322 and 375px no card content overflows. No uncaught errors, React warnings or Vite errors. npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-26: Traffic usage card is now 2x2. With an active plan the rows are: banner 4x3 + plan 4x3; traffic 2x2 + personal info 3x2 + node status 3x2; subscription link 5x3 + visitor IP 3x3; announcements 3x3 + traffic chart 5x3 (either alone spans 8). Without a plan the previous layout is kept. Node status counters use Item size sm with nowrap labels so they stay on one line at 3 columns. Browser check at 1301px: measured placement matches (traffic col 1 row 4 2x2, 221x256px); at 1301, 1280, 1100, 900 and 375px no card overflows horizontally or vertically, node labels are single-line (21px) and the page has no horizontal scroll; no uncaught errors, React warnings or Vite errors. npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-26: Plan details card shows plan-only traffic. GET /api/account/overview now returns subscription.planTrafficBytes (planTrafficBytes(user), excluding traffic packs and admin gifts); the plan name uses it and the quota reads <GB>GB/月 for periodic plans, <GB>GB for lifetime, 不限 for unlimited. The traffic usage card still shows the cycle total. test.js asserts planTrafficBytes stays 700 GiB after a 100 GiB pack is granted. npm run verify (exit 0) and git diff --check passed. Browser check with a quarterly plan of 100 GB plus 100 GB extra: API planTrafficBytes = 100 GiB; plan card shows PRO-90天-100G and 流量配额 100GB/月; traffic card still shows 已用 115.44 GB / 200 GB; no card overflows; no uncaught errors, React warnings or Vite errors.",
+        "2026-09-26: Home IP button on the plan card spans the full row at every width, drops the HousePlug icon, keeps its text left-aligned and ends with a white Lucide ArrowUpRight. Browser check: 433px of 433px inner width at desktop, 208/210 at 900px and 275/277 at 375px (text wraps, 52px tall), one svg with color rgb(255,255,255) inside the button, no card or page overflow, no uncaught errors, React warnings or Vite errors. npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-26: Removed the plan status badge. The banner spans the full row (8x2). With a plan: plan details 4x4 on the left; traffic usage 4x2 top right; a new 可使用设备数 card 2x2 (online devices / device limit) and a compact node status card 2x2 (online / total, plus offline count and check time) below it; then personal info 4x2 + visitor IP 4x2, subscription link 5x3 + announcements 3x3 (link spans 8 without announcements), traffic chart 8x3. Expiry date and plan quota are small text under the days-left line. Without a plan: plan 4x2 + node status 4x2, personal info 4x2 + visitor IP 4x2, announcements 8x3. Browser check at 1351px: measured placement matches (plan col1 row3 4x4, traffic col5 row3 4x2, devices col5 row5 2x2, node col7 row5 2x2) with no plan badge; at 1351, 1280, 1100, 900 and 375px no card overflows and the page has no horizontal scroll; no uncaught errors, React warnings or Vite errors. npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-26: Halved the plan block: plan details 4x2, traffic usage 4x1 (remaining % beside the title, bar and one detail line below), device limit 2x1 and node status 2x1 (one line each; node check time moved to the line's title tooltip). One-row BentoCards use gap-2 py-4. Plan name is text-3xl, 8px under the title. Row spans now apply from lg (fixed row units still from xl) and announcements span the full row at md, removing grid holes at 768-1279px. Browser check: at 1351px measured placement plan col1 row3 4x2 (256px), traffic col5 row3 4x1 (120px), devices col5 row4 2x1, node col7 row4 2x1; a column-by-column hole scan finds no holes at 1258, 1280, 1100 and 900px; no card overflows at those widths or 375px; no uncaught errors, React warnings or Vite errors. npm run check, npm run verify:fast and git diff --check passed.",
+        "Open: the console still shows a 502 from /api/account/ip-info on the local dev server (the external IP lookup is unreachable locally), which is unrelated to this layout change. Earlier [vite] Failed to reload messages were transient mid-edit HMR errors; the module now serves 200."
+      ]
     }
   ]
 }

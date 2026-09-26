@@ -1,12 +1,12 @@
 # Current State
 
-- Last Updated: 2026-09-25
-- Current Objective: 所有支付走 checkout v2：充值改走 checkoutWorkflow，删除 v1 代码，启动时关闭历史 pending 订单
+- Last Updated: 2026-09-26
+- Current Objective: 用户总览：套餐详情 4x2、流量使用 4x1、设备数与节点状态 2x1；套餐名放大贴近标题；lg 起应用行跨度消除空洞
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
-- Active feature: none
+- Active feature: account-overview-bento
 - Blockers: none
 
 ## Verification Evidence
@@ -274,8 +274,30 @@
 
 - 2026-09-25: npm run verify、verify:harness、git diff --check 通过；浏览器验证钱包充值→收银台→测试付款/取消，桌面与 390px 无 console/page errors
 
+- 2026-09-25: npm run verify、npm run verify:harness、git diff --check 通过
+
+- 2026-09-25: npm run verify、verify:harness、git diff --check 通过；/xui-inbounds 与用户详情定制入站浏览器验证无 console/page 错误
+
+- 2026-09-25: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 已在桌面、375px 和深色模式下检查（过期套餐账户）
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；生效套餐账户下卡片高度均为整数行单位且无溢出
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器确认 8 个标题 18px/700，浅色黑、深色白，橙卡恒为黑
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器确认两卡底色与深浅色文字颜色，并修复 768-1023px 套餐卡溢出
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器在 1301/1280/1100/900/375px 下确认布局位置正确且无卡片溢出
+
+- 2026-09-26: npm run verify、verify:harness、git diff --check 通过；浏览器显示 PRO-90天-100G、100GB/月，流量卡仍为 200 GB
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器在桌面、900px、375px 确认按钮占满整行且箭头为白色
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器实测卡片位置与尺寸正确，1280/1100/900/375px 无溢出
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器实测位置尺寸正确，1258/1280/1100/900/375px 无空洞无溢出
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/cashier-page.tsx`, `src/components/features/cashier-types.ts`, `src/components/features/cashier.tsx`, `src/components/features/navigation.ts`, `src/main.tsx`, `src/utils.ts`, `test-payment.js`, `test.js`, `~/.claude/skills/hue`, `.claude/`, `src/components/features/sync-jobs.tsx`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/account-traffic-chart.tsx`, `src/styles.css`, `src/types.ts`, `test-payment.js`, `test.js`, `.claude/`, `src/components/features/bento-button.tsx`, `src/components/features/bento-card.tsx`
 - Known risks: none
-- Recommended Next Step: 用户确认后提交并部署；部署后检查启动日志里历史订单关闭数量；另有收银台刷新被重定向到 /account 的旧问题待修
+- Recommended Next Step: 决定 /api/account/ip-info 本地 502 是否可接受；无控制台错误后将 account-overview-bento 标为 passing

@@ -516,46 +516,13 @@ async function main() {
     const purchaseLogs = adminUsers.data[0].userLogs;
     const managedUser = adminUsers.data[0];
     assert.strictEqual(managedUser.lineType, "self_hosted", "new purchases must use self-hosted delivery");
-    const saveInboundGroups = async groups => {
-      xuiRequests.length = 0;
-      const result = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups, syncGroups: true } });
-      assert.strictEqual(result.response.status, 200);
-      return xuiRequests.filter(entry => entry.url.startsWith("/panel/api/clients/bulk"));
-    };
-    assert.deepStrictEqual(await saveInboundGroups({ basic: [1], pro: [1, 2], ultra: [1] }), [
-      { url: "/panel/api/clients/bulkAttach", body: { emails: ["buyer@example.test"], inboundIds: [2] } }
-    ]);
-    assert.deepStrictEqual(await saveInboundGroups({ basic: [1], pro: [1], ultra: [1] }), [
-      { url: "/panel/api/clients/bulkDetach", body: { emails: ["buyer@example.test"], inboundIds: [2] } }
-    ]);
-    assert.deepStrictEqual(await saveInboundGroups({ basic: [1], pro: [2], ultra: [1] }), [
-      { url: "/panel/api/clients/bulkAttach", body: { emails: ["buyer@example.test"], inboundIds: [2] } },
-      { url: "/panel/api/clients/bulkDetach", body: { emails: ["buyer@example.test"], inboundIds: [1] } }
-    ]);
-    const staleInboundGroups = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [1, 999], pro: [1], ultra: [1] }, syncGroups: false } });
-    assert.strictEqual(staleInboundGroups.response.status, 200);
-    assert.deepStrictEqual(staleInboundGroups.data.groups, { basic: [1], pro: [1], ultra: [1] });
     xuiRequests.length = 0;
-    const metadataOnlyInboundSave = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [999], pro: [999], ultra: [999] }, metadata: { "node:local:1": { region: "香港", inboundType: "package" } }, syncGroups: false } });
+    const metadataOnlyInboundSave = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { metadata: { "node:local:1": { region: "香港", inboundType: "package" } } } });
     assert.strictEqual(metadataOnlyInboundSave.response.status, 200);
-    assert.deepStrictEqual(metadataOnlyInboundSave.data.groups, { basic: [1], pro: [1], ultra: [1] });
     assert.deepStrictEqual(metadataOnlyInboundSave.data.metadata["node:local:1"].region, "香港");
     assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/")), "metadata-only inbound saves must not request 3x-ui");
-    xuiRequests.length = 0;
-    const appOnlyGroupChange = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [], pro: [1], ultra: [1] }, metadata: { "node:local:1": { region: "上海", inboundType: "package" } }, syncGroups: false, groupsChanged: true } });
-    assert.strictEqual(appOnlyGroupChange.response.status, 200);
-    assert.deepStrictEqual(appOnlyGroupChange.data.groups, { basic: [], pro: [1], ultra: [1] });
-    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/")), "editor group changes must not request 3x-ui");
-    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/groups/bulkAdd"));
-    await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { groups: { basic: [1], pro: [1], ultra: [1] }, syncGroups: false } });
-    xuiClients.get("buyer@example.test").inboundIds = [2];
-    xuiRequests.length = 0;
-    const resync = await request("/api/xui-inbound-groups/resync", { method: "POST", cookie: adminCookie, body: {} });
-    assert.strictEqual(resync.response.status, 200);
-    assert.strictEqual(resync.data.checked, 1);
-    assert.strictEqual(resync.data.repaired, 1);
-    assert.deepStrictEqual(xuiClients.get("buyer@example.test").inboundIds, [1]);
-    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/server/status"), "resync should reuse the cached inbound snapshot");
+    const removedResync = await request("/api/xui-inbound-groups/resync", { method: "POST", cookie: adminCookie, body: {} });
+    assert.strictEqual(removedResync.response.status, 404, "the V1 group resync route is removed");
     await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
     xuiClients.get("buyer@example.test").group = "basic";
     xuiRequests.length = 0;
@@ -565,11 +532,11 @@ async function main() {
     assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/groups/bulkAdd"));
     const customInboundOptions = await request(`/api/users/${managedUser.id}/custom-inbounds`, { cookie: adminCookie });
     assert.strictEqual(customInboundOptions.response.status, 200);
-    assert.deepStrictEqual(customInboundOptions.data.inheritedInboundIds, [1]);
+    assert.deepStrictEqual(customInboundOptions.data.inheritedInboundIds, [], "users without a V2 line group inherit no inbounds");
     const customInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2] } });
     assert.strictEqual(customInboundUpdate.response.status, 200);
     assert.deepStrictEqual(customInboundUpdate.data.xuiExtraInboundIds, [2]);
-    assert.deepStrictEqual(customInboundUpdate.data.xuiInboundIds, [1, 2]);
+    assert.deepStrictEqual(customInboundUpdate.data.xuiInboundIds, [2]);
     xuiRequests.length = 0;
     const unchangedCustomInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2] } });
     assert.strictEqual(unchangedCustomInboundUpdate.response.status, 200);
@@ -637,7 +604,7 @@ async function main() {
     const replacedUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
     assert.strictEqual(replacedUser.activeGroup, "basic");
     assert.deepStrictEqual(replacedUser.xuiExtraInboundIds, [2], "custom inbound grants must survive plan replacement");
-    assert.deepStrictEqual(replacedUser.xuiInboundIds, [1, 2], "effective inbounds must merge plan and custom grants");
+    assert.deepStrictEqual(replacedUser.xuiInboundIds, [2], "a V1 plan grants no inbounds; custom grants remain");
     assert.deepStrictEqual([replacedUser.currentProductId, replacedUser.currentOptionId, replacedUser.currentProductOrderId], ["basic", "basic-30", replacementOrder.data.id]);
     assert.strictEqual(replacedUser.unlimited, false);
     assert.strictEqual(replacedUser.cashValue, replacementOrder.data.amount, "replacement cash value must only include the new payment");
@@ -1019,6 +986,22 @@ async function main() {
     const inboundTable = (await database.query("SELECT key, inbound_id, enabled FROM xui_inbounds ORDER BY inbound_id")).rows;
     assert.deepStrictEqual(inboundTable.map(row => [row.key, row.inbound_id, row.enabled]), [["local:1", 1, true], ["local:2", 2, true], ["local:3", 3, false]], "the panel sync must replace the inbound table");
 
+    const saveV2Group = async inboundKeys => {
+      xuiRequests.length = 0;
+      const result = await request(`/api/catalog-v2/line-groups/${catalogV2Ids.group}`, { method: "PUT", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys } });
+      assert.strictEqual(result.response.status, 200, result.text);
+      return { result, bulk: xuiRequests.filter(entry => entry.url.startsWith("/panel/api/clients/bulk")) };
+    };
+    const widenedGroup = await saveV2Group(["local:1", "local:2"]);
+    assert.deepStrictEqual(widenedGroup.bulk, [{ url: "/panel/api/clients/bulkAttach", body: { emails: ["v2-sync@example.test"], inboundIds: [2] } }], "saving a line group must attach only the added inbound right away");
+    assert.deepStrictEqual([widenedGroup.result.data.xuiSync?.updated, widenedGroup.result.data.xuiSync?.failed], [1, 0]);
+    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1, 2]);
+    const narrowedGroup = await saveV2Group(["local:1"]);
+    assert.deepStrictEqual(narrowedGroup.bulk, [{ url: "/panel/api/clients/bulkDetach", body: { emails: ["v2-sync@example.test"], inboundIds: [2] } }], "saving a line group must detach the removed inbound right away");
+    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
+    const unchangedGroup = await saveV2Group(["local:1"]);
+    assert.deepStrictEqual([unchangedGroup.bulk, unchangedGroup.result.data.xuiSync], [[], undefined], "a save that keeps the same inbounds must not run the 3x-ui sync");
+
     xuiRequests.length = 0;
     await handler.probeXuiInbounds();
     assert.strictEqual(xuiRequests.length, 0, "the TCP probe must read targets from the inbound table only");
@@ -1166,7 +1149,7 @@ async function main() {
     const legacyFind = async email => legacyClients.get(email) || null;
     await assert.rejects(handler.writeXuiClient(structuredClone(legacyUser), { findClient: legacyFind, allInboundIds: [1, 2], groupInboundIds: [1], dryRun: true }), error => error.code === "XUI_CLIENT_CONFLICT" && error.email === "nexora_900001@internal", "a legacy-email panel client must be reported, not adopted");
     const legacyIgnored = await handler.writeXuiClient(structuredClone(legacyUser), { findClient: legacyFind, allInboundIds: [1, 2], groupInboundIds: [1], checkLegacyEmail: false, dryRun: true });
-    assert.deepStrictEqual([legacyIgnored.created, legacyIgnored.email, legacyIgnored.inboundChange], [true, "legacy-owner@example.test", { email: "legacy-owner@example.test", attach: [1], detach: [2] }]);
+    assert.deepStrictEqual([legacyIgnored.created, legacyIgnored.email, legacyIgnored.inboundIds, legacyIgnored.inboundChange], [true, "legacy-owner@example.test", [1], null], "a new client gets its inbounds from clients/add, with no separate bulkAttach/bulkDetach");
     // The helpers writeXuiClient is built from.
     assert.deepStrictEqual(handler.xuiInboundChange("a@example.test", [1, 2], [1, 2, 3], [2, 3]), { email: "a@example.test", attach: [1], detach: [3] }, "known inbounds send only differences");
     assert.deepStrictEqual(handler.xuiInboundChange("a@example.test", [1], [1, 2, 3]), { email: "a@example.test", attach: [1], detach: [2, 3] }, "unknown inbounds attach the full set and detach the rest");
