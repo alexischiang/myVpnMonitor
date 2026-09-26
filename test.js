@@ -59,7 +59,6 @@ const {
   normalizeXuiMonitor,
   xuiTrafficFromNodes,
   normalizeXuiInbounds,
-  normalizeXuiInboundGroups,
   normalizeXuiInboundIdList,
   effectiveXuiInboundIds,
   normalizeXuiInboundMetadata,
@@ -96,7 +95,8 @@ const {
   isXuiTimeoutError,
   disabledAccountPlaceholderSubscription,
   clearSubscriptionSourceState,
-  ticketTelegramText
+  ticketTelegramText,
+  planRenewalOffer
 } = require("./server");
 
 assert.strictEqual(requestIp({ headers: { "x-forwarded-for": "203.0.113.8, 172.64.0.1" }, socket: { remoteAddress: "127.0.0.1" } }), "203.0.113.8");
@@ -198,28 +198,27 @@ assert.deepStrictEqual(adminReferralDetails(
   rewards: [{ id: "reward", sourceOrderId: "order", orderNumber: "ORDER-1", inviteeEmail: "invitee@example.com", baseAmount: 50, rate: 10, rewardAmount: 5, status: "available", availableAt: "2026-08-29T01:00:00.000Z" }]
 });
 assert.deepStrictEqual(publicAccountNodeStatus(
-  { activeGroup: "basic", xuiExtraInboundIds: [3] },
+  { productCatalogVersion: 2, v2LineGroupId: "line-basic", activeGroup: "basic", xuiExtraInboundIds: [3] },
   {
     configured: true,
     checkedAt: "2026-09-08T00:00:00.000Z",
-    groups: { basic: [1], pro: [2], ultra: [] },
     inbounds: [
-      { id: 1, name: "Basic HK", region: "香港", networkLevel: "standard", inboundType: "package", enabled: true, probeStatus: "online", probeLatencyMs: 20, probeCheckedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 1 },
-      { id: 2, name: "Pro JP", region: "日本", networkLevel: "premium", inboundType: "package", enabled: true, probeStatus: "offline", probeLatencyMs: null, probeCheckedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 2, address: "hidden.example" },
-      { id: 3, name: "My Custom", region: "美国", networkLevel: "optimized", inboundType: "custom", enabled: true, probeStatus: "online", probeLatencyMs: 80, probeCheckedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 3 },
-      { id: 4, name: "Other Custom", region: "德国", networkLevel: "optimized", inboundType: "custom", enabled: true, probeStatus: "online", probeLatencyMs: 90, probeCheckedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 4 }
+      { id: 1, key: "local:1", name: "Basic HK", region: "香港", networkLevel: "standard", inboundType: "package", enabled: true, probeStatus: "online", probeLatencyMs: 20, probeCheckedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 1 },
+      { id: 2, key: "local:2", name: "Pro JP", region: "日本", networkLevel: "premium", inboundType: "package", enabled: true, probeStatus: "offline", probeLatencyMs: null, probeCheckedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 2, address: "hidden.example" },
+      { id: 3, key: "local:3", name: "My Custom", region: "美国", networkLevel: "optimized", inboundType: "custom", enabled: true, probeStatus: "online", probeLatencyMs: 80, probeCheckedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 3 },
+      { id: 4, key: "local:4", name: "Other Custom", region: "德国", networkLevel: "optimized", inboundType: "custom", enabled: true, probeStatus: "online", probeLatencyMs: 90, probeCheckedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 4 }
     ]
-  }
+  },
+  { id: "line-basic", name: "Basic line", inboundKeys: ["local:1"] }
 ), {
   configured: true,
-  currentGroup: "basic",
+  currentGroup: "line-basic",
   checkedAt: "2026-09-08T00:00:00.000Z",
   totalNodes: 2,
   onlineNodes: 2,
   offlineNodes: 0,
   inbounds: [
-    { id: "1", name: "Basic HK", region: "香港", networkLevel: "standard", enabled: true, status: "online", latencyMs: 20, checkedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 1, custom: false, accessible: true, permissionGroups: ["basic"] },
-    { id: "2", name: "Pro JP", region: "日本", networkLevel: "premium", enabled: true, status: "offline", latencyMs: null, checkedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 2, custom: false, accessible: false, permissionGroups: ["pro"] },
+    { id: "1", name: "Basic HK", region: "香港", networkLevel: "standard", enabled: true, status: "online", latencyMs: 20, checkedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 1, custom: false, accessible: true, permissionGroups: ["Basic line"] },
     { id: "3", name: "My Custom", region: "美国", networkLevel: "optimized", enabled: true, status: "online", latencyMs: 80, checkedAt: "2026-09-08T00:00:00.000Z", subSortIndex: 3, custom: true, accessible: true, permissionGroups: [] }
   ]
 });
@@ -238,6 +237,21 @@ assert.strictEqual(trafficPackUser.xuiTrafficLimitBytes, 800 * gib);
 assert.strictEqual(trafficPackUser.xuiLastTraffic.remainingBytes, 745 * gib);
 assert.deepStrictEqual(grantTrafficPack(trafficPackUser, "order-1"), { replayed: true });
 assert.strictEqual(trafficPackUser.xuiTrafficLimitBytes, 800 * gib);
+// The plan-only quota shown on the account overview excludes the granted pack.
+assert.strictEqual(planTrafficBytes(trafficPackUser), 700 * gib);
+
+// An expired plan renews as a new purchase of the same product, period and traffic while it is still publicly sold.
+const renewalProduct = {
+  id: "renew-pro", type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, name: "PRO", lineGroupId: "renew-line",
+  trafficCustomization: { enabled: true, stepBytes: 10 * gib, stepPriceCents: 200, maxSteps: 3 },
+  periods: [{ id: "90d", durationDays: 90, trafficBytes: 100 * gib, deviceLimit: 3, priceCents: 3000, isEnabled: true }]
+};
+const expiredRenewalUser = { productCatalogVersion: 2, expiresAt: "2026-01-01T00:00:00.000Z", v2ProductSnapshot: { productId: "renew-pro", periodId: "90d", trafficSteps: 2 } };
+assert.deepStrictEqual(planRenewalOffer(expiredRenewalUser, [renewalProduct]), { optionId: "v2:renew-pro:90d", trafficTier: 3 });
+assert.strictEqual(planRenewalOffer({ ...expiredRenewalUser, expiresAt: "2999-01-01T00:00:00.000Z" }, [renewalProduct]), null);
+assert.strictEqual(planRenewalOffer(expiredRenewalUser, [{ ...renewalProduct, isForSale: false }]), null);
+assert.strictEqual(planRenewalOffer(expiredRenewalUser, [{ ...renewalProduct, periods: [{ ...renewalProduct.periods[0], isEnabled: false }] }]), null);
+assert.strictEqual(planRenewalOffer({ ...expiredRenewalUser, productCatalogVersion: 1 }, [renewalProduct]), null);
 
 const linkedXuiUser = {
   productCatalogVersion: 2,
@@ -537,7 +551,6 @@ const localMirrorTrafficPromise = xuiTrafficFromNodes(
 });
   const xuiInbounds = normalizeXuiInbounds([{ id: 2, remark: "VLESS", protocol: "vless", port: 443, up: 10, down: 20, total: 100, clientStats: [{}, {}] }]);
   assert.deepStrictEqual([xuiInbounds[0].clients, xuiInbounds[0].uploadBytes, xuiInbounds[0].downloadBytes], [2, 10, 20]);
-assert.deepStrictEqual(normalizeXuiInboundGroups({ groups: { basic: [2, "3", 2, -1], pro: [7] } }), { basic: [2, 3], pro: [7], ultra: [] });
 assert.deepStrictEqual(normalizeXuiInboundMetadata({ metadata: { "node-a:2": { networkLevel: "premium", region: " 香港 ", multiplier: 2 }, bad: { networkLevel: "vip" } } }), { "node-a:2": { networkLevel: "premium", region: "香港", inboundType: "package" } });
 assert.deepStrictEqual(normalizeXuiInboundEnable("7", true), { id: 7, enable: true });
 assert.throws(() => normalizeXuiInboundEnable("0", true), /ID 无效/);

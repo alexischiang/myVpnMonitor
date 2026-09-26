@@ -1,13 +1,13 @@
 # Current State
 
-- Last Updated: 2026-09-25
-- Current Objective: 所有支付走 checkout v2：充值改走 checkoutWorkflow，删除 v1 代码，启动时关闭历史 pending 订单
+- Last Updated: 2026-09-26
+- Current Objective: 撤销家宽 IP 按钮深色模式改动；小屏下按钮仅显示“定制家宽IP”
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
 - Active feature: none
-- Blockers: none
+- Blockers: 本机 .env 未配置 TEST_DATABASE_URL，test:payment/test:wallet/test:catalog-v2 未运行
 
 ## Verification Evidence
 
@@ -274,8 +274,58 @@
 
 - 2026-09-25: npm run verify、verify:harness、git diff --check 通过；浏览器验证钱包充值→收银台→测试付款/取消，桌面与 390px 无 console/page errors
 
+- 2026-09-25: npm run verify、npm run verify:harness、git diff --check 通过
+
+- 2026-09-25: npm run verify、verify:harness、git diff --check 通过；/xui-inbounds 与用户详情定制入站浏览器验证无 console/page 错误
+
+- 2026-09-25: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 已在桌面、375px 和深色模式下检查（过期套餐账户）
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；生效套餐账户下卡片高度均为整数行单位且无溢出
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器确认 8 个标题 18px/700，浅色黑、深色白，橙卡恒为黑
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器确认两卡底色与深浅色文字颜色，并修复 768-1023px 套餐卡溢出
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器在 1301/1280/1100/900/375px 下确认布局位置正确且无卡片溢出
+
+- 2026-09-26: npm run verify、verify:harness、git diff --check 通过；浏览器显示 PRO-90天-100G、100GB/月，流量卡仍为 200 GB
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器在桌面、900px、375px 确认按钮占满整行且箭头为白色
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器实测卡片位置与尺寸正确，1280/1100/900/375px 无溢出
+
+- 2026-09-26: npm run check、verify:fast、verify:harness、git diff --check 通过；浏览器实测位置尺寸正确，1258/1280/1100/900/375px 无空洞无溢出
+
+- 2026-09-26: npm test、npm run check、npm run verify:fast、git diff --check 通过
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；浏览器验证 /account 与续费结算页 console_errors/page_errors 为空
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；浏览器验证 V2 档位 1/3/5 与 V1 档位 2 标签与订单摘要一致，console_errors/page_errors 为空
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；相关页面浏览器验证 console_errors/page_errors 为空
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；/account 在 755、1300、375px 和有效套餐场景浏览器验证无控制台错误
+
+- 2026-09-26: npm run check、npm run verify:fast、git diff --check 通过；用户侧 /pricing、/account/plans、结算页、/account 浏览器验证无控制台错误
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；用户侧与管理员页面浏览器验证 console_errors/page_errors 为空
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；更改套餐弹窗档位 100/150/200/250/300 GB，浏览器无控制台错误
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；/account 浅色、深色、1300px、375px 浏览器验证无控制台错误
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；/account 浅色与深色浏览器验证无控制台错误
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；/account 浅色与深色、20/60/95% 浏览器验证无控制台错误
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；/account 五档颜色与深色主题浏览器验证无控制台错误
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；/account 浅色与深色浏览器验证无控制台错误
+
+- 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；/account 在 375/639/640/900/1300px 浏览器验证无控制台错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/cashier-page.tsx`, `src/components/features/cashier-types.ts`, `src/components/features/cashier.tsx`, `src/components/features/navigation.ts`, `src/main.tsx`, `src/utils.ts`, `test-payment.js`, `test.js`, `~/.claude/skills/hue`, `.claude/`, `src/components/features/sync-jobs.tsx`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/account-onboarding.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/details.tsx`, `src/components/features/pricing-settings.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/styles.css`, `test.js`, `scripts/seed-local-test-data.js`
 - Known risks: none
-- Recommended Next Step: 用户确认后提交并部署；部署后检查启动日志里历史订单关闭数量；另有收银台刷新被重定向到 /account 的旧问题待修
+- Recommended Next Step: 在销售设置里修改已保存的 FAQ 问题文字；按需提交本会话全部改动

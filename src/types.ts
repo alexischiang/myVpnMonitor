@@ -364,8 +364,6 @@ export type CatalogV2Product = {
   updatedAt?: string
 }
 
-export type XuiInboundGroups = Record<string, number[]>
-
 export type XuiInboundMetadata = Record<string, {
   networkLevel: "premium" | "optimized" | "standard" | ""
   region: string
@@ -374,7 +372,6 @@ export type XuiInboundMetadata = Record<string, {
 
 export type XuiInboundManagement = {
   configured: boolean
-  groups: XuiInboundGroups
   metadata: XuiInboundMetadata
   inbounds: Array<{
     id: number

@@ -358,12 +358,12 @@ export function UserDetailPage() {
       ...(user.currentOptionId !== planOptionId ? [{ label: "商品规格", before: productName, after: option.label }] : []),
       ...(lifetime && user.duration !== "lifetime" ? [{ label: "到期日", before: formatDate(user.expiresAt), after: "永久有效" }] : []),
       ...((user.unlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0)) !== (unlimited ? "不限流量" : formatBytes(targetBytes)) ? [{ label: "流量配额", before: user.unlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0), after: unlimited ? "不限流量" : formatBytes(targetBytes) }] : []),
-      ...(Number(user.deviceLimit || 0) !== targetDevices ? [{ label: "可使用设备数", before: `${user.deviceLimit || 0} 台`, after: `${targetDevices} 台` }] : []),
+      ...(Number(user.deviceLimit || 0) !== targetDevices ? [{ label: "在线IP数量", before: `${user.deviceLimit || 0}`, after: `${targetDevices}` }] : []),
     ]
     const impacts = [
       `已用流量 ${formatBytes(usedBytes)} 保留，不会清零`,
       "本次后台调整不生成账单，不退款，也不抵扣剩余期限",
-      "套餐权限、可使用设备数和流量配额会立即同步到 3x-ui",
+      "套餐权限、在线IP数量和流量配额会立即同步到 3x-ui",
       ...(targetBytes > 0 && usedBytes >= targetBytes ? ["目标额度不高于已用流量，变更后用户将进入流量耗尽状态"] : []),
     ]
     return { changes, impacts }
@@ -943,7 +943,7 @@ export function UserDetailPage() {
             <DialogHeader><DialogTitle>更改套餐</DialogTitle><DialogDescription>可选择商品库中的套餐规格，包括未上架商品；附加商品和旧版规格不可选择。操作原因会写入用户记录。</DialogDescription></DialogHeader>
             <FieldGroup>
               <Field><FieldLabel htmlFor="plan-option">目标商品规格</FieldLabel><Select value={planOptionId} onValueChange={setPlanOptionId} disabled={planSaving || !planOptions.length}><SelectTrigger id="plan-option" className="w-full"><SelectValue placeholder="当前周期没有可用商品规格" /></SelectTrigger><SelectContent>{planOptions.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select><FieldDescription>切换至不限时规格后，到期日将改为永久有效。</FieldDescription></Field>
-              {selectedPlanConfig && !selectedPlanConfig.lifetime && !selectedPlanConfig.unlimited ? <Field><FieldLabel htmlFor="plan-traffic-tier">定制流量</FieldLabel><Select value={planTrafficTier} onValueChange={setPlanTrafficTier} disabled={planSaving}><SelectTrigger id="plan-traffic-tier" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: selectedPlanConfig.maxTier }, (_, index) => index + 1).map(tier => <SelectItem key={tier} value={String(tier)}>第 {tier} 档 · {selectedPlanConfig.baseGb * tier} GB</SelectItem>)}</SelectContent></Select><FieldDescription>后台调整不计算价格，所选流量配额会直接同步到 3x-ui。</FieldDescription></Field> : null}
+              {selectedPlanConfig && !selectedPlanConfig.lifetime && !selectedPlanConfig.unlimited ? <Field><FieldLabel htmlFor="plan-traffic-tier">定制流量</FieldLabel><Select value={planTrafficTier} onValueChange={setPlanTrafficTier} disabled={planSaving}><SelectTrigger id="plan-traffic-tier" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: selectedPlanConfig.maxTier }, (_, index) => index + 1).map(tier => <SelectItem key={tier} value={String(tier)}>第 {tier} 档 · {formatBytes(selectedPlanConfig.baseBytes + (tier - 1) * selectedPlanConfig.stepBytes)}</SelectItem>)}</SelectContent></Select><FieldDescription>后台调整不计算价格，所选流量配额会直接同步到 3x-ui。</FieldDescription></Field> : null}
               <Field><FieldLabel htmlFor="plan-note">变更原因</FieldLabel><Input id="plan-note" maxLength={200} value={planNote} onChange={event => { setPlanNote(event.target.value); setPlanError("") }} placeholder="例如：客服补偿、套餐升级" aria-invalid={Boolean(planError)} autoFocus required /><FieldError>{planError}</FieldError></Field>
             </FieldGroup>
             {planPreview?.changes.length ? <Item variant="muted"><ItemContent><ItemTitle>变更预览</ItemTitle><Table><TableHeader><TableRow><TableHead>项目</TableHead><TableHead>当前</TableHead><TableHead>变更后</TableHead></TableRow></TableHeader><TableBody>{planPreview.changes.map(change => <TableRow key={change.label}><TableCell className="font-medium">{change.label}</TableCell><TableCell className="whitespace-normal text-muted-foreground">{change.before}</TableCell><TableCell className="whitespace-normal">{change.after}</TableCell></TableRow>)}</TableBody></Table></ItemContent></Item> : null}
@@ -979,7 +979,7 @@ export function UserDetailPage() {
       </AlertDialog>
       <AlertDialog open={xuiRecoverOpen} onOpenChange={setXuiRecoverOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>{user.productCatalogVersion === 2 ? "同步V2套餐到3x-ui？" : "恢复3x-ui客户端？"}</AlertDialogTitle><AlertDialogDescription>{user.productCatalogVersion === 2 ? "将按当前V2套餐的额度、到期时间、设备数和入站组更新或补建3x-ui客户端，不清空已有流量。" : "将使用原邮箱、套餐额度、到期时间、重置日和入站组重新创建客户端。已有折算流量和历史账本不会清空。"}</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogHeader><AlertDialogTitle>{user.productCatalogVersion === 2 ? "同步V2套餐到3x-ui？" : "恢复3x-ui客户端？"}</AlertDialogTitle><AlertDialogDescription>{user.productCatalogVersion === 2 ? "将按当前V2套餐的额度、到期时间、在线IP数量和入站组更新或补建3x-ui客户端，不清空已有流量。" : "将使用原邮箱、套餐额度、到期时间、重置日和入站组重新创建客户端。已有折算流量和历史账本不会清空。"}</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter><AlertDialogCancel disabled={xuiRecoverSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "同步中..." : user.productCatalogVersion === 2 ? "立即同步" : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1162,7 +1162,7 @@ export function UserDetailPage() {
                   <Info label="周期标识" value={user.v2PeriodId || "不限时"} />
                   <Info label="周期时长" value={user.v2ProductSnapshot.durationDays ? `${user.v2ProductSnapshot.durationDays} 天` : "不限时"} />
                   <Info label="流量额度" value={user.v2ProductSnapshot.trafficBytes === null ? "不限流量" : formatBytes(user.v2ProductSnapshot.trafficBytes)} />
-                  <Info label="设备数" value={user.v2ProductSnapshot.deviceLimit === null ? "-" : `${user.v2ProductSnapshot.deviceLimit} 台`} />
+                  <Info label="在线IP数量" value={user.v2ProductSnapshot.deviceLimit === null ? "-" : `${user.v2ProductSnapshot.deviceLimit}`} />
                   <Info label="线路权限组" value={user.v2LineGroupId || "-"} />
                 </CardContent>
               </Card>

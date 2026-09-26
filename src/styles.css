@@ -58,10 +58,32 @@
   --color-orange-900: color-mix(in oklch, var(--color-orange-600) 64%, black);
   --color-orange-1000: color-mix(in oklch, var(--color-orange-600) 50%, black);
   --color-orange-1100: color-mix(in oklch, var(--color-orange-600) 34%, black);
+  --color-bento-yellow: #fed230;
+  --color-bento-green: #58e057;
+  --color-usage-20: #72c238;
+  --color-usage-40: #d1b60c;
+  --color-usage-60: #ff9e07;
+  --color-usage-80: #ff7825;
+  --color-usage-100: #ff594c;
+}
+
+/* Bright surfaces that stay light in both themes: keep text and controls dark and AA-legible on them. */
+@utility bento-light-surface {
+  --foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --muted-foreground: oklch(0.35 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --background: oklch(1 0 0);
+  --border: oklch(0.145 0 0 / 15%);
+  --input: oklch(0.145 0 0 / 15%);
+  --ring: oklch(0.145 0 0 / 40%);
 }
 
 :root {
   --radius: 0.625rem;
+  /* Height of one BentoGrid row unit; cards span whole units on wide screens. */
+  --bento-row: 7.5rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
