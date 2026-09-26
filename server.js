@@ -162,7 +162,7 @@ function normalizeCatalogV2Product(input = {}) {
     id: normalizeCatalogV2Id(period.id, "周期标识"),
     durationDays: catalogV2Integer(period.durationDays, { min: 1, label: "周期天数" }),
     trafficBytes: catalogV2Integer(period.trafficBytes, { nullable: true, label: "周期流量" }),
-    deviceLimit: catalogV2Integer(period.deviceLimit, { label: "设备数" }),
+    deviceLimit: catalogV2Integer(period.deviceLimit, { label: "在线IP数量" }),
     priceCents: catalogV2Integer(period.priceCents, { label: "周期价格" }),
     isEnabled: period.isEnabled !== false,
     sortOrder: catalogV2Integer(period.sortOrder ?? index * 10, { label: "周期排序" })
@@ -193,7 +193,7 @@ function normalizeCatalogV2Product(input = {}) {
     isRecommended: type !== "addon" && input.isRecommended === true, lineGroupId,
     durationDays: type === "lifetime_plan" ? null : null,
     trafficBytes: type === "lifetime_plan" ? catalogV2Integer(input.trafficBytes, { nullable: true, label: "默认流量" }) : null,
-    deviceLimit: type === "lifetime_plan" ? catalogV2Integer(input.deviceLimit, { nullable: !isEnabled, label: "设备数" }) : null,
+    deviceLimit: type === "lifetime_plan" ? catalogV2Integer(input.deviceLimit, { nullable: !isEnabled, label: "在线IP数量" }) : null,
     priceCents: type === "lifetime_plan" || isAddon ? catalogV2Integer(input.priceCents, { nullable: !isEnabled, label: "商品价格" }) : null,
     trafficCustomization: normalizedCustomization, periods,
     purchaseRequirement: isAddon && input.purchaseRequirement === "requires_recurring_plan" ? "requires_recurring_plan" : isAddon ? "standalone" : null,
@@ -213,6 +213,18 @@ function catalogV2Selection(payload = {}) {
     trafficSteps: payload.trafficSteps ?? (payload.trafficTier == null ? 0 : Number(payload.trafficTier) - 1),
     quantity: payload.quantity
   };
+}
+
+// Renewal is a new purchase of the expired plan's product, period and traffic; only products still publicly sold qualify.
+function planRenewalOffer(user, products) {
+  const snapshot = user?.productCatalogVersion === 2 ? user.v2ProductSnapshot : null;
+  if (!snapshot || !isUserExpired(user)) return null;
+  try {
+    const selected = resolveCatalogV2Purchase(products, { productId: snapshot.productId, periodId: snapshot.periodId, trafficSteps: snapshot.trafficSteps || 0 });
+    return selected.purpose === "plan" ? { optionId: selected.optionId, trafficTier: selected.trafficSteps + 1 } : null;
+  } catch {
+    return null;
+  }
 }
 
 function userHasV2RecurringPlan(user) {
@@ -254,6 +266,8 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) 
     devices: selected.devices || 0,
     trafficTier: selected.trafficSteps + 1,
     trafficBaseGb: product.type === "recurring_plan" ? Number(((product.periods.find(period => period.id === selected.periodId)?.trafficBytes || 0) / 1024 ** 3).toFixed(2)) : 0,
+    // V2 traffic tiers add a fixed step to the period's base traffic rather than multiplying it.
+    trafficStepGb: product.trafficCustomization.enabled ? Number(((product.trafficCustomization.stepBytes || 0) / 1024 ** 3).toFixed(2)) : 0,
     trafficMaxTier: product.trafficCustomization.enabled ? product.trafficCustomization.maxSteps + 1 : 1,
     trafficTierMarkupPercent: 0,
     discountAmount: discountCents / 100,
@@ -363,7 +377,7 @@ if (process.env.NODE_ENV === "test") {
   PAYMENT_PLAN_OPTIONS["pro-test-001"] = { planId: "pro", planName: "PRO", optionLabel: "支付测试 1 元", duration: "monthly", group: "pro", fallbackPrice: 1 };
 }
 const DEFAULT_PRICING_FAQS = [
-  { id: "devices", question: "“可使用设备数”是指什么？", answer: "指同一订阅可同时使用的设备数量，手机、电脑和平板等各计为一台；具体数量以所选套餐和计费周期显示为准。", enabled: true },
+  { id: "devices", question: "“在线IP数量”是指什么？", answer: "指同一订阅可同时在线的 IP 数量，同一网络下的多个设备通常只占用一个 IP；具体数量以所选套餐和计费周期显示为准。", enabled: true },
   { id: "gpt", question: "哪些套餐支持 GPT 解锁？", answer: "当前 PRO 套餐明确包含稳定 GPT 解锁。其他套餐能力请以套餐卡片的功能列表为准；实际可用性可能受目标平台策略和网络环境影响。", enabled: true },
   { id: "discount", question: "季度、半年和年度套餐如何计算优惠？", answer: "页面折扣以月付价格乘以对应月数作为基准计算，周期价格旁的百分比就是相比连续月付节省的比例。", enabled: true },
   { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "新套餐支付成功后会立即覆盖当前套餐，原套餐剩余有效期和流量不再保留。提交订单前会要求再次确认。", enabled: true },
@@ -9014,7 +9028,8 @@ async function handleApi(req, res, pathname) {
         planTrafficBytes: planTrafficBytes(user),
         traffic: user.unlimited || user.productCatalogVersion === 2 && user.v2ProductSnapshot?.trafficBytes === null ? "无限流量" : user.productCatalogVersion === 2 ? `${Number((planTrafficBytes(user) / 1024 ** 3).toFixed(2))} GB` : Number(user.purchasedTrafficGb) > 0 ? `每月 ${user.purchasedTrafficGb} GB` : (plan?.traffic || "-"),
         devices: user.productCatalogVersion === 2 ? planDeviceLimit(user) : plan?.[`${user.duration}Devices`] || "-",
-        productName: user.productCatalogVersion === 2 ? user.v2ProductSnapshot?.name || user.v2ProductId : plan?.name || activeUserGroup(user)
+        productName: user.productCatalogVersion === 2 ? user.v2ProductSnapshot?.name || user.v2ProductId : plan?.name || activeUserGroup(user),
+        renewal: isUserExpired(user) ? planRenewalOffer(user, await dataStore.listCatalogV2Products()) : null
       } : null,
       services: accountServiceInstances(account.id),
       trafficPack: (() => { const config = trafficPackConfig(); return { trafficGb: config.trafficGb, price: config.price, enabled: config.product.enabled !== false }; })(),
@@ -9066,7 +9081,8 @@ async function handleApi(req, res, pathname) {
     try {
       sendJson(res, 200, await lookupIpInfo(requestIp(req), { signal: controller.signal }));
     } catch (error) {
-      sendJson(res, 502, { error: error.name === "AbortError" ? "IP 信息服务响应超时。" : "IP 信息服务暂不可用。" });
+      // The lookup is optional page context, so an unreachable provider is reported in the body rather than as a failed request.
+      sendJson(res, 200, { error: error.name === "AbortError" ? "IP 信息服务响应超时。" : "IP 信息服务暂不可用。" });
     } finally {
       clearTimeout(timer);
     }
@@ -10695,7 +10711,7 @@ async function handleApi(req, res, pathname) {
           const devicesKey = `${dur}Devices`;
           if (item[devicesKey] !== undefined) {
             const devices = Number(item[devicesKey]);
-            if (!Number.isInteger(devices) || devices < 0) { sendJson(res, 400, { error: `${item.group}.${devicesKey} 设备数无效。` }); return; }
+            if (!Number.isInteger(devices) || devices < 0) { sendJson(res, 400, { error: `${item.group}.${devicesKey} 在线IP数量无效。` }); return; }
             row[devicesKey] = devices;
           }
         }
@@ -11975,6 +11991,7 @@ if (require.main === module) {
 
 module.exports = Object.assign(requestHandler, {
   closeDataStore: () => dataStore.close(),
+  planRenewalOffer,
   ensureDataFile,
   handleApi,
   sendJson,

@@ -60,6 +60,11 @@
   --color-orange-1100: color-mix(in oklch, var(--color-orange-600) 34%, black);
   --color-bento-yellow: #fed230;
   --color-bento-green: #58e057;
+  --color-usage-20: #72c238;
+  --color-usage-40: #d1b60c;
+  --color-usage-60: #ff9e07;
+  --color-usage-80: #ff7825;
+  --color-usage-100: #ff594c;
 }
 
 /* Bright surfaces that stay light in both themes: keep text and controls dark and AA-legible on them. */

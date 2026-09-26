@@ -95,7 +95,8 @@ const {
   isXuiTimeoutError,
   disabledAccountPlaceholderSubscription,
   clearSubscriptionSourceState,
-  ticketTelegramText
+  ticketTelegramText,
+  planRenewalOffer
 } = require("./server");
 
 assert.strictEqual(requestIp({ headers: { "x-forwarded-for": "203.0.113.8, 172.64.0.1" }, socket: { remoteAddress: "127.0.0.1" } }), "203.0.113.8");
@@ -238,6 +239,19 @@ assert.deepStrictEqual(grantTrafficPack(trafficPackUser, "order-1"), { replayed:
 assert.strictEqual(trafficPackUser.xuiTrafficLimitBytes, 800 * gib);
 // The plan-only quota shown on the account overview excludes the granted pack.
 assert.strictEqual(planTrafficBytes(trafficPackUser), 700 * gib);
+
+// An expired plan renews as a new purchase of the same product, period and traffic while it is still publicly sold.
+const renewalProduct = {
+  id: "renew-pro", type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, name: "PRO", lineGroupId: "renew-line",
+  trafficCustomization: { enabled: true, stepBytes: 10 * gib, stepPriceCents: 200, maxSteps: 3 },
+  periods: [{ id: "90d", durationDays: 90, trafficBytes: 100 * gib, deviceLimit: 3, priceCents: 3000, isEnabled: true }]
+};
+const expiredRenewalUser = { productCatalogVersion: 2, expiresAt: "2026-01-01T00:00:00.000Z", v2ProductSnapshot: { productId: "renew-pro", periodId: "90d", trafficSteps: 2 } };
+assert.deepStrictEqual(planRenewalOffer(expiredRenewalUser, [renewalProduct]), { optionId: "v2:renew-pro:90d", trafficTier: 3 });
+assert.strictEqual(planRenewalOffer({ ...expiredRenewalUser, expiresAt: "2999-01-01T00:00:00.000Z" }, [renewalProduct]), null);
+assert.strictEqual(planRenewalOffer(expiredRenewalUser, [{ ...renewalProduct, isForSale: false }]), null);
+assert.strictEqual(planRenewalOffer(expiredRenewalUser, [{ ...renewalProduct, periods: [{ ...renewalProduct.periods[0], isEnabled: false }] }]), null);
+assert.strictEqual(planRenewalOffer({ ...expiredRenewalUser, productCatalogVersion: 1 }, [renewalProduct]), null);
 
 const linkedXuiUser = {
   productCatalogVersion: 2,

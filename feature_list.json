@@ -1061,7 +1061,7 @@
       "id": "account-overview-bento",
       "name": "Account overview bento layout",
       "description": "Rebuild the /account overview cards as a bento layout on an 8-column grid, with a reusable BentoCard (span 1-8, large radius, tone variants) and BentoButton (same radius) built on shadcn Card/Button, a hello banner with the user email, and an orange-400 plan details card.",
-      "status": "in_progress",
+      "status": "passing",
       "ui": true,
       "dependencies": [],
       "done_criteria": [
@@ -1086,8 +1086,293 @@
         "2026-09-26: Home IP button on the plan card spans the full row at every width, drops the HousePlug icon, keeps its text left-aligned and ends with a white Lucide ArrowUpRight. Browser check: 433px of 433px inner width at desktop, 208/210 at 900px and 275/277 at 375px (text wraps, 52px tall), one svg with color rgb(255,255,255) inside the button, no card or page overflow, no uncaught errors, React warnings or Vite errors. npm run check, npm run verify:fast and git diff --check passed.",
         "2026-09-26: Removed the plan status badge. The banner spans the full row (8x2). With a plan: plan details 4x4 on the left; traffic usage 4x2 top right; a new 可使用设备数 card 2x2 (online devices / device limit) and a compact node status card 2x2 (online / total, plus offline count and check time) below it; then personal info 4x2 + visitor IP 4x2, subscription link 5x3 + announcements 3x3 (link spans 8 without announcements), traffic chart 8x3. Expiry date and plan quota are small text under the days-left line. Without a plan: plan 4x2 + node status 4x2, personal info 4x2 + visitor IP 4x2, announcements 8x3. Browser check at 1351px: measured placement matches (plan col1 row3 4x4, traffic col5 row3 4x2, devices col5 row5 2x2, node col7 row5 2x2) with no plan badge; at 1351, 1280, 1100, 900 and 375px no card overflows and the page has no horizontal scroll; no uncaught errors, React warnings or Vite errors. npm run check, npm run verify:fast and git diff --check passed.",
         "2026-09-26: Halved the plan block: plan details 4x2, traffic usage 4x1 (remaining % beside the title, bar and one detail line below), device limit 2x1 and node status 2x1 (one line each; node check time moved to the line's title tooltip). One-row BentoCards use gap-2 py-4. Plan name is text-3xl, 8px under the title. Row spans now apply from lg (fixed row units still from xl) and announcements span the full row at md, removing grid holes at 768-1279px. Browser check: at 1351px measured placement plan col1 row3 4x2 (256px), traffic col5 row3 4x1 (120px), devices col5 row4 2x1, node col7 row4 2x1; a column-by-column hole scan finds no holes at 1258, 1280, 1100 and 900px; no card overflows at those widths or 375px; no uncaught errors, React warnings or Vite errors. npm run check, npm run verify:fast and git diff --check passed.",
-        "Open: the console still shows a 502 from /api/account/ip-info on the local dev server (the external IP lookup is unreachable locally), which is unrelated to this layout change. Earlier [vite] Failed to reload messages were transient mid-edit HMR errors; the module now serves 200."
-      ]
+        "Earlier note: the console showed a 502 from /api/account/ip-info on the local dev server (the external IP lookup is unreachable locally). Earlier [vite] Failed to reload messages were transient mid-edit HMR errors.",
+        "2026-09-26: Fixed the two console errors on /account: node-status is only requested for an active self-hosted plan (it returned 403 otherwise), and /api/account/ip-info reports lookup failures as 200 with an error field instead of 502. Browser check with test2@admin.com (no plan and a seeded expired plan) at 755px and 375x812: every /api/account request returns 200, the console has no errors and the page has no uncaught errors. Active-plan layouts were checked in the earlier entries; the active plan state was not re-seeded to avoid provisioning a 3x-ui client. npm run check, npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Logged in as test2@admin.com with no plan, and with a seeded expired V2 plan, and opened /account at 755px and 375x812; closed the announcement dialog.",
+          "Confirmed no GET /api/account/node-status is sent without an active self-hosted plan and the node status card reads 开通套餐后可查看.",
+          "Confirmed GET /api/account/ip-info returns 200 with an error body when the lookup is unreachable and the IP card shows IP 信息服务暂不可用。",
+          "At 375px the page and the plan card have no horizontal or vertical overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-26"
+      }
+    },
+    {
+      "id": "expired-plan-renewal",
+      "name": "Expired plan renewal entry",
+      "description": "When a user's plan has expired and its V2 product, period and traffic setting are still publicly sold, the /account plan details card shows a 续费 button instead of 购买服务. It opens the checkout with the same product (line), period and traffic tier preselected. Renewal is a normal new purchase; fulfilment is unchanged. Plans no longer publicly sold (or V1 plans) keep the 购买服务 entry.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "GET /api/account/overview returns subscription.renewal { optionId, trafficTier } only for expired V2 plans whose product is enabled, for sale, in stock and whose period and traffic tier still resolve; otherwise null.",
+        "The plan details card shows 续费 for expired plans with a renewal offer and 购买服务 otherwise.",
+        "续费 opens /account/plans/checkout with the original period selected and the traffic slider at the original tier.",
+        "/account and the checkout page render with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-26: test.js asserts planRenewalOffer returns v2:<product>:<period> with trafficTier 3 for an expired plan with 2 traffic steps, and null for an active plan, an unlisted product, a disabled period and a V1 plan. npm test and npm run check passed.",
+        "2026-09-26: npm run verify stopped at test:payment because TEST_DATABASE_URL is not configured in this environment's .env; the payment, wallet and catalog-v2 database tests were not run. Payment and fulfilment code is unchanged by this feature.",
+        "2026-09-26: Expired plans with a renewal offer show the product name instead of 暂无套餐. Browser check passed (see browser_verification); npm run check, npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/plans/checkout?option=v2:renewal-test-pro:90d&traffic=3"
+        ],
+        "interactions": [
+          "Seeded a publicly sold V2 recurring product (30d/90d, 50 GB traffic steps) and bound test2@admin.com to an expired 90d plan with 2 traffic steps; restored the account and deleted the product and line group afterwards.",
+          "/account plan card showed 续费测试 PRO, 套餐已于 2026/08/30 到期，续费后恢复使用。 and a 续费 link to /account/plans/checkout?option=v2%3Arenewal-test-pro%3A90d&traffic=3.",
+          "Clicked 续费: checkout loaded with 90 天 selected, the traffic slider at tier 3 and POST /api/orders/quote 200 (¥80 + ¥20 traffic + 3% tax = ¥103).",
+          "Took the product off sale: the card fell back to 暂无套餐 with 购买服务 linking to /account/plans.",
+          "At 375x812 the 续费 button is 84x44px and neither the page nor the card overflows."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-26"
+      }
+    },
+    {
+      "id": "checkout-v2-traffic-label",
+      "name": "Checkout traffic slider label for V2 plans",
+      "description": "The checkout traffic slider's 当前选择 label computed base traffic x tier, but V2 recurring plans add product.trafficCustomization.stepBytes per step. The V2 quote now returns trafficStepGb and the label shows base + (tier - 1) x step; legacy V1 quotes have no step and keep base x tier.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "For a V2 product with a step size different from its base traffic, the 当前选择 label matches the order summary and quote.trafficGb at every tier.",
+        "The label for legacy V1 quotes is unchanged (base x tier).",
+        "The checkout page renders with no console or page errors at desktop and mobile widths."
+      ],
+      "verification": [
+        "2026-09-26: Reproduced with a seeded V2 product (30d, 100 GB base, 50 GB step, 4 steps): at tier 3 the label read 每月 300 GB while the product and the summary read 200 GB.",
+        "2026-09-26: catalogV2Quote returns trafficStepGb; CheckoutPage computes selectedTrafficGb = base + (tier - 1) x (trafficStepGb ?? base). No unit test: catalogV2Quote needs the database, and the V2 DB tests cannot run here without TEST_DATABASE_URL. npm run check, npm run verify:fast and git diff --check passed. The seeded product and line group were deleted afterwards.",
+        "2026-09-26: The slider card description for V2 plans now reads 每档在套餐默认流量上增加 <step> GB instead of 可按套餐默认流量的倍数增加 (kept for V1). Browser check with a re-seeded V2 product (50 GB step): V2 shows the step text with label 每月 200 GB at tier 3, V1 pro-30 keeps the original text, no console errors. The seeded product was deleted afterwards. npm run check, npm run verify:fast, npm run verify:harness and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans/checkout?option=v2:slider-test-pro:30d&traffic=3",
+          "/account/plans/checkout?option=pro-30&traffic=2"
+        ],
+        "interactions": [
+          "V2 tier 3: 当前选择 每月 200 GB matches 流量定制至每月 200 GB.",
+          "Moved the slider with the keyboard to tier 5 (End): label and summary 300 GB, 待付金额 ¥72.10; to tier 1 (Home): label 100 GB, no customization line, ¥30.90.",
+          "V1 pro-30 at tier 2: label 每月 200 GB matches the summary; the V1 quote has no trafficStepGb.",
+          "At 375x812 the checkout page has no horizontal overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-26"
+      }
+    },
+    {
+      "id": "account-banner-shop-entry",
+      "name": "Account banner greeting and shop entry",
+      "description": "The /account banner reads What's up, on the first line and <email> ! on the next line, both at the same size; the banner purchase button reads 前往商城 with its icon before the text. The node status card follows the traffic usage and device limit cards and is hidden without an active plan (expired or never purchased); the plan details card then spans the full row.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The banner shows What's up, on the first line and <email> ! on the second line, both at the same font size.",
+        "The banner button reads 前往商城 with the icon to the left of the text and links to /account/plans.",
+        "Without an active plan (expired or no purchase) the traffic usage, device limit and node status cards are all hidden and the plan card spans 8 columns with no grid holes.",
+        "With an active plan the node status card is still shown beside the device limit card.",
+        "/account renders with no console or page errors at desktop and mobile widths."
+      ],
+      "verification": [
+        "2026-09-26: Banner h2 now has two lines: What's up, (text-5xl, lg text-6xl) and <email> ! (text-4xl, lg text-5xl; a non-breaking space keeps ! with the email). The banner button reads 前往商城 with ArrowRight before the text. The node status card moved inside the active-plan block with the traffic usage and device limit cards; without an active plan the plan details card spans 8 columns. The node card's note for active non-self-hosted plans is now 当前线路暂不支持. npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-26: What's up, now uses the same size as the email line (the per-line text-5xl/lg:text-6xl was removed; both inherit text-4xl/lg:text-5xl). Browser check: both lines 36px at 755px and 48px at 1300px, no horizontal scroll, no console errors. npm run check, npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Logged in as expired-unlisted@xela.test (expired plan, seeded by scripts/seed-local-test-data.js) and closed the announcement dialog.",
+          "755px: line 1 What's up, and line 2 expired-unlisted@xela.test ! both at 36px (48px at 1300px); button text 前往商城 with the svg as first child, href /account/plans; no 节点状态 card.",
+          "1300px: grid rows are banner 8, plan details 8, personal info 4 + visitor IP 4, announcements 8, traffic chart 8, with no holes.",
+          "375x812: the email wraps at @ with ! attached, the button is 112x44px, no card overflows and the page has no horizontal scroll.",
+          "Temporarily moved the test plan's expiry 20 days ahead: at 1300px plan 4x2, traffic usage 4x1, devices 2x1 and node status 2x1 (3 / 3 在线), node-status 200; then restored the expiry."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-26"
+      }
+    },
+    {
+      "id": "online-ip-count-label",
+      "name": "Rename device limit to online IP count",
+      "description": "Every 可使用设备数 label in the user and admin UI (account overview card, pricing and checkout pages, onboarding demo, admin plan change and 3x-ui client dialogs, product settings) and the default FAQ now read 在线IP数量, and device counts no longer carry the 台 unit. The admin 设备数 labels (V2 product editor, user detail V2 snapshot, xui resync description) and the matching server validation messages were renamed too.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "No 可使用设备数 text remains in server.js or src; device counts show without 台.",
+        "User pages (/account, /account/plans, checkout) show 在线IP数量 and bare numbers.",
+        "Admin pages (user detail plan change, 3x-ui client dialog, product settings) show 在线IP数量.",
+        "Affected pages render with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-26: Replaced every 可使用设备数 in server.js and src with 在线IP数量 and removed the 台 unit from device counts (account overview card title, 台在线 and 台上限 suffixes, pricing/plans/checkout labels, onboarding demo, admin plan change diff and summary, V2 snapshot info, 3x-ui client dialog, product settings labels and descriptions, default FAQ). grep finds no 可使用设备数 and no digit/placeholder followed by 台. npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-26: Browser (user pages): /pricing and /account/plans show 在线IP数量：2 / 5; checkout for test-standard shows 在线IP数量：3 in the product card and cycles; /account with an active lifetime plan shows the 在线IP数量 card as 2 / 99 在线 with no overflow; no 数字+台 text on any of these pages and no console errors.",
+        "Note: the FAQ shown on /pricing and /account/plans comes from the saved sales settings (question “可使用设备数”是指什么？我可以分享订阅链接给朋友吗？), so it must be edited in 销售设置; the code change only updates the default FAQ.",
+        "2026-09-26: Renamed the remaining admin 设备数 labels and server validation messages to 在线IP数量; grep finds no 设备数 in server.js, src or commerce. Admin browser check passed (see browser_verification). npm run check, npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/pricing",
+          "/account/plans",
+          "/account/plans/checkout?option=v2:test-standard:90d&traffic=1",
+          "/account",
+          "/catalog-v2/products/test-standard",
+          "/catalog-v2/products/test-lifetime",
+          "/pricing-settings/pro/recurring",
+          "/pricing-settings/pro/lifetime",
+          "/users/detail/:id"
+        ],
+        "interactions": [
+          "User pages: 在线IP数量：N on pricing, plans and checkout; /account card 在线IP数量 2 / 99 在线; no digit+台 text.",
+          "Admin (logged in by the user): V2 recurring editor shows 3 period fields labelled 在线IP数量 and the lifetime editor 1; V1 product settings show 4 recurring fields, the description 固定流量版本的周期价格和在线IP数量。 and the lifetime field.",
+          "Seeded V2 user detail: V2 商品 tab shows 在线IP数量 3; 更改套餐 with 测试 不限时 200G previews 在线IP数量 | 3 | 2 and the impact text 套餐权限、在线IP数量和流量配额; closed without submitting.",
+          "Non-self-hosted user detail: 切换到自研线路 dialog (导入到3x-ui) shows 在线IP数量 3; closed without submitting. Only GET requests were sent.",
+          "The onboarding demo (/onboarding) redirects to /account for these accounts and was not rendered; its change is static text."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-26"
+      }
+    },
+    {
+      "id": "admin-plan-tier-label",
+      "name": "Admin change-plan traffic tier labels",
+      "description": "The admin user detail 更改套餐 dialog labelled each traffic tier with selectedPlanConfig.baseGb * tier, a field that does not exist, so every option read NaN GB. Tier labels now use the V2 additive formula baseBytes + (tier - 1) * stepBytes, the same one planPreview uses.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "For test-standard (100 GB base, 50 GB step, 4 steps) the 定制流量 options read 100/150/200/250/300 GB.",
+        "The selected tier's label matches the 流量配额 row in the change preview.",
+        "The dialog renders with no console or page errors; nothing is submitted during verification."
+      ],
+      "verification": [
+        "2026-09-26: Reproduced with the seeded expired-renew@xela.test user (test-standard 90d, tier 3): 更改套餐 showed 第 1-5 档 · NaN GB.",
+        "2026-09-26: details.tsx tier options now render formatBytes(baseBytes + (tier - 1) * stepBytes), matching planPreview. npm run check, npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/:id (expired-renew@xela.test)"
+        ],
+        "interactions": [
+          "Logged in as admin (by the user), opened 更改套餐: the 定制流量 options read 第 1 档 · 100 GB, 150 GB, 200 GB, 250 GB, 第 5 档 · 300 GB and the current tier shows 第 3 档 · 200 GB with no change rows.",
+          "Selected 第 5 档 · 300 GB: the preview shows 流量配额 | 200 GB | 300 GB.",
+          "Closed the dialog with Escape without submitting; only GET requests were sent."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-26"
+      }
+    },
+    {
+      "id": "traffic-card-green-progress",
+      "name": "Traffic usage card default surface with green progress bar",
+      "description": "The /account traffic usage card uses the default card surface instead of the green tone; its progress bar indicator uses a darker green (--color-bento-green-strong, #2fa92e) on a 20% track of the same color, is twice as tall (h-4 instead of h-2) and has a smaller radius (rounded-sm, 6px). The base Progress component is unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The traffic usage card background matches the other default bento cards in light and dark themes.",
+        "The progress indicator is rgb(47, 169, 46) on a 20% track of the same color, 16px tall, with a 6px radius.",
+        "Other Progress instances keep their default style.",
+        "/account renders with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-26: TrafficUsageCard drops tone=\"green\"; its Progress gets className h-4 bg-bento-green/20 *:data-[slot=progress-indicator]:bg-bento-green, so only this bar changes. npm run check, npm run verify:fast and git diff --check passed.",
+        "2026-09-26: Darkened the bar to a new --color-bento-green-strong token (#2fa92e, about 3:1 on the white card and 5.9:1 on the dark card) with a 20% track of the same color, and set rounded-sm (6px) instead of rounded-full. Browser check in light and dark: indicator rgb(47, 169, 46), radius 6px, height 16px, no card overflow; the 个人信息 VIP bar keeps rounded-full and the primary color; no console errors. npm run check, npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Opened /account with an account that has an active plan (session provided by the user).",
+          "Light: card data-tone default, background oklch(1 0 0) like the 在线IP数量 card; indicator rgb(47, 169, 46), track the same green at 20%, bar 16px with a 6px radius.",
+          "Dark (site theme toggle, then toggled back): card rgb(23, 23, 23) like other cards, title oklch(0.985 0 0), indicator rgb(47, 169, 46), radius 6px.",
+          "1300px: the one-row card is 465x120px with no overflow; the 个人信息 VIP progress bar keeps 8px and the primary color. 375px: bar 16px, no card or page overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-26"
+      }
+    },
+    {
+      "id": "traffic-usage-color-bands",
+      "name": "Traffic usage bar color bands",
+      "description": "The /account traffic usage bar is one solid color chosen by usage band, using five colors sampled from the reference image at 20/40/60/80/100%: <=20% #72c238, <=40% #d1b60c, <=60% #ff9e07, <=80% #ff7825, above 80% #ff594c. The unused track is muted; height 16px and 6px radius are kept. The base Progress component is unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "traffic-card-green-progress"
+      ],
+      "done_criteria": [
+        "The indicator is a solid color (no gradient) matching its usage band, with band limits inclusive (exactly 20% is the 20% color).",
+        "The unused track uses the muted surface; height 16px and 6px radius are kept.",
+        "Other Progress instances keep their default style.",
+        "/account renders with no console or page errors in light and dark themes."
+      ],
+      "verification": [
+        "2026-09-26: Replaced the earlier gradient attempt (the user wanted solid band colors, not a gradient); removed the usage-gradient-progress utility, the --usage @property and the low/mid/high tokens.",
+        "2026-09-26: Colors sampled from the reference image (pure-Python PNG decode, bar x 61-1459, averaged patches) at 20/40/60/80/100%: #72c238, #d1b60c, #ff9e07, #ff7825, #ff594c, stored as --color-usage-20..100. TrafficUsageCard picks one class per band via usageBarClass (first limit >= usage, limits 20/40/60/80/Infinity). npm run check, npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Active-plan account at 59.9% used: solid indicator rgb(255, 158, 7) (60% band), background-image none, track oklch(0.97 0 0), 16px tall, 6px radius.",
+          "Swapped the band class in the page (display only, 300ms per band to let the 150ms color transition finish): 20% rgb(114, 194, 56), 40% rgb(209, 182, 12), 60% rgb(255, 158, 7), 80% rgb(255, 120, 37), 100% rgb(255, 89, 76); restored afterwards.",
+          "Dark theme (site toggle, then back): indicator rgb(255, 158, 7) on track oklch(0.269 0 0), no card overflow; the 个人信息 VIP progress bar keeps the primary color and full radius."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-26"
+      }
+    },
+    {
+      "id": "home-ip-button-short-label",
+      "name": "Short home IP button label on phones",
+      "description": "Below the sm breakpoint (640px) the home IP button on the plan details card shows only 定制家宽IP plus the arrow icon; from 640px up it keeps the full AI被降智？定制纯净家宽 IP · ¥<price> 起 text. The earlier dark-mode page-primary change for this button was reverted at the user's request.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "At widths below 640px the button reads 定制家宽IP with the arrow and fits on one line.",
+        "At 640px and wider the button shows the full text with the starting price.",
+        "The button keeps the surface's dark background and white arrow in both themes (dark-mode change reverted).",
+        "/account renders with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-26: Reverted the home IP button dark-mode change: removed the page-primary utility and --page-primary tokens from styles.css, removed page-primary from the button and restored the arrow's text-white. The button label now has two spans: 定制家宽IP (sm:hidden) and the full text with the price (hidden sm:inline). npm run check, npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Active-plan account with a home IP offer, dark theme (the user's setting).",
+          "375px and 639px: the button reads 定制家宽IP with the arrow, 44px tall, background oklch(0.205 0 0) and a white arrow (revert confirmed); no horizontal page scroll.",
+          "640px, 900px and 1300px: the button reads AI被降智？定制纯净家宽 IP · ¥39.00 起 on one line (44px); the plan card does not overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-26"
+      }
     }
   ]
 }

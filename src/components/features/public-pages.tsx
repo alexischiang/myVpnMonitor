@@ -60,7 +60,7 @@ const defaultPlans = [
 ]
 
 const defaultPricingFaqs: FaqSetting[] = [
-  { id: "devices", question: "“可使用设备数”是指什么？", answer: "指同一订阅可同时使用的设备数量，手机、电脑和平板等各计为一台；具体数量以所选套餐和计费周期显示为准。" },
+  { id: "devices", question: "“在线IP数量”是指什么？", answer: "指同一订阅可同时在线的 IP 数量，同一网络下的多个设备通常只占用一个 IP；具体数量以所选套餐和计费周期显示为准。" },
   { id: "gpt", question: "哪些套餐支持 GPT 解锁？", answer: "当前 PRO 套餐明确包含稳定 GPT 解锁。其他套餐能力请以套餐卡片的功能列表为准；实际可用性可能受目标平台策略和网络环境影响。" },
   { id: "discount", question: "季度、半年和年度套餐如何计算优惠？", answer: "页面折扣以月付价格乘以对应月数作为基准计算，周期价格旁的百分比就是相比连续月付节省的比例。" },
   { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "新套餐支付成功后会立即覆盖当前套餐，原套餐剩余有效期和流量不再保留。提交订单前会要求再次确认。" },
@@ -150,7 +150,7 @@ export function PricingPage() {
                 const recommended = lifetime ? plan.lifetimeRecommended : plan.recommended
                 const features = [
                   { label: lifetime ? plan.lifetimeTraffic : plan.traffic },
-                  { label: `可使用设备数：${lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]} 台` },
+                  { label: `在线IP数量：${lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]}` },
                   ...(lifetime ? plan.lifetimeFeatures || [] : plan.features).map(label => ({ label })),
                   ...(lifetime ? plan.lifetimeUnavailableFeatures || [] : plan.unavailableFeatures).map(label => ({ label, available: false })),
                 ]
@@ -204,6 +204,7 @@ type CheckoutQuote = {
   trafficCustomizationAmount: number
   trafficTier?: number
   trafficBaseGb?: number
+  trafficStepGb?: number
   trafficGb?: number
   trafficMaxTier?: number
   trafficTierMarkupPercent?: number
@@ -249,7 +250,7 @@ export function CheckoutPage() {
   const submissionStartingRef = React.useRef(false)
   const [useBalance, setUseBalance] = React.useState(true)
   const [addOns, setAddOns] = React.useState<string[]>([])
-  const [trafficTier, setTrafficTier] = React.useState(1)
+  const [trafficTier, setTrafficTier] = React.useState(() => Math.max(1, Math.trunc(Number(searchParams.get("traffic"))) || 1))
   const [replacementOpen, setReplacementOpen] = React.useState(false)
 
   async function loadQuote(code = "", nextOptionId = optionId, nextUseBalance = useBalance, nextAddOns = addOns, nextTrafficTier = trafficTier) {
@@ -340,6 +341,8 @@ export function CheckoutPage() {
   if (!quote) return <EmptyState title={trafficPack ? "流量包不可用" : homeIp ? "家宽 IP 不可用" : "套餐不可用"} description={standaloneAddOn ? "请确认当前有生效中的周期性套餐，并检查商品是否已上架。" : "请返回套餐页重新选择。"} />
   const isStandaloneAddOn = standaloneAddOn || quote.purchaseAction === "add_on"
   const monthlyPrice = quote.cycles.find(cycle => cycle.durationDays === 30 || billingMonths(cycle.optionId) === 1 && cycle.optionId.endsWith("-30"))?.amount || quote.originalAmount
+  // V2 tiers add trafficStepGb per step; legacy plans have no step and multiply the base traffic.
+  const selectedTrafficGb = Number(((quote.trafficBaseGb || 0) + (trafficTier - 1) * (quote.trafficStepGb ?? quote.trafficBaseGb ?? 0)).toFixed(2))
   const couponApplied = Boolean(quote.couponCode && quote.couponCode === couponCode.trim().toUpperCase())
   const actionMessage = quote.purchaseAction === "add_on"
     ? quote.fulfillment?.mode === "automatic" ? "支付成功后附加服务将自动发放。" : "支付成功后将进入人工交付。"
@@ -356,18 +359,18 @@ export function CheckoutPage() {
           <Card>
             <CardHeader><CardTitle>{quote.planName} · {quote.title}</CardTitle><CardDescription>{quote.description}</CardDescription></CardHeader>
             <CardContent className="grid gap-4">
-              <div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{quote.traffic}</p>{quote.devices ? <p className="flex items-center gap-2"><Check className="size-4" />可使用设备数：{quote.devices} 台</p> : null}{quote.features.map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}</div>
+              <div className="grid gap-3 text-sm"><p className="flex items-center gap-2"><Check className="size-4" />{quote.traffic}</p>{quote.devices ? <p className="flex items-center gap-2"><Check className="size-4" />在线IP数量：{quote.devices}</p> : null}{quote.features.map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}</div>
             </CardContent>
           </Card>
           {isStandaloneAddOn ? null : <Card>
             <CardHeader><CardTitle>{homeIp ? "选择服务地区" : "选择计费周期"}</CardTitle><CardDescription>{homeIp ? "不同地区按后台配置的月费结算，每次服务 30 天。" : "选择适合你的购买周期"}</CardDescription></CardHeader>
-            <CardContent><RadioGroup value={optionId} onValueChange={selectCycle} disabled={loading} className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{quote.cycles.map(cycle => <FieldLabel key={cycle.optionId} htmlFor={`cycle-${cycle.optionId}`} className="w-full cursor-pointer sm:min-w-0 sm:flex-1 sm:basis-[calc(50%-0.375rem)]"><Field orientation="horizontal" className="h-full w-full rounded-md border p-4 has-[[data-state=checked]]:border-primary"><FieldContent className="flex-1"><FieldTitle className="flex items-center gap-1.5 leading-[18px]">{quote.unlimited ? <>{cycle.label.replace(/\s*无限流量$/, "")}<Badge variant="outline" className={`${inlinePlanBadgeClass} relative isolate overflow-hidden border-transparent bg-[linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec4899)] bg-clip-padding text-white dark:bg-[linear-gradient(135deg,#0284c7,#7c3aed,#db2777)]`}><span aria-hidden className="premium-shine absolute inset-0" /><span className="relative flex h-full items-center leading-none">无限流量</span></Badge></> : cycle.label}{homeIp ? null : <BillingDiscount monthlyPrice={monthlyPrice} totalPrice={cycle.amount} months={billingMonths(cycle.optionId)} />}</FieldTitle><FieldDescription>{formatMoney(cycle.amount)}{cycle.devices ? ` · 可使用设备数：${cycle.devices} 台` : ""}</FieldDescription></FieldContent><RadioGroupItem id={`cycle-${cycle.optionId}`} value={cycle.optionId} /></Field></FieldLabel>)}</RadioGroup></CardContent>
+            <CardContent><RadioGroup value={optionId} onValueChange={selectCycle} disabled={loading} className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{quote.cycles.map(cycle => <FieldLabel key={cycle.optionId} htmlFor={`cycle-${cycle.optionId}`} className="w-full cursor-pointer sm:min-w-0 sm:flex-1 sm:basis-[calc(50%-0.375rem)]"><Field orientation="horizontal" className="h-full w-full rounded-md border p-4 has-[[data-state=checked]]:border-primary"><FieldContent className="flex-1"><FieldTitle className="flex items-center gap-1.5 leading-[18px]">{quote.unlimited ? <>{cycle.label.replace(/\s*无限流量$/, "")}<Badge variant="outline" className={`${inlinePlanBadgeClass} relative isolate overflow-hidden border-transparent bg-[linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec4899)] bg-clip-padding text-white dark:bg-[linear-gradient(135deg,#0284c7,#7c3aed,#db2777)]`}><span aria-hidden className="premium-shine absolute inset-0" /><span className="relative flex h-full items-center leading-none">无限流量</span></Badge></> : cycle.label}{homeIp ? null : <BillingDiscount monthlyPrice={monthlyPrice} totalPrice={cycle.amount} months={billingMonths(cycle.optionId)} />}</FieldTitle><FieldDescription>{formatMoney(cycle.amount)}{cycle.devices ? ` · 在线IP数量：${cycle.devices}` : ""}</FieldDescription></FieldContent><RadioGroupItem id={`cycle-${cycle.optionId}`} value={cycle.optionId} /></Field></FieldLabel>)}</RadioGroup></CardContent>
           </Card>}
           {!trafficPack && !quote.lifetime && (quote.trafficMaxTier || 1) > 1 ? <Card>
-            <CardHeader><CardTitle>定制每月流量</CardTitle><CardDescription>可按套餐默认流量的倍数增加，价格根据所选流量自动计算。</CardDescription></CardHeader>
+            <CardHeader><CardTitle>定制每月流量</CardTitle><CardDescription>{quote.trafficStepGb ? `每档在套餐默认流量上增加 ${quote.trafficStepGb} GB，价格根据所选流量自动计算。` : "可按套餐默认流量的倍数增加，价格根据所选流量自动计算。"}</CardDescription></CardHeader>
             <CardContent className="grid gap-4">
               <Slider aria-label="每月流量" min={1} max={quote.trafficMaxTier} step={1} value={[trafficTier]} onValueChange={values => setTrafficTier(values[0] || 1)} onValueCommit={selectTrafficTier} disabled={loading || submitting} />
-              <Item variant="muted"><ItemContent><ItemDescription>当前选择</ItemDescription><ItemTitle>每月 {(quote.trafficBaseGb || 0) * trafficTier} GB</ItemTitle></ItemContent><ItemActions><span className="text-xl font-semibold tabular-nums">{formatMoney(quote.originalAmount)}</span></ItemActions></Item>
+              <Item variant="muted"><ItemContent><ItemDescription>当前选择</ItemDescription><ItemTitle>每月 {selectedTrafficGb} GB</ItemTitle></ItemContent><ItemActions><span className="text-xl font-semibold tabular-nums">{formatMoney(quote.originalAmount)}</span></ItemActions></Item>
             </CardContent>
           </Card> : null}
           {isStandaloneAddOn || quote.lifetime ? null : <Card>
