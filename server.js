@@ -4224,15 +4224,27 @@ function nextXuiCycleResetAt(user = {}, now = Date.now()) {
 
 // N-day per-day usedBytes series for a user (from the daily table), zero-filled for
 // missing days, matching the account chart's { date, usedBytes } shape.
-async function xuiUserDailyUsageSeries(email, days = 7, now = Date.now()) {
-  const to = chinaDateKey(now);
-  const from = chinaDateKey(now - (days - 1) * 86400000);
-  const rows = await dataStore.xuiUserDailySeries(String(email || "").trim().toLowerCase(), from, to);
-  const byDate = new Map(rows.map(row => [row.date, row.up + row.down]));
-  return Array.from({ length: days }, (_, index) => {
-    const date = chinaDateKey(now - (days - 1 - index) * 86400000);
-    return { date, usedBytes: byDate.get(date) || 0 };
-  });
+// The account overview's per-node daily usage over the last 30 days, weighted by each node's
+// current multiplier like quota billing. Nodes are named after the first inbound this user can
+// see on them (the names on their node status page), so internal node remarks never reach users.
+async function xuiUserNodeUsage(user, days = 30, now = Date.now()) {
+  const dates = Array.from({ length: days }, (_, index) => chinaDateKey(now - (days - 1 - index) * 86400000));
+  const [rawRows, management, groups, billingState] = await Promise.all([
+    dataStore.xuiUserDailyNodeSeries(String(xuiClientEmail(user) || "").trim().toLowerCase(), dates[0], dates[dates.length - 1]),
+    xuiInboundManagementView(),
+    user.productCatalogVersion === 2 ? dataStore.listCatalogV2LineGroups() : [],
+    getXuiBillingState()
+  ]);
+  const multipliers = billingState?.multipliers || {};
+  const rows = rawRows.map(row => ({ ...row, bytes: Math.round(row.bytes * xuiMultiplier(multipliers[row.nodeGuid])) }));
+  const v2Group = groups.find(group => group.id === user.v2LineGroupId && group.isEnabled) || null;
+  const guidByInboundId = new Map((management.inbounds || []).map(inbound => [String(inbound.id), inbound.nodeGuid]));
+  const labelByGuid = new Map();
+  for (const inbound of publicAccountNodeStatus(user, management, v2Group).inbounds) {
+    const guid = guidByInboundId.get(inbound.id);
+    if (guid && !labelByGuid.has(guid)) labelByGuid.set(guid, inbound.name);
+  }
+  return xuiTraffic.accountNodeUsage(rows, labelByGuid, dates);
 }
 
 // Build the admin presence + today's per-node/per-user traffic overview from the
@@ -9051,7 +9063,7 @@ async function handleApi(req, res, pathname) {
       return;
     }
     if (user.xuiLastTraffic) {
-      sendJson(res, 200, { ...user.xuiLastTraffic, dailyUsage: await xuiUserDailyUsageSeries(xuiClientEmail(user)) });
+      sendJson(res, 200, { ...user.xuiLastTraffic, nodeUsage: await xuiUserNodeUsage(user) });
     }
     else sendJson(res, 503, { error: "流量数据正在进行首次同步，请稍后查看。" });
     return;

@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { ArrowRight, ArrowUpRight, BadgeCheck, BookOpen, Check, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Info, Loader2, PackagePlus, Percent, RefreshCw, Users, WalletCards, type LucideIcon } from "lucide-react"
+import { ArrowRight, ArrowUpRight, BadgeCheck, BookOpen, Check, ChevronDown, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Info, Loader2, PackagePlus, Percent, RefreshCw, Users, WalletCards, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { clearJsonCache, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
@@ -12,28 +12,31 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { type CarouselApi, Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel"
 import { Checkbox } from "@/components/ui/checkbox"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
+import { Item, ItemGroup } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
+import type { AccountNodeUsage } from "@/components/features/account-traffic-chart"
 import { BentoButton } from "@/components/features/bento-button"
 import { BentoCard, BentoGrid, bentoSpanClass, type BentoRowSpan, type BentoSpan } from "@/components/features/bento-card"
 import { DataTableRowActions } from "@/components/features/data-table"
 import { MarkdownContent } from "@/components/features/markdown-content"
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
+import { ProgressRing } from "@/components/features/progress-ring"
 import { VipBadge } from "@/components/features/vip-badge"
 import { cn } from "@/lib/utils"
 import { formatDate, formatDateTime, formatMoney, purchasedPlanName } from "@/utils"
 
 import type { PaymentOrder } from "@/components/features/cashier-types"
 type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; unlimited?: boolean; trafficTier?: number; purchasedTrafficGb?: number; currentProductSnapshot?: Record<string, unknown>; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number } | null }
-type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; dailyUsage: Array<{ date: string; usedBytes: number }>; stale?: boolean; error?: string }
+type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; nodeUsage: AccountNodeUsage; stale?: boolean; error?: string }
 type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
 type IpInfo = { ip: string; asn?: number; asOrganization?: string; country?: string; countryCode?: string; region?: string; regionCode?: string; city?: string; timezone?: string; fraudScore?: number; isResidential?: boolean; isBroadcast?: boolean }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
@@ -41,15 +44,17 @@ type AccountService = { id: string; orderId: string; name: string; regionName?: 
 type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
 type WalletData = { balance: number; cashBalance: number; giftBalance: number; referralBalance: number; realCashBalance?: number; virtualCashBalance?: number; availableRealCashBalance?: number; availableVirtualCashBalance?: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
+// Local development cannot resolve a loopback address, so the overview shows this sample instead of an error.
+const devSampleIpInfo: IpInfo = { ip: "203.0.113.42", asn: 4134, asOrganization: "CHINANET", countryCode: "CN", regionCode: "GD", city: "Shenzhen", timezone: "Asia/Shanghai" }
 type ImportClient = "shadowrocket" | "sparkle" | "clash-meta" | "clash-verge"
 
 const AccountTrafficChart = React.lazy(() => import("@/components/features/account-traffic-chart").then(module => ({ default: module.AccountTrafficChart })))
 
-const importClients: Record<ImportClient, { name: string; app: string; scheme: string }> = {
-  shadowrocket: { name: "Shadowrocket", app: "小火箭", scheme: "shadowrocket://add/" },
-  sparkle: { name: "Sparkle", app: "Sparkle", scheme: "mihomo://install-config?url=" },
-  "clash-meta": { name: "Clash Meta for Android", app: "Clash Meta", scheme: "clash://install-config?url=" },
-  "clash-verge": { name: "Clash Verge Rev", app: "Clash Verge Rev", scheme: "clash://install-config?url=" },
+const importClients: Record<ImportClient, { name: string; app: string; label: string; platform: string; scheme: string }> = {
+  shadowrocket: { name: "Shadowrocket", app: "小火箭", label: "Shadowrocket", platform: "iOS", scheme: "shadowrocket://add/" },
+  sparkle: { name: "Sparkle", app: "Sparkle", label: "Sparkle", platform: "桌面端", scheme: "mihomo://install-config?url=" },
+  "clash-meta": { name: "Clash Meta for Android", app: "Clash Meta", label: "Clash Meta", platform: "Android", scheme: "clash://install-config?url=" },
+  "clash-verge": { name: "Clash Verge Rev", app: "Clash Verge Rev", label: "Clash Verge", platform: "桌面端", scheme: "clash://install-config?url=" },
 }
 
 function todayKey() {
@@ -96,24 +101,61 @@ function CopySubscription({ value }: { value: string }) {
     }
   }
 
-  return <BentoButton variant={copied ? "success" : "outline"} aria-label={copied ? "订阅链接已复制" : "复制订阅链接"} onClick={copySubscription}><span className={copied ? "motion-safe:animate-[copy-success_180ms_ease-out]" : ""}>{copied ? <Check /> : <Copy />}</span>{copied ? "复制订阅成功" : "复制订阅链接"}</BentoButton>
+  return <BentoButton variant={copied ? "success" : "default"} aria-label={copied ? "订阅链接已复制" : "复制订阅链接"} onClick={copySubscription}><span className={copied ? "motion-safe:animate-[copy-success_180ms_ease-out]" : ""}>{copied ? <Check /> : <Copy />}</span>{copied ? "复制订阅成功" : "复制订阅链接"}</BentoButton>
 }
 
-function PersonalInfoCard({ account, span, rowSpan }: { account: Overview; span: BentoSpan; rowSpan: BentoRowSpan }) {
+function PersonalInfoCard({ account, span, rowSpan, className }: { account: Overview; span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
   const accountType = account.isSuperAccount ? "super" : account.isBusiness ? "business" : account.isFamilyFriend ? "family" : "regular"
-  const vipTarget = account.vipSpend < 360 ? { level: "VIP 2", start: 0, amount: 360 } : account.vipSpend < 900 ? { level: "VIP 3", start: 360, amount: 900 } : null
-  const vipProgress = vipTarget ? Math.min(100, Math.max(0, (account.vipSpend - vipTarget.start) / (vipTarget.amount - vipTarget.start) * 100)) : 100
+  const details = [
+    ["ID", `#${account.customerID}`],
+    ["注册时间", formatDate(account.createdAt)],
+  ]
 
-  return <BentoCard span={span} rowSpan={rowSpan} title="个人信息" action={<Badge variant="outline" className="tabular-nums">ID #{account.customerID}</Badge>}>
-    <CardContent className="grid gap-4">
-      <div className="flex min-w-0 items-center gap-4">
-        <Avatar size="lg" className="data-[size=lg]:size-15"><AvatarFallback className="bg-slate-600 text-lg font-semibold text-white dark:bg-slate-500">{account.email.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
-        <div className="grid min-w-0 flex-1 gap-2">
-          <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium"><span className="truncate">{account.email}</span><AccountVerificationIcon type={accountType} /></p>
-          <div className="flex flex-wrap items-center gap-2"><VipBadge level={account.vipLevel} /><span className="flex items-center gap-1 text-xs text-muted-foreground">专属折扣 {account.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>VIP 1：0% · VIP 2：5% · VIP 3：10%</TooltipContent></Tooltip></span></div>
+  return <BentoCard span={span} rowSpan={rowSpan} className={className} title="个人信息">
+    <CardContent className="grid flex-1 content-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <Avatar size="lg" className="data-[size=lg]:size-12"><AvatarFallback className="bg-slate-600 text-base font-semibold text-white dark:bg-slate-500">{account.email.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
+        <div className="grid min-w-0 flex-1 gap-1.5">
+          <p className="flex min-w-0 items-center gap-1.5 font-semibold"><span className="truncate" title={account.email}>{account.email}</span><AccountVerificationIcon type={accountType} /></p>
+          <div className="flex"><VipBadge level={account.vipLevel} /></div>
         </div>
       </div>
-      <div className="grid gap-1.5"><div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground"><span>{vipTarget ? `距离 ${vipTarget.level}` : "已达到最高等级"}</span><span>{vipTarget ? `还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "100%"}</span></div><Progress value={vipProgress} aria-label={`VIP 消费进度 ${Math.round(vipProgress)}%`} /></div>
+      <Item className="rounded-2xl bg-background p-3">
+        <dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
+          {details.map(([label, value]) => <React.Fragment key={label}><dt className="text-muted-foreground">{label}</dt><dd className="truncate text-right font-medium tabular-nums">{value}</dd></React.Fragment>)}
+        </dl>
+      </Item>
+    </CardContent>
+  </BentoCard>
+}
+
+function VipLevelCard({ account, span, rowSpan, className }: { account: Overview; span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
+  const vipTarget = account.vipSpend < 360 ? { level: "VIP 2", start: 0, amount: 360 } : account.vipSpend < 900 ? { level: "VIP 3", start: 360, amount: 900 } : null
+  const vipProgress = vipTarget ? Math.min(100, Math.max(0, (account.vipSpend - vipTarget.start) / (vipTarget.amount - vipTarget.start) * 100)) : 100
+  const currentLevel = account.vipLevel.replace(/^vip\s*/i, "VIP ")
+
+  return <BentoCard span={span} rowSpan={rowSpan} className={className} title="VIP 等级">
+    <CardContent className="grid flex-1 content-between justify-items-center gap-2 text-center">
+      <ProgressRing value={vipProgress} size={96} sweep={270} className="text-bento-green-strong" label={vipTarget ? `距离 ${vipTarget.level} 已完成 ${Math.round(vipProgress)}%` : "已达到最高 VIP 等级"}>
+        <strong className="text-xl font-semibold">{currentLevel}</strong>
+      </ProgressRing>
+      <div className="grid text-xs text-muted-foreground tabular-nums">
+        <span>累计消费 <span className="font-medium text-foreground">{formatMoney(account.vipSpend)}</span></span>
+        <span>{vipTarget ? `距离 ${vipTarget.level} 还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "已达到最高等级"}</span>
+        <span className="flex items-center justify-center gap-1">专属折扣 {account.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>VIP 1：0% · VIP 2：5% · VIP 3：10%</TooltipContent></Tooltip></span>
+      </div>
+    </CardContent>
+  </BentoCard>
+}
+
+// Placeholder ad slot: promotes the referral program until real ad content is wired in.
+// Hidden for now (SHOW_PROMO_SLOT); the greeting spans the full row while it is off.
+const SHOW_PROMO_SLOT = false
+function PromoCard({ span, rowSpan, className }: { span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
+  return <BentoCard tone="green" span={span} rowSpan={rowSpan} className={className} title="邀请好友，一起加速" action={<Badge variant="outline" className="border-transparent bg-white/60">推荐</Badge>}>
+    <CardContent className="flex flex-1 flex-col justify-between gap-4">
+      <p className="text-sm">好友通过你的邀请码购买套餐后，返利会直接计入你的钱包，购买时可抵扣。</p>
+      <BentoButton asChild className="w-fit"><Link to="/account/referrals"><Gift />获取邀请码</Link></BentoButton>
     </CardContent>
   </BentoCard>
 }
@@ -122,8 +164,9 @@ function NodeStatusCard({ status, error, inactive, span, rowSpan }: { status: No
   const available = !inactive && Boolean(status?.configured && status.checkedAt)
   const note = inactive ? "当前线路暂不支持" : error ? "状态暂不可用" : !status ? "" : !status.configured ? "节点监控未配置" : "等待首次检测"
   return <BentoCard span={span} rowSpan={rowSpan} title="节点状态">
-    <CardContent className="grid flex-1 content-end">
-      {available ? <p className="flex flex-wrap items-baseline gap-x-1.5" title={status?.checkedAt ? `最近检测 ${formatDateTime(status.checkedAt)}` : undefined}><strong className="text-3xl font-semibold tabular-nums">{status?.onlineNodes}</strong><span className="text-sm text-muted-foreground tabular-nums">/ {status?.totalNodes} 在线 · 离线 {status?.offlineNodes}</span></p> : !inactive && !status && !error ? <Skeleton className="h-9 w-24" /> : <p className="flex items-baseline gap-1.5"><strong className="text-3xl font-semibold">-</strong><span className="text-sm text-muted-foreground">{note}</span></p>}
+    <CardContent className="flex flex-1 items-end justify-between gap-3">
+      {available ? <p className="flex flex-wrap items-baseline gap-x-1.5" title={status?.checkedAt ? `最近检测 ${formatDateTime(status.checkedAt)}` : undefined}><strong className="text-3xl font-semibold tabular-nums">{status?.onlineNodes}</strong><span className="text-sm text-muted-foreground tabular-nums">/ {status?.totalNodes} 在线</span></p> : !inactive && !status && !error ? <Skeleton className="h-9 w-24" /> : <p className="flex min-w-0 items-baseline gap-1.5"><strong className="text-3xl font-semibold">-</strong><span className="truncate text-sm text-muted-foreground">{note}</span></p>}
+      {inactive ? null : <Button asChild variant="outline" size="icon" className="size-11 shrink-0 rounded-full border-transparent bg-background md:size-10 shadow-none dark:border-transparent dark:bg-background"><Link to="/account/nodes" aria-label="查看节点状态"><Eye /></Link></Button>}
     </CardContent>
   </BentoCard>
 }
@@ -137,7 +180,7 @@ function DeviceLimitCard({ subscription, traffic, span, rowSpan }: { subscriptio
   </BentoCard>
 }
 
-function IpInfoCard({ info, error, span, rowSpan }: { info: IpInfo | null; error: string; span: BentoSpan; rowSpan: BentoRowSpan }) {
+function IpInfoCard({ info, error, span, rowSpan, className }: { info: IpInfo | null; error: string; span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
   if (info) {
     const organization = info.asOrganization || ""
     const translatedOrganization = /(?:CHINANET|CHINA TELECOM|TELECOM)/i.test(organization)
@@ -152,14 +195,21 @@ function IpInfoCard({ info, error, span, rowSpan }: { info: IpInfo | null; error
     const cityNames: Record<string, string> = { Tokyo: "东京", Shenzhen: "深圳", Guangzhou: "广州", Beijing: "北京", Shanghai: "上海", Singapore: "新加坡", Seoul: "首尔", London: "伦敦", Paris: "巴黎", Frankfurt: "法兰克福", "Los Angeles": "洛杉矶", "San Francisco": "旧金山", "New York": "纽约" }
     info = { ...info, asOrganization: translatedOrganization, country: info.countryCode ? countryNames[info.countryCode] || "" : "", region: info.countryCode === "CN" ? chinaRegions[info.regionCode || ""] || "" : "", city: info.city ? cityNames[info.city] || "" : "" }
   }
-  return <BentoCard span={span} rowSpan={rowSpan} title="访问 IP">
-    <CardContent>
-      {error ? <Alert variant="warning"><Info /><AlertDescription>{error}</AlertDescription></Alert> : info ? <ItemGroup className="grid gap-2 sm:grid-cols-2">
-        <Item variant="muted"><ItemContent><ItemDescription>IP 地址</ItemDescription><ItemTitle className="font-mono text-base">{info.ip}</ItemTitle></ItemContent></Item>
-        <Item variant="muted"><ItemContent><ItemDescription>网络组织</ItemDescription><ItemTitle>{info.asOrganization || "-"}</ItemTitle></ItemContent></Item>
-        <Item variant="muted"><ItemContent><ItemDescription>位置</ItemDescription><ItemTitle>{[info.country, info.region, info.city].filter(Boolean).join(" · ") || "-"}</ItemTitle></ItemContent></Item>
-        <Item variant="muted"><ItemContent><ItemDescription>风险评分</ItemDescription><ItemTitle className="tabular-nums">{Number.isFinite(info.fraudScore) ? info.fraudScore : "-"}</ItemTitle></ItemContent></Item>
-      </ItemGroup> : <div className="grid gap-2 sm:grid-cols-2"><Skeleton className="h-16" /><Skeleton className="h-16" /></div>}
+  const details = info ? [
+    ["网络组织", info.asOrganization || "-"],
+    ["位置", [info.country, info.region, info.city].filter(Boolean).join(" · ") || "-"],
+    ["ASN", info.asn ? `AS${info.asn}` : "-"],
+  ] : []
+  return <BentoCard span={span} rowSpan={rowSpan} className={className} title="您的IP">
+    <CardContent className="grid flex-1 content-between gap-3">
+      {error ? <Alert variant="warning"><Info /><AlertDescription>{error}</AlertDescription></Alert> : info ? <>
+        <p className="truncate font-mono text-2xl font-semibold" title={info.ip}>{info.ip}</p>
+        <Item className="rounded-2xl bg-background p-3">
+          <dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
+            {details.map(([label, value]) => <React.Fragment key={label}><dt className="text-muted-foreground">{label}</dt><dd className="truncate text-right font-medium tabular-nums" title={value}>{value}</dd></React.Fragment>)}
+          </dl>
+        </Item>
+      </> : <><Skeleton className="h-12 w-48" /><Skeleton className="h-24 rounded-2xl" /></>}
     </CardContent>
   </BentoCard>
 }
@@ -215,13 +265,13 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
   </BentoCard>
 }
 
-// Solid bar color per usage band: up to 20/40/60/80% of the quota, then anything above 80%.
+// Bar color per usage band (up to 20/40/60/80% of the quota, then above 80%): a solid indicator on a light track of the same color.
 const usageBarBands = [
-  [20, "*:data-[slot=progress-indicator]:bg-usage-20"],
-  [40, "*:data-[slot=progress-indicator]:bg-usage-40"],
-  [60, "*:data-[slot=progress-indicator]:bg-usage-60"],
-  [80, "*:data-[slot=progress-indicator]:bg-usage-80"],
-  [Infinity, "*:data-[slot=progress-indicator]:bg-usage-100"],
+  [20, "bg-usage-20/20 *:data-[slot=progress-indicator]:bg-usage-20"],
+  [40, "bg-usage-40/20 *:data-[slot=progress-indicator]:bg-usage-40"],
+  [60, "bg-usage-60/20 *:data-[slot=progress-indicator]:bg-usage-60"],
+  [80, "bg-usage-80/20 *:data-[slot=progress-indicator]:bg-usage-80"],
+  [Infinity, "bg-usage-100/20 *:data-[slot=progress-indicator]:bg-usage-100"],
 ] as const
 
 function usageBarClass(percent: number) {
@@ -233,7 +283,7 @@ function TrafficUsageCard({ plan, trafficLoading, trafficError, nextResetAt, spa
   const remaining = <p className="flex items-baseline gap-1.5"><strong className="text-3xl font-semibold tabular-nums">{remainingPercent == null ? subscription?.unlimited ? "不限" : trafficLoading ? "同步中" : "-" : `${Math.round(remainingPercent)}%`}</strong>{remainingPercent == null || subscription?.unlimited ? null : <span className="text-sm text-muted-foreground">剩余</span>}</p>
   return <BentoCard span={span} rowSpan={rowSpan} title="流量使用" action={remaining}>
     <CardContent className="grid flex-1 content-end gap-2">
-      <Progress value={usagePercent ?? 0} className={cn("h-4 rounded-sm bg-muted", usageBarClass(usagePercent ?? 0))} aria-label={usagePercent == null ? "流量用量暂不可用" : `已使用流量 ${Math.round(usagePercent)}%`} />
+      <Progress value={usagePercent ?? 0} className={cn("h-4 rounded-sm", usageBarClass(usagePercent ?? 0))} aria-label={usagePercent == null ? "流量用量暂不可用" : `已使用流量 ${Math.round(usagePercent)}%`} />
       {trafficError ? <p className="truncate text-xs text-muted-foreground" title={trafficError}>流量同步暂不可用：{trafficError}</p>
         : <p className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground"><span className="tabular-nums">已用 {trafficUsed} / {subscription?.unlimited ? "不限" : trafficTotal}</span>{nextResetAt ? <span>{formatDate(nextResetAt)} 重置</span> : null}</p>}
     </CardContent>
@@ -244,17 +294,18 @@ function SubscriptionLinkCard({ subscriptionUrl, onImportClient, span, rowSpan }
   return <BentoCard span={span} rowSpan={rowSpan} title="订阅链接">
     <CardContent>
       <Field>
-        <FieldLabel htmlFor="subscription-url">订阅地址</FieldLabel>
-        <span className="block rounded-4xl bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" className="h-11 rounded-4xl border-0 bg-background px-4 font-semibold shadow-none dark:bg-background" readOnly value={subscriptionUrl} /></span>
-        <FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription>
+        <span className="block rounded-4xl bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" aria-label="订阅地址" className="h-11 rounded-4xl border-0 bg-background px-4 font-semibold shadow-none dark:bg-background" readOnly value={subscriptionUrl} /></span>
         <div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto">
           <CopySubscription value={subscriptionUrl} />
-          <BentoButton variant="outline" onClick={() => onImportClient("shadowrocket")}><ExternalLink />导入 Shadowrocket</BentoButton>
-          <BentoButton variant="outline" onClick={() => onImportClient("sparkle")}><ExternalLink />导入 Sparkle</BentoButton>
-          <BentoButton variant="outline" onClick={() => onImportClient("clash-meta")}><ExternalLink />导入 Clash Meta</BentoButton>
-          <BentoButton variant="outline" onClick={() => onImportClient("clash-verge")}><ExternalLink />导入 Clash Verge</BentoButton>
-          <BentoButton asChild variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></BentoButton>
+          <BentoButton asChild variant="outline"><Link to="/account/docs"><BookOpen />使用教程</Link></BentoButton>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><BentoButton variant="outline"><ExternalLink />一键导入客户端<ChevronDown /></BentoButton></DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-56">
+              {(Object.keys(importClients) as ImportClient[]).map(client => <DropdownMenuItem key={client} className="min-h-11 justify-between gap-4 md:min-h-0" onSelect={() => onImportClient(client)}>{importClients[client].label}<span className="text-xs text-muted-foreground">{importClients[client].platform}</span></DropdownMenuItem>)}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
+        <FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription>
       </Field>
     </CardContent>
   </BentoCard>
@@ -335,8 +386,13 @@ export function AccountOverviewPage() {
   React.useEffect(() => {
     let active = true
     fetchJson<IpInfo & { error?: string }>("/api/account/ip-info")
-      .then(value => { if (active) { setIpInfo(value.error ? null : value); setIpInfoError(value.error || "") } })
-      .catch(error => { if (active) setIpInfoError(error instanceof Error ? error.message : "IP 信息获取失败") })
+      .then(value => {
+        if (!value.error) return value
+        if (import.meta.env.DEV) return devSampleIpInfo
+        throw new Error(value.error)
+      })
+      .then(value => { if (active) { setIpInfo(value); setIpInfoError("") } })
+      .catch(error => { if (active) { setIpInfo(null); setIpInfoError(error instanceof Error ? error.message : "IP 信息获取失败") } })
     return () => { active = false }
   }, [])
 
@@ -370,36 +426,45 @@ export function AccountOverviewPage() {
       <div className="grid gap-4">
         <Alert variant="warning"><CircleHelp /><AlertDescription className="flex w-full flex-row flex-wrap items-center justify-between gap-3"><span>遇到问题？发送工单联系客服吧！</span><Button asChild variant="link" size="sm" className="h-auto shrink-0 p-0 underline underline-offset-4"><Link to="/account/tickets/new">发送工单</Link></Button></AlertDescription></Alert>
         <BentoGrid>
-          <section className={cn(bentoSpanClass(8, 2), "flex min-w-0 flex-col justify-center gap-6 py-4")} aria-labelledby="account-greeting">
+          <section className={cn(bentoSpanClass(SHOW_PROMO_SLOT ? 5 : 8, 2), "flex min-w-0 flex-col justify-center gap-6 py-4")} aria-labelledby="account-greeting">
             <h2 id="account-greeting" className="grid gap-1 text-4xl font-semibold tracking-tight wrap-anywhere lg:text-5xl"><span>What's up,</span><span>{emailLocal}{emailDomain ? <><wbr />@{emailDomain}</> : null}{"\u00a0"}!</span></h2>
             <div className="flex flex-wrap gap-2">
               <BentoButton asChild size="lg"><Link to="/account/plans"><ArrowRight />前往商城</Link></BentoButton>
               <BentoButton asChild size="lg" variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></BentoButton>
             </div>
           </section>
+          {SHOW_PROMO_SLOT ? <PromoCard span={3} rowSpan={2} className="md:col-span-8" /> : null}
           <PlanDetailsCard account={data} plan={plan} span={plan.subscription ? 4 : 8} rowSpan={2} />
           {plan.subscription ? <>
             <TrafficUsageCard plan={plan} trafficLoading={trafficLoading} trafficError={trafficError} nextResetAt={selfHostedTraffic?.nextResetAt} span={4} rowSpan={1} />
             <DeviceLimitCard subscription={plan.subscription} traffic={selfHostedTraffic} span={2} rowSpan={1} />
             <NodeStatusCard status={nodeStatus} error={nodeStatusError} inactive={!canViewNodes} span={2} rowSpan={1} />
           </> : null}
-          <PersonalInfoCard account={data} span={4} rowSpan={2} />
-          <IpInfoCard info={ipInfo} error={ipInfoError} span={4} rowSpan={2} />
-          {plan.subscription ? <SubscriptionLinkCard subscriptionUrl={plan.subscription.subscriptionUrl} onImportClient={setImportClient} span={subscriptionLinkSpan} rowSpan={3} /> : null}
-          {hasAnnouncements ? <BentoCard span={announcementSpan} rowSpan={3} className="md:col-span-8" title="网站公告">
-            <CardContent>
-              <Carousel opts={{ loop: data.announcements.length > 1 }} setApi={setCarouselApi} aria-label="网站公告">
+          {/* Tablets stack these full width; the 2 + 3 + 3 row starts at lg. */}
+          <VipLevelCard account={data} span={2} rowSpan={2} className="md:col-span-8" />
+          <PersonalInfoCard account={data} span={3} rowSpan={2} className="md:col-span-8" />
+          <IpInfoCard info={ipInfo} error={ipInfoError} span={3} rowSpan={2} className="md:col-span-8" />
+          {plan.subscription ? <SubscriptionLinkCard subscriptionUrl={plan.subscription.subscriptionUrl} onImportClient={setImportClient} span={subscriptionLinkSpan} rowSpan={2} /> : null}
+          {hasAnnouncements ? <BentoCard span={announcementSpan} rowSpan={2} className="md:col-span-8" title="网站公告" action={data.announcements.length > 1 ? <Badge variant="outline" className="bg-background tabular-nums">{carouselIndex + 1} / {data.announcements.length}</Badge> : null}>
+            <CardContent className="grid flex-1">
+              <Carousel opts={{ loop: data.announcements.length > 1 }} setApi={setCarouselApi} aria-label="网站公告" className="grid content-between gap-3">
                 <CarouselContent>
-                  {data.announcements.map(announcement => <CarouselItem key={announcement.id}><Item asChild variant="muted"><article role="button" tabIndex={0} className="grid cursor-pointer gap-3 hover:bg-muted focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" onClick={() => viewAnnouncement(announcement)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); viewAnnouncement(announcement) } }}><header className="grid gap-1"><h3 className="font-medium">{announcement.title}</h3><time className="text-sm text-muted-foreground" dateTime={announcement.publishedAt}>{formatDateTime(announcement.publishedAt)}</time></header><MarkdownContent content={announcement.content} className="line-clamp-2 max-h-14 overflow-hidden" /></article></Item></CarouselItem>)}
+                  {data.announcements.map((announcement, index) => <CarouselItem key={announcement.id}><Item asChild className="grid cursor-pointer gap-2 rounded-2xl bg-background p-3 hover:bg-background/70 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"><article role="button" tabIndex={0} aria-label={`查看公告：${announcement.title}`} onClick={() => viewAnnouncement(announcement)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); viewAnnouncement(announcement) } }}>
+                    <header className="grid gap-1">
+                      <div className="flex min-w-0 items-center gap-2">{index === 0 ? <Badge className="shrink-0">最新</Badge> : null}<h3 className="truncate font-semibold">{announcement.title}</h3></div>
+                      <time className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums" dateTime={announcement.publishedAt}><Clock3 className="size-3.5" />{formatDateTime(announcement.publishedAt)}</time>
+                    </header>
+                    <MarkdownContent content={announcement.content} className="line-clamp-3 max-h-20 overflow-hidden text-sm text-muted-foreground xl:line-clamp-1 xl:max-h-5" />
+                  </article></Item></CarouselItem>)}
                 </CarouselContent>
-                <div className="mt-4 flex items-center justify-between gap-2">
-                  <BentoButton variant="outline" onClick={() => { if (currentAnnouncement) viewAnnouncement(currentAnnouncement) }}><Eye />查看公告</BentoButton>
-                  {data.announcements.length > 1 ? <div className="flex gap-2"><CarouselPrevious className="static translate-y-0" /><CarouselNext className="static translate-y-0" /></div> : null}
+                <div className="flex items-center justify-between gap-2">
+                  <BentoButton variant="outline" onClick={() => { if (currentAnnouncement) viewAnnouncement(currentAnnouncement) }}><Eye />查看全文</BentoButton>
+                  {data.announcements.length > 1 ? <div className="flex gap-2"><CarouselPrevious className="static size-11 translate-y-0 md:size-9" /><CarouselNext className="static size-11 translate-y-0 md:size-9" /></div> : null}
                 </div>
               </Carousel>
             </CardContent>
           </BentoCard> : null}
-          {hasTrafficDetails ? selfHostedTraffic ? <React.Suspense fallback={<Skeleton className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} />}><AccountTrafficChart span={8} rowSpan={3} data={selfHostedTraffic.dailyUsage} /></React.Suspense> : <Skeleton className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} /> : null}
+          {hasTrafficDetails ? selfHostedTraffic ? <React.Suspense fallback={<Skeleton className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} />}><AccountTrafficChart span={8} rowSpan={3} usage={selfHostedTraffic.nodeUsage} /></React.Suspense> : <Skeleton className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} /> : null}
         </BentoGrid>
       </div>
       <Dialog open={announcementOpen} onOpenChange={changeAnnouncementOpen}>

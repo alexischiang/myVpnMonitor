@@ -99,6 +99,33 @@ assert.deepStrictEqual(d3["u@x"].LA, { inBytes: 0, outBytes: 0 }, "negative clam
 const d4 = deductRemotesFromLocalNode({ "u@x": { TW: { inBytes: 5, outBytes: 5 } } }, "LA");
 assert.deepStrictEqual(d4["u@x"], { TW: { inBytes: 5, outBytes: 5 } }, "no local → untouched");
 
+// accountNodeUsage: public names, merged duplicates, top-N series, "other" fold, zero-filled days.
+const { accountNodeUsage } = require("./xui-traffic");
+{
+  const labels = new Map([["g1", "香港 01"], ["g2", "日本 01"], ["g3", "香港 01"], ["g4", "美国 01"]]);
+  const usage = accountNodeUsage([
+    { date: "2026-09-01", nodeGuid: "g1", bytes: 100 },
+    { date: "2026-09-01", nodeGuid: "g3", bytes: 50 },
+    { date: "2026-09-02", nodeGuid: "g2", bytes: 120 },
+    { date: "2026-09-02", nodeGuid: "g4", bytes: 10 },
+    { date: "2026-09-02", nodeGuid: "internal", bytes: 7 },
+    { date: "2026-08-31", nodeGuid: "g1", bytes: 999 }
+  ], labels, ["2026-09-01", "2026-09-02", "2026-09-03"], 2);
+  assert.deepStrictEqual(usage.nodes, [
+    { key: "node1", name: "香港 01", usedBytes: 150 },
+    { key: "node2", name: "日本 01", usedBytes: 120 },
+    { key: "other", name: "其他节点", usedBytes: 17 }
+  ], "same-name nodes merge, past maxSeries and unnamed nodes fold into other, out-of-range dates ignored");
+  assert.deepStrictEqual(usage.days, [
+    { date: "2026-09-01", usedBytes: 150, nodes: { node1: 150 } },
+    { date: "2026-09-02", usedBytes: 137, nodes: { node2: 120, other: 17 } },
+    { date: "2026-09-03", usedBytes: 0, nodes: {} }
+  ]);
+  assert.deepStrictEqual(accountNodeUsage([], labels, ["2026-09-01"]), { days: [], nodes: [] }, "no usage gives no days");
+  const trimmed = accountNodeUsage([{ date: "2026-09-02", nodeGuid: "g1", bytes: 5 }], labels, ["2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03"]);
+  assert.deepStrictEqual(trimmed.days.map(day => day.date), ["2026-09-02", "2026-09-03"], "days start at the first date with usage and run to the last date");
+}
+
 // applyLocalNodeDelta (Plan B): derive the local node's per-round usage in delta space.
 const { applyLocalNodeDelta } = require("./xui-traffic");
 assert.deepStrictEqual(

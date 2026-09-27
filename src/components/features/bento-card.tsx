@@ -43,7 +43,7 @@ export function BentoGrid({ className, ...props }: React.ComponentProps<"div">) 
 const bentoCardVariants = cva(`${bentoRadius} col-span-8 gap-4 xl:overflow-y-auto`, {
   variants: {
     tone: {
-      default: "",
+      default: "border-transparent bg-bento-surface",
       muted: "border-transparent bg-muted",
       yellow: "bento-light-surface border-transparent bg-bento-yellow text-foreground [&_[data-slot=item]]:bg-white/50",
       green: "bento-light-surface border-transparent bg-bento-green text-foreground [&_[data-slot=item]]:bg-white/50",
