@@ -1,13 +1,13 @@
 # Current State
 
-- Last Updated: 2026-09-26
-- Current Objective: 撤销家宽 IP 按钮深色模式改动；小屏下按钮仅显示“定制家宽IP”
+- Last Updated: 2026-09-28
+- Current Objective: 总览卡片与 30 天分节点流量明细（倍率、起始日、小屏滑动）上线
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
 - Active feature: none
-- Blockers: 本机 .env 未配置 TEST_DATABASE_URL，test:payment/test:wallet/test:catalog-v2 未运行
+- Blockers: none
 
 ## Verification Evidence
 
@@ -324,8 +324,28 @@
 
 - 2026-09-26: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；/account 在 375/639/640/900/1300px 浏览器验证无控制台错误
 
+- 2026-09-27: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 浅色卡片 rgb(233,233,233)、深色不变，console_errors/page_errors 为空
+
+- 2026-09-27: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 浅色卡片 rgb(230,230,230)、深色不变，刷新后无新增控制台错误
+
+- 2026-09-27: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 浅色卡片 rgb(246,246,246)、深色不变，新标签页控制台无错误
+
+- 2026-09-27: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 1440/375px、浅色与深色浏览器验证无溢出，console_errors/page_errors 为空
+
+- 2026-09-27: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 375/768/1024/1280/1440px、浅色与深色浏览器验证无溢出，console_errors/page_errors 为空
+
+- 2026-09-27: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 375/768/1024/1440px、浅色与深色浏览器验证无溢出，新标签页 console_errors/page_errors 为空
+
+- 2026-09-27: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 375/768/1024/1440px、浅色与深色浏览器验证无溢出，新标签页 console_errors/page_errors 为空
+
+- 2026-09-28: test-xui-traffic、npm run check、verify:fast、verify:harness、git diff --check 通过；/account 375/1024/1280/1440px、浅色与深色浏览器验证无溢出，新标签页 console_errors/page_errors 为空
+
+- 2026-09-28: test-xui-traffic、npm run check、verify:fast、verify:harness、git diff --check 通过；/account 375/1024/1280/1440px、浅色与深色浏览器验证无溢出，新标签页 console_errors/page_errors 为空
+
+- 2026-09-28: npm run verify、verify:harness、git diff --check 通过；/account 375/1024/1280/1440px 浏览器验证无溢出，新标签页 console_errors/page_errors 为空
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/account-onboarding.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/details.tsx`, `src/components/features/pricing-settings.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/styles.css`, `test.js`, `scripts/seed-local-test-data.js`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/account-traffic-chart.tsx`, `src/components/features/bento-card.tsx`, `src/styles.css`, `test-xui-traffic.js`, `xui-traffic.js`, `src/components/features/progress-ring.tsx`
 - Known risks: none
-- Recommended Next Step: 在销售设置里修改已保存的 FAQ 问题文字；按需提交本会话全部改动
+- Recommended Next Step: 观察生产部署结果；广告栏后续可接入后台广告草稿

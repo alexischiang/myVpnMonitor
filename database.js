@@ -858,17 +858,17 @@ class PostgresDataStore {
     return result.rows.map(row => ({ email: row.email, nodeGuid: row.node_guid, up: Number(row.up), down: Number(row.down) }));
   }
 
-  // Per-day up/down totals (summed over nodes) for one user in a date range.
-  async xuiUserDailySeries(email, fromDateKey, toDateKey) {
+  // One user's daily bytes split by node, for the account overview's per-node chart.
+  async xuiUserDailyNodeSeries(email, fromDateKey, toDateKey) {
     const result = await withPgRetry(
       () => this.pool.query(
-        `SELECT date, SUM(up_bytes)::bigint AS up, SUM(down_bytes)::bigint AS down
-         FROM xui_daily_traffic WHERE email = $1 AND date BETWEEN $2 AND $3 GROUP BY date ORDER BY date`,
+        `SELECT date, node_guid, SUM(up_bytes + down_bytes)::bigint AS bytes
+         FROM xui_daily_traffic WHERE email = $1 AND date BETWEEN $2 AND $3 GROUP BY date, node_guid ORDER BY date`,
         [email, fromDateKey, toDateKey]
       ),
-      `xui daily series ${email}`
+      `xui daily node series ${email}`
     );
-    return result.rows.map(row => ({ date: row.date, up: Number(row.up), down: Number(row.down) }));
+    return result.rows.map(row => ({ date: row.date, nodeGuid: row.node_guid, bytes: Number(row.bytes) }));
   }
 
   // Directional application traffic rows used by sales profitability reports.

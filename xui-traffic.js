@@ -190,7 +190,46 @@ function applyLocalNodeDelta(perNodeDelta = {}, localGuid) {
   return perNodeDelta;
 }
 
+// --- account overview -----------------------------------------------------
+
+// Shapes one user's per-node daily rows ({ date, nodeGuid, bytes }) for the overview chart.
+// Nodes are named through `labelByGuid` (public inbound names, never internal node remarks) and
+// nodes sharing a name merge. The top `maxSeries` names by total keep their own series
+// (node1, node2, ...); unnamed nodes and the rest fold into one "other" series. Days run from
+// the first date in `dates` with usage through the last date, zero-filled in between (no usage at
+// all gives no days). Returns { days: [{ date, usedBytes, nodes: { key: bytes } }],
+// nodes: [{ key, name, usedBytes }] } with nodes ordered by usage and "other" last.
+function accountNodeUsage(rows = [], labelByGuid = new Map(), dates = [], maxSeries = 5) {
+  const inRange = new Set(dates);
+  const usable = rows
+    .map(row => ({ date: row.date, label: labelByGuid.get(row.nodeGuid) || "", bytes: Math.max(0, Number(row.bytes) || 0) }))
+    .filter(row => inRange.has(row.date) && row.bytes > 0);
+  const totals = new Map();
+  for (const row of usable) if (row.label) totals.set(row.label, (totals.get(row.label) || 0) + row.bytes);
+  const named = [...totals.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, maxSeries);
+  const keyByLabel = new Map(named.map(([label], index) => [label, `node${index + 1}`]));
+  const nodes = named.map(([name, usedBytes], index) => ({ key: `node${index + 1}`, name, usedBytes }));
+  const byDate = new Map(dates.map(date => [date, {}]));
+  let otherBytes = 0;
+  for (const row of usable) {
+    const key = keyByLabel.get(row.label) || "other";
+    if (key === "other") otherBytes += row.bytes;
+    const day = byDate.get(row.date);
+    day[key] = (day[key] || 0) + row.bytes;
+  }
+  if (otherBytes) nodes.push({ key: "other", name: "其他节点", usedBytes: otherBytes });
+  const firstUsed = dates.findIndex(date => Object.keys(byDate.get(date)).length);
+  return {
+    days: (firstUsed < 0 ? [] : dates.slice(firstUsed)).map(date => {
+      const dayNodes = byDate.get(date);
+      return { date, usedBytes: Object.values(dayNodes).reduce((sum, bytes) => sum + bytes, 0), nodes: dayNodes };
+    }),
+    nodes
+  };
+}
+
 module.exports = {
+  accountNodeUsage,
   RESET_INTERVAL_DAYS,
   MS_PER_DAY,
   deductRemotesFromLocalNode,

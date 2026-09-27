@@ -10,6 +10,7 @@
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-bento-surface: var(--bento-surface);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
@@ -60,6 +61,8 @@
   --color-orange-1100: color-mix(in oklch, var(--color-orange-600) 34%, black);
   --color-bento-yellow: #fed230;
   --color-bento-green: #58e057;
+  /* Darker green for progress graphics on light cards (3:1 against white). */
+  --color-bento-green-strong: #2fa92e;
   --color-usage-20: #72c238;
   --color-usage-40: #d1b60c;
   --color-usage-60: #ff9e07;
@@ -88,6 +91,15 @@
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
+  /* Default surface of overview bento cards (they have no border). */
+  --bento-surface: #f6f6f6;
+  /* Categorical series in fixed order (validated for CVD separation on the card surface); "other" is neutral. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-other: #a3a3a3;
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
@@ -122,6 +134,14 @@
   --foreground: oklch(0.985 0 0);
   --card: #171717;
   --card-foreground: oklch(0.985 0 0);
+  /* One step lighter than the #171717 content panel, since bento cards have no border. */
+  --bento-surface: #262626;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-other: #737373;
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.922 0 0);
