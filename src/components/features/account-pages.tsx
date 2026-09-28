@@ -166,7 +166,7 @@ function NodeStatusCard({ status, error, inactive, span, rowSpan }: { status: No
   return <BentoCard span={span} rowSpan={rowSpan} title="节点状态">
     <CardContent className="flex flex-1 items-end justify-between gap-3">
       {available ? <p className="flex flex-wrap items-baseline gap-x-1.5" title={status?.checkedAt ? `最近检测 ${formatDateTime(status.checkedAt)}` : undefined}><strong className="text-3xl font-semibold tabular-nums">{status?.onlineNodes}</strong><span className="text-sm text-muted-foreground tabular-nums">/ {status?.totalNodes} 在线</span></p> : !inactive && !status && !error ? <Skeleton className="h-9 w-24" /> : <p className="flex min-w-0 items-baseline gap-1.5"><strong className="text-3xl font-semibold">-</strong><span className="truncate text-sm text-muted-foreground">{note}</span></p>}
-      {inactive ? null : <Button asChild variant="outline" size="icon" className="size-11 shrink-0 rounded-full border-transparent bg-background md:size-10 shadow-none dark:border-transparent dark:bg-background"><Link to="/account/nodes" aria-label="查看节点状态"><Eye /></Link></Button>}
+      {inactive ? null : <Button asChild variant="outline" size="icon" className="-mr-2 size-11 shrink-0 rounded-full border-transparent bg-background md:size-10 shadow-none dark:border-transparent dark:bg-background"><Link to="/account/nodes" aria-label="查看节点状态"><Eye /></Link></Button>}
     </CardContent>
   </BentoCard>
 }
