@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
@@ -49,6 +49,43 @@ function newTestPlatform(priority: number): PaymentSettings {
     alipayChannelCode: "100",
     wechatChannelCode: "200",
   }
+}
+
+// Checkout tax rate applied to new orders; products can opt out with 收取税费 in the product editor.
+function TaxRateSettingsCard() {
+  const [savedRate, setSavedRate] = React.useState<number | null>(null)
+  const [rate, setRate] = React.useState("")
+  const [loadError, setLoadError] = React.useState("")
+  const [error, setError] = React.useState("")
+  const [saving, setSaving] = React.useState(false)
+  React.useEffect(() => { fetchJson<{ taxRate: number }>("/api/checkout-settings").then(data => { setSavedRate(data.taxRate); setRate(String(data.taxRate)) }).catch(cause => setLoadError(cause instanceof Error ? cause.message : "税率加载失败")) }, [])
+  async function save(event: React.FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    setError("")
+    try {
+      const data = await putJson<{ taxRate: number }>("/api/checkout-settings", { taxRate: rate === "" ? "" : Number(rate) })
+      setSavedRate(data.taxRate)
+      setRate(String(data.taxRate))
+      toast.success(`税率已保存为 ${data.taxRate}%`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "保存税率失败")
+    } finally { setSaving(false) }
+  }
+  return <Card>
+    <CardHeader><CardTitle>税费设置</CardTitle><CardDescription>结账时按商品金额计算税费，仅影响之后创建的订单，已有订单保留下单时的税率。</CardDescription></CardHeader>
+    <CardContent>
+      {loadError ? <Alert variant="destructive"><AlertDescription>{loadError}</AlertDescription></Alert>
+        : savedRate === null ? <Skeleton className="h-16 max-w-sm" />
+        : <form className="max-w-sm" noValidate onSubmit={event => void save(event)}>
+          <Field data-invalid={Boolean(error)}>
+            <FieldLabel htmlFor="checkout-tax-rate">税率（%）</FieldLabel>
+            <div className="flex gap-2"><Input id="checkout-tax-rate" type="number" inputMode="decimal" min="0" max="100" step="0.01" className="tabular-nums" value={rate} aria-invalid={Boolean(error)} aria-describedby={error ? "checkout-tax-rate-error" : "checkout-tax-rate-help"} onChange={event => { setRate(event.target.value); setError("") }} disabled={saving} /><Button type="submit" disabled={saving || rate === String(savedRate)}>{saving ? <Loader2 className="animate-spin" /> : null}保存税率</Button></div>
+            {error ? <FieldError id="checkout-tax-rate-error">{error}</FieldError> : <FieldDescription id="checkout-tax-rate-help">0–100，最多两位小数。商品可在编辑页取消“收取税费”。</FieldDescription>}
+          </Field>
+        </form>}
+    </CardContent>
+  </Card>
 }
 
 export function PaymentSettingsPage() {
@@ -146,6 +183,8 @@ export function PaymentSettingsPage() {
           ) : <Alert className="mx-6"><ShieldCheck /><AlertTitle>支付尚未启用</AlertTitle><AlertDescription>新增并启用一个平台后，支付宝和微信入口会自动开放。</AlertDescription></Alert>}
         </CardContent>
       </Card>
+
+      <TaxRateSettingsCard />
 
       <Alert><ShieldCheck /><AlertTitle>测试平台仅在本地结算</AlertTitle><AlertDescription>测试订单不会请求线上网关；线上平台的凭证不会回显，异步通知地址需要可被公网 HTTPS 访问。</AlertDescription></Alert>
 

@@ -1,3 +1,5 @@
+const { normalizeBuyerInput } = require("./addon-services");
+
 const GB = 1024 ** 3;
 
 const DURATION_BY_DAYS = Object.freeze({
@@ -72,7 +74,7 @@ function resolvePurchase(products, input = {}, context = {}) {
 
   const unitPriceCents = integer(priceCents, { label: "商品价格" });
   const subtotalCents = unitPriceCents * quantity;
-  const taxRate = Number(context.taxRate || 0);
+  const taxRate = product.chargeTax === false ? 0 : Number(context.taxRate || 0);
   const taxCents = Math.round(subtotalCents * taxRate / 100);
   const totalCents = subtotalCents + taxCents;
   const isAddon = product.type === "addon";
@@ -86,7 +88,9 @@ function resolvePurchase(products, input = {}, context = {}) {
     deliveryMode: product.fulfillment.mode,
     fulfillmentHandler: product.fulfillment.handler,
     fulfillmentConfig: structuredClone(product.fulfillment.config || {}),
-    deliveryDescription: product.deliveryDescription
+    deliveryDescription: product.deliveryDescription,
+    buyerInputLabel: product.buyerInputLabel || "",
+    buyerInput: product.buyerInputLabel ? normalizeBuyerInput(input.buyerInput) : ""
   } : null;
 
   return {
@@ -142,6 +146,7 @@ function resolvePurchase(products, input = {}, context = {}) {
       quantity,
       trafficSteps,
       purchaseRequirement: product.purchaseRequirement,
+      chargeTax: product.chargeTax !== false,
       fulfillment: structuredClone(product.fulfillment || { mode: null, handler: null, config: {} })
     }
   };

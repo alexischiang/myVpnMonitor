@@ -1,7 +1,12 @@
 const assert = require("assert");
 const fs = require("fs");
 const { salesAmount, salesDateKey, salesDateRange, salesMonthRange, unlinkedSalesBills } = require("./src/components/features/sales-analytics-logic.ts");
-const { purchasedPlanName } = require("./src/utils.ts");
+const { orderProductLabel, purchasedPlanName } = require("./src/utils.ts");
+assert.strictEqual(orderProductLabel({ planName: "ChatGPT PLUS 直充1个月", optionLabel: "ChatGPT PLUS 直充1个月" }), "ChatGPT PLUS 直充1个月", "add-ons use the product name as option label");
+assert.strictEqual(orderProductLabel({ planName: "BASIC", optionLabel: "30 天" }), "BASIC / 30 天");
+assert.strictEqual(orderProductLabel({ planName: "BASIC", optionLabel: "BASIC 30 天" }, " · "), "BASIC 30 天");
+assert.strictEqual(orderProductLabel({ planName: "PRO", optionLabel: "" }, " · "), "PRO");
+assert.strictEqual(orderProductLabel({ planName: "", optionLabel: "充值" }), "充值");
 const net = require("net");
 const zlib = require("zlib");
 const {
@@ -66,6 +71,8 @@ const {
   normalizeCatalogV2LineGroup,
   validateCatalogV2LineGroupInbounds,
   normalizeCatalogV2Product,
+  normalizeCatalogV2AddonCategory,
+  normalizeCheckoutSettings,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
   publicAccountNodeStatus,
@@ -127,6 +134,93 @@ const catalogV2TrafficAddon = normalizeCatalogV2Product({ id: "traffic-addon", t
 assert.deepStrictEqual([catalogV2TrafficAddon.purchaseRequirement, catalogV2TrafficAddon.fulfillment.mode, catalogV2TrafficAddon.fulfillment.handler, catalogV2TrafficAddon.maxQuantity], ["requires_recurring_plan", "automatic", "traffic_credit", 5]);
 const catalogV2ManualAddon = normalizeCatalogV2Product({ id: "apple-id", type: "addon", isEnabled: true, isForSale: true, stock: 2, name: "Apple ID", priceCents: 500, fulfillment: { mode: "manual" }, deliveryDescription: "人工交付", allowQuantity: false });
 assert.deepStrictEqual([catalogV2ManualAddon.fulfillment.mode, catalogV2ManualAddon.fulfillment.handler, catalogV2ManualAddon.allowQuantity], ["manual", "manual", false]);
+assert.strictEqual(catalogV2ManualAddon.addonCategoryId, null);
+assert.strictEqual(normalizeCatalogV2Product({ ...catalogV2ManualAddon, addonCategoryId: "cat-account" }).addonCategoryId, "cat-account");
+assert.strictEqual(normalizeCatalogV2Product({ ...catalogV2Product, addonCategoryId: "cat-account" }).addonCategoryId, null);
+assert.throws(() => normalizeCatalogV2Product({ ...catalogV2ManualAddon, addonCategoryId: "Bad Id" }), /附加服务分类/);
+const addonCategory = normalizeCatalogV2AddonCategory({ name: "  账号服务  ", sortOrder: 5 });
+assert.match(addonCategory.id, /^cat-[0-9a-f]{8}$/);
+assert.deepStrictEqual([addonCategory.name, addonCategory.sortOrder], ["账号服务", 5]);
+assert.strictEqual(normalizeCatalogV2AddonCategory({ id: "cat-account", name: "账号" }).id, "cat-account");
+assert.throws(() => normalizeCatalogV2AddonCategory({ name: " " }), /分类名称不能为空/);
+
+// Tax: stored checkout rate and the per-product 收取税费 flag.
+assert.deepStrictEqual(normalizeCheckoutSettings({ taxRate: "5.25" }), { id: "default", taxRate: 5.25 });
+assert.strictEqual(normalizeCheckoutSettings({ taxRate: 0 }).taxRate, 0);
+for (const taxRate of [-1, 101, "", null, "abc", 3.125]) assert.throws(() => normalizeCheckoutSettings({ taxRate }), /税率/);
+assert.strictEqual(catalogV2ManualAddon.chargeTax, true, "products charge tax unless unchecked");
+const taxExemptAddon = normalizeCatalogV2Product({ ...catalogV2ManualAddon, chargeTax: false });
+assert.strictEqual(taxExemptAddon.chargeTax, false);
+{
+  const { resolvePurchase } = require("./commerce/catalog-v2");
+  const taxed = resolvePurchase([catalogV2ManualAddon], { productId: catalogV2ManualAddon.id }, { taxRate: 3 });
+  const exempt = resolvePurchase([taxExemptAddon], { productId: taxExemptAddon.id }, { taxRate: 3 });
+  assert.deepStrictEqual([taxed.taxRate, taxed.taxAmount, taxed.amount], [3, 0.15, 5.15]);
+  assert.deepStrictEqual([exempt.taxRate, exempt.taxAmount, exempt.amount, exempt.productSnapshotV2.chargeTax], [0, 0, 5, false]);
+}
+
+// Add-on handlers: product normalisation, checkout input, service windows, delivery and custom-node expiry.
+{
+  const addonServices = require("./commerce/addon-services");
+  const { resolvePurchase } = require("./commerce/catalog-v2");
+  const legacyTraffic = normalizeCatalogV2Product({ id: "legacy-traffic", type: "addon", isEnabled: true, isForSale: true, name: "流量包", priceCents: 100, fulfillment: { mode: "automatic", config: { trafficBytes: 1024 } }, serviceDurationDays: 30 });
+  assert.deepStrictEqual([legacyTraffic.fulfillment.handler, legacyTraffic.fulfillment.mode, legacyTraffic.purchaseRequirement, legacyTraffic.serviceDurationDays], ["traffic_credit", "automatic", "requires_recurring_plan", null]);
+  const customNode = normalizeCatalogV2Product({ id: "custom-node", type: "addon", isEnabled: true, isForSale: true, name: "家宽节点", priceCents: 3000, fulfillment: { handler: "custom_node" }, purchaseRequirement: "standalone" });
+  assert.deepStrictEqual([customNode.fulfillment.handler, customNode.fulfillment.mode, customNode.purchaseRequirement, customNode.serviceDurationDays], ["custom_node", "manual", "requires_recurring_plan", 30]);
+  const topUp = normalizeCatalogV2Product({ id: "ai-topup", type: "addon", isEnabled: true, isForSale: true, stock: null, name: "AI 代充值", priceCents: 15000, fulfillment: { handler: "manual" }, buyerInputLabel: "  充值账号  " });
+  assert.deepStrictEqual([topUp.fulfillment.handler, topUp.purchaseRequirement, topUp.serviceDurationDays, topUp.buyerInputLabel], ["manual", "standalone", null, "充值账号"]);
+  assert.strictEqual(normalizeCatalogV2Product({ ...catalogV2Product, buyerInputLabel: "x" }).buyerInputLabel, "");
+
+  const quoteWithout = resolvePurchase([topUp], { productId: "ai-topup" });
+  assert.deepStrictEqual([quoteWithout.selectedAddOnSnapshots[0].buyerInputLabel, quoteWithout.selectedAddOnSnapshots[0].buyerInput], ["充值账号", ""]);
+  assert.throws(() => addonServices.assertBuyerInputs(quoteWithout.selectedAddOnSnapshots), /请填写充值账号/);
+  const quoteWith = resolvePurchase([topUp], { productId: "ai-topup", buyerInput: "  me@example.test  " });
+  assert.strictEqual(quoteWith.selectedAddOnSnapshots[0].buyerInput, "me@example.test");
+  addonServices.assertBuyerInputs(quoteWith.selectedAddOnSnapshots);
+  assert.strictEqual(resolvePurchase([customNode], { productId: "custom-node", buyerInput: "ignored" }, { hasRecurringPlan: true }).selectedAddOnSnapshots[0].buyerInput, "");
+  assert.throws(() => resolvePurchase([customNode], { productId: "custom-node" }), /周期性套餐/);
+
+  const deliveredAt = "2026-09-01T00:00:00.000Z";
+  assert.deepStrictEqual(addonServices.serviceWindow("custom_node", { deliveredAt, durationDays: 30, quantity: 2 }), { startedAt: deliveredAt, expiresAt: "2026-10-31T00:00:00.000Z" });
+  assert.strictEqual(addonServices.serviceWindow("custom_node", { deliveredAt }).expiresAt, "2026-10-01T00:00:00.000Z");
+  assert.strictEqual(addonServices.serviceWindow("traffic_credit", { deliveredAt, durationDays: 30, trafficCycleEndsAt: "2026-09-15T00:00:00.000Z" }).expiresAt, "2026-09-15T00:00:00.000Z");
+  assert.strictEqual(addonServices.serviceWindow("manual", { deliveredAt }).expiresAt, "");
+
+  const order = (id, handler, extra = {}) => ({ id, merOrderTid: id.toUpperCase(), userId: "u1", status: "paid", purpose: "addon", paidAt: deliveredAt, fulfillmentStatus: "fulfilled", fulfilledAt: deliveredAt, addOnSnapshots: [{ name: id, fulfillmentHandler: handler, quantity: 1, durationDays: handler === "custom_node" ? 30 : null }], ...extra });
+  const now = new Date("2026-09-20T00:00:00.000Z").getTime();
+  const statusOf = item => addonServices.serviceRecords(item, now)[0].status;
+  assert.strictEqual(statusOf(order("a", "manual", { fulfillmentStatus: "manual_pending", fulfilledAt: "" })), "pending");
+  const pendingNode = addonServices.serviceRecords(order("a2", "custom_node", { catalogVersion: 2, fulfillmentStatus: "manual_pending", fulfilledAt: "" }), now)[0];
+  assert.deepStrictEqual([pendingNode.status, pendingNode.startedAt, pendingNode.expiresAt], ["pending", "", ""], "V2 services have no validity before delivery");
+  assert.strictEqual(statusOf(order("b", "manual", { deliveryNote: "KEY-1" })), "delivered");
+  assert.strictEqual(statusOf(order("c", "custom_node", { serviceExpiresAt: "2026-10-01T00:00:00.000Z" })), "active");
+  assert.strictEqual(statusOf(order("d", "custom_node", { serviceExpiresAt: "2026-09-10T00:00:00.000Z" })), "expired");
+  assert.strictEqual(statusOf(order("e", "manual", { fulfillmentStatus: "failed" })), "failed");
+  assert.deepStrictEqual(addonServices.serviceRecords({ ...order("f", "manual"), status: "pending" }), []);
+  const legacyHomeIp = { id: "g", status: "paid", paidAt: deliveredAt, fulfillmentStatus: "fulfilled", addOnSnapshots: [{ name: "家宽 IP", durationDays: 30, regionName: "美国" }] };
+  assert.deepStrictEqual([statusOf(legacyHomeIp), addonServices.serviceRecords(legacyHomeIp, now)[0].expiresAt, addonServices.serviceRecords(legacyHomeIp, now)[0].handler], ["active", "2026-10-01T00:00:00.000Z", "manual"]);
+  assert.strictEqual(addonServices.isPendingDelivery(order("h", "manual", { fulfillmentStatus: "manual_pending", reversedAt: deliveredAt })), false);
+
+  assert.throws(() => addonServices.normalizeDelivery("custom_node", { deliveryNote: "x" }), /定制入站/);
+  assert.throws(() => addonServices.normalizeDelivery("manual", { inboundIds: [3] }), /交付内容/);
+  assert.deepStrictEqual(addonServices.normalizeDelivery("custom_node", { inboundIds: ["7", 7, -1, "x"] }), { deliveryNote: "", inboundIds: [7] });
+  assert.deepStrictEqual(addonServices.normalizeDelivery("manual", { deliveryNote: " KEY ", inboundIds: [7] }), { deliveryNote: "KEY", inboundIds: [] });
+
+  const grants = [
+    order("old", "custom_node", { customInboundIds: [7, 8], serviceExpiresAt: "2026-09-10T00:00:00.000Z" }),
+    order("renewed", "custom_node", { customInboundIds: [8], serviceExpiresAt: "2026-10-10T00:00:00.000Z" }),
+    order("done", "custom_node", { customInboundIds: [9], serviceExpiresAt: "2026-09-01T00:00:00.000Z", serviceEndedAt: "2026-09-01T00:10:00.000Z" }),
+    order("other-user", "custom_node", { userId: "u2", customInboundIds: [7], serviceExpiresAt: "2026-09-10T00:00:00.000Z" }),
+    order("card", "manual", { customInboundIds: [], serviceExpiresAt: "2026-09-10T00:00:00.000Z" })
+  ];
+  const expired = addonServices.expiredCustomNodeGrants(grants, "u1", now);
+  assert.deepStrictEqual([expired.orders.map(item => item.id), expired.releaseInboundIds], [["old"], [7]]);
+  assert.deepStrictEqual(addonServices.expiredCustomNodeGrants(grants, "u1", new Date("2026-08-01").getTime()).orders, []);
+
+  const mail = addonServices.deliveryNotificationMail({ order: { merOrderTid: "NO<1>", planName: "美区账号", deliveryNote: "SECRET-KEY" }, url: "https://example.test/account/orders/1" });
+  assert.ok(mail.text.includes("https://example.test/account/orders/1") && mail.html.includes("NO&lt;1&gt;"));
+  assert.ok(!mail.text.includes("SECRET-KEY") && !mail.html.includes("SECRET-KEY"));
+}
 
 assert.strictEqual(strictActiveUserGroup({ group: "basic", activeGroup: "ultra" }), "ultra");
 assert.strictEqual(strictActiveUserGroup({ group: "basic" }), "basic");

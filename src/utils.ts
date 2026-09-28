@@ -13,6 +13,16 @@ const planDurationLabels: Record<string, string> = { monthly: "30天", quarterly
 
 type PurchasedPlan = Partial<Pick<User, "activeGroup" | "duration" | "unlimited" | "trafficTier" | "purchasedTrafficGb" | "currentProductSnapshot">> & { traffic?: string }
 
+// Product name plus option, without repeating the name: add-ons use the product name as their
+// option label, and some option labels already start with the product name.
+export function orderProductLabel(order: { planName?: string; optionLabel?: string }, separator = " / ") {
+  const name = String(order.planName || "").trim()
+  const option = String(order.optionLabel || "").trim()
+  if (!option || option === name) return name || option
+  if (!name || option.startsWith(name)) return option
+  return `${name}${separator}${option}`
+}
+
 export function purchasedPlanName(plan: PurchasedPlan, pricing: PricingRow[] = [], trafficBytes?: number | null) {
   const snapshot = plan.currentProductSnapshot || {}
   const group = typeof snapshot.group === "string" ? snapshot.group : plan.activeGroup

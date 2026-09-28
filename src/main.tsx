@@ -29,6 +29,7 @@ const UserDetailPage = lazy(() => import("@/components/features/details").then(m
 const EmbyPage = lazy(() => import("@/components/features/emby").then(module => ({ default: module.EmbyPage })))
 const PricingSettingsPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingSettingsPage })))
 const PricingDetailPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingDetailPage })))
+const ServiceDeliveriesPage = lazy(() => import("@/components/features/service-delivery").then(module => ({ default: module.ServiceDeliveriesPage })))
 const CatalogV2ProductsPage = lazy(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2ProductsPage })))
 const CatalogV2ProductDetailPage = lazy(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2ProductDetailPage })))
 const SalesSettingsPage = lazy(() => import("@/components/features/sales-settings").then(module => ({ default: module.SalesSettingsPage })))
@@ -151,6 +152,7 @@ function App() {
               <Route path="orders/:id" element={<OrderDetailPage />} />
               <Route path="tickets" element={<AdminTicketsPage />} />
               <Route path="tickets/:id" element={<AdminTicketDetailPage />} />
+              <Route path="deliveries" element={<ServiceDeliveriesPage />} />
               <Route path="bills" element={<Navigate to="/orders" replace />} />
               <Route path="pricing-settings" element={<PricingSettingsPage />} />
               <Route path="pricing-settings/new" element={<PricingDetailPage />} />

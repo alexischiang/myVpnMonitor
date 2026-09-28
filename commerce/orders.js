@@ -31,7 +31,7 @@ function createOrder({ id, number, accountId, email, purpose, quote, purchaseCou
     trafficTierMarkupPercent: quote.trafficTierMarkupPercent || 0,
     discountAmount: quote.discountAmount || 0, vipLevel: quote.vipLevel,
     vipDiscountPercent: quote.vipDiscountPercent || 0, vipDiscountAmount: quote.vipDiscountAmount || 0,
-    subtotal: quote.subtotal, taxAmount: quote.taxAmount || 0,
+    subtotal: quote.subtotal, taxRate: Number(quote.taxRate) || 0, taxAmount: quote.taxAmount || 0,
     beforeCreditAmount: quote.beforeCreditAmount, cashCredit: quote.cashCredit || 0,
     purchaseAction: quote.purchaseAction, purchaseCountBefore: purpose === "plan" ? purchaseCount : undefined,
     couponCode: quote.couponCode || "", totalAmount: quote.amount,

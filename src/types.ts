@@ -335,6 +335,44 @@ export type PricingRow = {
 export type CatalogV2Feature = { label: string; isIncluded: boolean; sortOrder: number }
 export type CatalogV2Period = { id: string; durationDays: number; trafficBytes: number | null; deviceLimit: number; priceCents: number; isEnabled: boolean; sortOrder: number }
 export type CatalogV2LineGroup = { id: string; name: string; isEnabled: boolean; sortOrder: number; inboundKeys: string[]; productCount?: number; createdAt?: string; updatedAt?: string }
+export type AddonHandler = "traffic_credit" | "custom_node" | "manual"
+export type AddonService = {
+  id: string
+  orderId: string
+  name: string
+  regionName: string
+  handler: AddonHandler
+  handlerLabel: string
+  delivery: "automatic" | "inbounds" | "content"
+  quantity: number
+  amount: number
+  durationDays: number
+  status: "pending" | "processing" | "active" | "delivered" | "expired" | "failed" | "reversed"
+  startedAt: string
+  expiresAt: string
+  deliveredAt: string
+  deliveryNote: string
+  buyerInputLabel: string
+  buyerInput: string
+  inboundIds: number[]
+}
+export type AdminDeliveryOrder = {
+  id: string
+  merOrderTid: string
+  planName: string
+  email: string
+  customerID: number | null
+  totalAmount?: number
+  amount: number
+  paidAt: string
+  fulfilledAt: string
+  deliveredBy: string
+  deliveryNotifiedAt: string
+  deliveryNotifyError: string
+  services: AddonService[]
+}
+export type CustomInboundOption = { id: number; name: string; enabled: boolean; region: string; nodeName: string }
+export type CatalogV2AddonCategory = { id: string; name: string; sortOrder: number; productCount?: number; createdAt?: string; updatedAt?: string }
 export type CatalogV2Product = {
   id: string
   type: "recurring_plan" | "lifetime_plan" | "addon"
@@ -347,13 +385,16 @@ export type CatalogV2Product = {
   features: CatalogV2Feature[]
   isRecommended: boolean
   lineGroupId: string | null
+  addonCategoryId: string | null
   durationDays: number | null
   trafficBytes: number | null
   deviceLimit: number | null
   priceCents: number | null
   trafficCustomization: { enabled: boolean; stepBytes: number | null; stepPriceCents: number | null; maxSteps: number }
   purchaseRequirement: "standalone" | "requires_recurring_plan" | null
-  fulfillment: { mode: "automatic" | "manual" | null; handler: "traffic_credit" | "manual" | null; config: { trafficBytes?: number } }
+  fulfillment: { mode: "automatic" | "manual" | null; handler: AddonHandler | null; config: { trafficBytes?: number } }
+  buyerInputLabel: string
+  chargeTax: boolean
   deliveryDescription: string
   serviceDurationDays: number | null
   allowQuantity: boolean

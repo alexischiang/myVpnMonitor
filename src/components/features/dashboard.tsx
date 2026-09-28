@@ -1,5 +1,6 @@
 import * as React from "react"
-import { Activity, Loader2, Mail, RefreshCw, Users } from "lucide-react"
+import { Activity, ArrowRight, Loader2, Mail, RefreshCw, Users } from "lucide-react"
+import { Link } from "react-router-dom"
 import { toast } from "sonner"
 
 import { fetchJson, postJson } from "@/api"
@@ -10,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useServiceHealth } from "@/components/features/app-shell"
 import { useData } from "@/components/features/data-provider"
 import { SectionCards } from "@/components/features/section-cards"
+import { SummaryCard } from "@/components/features/summary-card"
 import { EmptyState, StatusBadge } from "@/components/features/shared"
 import { formatBytes, formatDate, formatDateTime, userStatus } from "@/utils"
 
@@ -47,6 +49,23 @@ function billIncomeForDay(bills: Array<{ amount?: number; occurredAt?: string }>
 function growthPercent(current: number, previous: number) {
   if (previous === 0) return current > 0 ? 100 : 0
   return ((current - previous) / previous) * 100
+}
+
+// Work waiting on the admin: paid add-ons to deliver and tickets awaiting a support reply.
+function PendingWorkCards() {
+  const [summary, setSummary] = React.useState<{ pendingDeliveries: number; pendingTickets: number } | null>(null)
+  const [error, setError] = React.useState(false)
+  React.useEffect(() => { fetchJson<{ pendingDeliveries: number; pendingTickets: number }>("/api/admin/work-summary").then(setSummary).catch(() => setError(true)) }, [])
+  const cards = [
+    { label: "待交付服务", value: summary?.pendingDeliveries, detail: "已付款、等待人工交付的附加服务", to: "/deliveries", action: "去交付" },
+    { label: "待处理工单", value: summary?.pendingTickets, detail: "等待客服回复的工单", to: "/tickets", action: "去处理" },
+  ]
+  return <div className="grid grid-cols-1 gap-4 px-4 md:grid-cols-2 lg:px-6">
+    {cards.map(card => <SummaryCard key={card.to} label={card.label}
+      value={summary ? card.value : error ? "—" : <Skeleton className="h-8 w-12" />}
+      detail={error ? "暂时无法加载，请刷新页面重试" : card.detail}
+      action={<Button asChild variant={summary && card.value ? "default" : "outline"} size="sm"><Link to={card.to}>{card.action}<ArrowRight /></Link></Button>} />)}
+  </div>
 }
 
 function ServiceMonitor() {
@@ -163,6 +182,8 @@ export function DashboardPage() {
         monthlyIncomeGrowth={monthlyIncomeGrowth}
         activeUserRate={activeUserRate}
       />
+
+      <PendingWorkCards />
 
       <div className="grid gap-4 px-4 lg:grid-cols-4 lg:px-6">
         <div className="min-w-0 lg:col-span-3">

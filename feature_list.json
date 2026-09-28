@@ -1612,6 +1612,327 @@
         "page_errors": [],
         "checked_at": "2026-09-28"
       }
+    },
+    {
+      "id": "catalog-v2-addon-categories",
+      "name": "Admin-managed add-on categories",
+      "description": "Admins create, rename, reorder and delete add-on categories on the V2 product page and assign each add-on product to one category. The account plans page groups add-on services under their category headings (uncategorised ones last under 其他服务).",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "catalog_v2_addon_categories table and nullable catalog_v2_products.addon_category_id (ON DELETE SET NULL) are created idempotently.",
+        "Admin API supports list/create/update/delete of categories; saving an add-on with an unknown category is rejected; non-add-on products never keep a category.",
+        "/catalog-v2 lets admins manage categories and /catalog-v2/products/:id lets admins pick a category for add-ons.",
+        "/account/plans groups add-ons by category in category sort order.",
+        "Affected routes render with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-28: node test.js (category normalisation cases), npm run check, npm run verify (app/docs build, core and 3x-ui tests; payment gate stops without TEST_DATABASE_URL as before), npm run verify:catalog-v2 (isolated schema: payment, wallet and catalog V2 incl. category save/rename/unassign/ON DELETE SET NULL), npm run verify:harness and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/catalog-v2",
+          "/catalog-v2/products/new",
+          "/catalog-v2/products/test-apple-id",
+          "/account/plans"
+        ],
+        "interactions": [
+          "Admin on the running local dev server (local DB): added categories 流量加油包 and 账号服务 from the form, renamed 账号服务 to 账号与会员 and saved inline; toasts shown, product counts updated.",
+          "Created add-on test-traffic-50g in the product editor with category 流量加油包; list badges showed 流量加油包 / 账号与会员 / 未分类; editor reload preselected 账号与会员.",
+          "API: saving an add-on with an unknown category returned 400 with 附加服务分类不存在.",
+          "Customer expired-renew@xela.test on /account/plans: add-ons grouped as 流量加油包 → 账号与会员 → 其他服务 in sort order; 375px and 1024px with no horizontal page scroll; fresh reload made only 200 API calls.",
+          "Deleting both categories left all three add-ons uncategorised; test categories and add-ons were then deleted (0 remain).",
+          "Console buffer held only the three errors caused by deliberate test probes (pre-login 401, intentional bad-category 400, a guessed /api/logout 404); fresh loads of every route added none."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-28"
+      }
+    },
+    {
+      "id": "addon-fulfillment-handlers",
+      "name": "Unified add-on fulfilment chain",
+      "description": "One handler table (commerce/addon-services.js) drives every V2 add-on: traffic_credit (automatic, lasts until the monthly traffic reset), custom_node (manual; admin binds custom inbounds on delivery; lasts serviceDurationDays x quantity from delivery; expired grants are unbound by a sync job while plan expiry keeps the binding) and manual (card/account/recharge delivery content). Products may require buyer input at checkout. Admin delivery stores the content, applies inbound grants and emails the customer a link (no secrets in mail).",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "catalog-v2-addon-categories"
+      ],
+      "done_criteria": [
+        "Handler policy, service records, expiry and grant calculations are shared pure functions with unit tests.",
+        "Products accept custom_node handler and an optional buyer input label; checkout rejects a missing required input and stores it on the order.",
+        "Admin delivery validates per handler, binds custom-node inbounds through the same path as manual custom-inbound edits, and sends a link-only email; mail failure does not undo delivery.",
+        "A tracked sync job unbinds expired custom-node inbounds unless another active grant still covers them.",
+        "npm run verify and the isolated catalog V2 suite pass."
+      ],
+      "verification": [
+        "2026-09-28: node test.js (handler normalisation, buyer input, service windows/statuses, delivery validation, overlapping custom-node expiry, link-only mail), npm run verify:catalog-v2 (isolated schema; new test-payment block: missing buyer input 400, manual sale -> pending queue and work summary, delivery without inbound 400, delivery binds inbound 2 on the mock panel with a 30-day window and records the mail failure, customer sees active service, expiry job unbinds once, card-key delivery visible only to the owner), npm run verify:fast and git diff --check passed."
+      ]
+    },
+    {
+      "id": "admin-service-delivery-page",
+      "name": "Admin add-on configuration and service delivery page",
+      "description": "The product editor offers the three add-on handlers (traffic pack / custom node / manual) with their duration rule and the optional buyer input label. /deliveries lists pending and recently delivered add-on services with buyer input, and lets the admin enter delivery content (and pick custom inbounds for custom nodes) then deliver and notify the customer.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "addon-fulfillment-handlers"
+      ],
+      "done_criteria": [
+        "Product editor saves custom_node and manual handlers, duration and buyer input label.",
+        "Pending queue and delivered history render with loading, empty and error states.",
+        "Delivering shows success or the mail warning and removes the item from the queue.",
+        "Route renders with no console or page errors on desktop and mobile."
+      ],
+      "verification": [
+        "2026-09-28: npm run check, npm run verify:catalog-v2, npm run verify:fast and git diff --check passed (recorded again at session end)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/deliveries",
+          "/orders/fixture-custom-node-order",
+          "/catalog-v2/products/test-home-node"
+        ],
+        "interactions": [
+          "Isolated server (port 3100, production build, mail and Telegram credentials blanked, XUI read-only with an unreachable panel URL) on the local DB with temporary test products, a customer top-up order carrying buyer input, an admin Apple ID sale and a local custom-node order fixture; one local inbound temporarily marked custom.",
+          "/deliveries: pending tab showed 3 then 2 items with handler badges, order meta and the buyer input with copy button; the custom-node form listed the custom inbound checkbox and enabled submit after ticking it.",
+          "Custom-node delivery for a user without a 3x-ui client showed the error toast and the order stayed pending; the top-up delivery with content showed the 邮件提醒未发送 warning toast and moved to 最近已交付 with the warning badge; a legacy home-IP order also listed with its expiry.",
+          "Order detail showed service type and the embedded delivery form, with no validity before delivery (bug found and fixed: V2 windows start at delivery).",
+          "Product editor: switching 流量包 / 人工交付 / 节点定制 toggled the traffic field, the days field (required only for custom node) and the locked purchase requirement; saving custom node with buyer input 期望地区 persisted after reload.",
+          "375px: no horizontal page scroll, item content not overflowing, submit button 44px high; meta lines unclamped after fix.",
+          "Console: the only errors were from deliberate probes (400 missing-input order, 400 no-active-plan sale, 400 intentional custom-node error, 404 x2 from a GET on a PUT-only route); fresh loads of every route made only 200 requests."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-28"
+      }
+    },
+    {
+      "id": "account-order-services-view",
+      "name": "Customer purchased services on order detail",
+      "description": "The customer order detail page shows each purchased add-on service with status, validity, buyer input and delivered content (copyable).",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "addon-fulfillment-handlers"
+      ],
+      "done_criteria": [
+        "Order detail shows pending, delivered, active and expired services correctly.",
+        "Checkout asks for the product buyer input when required.",
+        "Routes render with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-28: npm run check and the isolated catalog V2 suite passed; add-on checkout no longer lists 无限流量 and its footer matches the delivery type (found during verification)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/orders/852b37cb-4343-4145-baca-0d272e482315",
+          "/account/orders/fixture-custom-node-order",
+          "/account/plans/checkout?option=v2%3Atest-ai-topup",
+          "/account/plans"
+        ],
+        "interactions": [
+          "Isolated server, customer expired-renew@xela.test at 375px.",
+          "Delivered top-up order: 已购服务 shows 已交付, 人工交付 · 交付于 time, 充值账号 buyer input and the delivered content with a copy button; no horizontal scroll.",
+          "Pending custom-node order opened through the email-link path /account/orders/:id showed 等待交付 and 交付后生效，有效期 30 天.",
+          "Checkout: submitting without the required 充值账号 kept the page, showed 请填写充值账号 with aria-invalid and moved focus to the field; typing cleared it; submitting created the order with the buyer input stored.",
+          "Fresh tab with only customer pages: no console errors and every API request 200. Separate pre-existing issue flagged as its own task: a full-page load of /cashier/:id by a customer is redirected to /account by serveStatic."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-28"
+      }
+    },
+    {
+      "id": "dashboard-pending-work-cards",
+      "name": "Dashboard pending deliveries and tickets cards",
+      "description": "Admin dashboard shows counts of pending add-on deliveries and tickets awaiting support, each linking to its queue.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "addon-fulfillment-handlers"
+      ],
+      "done_criteria": [
+        "Counts match the delivery queue and tickets in pending_support.",
+        "/dashboard renders with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-28: npm run check passed; /api/admin/work-summary covered by the test-payment delivery block (pendingDeliveries >= 1)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/dashboard",
+          "/deliveries"
+        ],
+        "interactions": [
+          "Isolated server as admin: 待交付服务 showed 2 matching /api/admin/deliveries pending, 待处理工单 showed 0 then 1 after a customer opened a ticket (status pending_support); card buttons switch to the filled variant when there is work.",
+          "去交付 navigated to /deliveries; 去处理 links to /tickets.",
+          "375px: cards stack without horizontal scroll; desktop: two cards side by side below the income cards.",
+          "Fresh admin tab /dashboard -> /deliveries: no console errors.",
+          "All verification data (4 orders, 3 products, the ticket, wallet entries, reservations, user logs, 4 failed sync runs from the unreachable test panel, inbound metadata) was removed from the local DB afterwards."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-28"
+      }
+    },
+    {
+      "id": "customer-cashier-direct-load",
+      "name": "Customers can open or refresh /cashier/:id",
+      "description": "serveStatic redirected a signed-in customer's full-page load of /cashier/<orderId> to /account because only /account paths were allowed for the user role. The cashier page is standalone and its API enforces ownership, so customers must be able to load it directly.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "A signed-in customer loading /cashier/<id> directly gets the app, not a redirect.",
+        "Unauthenticated visitors are still sent to /login; admin behaviour is unchanged.",
+        "Regression assertions in test-payment.js; order page renders after a refresh with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-28: reproduced first with a new test-payment.js assertion (customer GET /cashier/<id> returned 302 to /account); after the fix npm run verify:catalog-v2 (isolated: customer 200 with app shell, anonymous 302 /login, /cashier/<id>/extra still 302 /account) and npm run verify:fast passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/cashier/5ea863b1-ef29-4503-8fb9-5fde082d551f"
+        ],
+        "interactions": [
+          "Isolated production-build server (mail blanked, XUI unreachable) as customer expired-renew@xela.test with a temporary pending plan order.",
+          "Direct load of /cashier/<id> rendered the cashier (order number, countdown, payment options) instead of redirecting; location.reload() kept the page.",
+          "Fresh tab: no console errors; document, assets and API requests all 200. Earlier ERR_CONNECTION_REFUSED entries came from a reused tab polling while the previous server was stopped.",
+          "The test order was cancelled through the app and its order row, reservation, user log and one failed sync run from the unreachable panel were removed from the local DB."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-28"
+      }
+    },
+    {
+      "id": "account-addon-category-pills",
+      "name": "Add-on category pill filter on the plans page",
+      "description": "The account plans page shows a row of pill buttons (全部商品 plus each add-on category that has products, and 其他服务 for uncategorised ones). 全部商品 shows every group under its heading; choosing a category shows only that category. Built as a reusable CategoryPills component on ToggleGroup, horizontally scrollable on small screens, with an optional icon per option.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "catalog-v2-addon-categories"
+      ],
+      "done_criteria": [
+        "Pills appear only when at least one category has products; clicking filters the add-on grid and the active pill is visibly selected and announced.",
+        "Re-clicking the active pill keeps the selection; keyboard arrows move between pills.",
+        "375px: the pill row scrolls sideways without page horizontal scroll and targets are at least 44px high.",
+        "/account/plans renders with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-28: npm run check, npm run verify:fast, npm run verify:harness and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans"
+        ],
+        "interactions": [
+          "Running dev server (local DB) as customer expired-renew@xela.test with 3 temporary categories (ChatGPT, X-Twitter, 在线接码) and 5 temporary add-ons (one uncategorised), all removed afterwards.",
+          "全部商品 selected by default shows every group under its heading; clicking X-Twitter showed only X 老号 with no headings; clicking the active pill again kept it selected; 其他服务 showed only uncategorised add-ons.",
+          "Pills are role=radio in a radiogroup labelled 附加服务分类 with aria-checked; ArrowRight moved focus to the next pill (roving focus); selected pill computed colours oklch(0.985) on oklch(0.205), hovered too.",
+          "375px: pills 44px high, row scrolls sideways (520px content in 357px) with no page horizontal scroll; first pill aligned with the 附加服务 heading after removing an edge bleed that pushed it past the card padding.",
+          "Console: only 401s from login attempts before the local seed was restored and 500/aborted dashboard requests while the backend restarted; every /account/plans load made only 200 requests."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-28"
+      }
+    },
+    {
+      "id": "order-product-label-dedup",
+      "name": "No repeated product name in order labels",
+      "description": "Add-on orders use the product name as their option label, so screens that rendered planName / optionLabel showed the name twice. A shared orderProductLabel(order, separator) drops the option when it is empty, equal to or starts with the product name; used by the account order list, admin order list and detail, order summary and checkout.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Add-on orders show the product name once on the account order list, cashier summary and checkout; plans still show name and option.",
+        "/account/orders, the cashier and checkout render with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-28: reproduced with the synced ChatGPT PLUS 直充1个月 order (planName equals optionLabel); unit tests for orderProductLabel in test.js, npm run check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans/checkout?option=v2%3Achatgpt-plus-1",
+          "/account/orders",
+          "/account/orders/c2f58783-0f8f-4c2e-ae62-a7c7d59fafdf"
+        ],
+        "interactions": [
+          "Dev server, customer expired-renew@xela.test: checkout card title and order summary each show ChatGPT PLUS 直充1个月 once.",
+          "Temporary pending order: desktop table cell and mobile item show the name once; cashier 商品明细 shows it once (the second occurrence is the add-on price line). Order cancelled and removed from the local DB afterwards.",
+          "No console errors on these loads."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-28"
+      }
+    },
+    {
+      "id": "checkout-tax-rate-setting",
+      "name": "Tax rate stored in the database and editable in payment settings",
+      "description": "The checkout tax rate (default 3%) lives in the checkoutSettings collection instead of a constant, is edited on /payment-settings, applies to V2 and legacy quotes, and each order records the tax rate it was charged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "GET/PUT /api/checkout-settings (admin) validates 0-100 with up to 2 decimals; default 3 when unset.",
+        "Quotes use the stored rate; orders store taxRate and taxAmount.",
+        "/payment-settings shows the rate field and saves it with no console or page errors."
+      ],
+      "verification": [
+        "2026-09-28: node test.js (normalizeCheckoutSettings bounds/decimals, chargeTax default and exempt quotes), npm run verify (build and core tests; payment gate stops without TEST_DATABASE_URL as before), npm run verify:catalog-v2 (isolated: checkout-settings admin-only and validated, rate stored in checkoutSettings, quotes and orders at 5%, exempt product 0%, charge_tax round-trip), git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/payment-settings",
+          "/account/plans/checkout?option=v2%3Acycled-basic%3A30d",
+          "/orders"
+        ],
+        "interactions": [
+          "Dev server as admin: 税费设置 card loaded 3; submitting 150 showed 税率必须是 0 到 100 之间的数字。 inline with aria-invalid (native validation disabled so the specific message shows) and kept 5/3 stored; saving 5 succeeded and disabled the button until changed.",
+          "Customer checkout for a plan showed 税费（5%） ¥1.95.",
+          "Fresh tabs: no console errors and all API requests 200. Rate reset to 3 and the local checkoutSettings record removed afterwards."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-28"
+      }
+    },
+    {
+      "id": "product-charge-tax-flag",
+      "name": "Per-product 收取税费 flag",
+      "description": "V2 products have chargeTax (catalog_v2_products.charge_tax, default true so existing products keep their tax). The product editor shows a 收取税费 checkbox, checked by default; unchecked products are quoted with a 0% tax rate.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "checkout-tax-rate-setting"
+      ],
+      "done_criteria": [
+        "charge_tax column added idempotently with default true; save/list round-trip it.",
+        "Quotes for products with chargeTax false have taxRate 0 and taxAmount 0.",
+        "Product editor checkbox saves and reloads; checkout shows 税费 0 for exempt products."
+      ],
+      "verification": [
+        "2026-09-28: node test.js (normalizeCheckoutSettings bounds/decimals, chargeTax default and exempt quotes), npm run verify (build and core tests; payment gate stops without TEST_DATABASE_URL as before), npm run verify:catalog-v2 (isolated: checkout-settings admin-only and validated, rate stored in checkoutSettings, quotes and orders at 5%, exempt product 0%, charge_tax round-trip), git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/catalog-v2/products/chatgpt-plus-1",
+          "/account/plans/checkout?option=v2%3Achatgpt-plus-1"
+        ],
+        "interactions": [
+          "Existing product loaded with 收取税费 checked (column default true); layout fixed to FieldContent so label and description stack.",
+          "Unchecking and saving persisted after reload; customer checkout showed 税费（免税） ¥0.00 and total equal to the price. Also hid the unnamed 附加服务 +¥ line that duplicated the price for standalone add-on purchases.",
+          "Fresh tabs: no console errors. Product restored to charge_tax=true in the local DB afterwards."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-28"
+      }
     }
   ]
 }

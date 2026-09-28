@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-28
-- Current Objective: 总览卡片与 30 天分节点流量明细（倍率、起始日、小屏滑动）上线
+- Current Objective: 订单商品名去重、商品收取税费开关、税率入库并在支付设置可编辑
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -344,8 +344,18 @@
 
 - 2026-09-28: npm run verify、verify:harness、git diff --check 通过；/account 375/1024/1280/1440px 浏览器验证无溢出，新标签页 console_errors/page_errors 为空
 
+- 2026-09-28: npm run check、npm run verify、npm run verify:catalog-v2、verify:harness、git diff --check 通过；/catalog-v2 与 /account/plans 浏览器验证无新增 console/page errors
+
+- 2026-09-28: npm run verify（构建与核心/3x-ui 测试通过，支付门因未配置 TEST_DATABASE_URL 按惯例停止）、npm run verify:catalog-v2（隔离库全量含新增交付端到端测试）、verify:harness、git diff --check 通过；/deliveries、/dashboard、订单详情、结账页在隔离服务器浏览器验证无新增 console/page errors
+
+- 2026-09-28: 先用 test-payment 断言复现 302，修复后 verify:catalog-v2、verify:fast、verify:harness、git diff --check 通过；隔离生产构建浏览器直接打开与刷新收银台正常，无 console/page errors
+
+- 2026-09-28: npm run check、verify:fast、verify:harness、git diff --check 通过；/account/plans 桌面与 375px 浏览器验证筛选、键盘与无横向滚动，页面加载无 console/page errors
+
+- 2026-09-28: verify、verify:catalog-v2、verify:harness、git diff --check 通过；支付设置/商品编辑/结账/订单列表浏览器验证无 console/page errors
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/account-traffic-chart.tsx`, `src/components/features/bento-card.tsx`, `src/styles.css`, `test-xui-traffic.js`, `xui-traffic.js`, `src/components/features/progress-ring.tsx`
+- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `commerce/orders.js`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/bills.tsx`, `src/components/features/cashier-types.ts`, `src/components/features/cashier.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/navigation.ts`, `src/components/features/order-summary.tsx`, `src/components/features/payment-settings.tsx`, `src/components/features/public-pages.tsx`, `src/main.tsx`, `src/types.ts`, `src/utils.ts`, `test-catalog-v2.js`, `test-payment.js`, `test.js`, `commerce/addon-services.js`, `src/components/features/category-pills.tsx`, `src/components/features/purchased-services.tsx`, `src/components/features/service-delivery.tsx`
 - Known risks: none
-- Recommended Next Step: 观察生产部署结果；广告栏后续可接入后台广告草稿
+- Recommended Next Step: 等待用户验收；上线后在支付设置确认税率
