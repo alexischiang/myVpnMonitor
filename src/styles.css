@@ -183,6 +183,22 @@
   }
 }
 
+.typing-cursor {
+  animation: typing-cursor-blink 1s steps(1, end) infinite;
+}
+
+@keyframes typing-cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-cursor {
+    animation: none;
+  }
+}
+
 .xui-inbound-sheet[data-state="open"] {
   animation: xui-inbound-sheet-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { CheckCircle, CircleX, Copy, ExternalLink, Info, TriangleAlert } from "lucide-react"
+import { Check, CheckCircle, CircleX, Copy, ExternalLink, Info, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -43,20 +43,42 @@ export function EmptyState({ title = "暂无数据", description }: { title?: st
   )
 }
 
-export function CopyButton({ value, label = "复制", variant = "ghost" }: { value?: string; label?: string; variant?: React.ComponentProps<typeof Button>["variant"] }) {
+// feedback="inline" 时复制结果直接显示在按钮上（带动画），不弹出 Toast
+export function CopyButton({ value, label = "复制", variant = "ghost", size = "sm", className, feedback = "toast" }: { value?: string; label?: string; variant?: React.ComponentProps<typeof Button>["variant"]; size?: React.ComponentProps<typeof Button>["size"]; className?: string; feedback?: "toast" | "inline" }) {
+  const [result, setResult] = React.useState<"copied" | "failed" | null>(null)
+  const resetTimer = React.useRef<number>()
+
+  React.useEffect(() => () => window.clearTimeout(resetTimer.current), [])
+
+  function showResult(next: "copied" | "failed") {
+    setResult(next)
+    window.clearTimeout(resetTimer.current)
+    resetTimer.current = window.setTimeout(() => setResult(null), 2000)
+  }
+
+  async function copy() {
+    try {
+      await copyText(value || "")
+      if (feedback === "inline") showResult("copied")
+      else toast.success("已复制")
+    } catch {
+      if (feedback === "inline") showResult("failed")
+      else toast.error("复制失败，请长按内容手动复制")
+    }
+  }
+
+  const Icon = result === "copied" ? Check : result === "failed" ? CircleX : Copy
   return (
     <Button
       type="button"
-      variant={variant}
-      size="sm"
-      onClick={async () => {
-        await copyText(value || "")
-        toast.success("已复制")
-      }}
+      variant={result === "copied" ? "success" : result === "failed" ? "destructive" : variant}
+      size={size}
+      className={className}
+      onClick={() => void copy()}
       disabled={!value}
     >
-      <Copy />
-      {label}
+      <Icon key={result || "idle"} className={result ? "motion-safe:animate-[copy-success_180ms_ease-out]" : undefined} />
+      <span aria-live="polite">{result === "copied" ? "已复制" : result === "failed" ? "复制失败，请长按链接复制" : label}</span>
     </Button>
   )
 }

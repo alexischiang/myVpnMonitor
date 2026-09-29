@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-20",
+  "updated_at": "2026-09-30",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -1932,6 +1932,51 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-09-28"
+      }
+    },
+    {
+      "id": "wechat-open-in-browser",
+      "name": "WeChat in-app browser guard",
+      "description": "Detect the WeChat in-app browser and route every page to a branded notice (NEXORA logo, typing banner) that asks the user to copy the link and open it in a system browser.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Any route opened with a MicroMessenger user agent redirects to /open-in-browser with the original path, query and hash preserved.",
+        "The notice page shows the full original URL with a copy button and the menu hint; non-WeChat visitors are sent back to the original path.",
+        "Redirect targets are limited to same-site relative paths; copy failures show a toast instead of an uncaught rejection.",
+        "Notice page shows the NEXORA logo, a left-aligned static banner \"One click away / From the\" where only WORLD. loops type-hold-delete and switches to a new random AA-contrast color at the start of each typing pass, 只需一键，全球互联。 below, the instructions Card (Compass icon title) centered in the viewport, and inline copy feedback without a toast."
+      ],
+      "verification": [
+        "2026-09-30: npm run check passed; browser verification on isolated server (test DB, port 3107) with simulated WeChat UA.",
+        "2026-09-30: branding/animation iteration: npm run check, verify:harness, verify:fast, git diff --check passed.",
+        "2026-09-30: card/banner layout iteration: npm run check, verify:harness, verify:fast, git diff --check passed.",
+        "2026-09-30: globe/centering/color iteration: npm run check, verify:harness, verify:fast, git diff --check passed.",
+        "2026-09-30: globe removal and WORLD.-only loop iteration: npm run check, verify:harness, verify:fast, git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/open-in-browser",
+          "/account/orders",
+          "/pricing",
+          "/account/wallet",
+          "/login"
+        ],
+        "interactions": [
+          "Simulated MicroMessenger UA and navigated to /account/orders?page=2#top; redirected to /open-in-browser with the full path preserved and shown as http://localhost:3107/account/orders?page=2#top.",
+          "At 375x812: copy button 44px high, no horizontal scroll; clicking it copied via the selection fallback when Clipboard API was denied and showed 已复制.",
+          "Initial run surfaced an uncaught NotAllowedError from navigator.clipboard.writeText; fixed copyText fallback and CopyButton error toast, rebuilt and re-verified in a fresh tab with no console errors.",
+          "Non-WeChat visit to /open-in-browser?redirect=//evil.com redirected to /login.",
+          "Iteration 2 (375x812 and 1280x800): logo NEXORA.beta at top; banner typed char by char with blinking typing-cursor-blink cursor; banner height constant during typing (64px mobile, 74px desktop) after replacing fixed min-height with an invisible full-text placeholder.",
+          "Real click on 复制网页链接: button switched to success variant with animated check and 已复制, zero Sonner toasts, reverted after 2s; gesture-less click showed the destructive 复制失败 state.",
+          "/login still renders the shared NexoraLogo; fresh tab console had no errors.",
+          "Iteration 3: banner left-aligned on two lines (36px mobile / 48px desktop), height constant while typing (84px mobile); Chinese line 18px/20px in foreground oklch(0.145 0 0); instructions inside Card with h1, card centered below banner (357-643px at 1280x800); no horizontal scroll at 375px; copy in card turned success variant with 已复制 and no toast; console clean.",
+          "Iteration 4: card center equals viewport center at 375x812 (406), 768x1024 (512), 1280x800 (400), 1440x900 (450) after moving the logo out of flow on md+; globe (opacity 0.8, z-index -10) overlaps banner right edge at all sizes with no horizontal scroll; WORLD. cycled colors every 1s; all 13 palette colors measured >=4.95:1 on light and >=6.33:1 on dark backgrounds; description text updated; copy button success state with no toast; console clean.",
+          "Iteration 5: globe SVG removed; 8s sampling at 375x812 showed static prefix, WORLD. typed/held ~2s/deleted/retyped with color changing only at each pass start (sky -> green -> red) and constant within a pass; banner height constant 84px; card centered at 375x812 (406) and 1280x800 (400); no horizontal scroll; console clean."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-30"
       }
     }
   ]

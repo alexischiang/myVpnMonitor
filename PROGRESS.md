@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-28
-- Current Objective: 订单商品名去重、商品收取税费开关、税率入库并在支付设置可编辑
+- Last Updated: 2026-09-30
+- Current Objective: 微信内置浏览器拦截页：移除地球图，仅 WORLD. 循环打字并每轮换色
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -354,8 +354,18 @@
 
 - 2026-09-28: verify、verify:catalog-v2、verify:harness、git diff --check 通过；支付设置/商品编辑/结账/订单列表浏览器验证无 console/page errors
 
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；模拟微信 UA 浏览器验证跳转、复制与控制台无错误
+
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；375/1280 宽度浏览器验证打字动画无布局跳动、复制按钮动画无 Toast、控制台无错误
+
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；375/1280 宽度浏览器验证卡片布局、banner 无跳动、复制动画、控制台无错误
+
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；4 种视口下卡片精确居中、地球与 banner 重叠、13 色对比度均达 AA、控制台无错误
+
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；浏览器采样确认 WORLD. 循环打字且每轮开始换色、卡片居中、控制台无错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `commerce/orders.js`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/bills.tsx`, `src/components/features/cashier-types.ts`, `src/components/features/cashier.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/navigation.ts`, `src/components/features/order-summary.tsx`, `src/components/features/payment-settings.tsx`, `src/components/features/public-pages.tsx`, `src/main.tsx`, `src/types.ts`, `src/utils.ts`, `test-catalog-v2.js`, `test-payment.js`, `test.js`, `commerce/addon-services.js`, `src/components/features/category-pills.tsx`, `src/components/features/purchased-services.tsx`, `src/components/features/service-delivery.tsx`
+- Files: `PROGRESS.md`, `feature_list.json`, `src/components/features/auth-pages.tsx`, `src/components/features/shared.tsx`, `src/main.tsx`, `src/styles.css`, `src/utils.ts`, `src/components/features/nexora-logo.tsx`, `src/components/features/open-in-browser.tsx`, `src/components/features/typing-text.tsx`
 - Known risks: none
-- Recommended Next Step: 等待用户验收；上线后在支付设置确认税率
+- Recommended Next Step: 无；如需上线请合并到 production

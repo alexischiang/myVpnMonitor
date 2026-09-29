@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react"
+import { lazy, Suspense, useEffect, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { ThemeProvider } from "next-themes"
@@ -9,6 +9,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DataProvider } from "@/components/features/data-provider"
 import { AppShell } from "@/components/features/app-shell"
+import { isWechatBrowser, OPEN_IN_BROWSER_PATH } from "@/utils"
 
 window.addEventListener("vite:preloadError", event => {
   event.preventDefault()
@@ -62,6 +63,7 @@ const AccountTicketCreatePage = lazy(() => import("@/components/features/ticket-
 const AccountTicketDetailPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketDetailPage })))
 const AdminTicketsPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AdminTicketsPage })))
 const AdminTicketDetailPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AdminTicketDetailPage })))
+const OpenInBrowserPage = lazy(() => import("@/components/features/open-in-browser").then(module => ({ default: module.OpenInBrowserPage })))
 
 if (import.meta.env.DEV) document.title = `[LOCAL] ${document.title}`
 
@@ -80,6 +82,14 @@ function ScrollToTop() {
     return () => window.cancelAnimationFrame(frame)
   }, [pathname, search])
   return null
+}
+
+function WechatGuard({ children }: { children: ReactNode }) {
+  const { pathname, search, hash } = useLocation()
+  if (pathname !== OPEN_IN_BROWSER_PATH && isWechatBrowser()) {
+    return <Navigate to={`${OPEN_IN_BROWSER_PATH}?redirect=${encodeURIComponent(`${pathname}${search}${hash}`)}`} replace />
+  }
+  return children
 }
 
 function CrispChat() {
@@ -107,7 +117,9 @@ function App() {
         <BrowserRouter>
           <ScrollToTop />
           <Suspense fallback={<Skeleton className="m-6 min-h-24" />}>
+          <WechatGuard>
           <Routes>
+            <Route path={OPEN_IN_BROWSER_PATH} element={<OpenInBrowserPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -169,6 +181,7 @@ function App() {
             </Route>
             <Route path="*" element={<StatusPage code="404" title="页面不存在" description="没有找到你访问的页面，它可能已被移动或删除。" />} />
           </Routes>
+          </WechatGuard>
           </Suspense>
         </BrowserRouter>
         <Toaster position="bottom-right" richColors />
