@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-28
-- Current Objective: 总览卡片与 30 天分节点流量明细（倍率、起始日、小屏滑动）上线
+- Last Updated: 2026-09-30
+- Current Objective: 微信内置浏览器拦截页：移除地球图，仅 WORLD. 循环打字并每轮换色
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -344,8 +344,28 @@
 
 - 2026-09-28: npm run verify、verify:harness、git diff --check 通过；/account 375/1024/1280/1440px 浏览器验证无溢出，新标签页 console_errors/page_errors 为空
 
+- 2026-09-28: npm run check、npm run verify、npm run verify:catalog-v2、verify:harness、git diff --check 通过；/catalog-v2 与 /account/plans 浏览器验证无新增 console/page errors
+
+- 2026-09-28: npm run verify（构建与核心/3x-ui 测试通过，支付门因未配置 TEST_DATABASE_URL 按惯例停止）、npm run verify:catalog-v2（隔离库全量含新增交付端到端测试）、verify:harness、git diff --check 通过；/deliveries、/dashboard、订单详情、结账页在隔离服务器浏览器验证无新增 console/page errors
+
+- 2026-09-28: 先用 test-payment 断言复现 302，修复后 verify:catalog-v2、verify:fast、verify:harness、git diff --check 通过；隔离生产构建浏览器直接打开与刷新收银台正常，无 console/page errors
+
+- 2026-09-28: npm run check、verify:fast、verify:harness、git diff --check 通过；/account/plans 桌面与 375px 浏览器验证筛选、键盘与无横向滚动，页面加载无 console/page errors
+
+- 2026-09-28: verify、verify:catalog-v2、verify:harness、git diff --check 通过；支付设置/商品编辑/结账/订单列表浏览器验证无 console/page errors
+
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；模拟微信 UA 浏览器验证跳转、复制与控制台无错误
+
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；375/1280 宽度浏览器验证打字动画无布局跳动、复制按钮动画无 Toast、控制台无错误
+
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；375/1280 宽度浏览器验证卡片布局、banner 无跳动、复制动画、控制台无错误
+
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；4 种视口下卡片精确居中、地球与 banner 重叠、13 色对比度均达 AA、控制台无错误
+
+- 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；浏览器采样确认 WORLD. 循环打字且每轮开始换色、卡片居中、控制台无错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/account-traffic-chart.tsx`, `src/components/features/bento-card.tsx`, `src/styles.css`, `test-xui-traffic.js`, `xui-traffic.js`, `src/components/features/progress-ring.tsx`
+- Files: `PROGRESS.md`, `feature_list.json`, `src/components/features/auth-pages.tsx`, `src/components/features/shared.tsx`, `src/main.tsx`, `src/styles.css`, `src/utils.ts`, `src/components/features/nexora-logo.tsx`, `src/components/features/open-in-browser.tsx`, `src/components/features/typing-text.tsx`
 - Known risks: none
-- Recommended Next Step: 观察生产部署结果；广告栏后续可接入后台广告草稿
+- Recommended Next Step: 无；如需上线请合并到 production

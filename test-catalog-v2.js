@@ -44,13 +44,16 @@ async function main() {
     recurring: `test-recurring-${suffix}`,
     lifetime: `test-lifetime-${suffix}`,
     traffic: `test-traffic-${suffix}`,
-    manual: `test-manual-${suffix}`
+    manual: `test-manual-${suffix}`,
+    category: `test-category-${suffix}`,
+    customNode: `test-custom-node-${suffix}`
   };
   const createdProducts = [];
   const originalUsers = (await store.loadAll()).users || [];
 
   try {
     await store.upsertCatalogV2LineGroup({ id: ids.group, name: "Test group", isEnabled: true, sortOrder: 0, inboundKeys: ["test-node:1"] }, { create: true });
+    await store.upsertCatalogV2AddonCategory({ id: ids.category, name: "Test category", sortOrder: 0 }, { create: true });
     const recurring = product(ids.recurring, "recurring_plan", {
       lineGroupId: ids.group,
       trafficCustomization: { enabled: true, stepBytes: 10 * GB, stepPriceCents: 200, maxSteps: 3 },
@@ -58,13 +61,30 @@ async function main() {
     });
     const lifetime = product(ids.lifetime, "lifetime_plan", { lineGroupId: ids.group, trafficBytes: 200 * GB, deviceLimit: 3, priceCents: 5000 });
     const traffic = product(ids.traffic, "addon", { stock: 2, priceCents: 300, purchaseRequirement: "requires_recurring_plan", fulfillment: { mode: "automatic", handler: "traffic_credit", config: { trafficBytes: 50 * GB } }, allowQuantity: true, minQuantity: 1, maxQuantity: 2 });
-    const manual = product(ids.manual, "addon", { stock: 2, priceCents: 800, purchaseRequirement: "standalone", fulfillment: { mode: "manual", handler: "manual", config: {} }, deliveryDescription: "manual delivery", serviceDurationDays: 30, allowQuantity: false });
-    for (const item of [recurring, lifetime, traffic, manual]) {
+    const manual = product(ids.manual, "addon", { stock: 2, priceCents: 800, purchaseRequirement: "standalone", fulfillment: { mode: "manual", handler: "manual", config: {} }, deliveryDescription: "manual delivery", serviceDurationDays: 30, allowQuantity: false, addonCategoryId: ids.category });
+    const customNode = product(ids.customNode, "addon", { stock: null, priceCents: 3000, purchaseRequirement: "requires_recurring_plan", fulfillment: { mode: "manual", handler: "custom_node", config: {} }, serviceDurationDays: 30, buyerInputLabel: "期望地区" });
+    for (const item of [recurring, lifetime, traffic, manual, customNode]) {
       await store.saveCatalogV2Product(item, { create: true });
       createdProducts.push(item.id);
     }
 
     let products = await store.listCatalogV2Products();
+    const savedCustomNode = products.find(item => item.id === ids.customNode);
+    assert.deepEqual([savedCustomNode.fulfillment.handler, savedCustomNode.buyerInputLabel, savedCustomNode.serviceDurationDays], ["custom_node", "期望地区", 30]);
+    assert.equal(products.find(item => item.id === ids.manual).buyerInputLabel, "");
+    assert.equal(products.find(item => item.id === ids.manual).chargeTax, true, "charge_tax defaults to true");
+    await store.saveCatalogV2Product({ ...manual, chargeTax: false });
+    assert.equal((await store.listCatalogV2Products()).find(item => item.id === ids.manual).chargeTax, false);
+    await store.saveCatalogV2Product(manual);
+    assert.deepEqual([products.find(item => item.id === ids.manual).addonCategoryId, products.find(item => item.id === ids.traffic).addonCategoryId], [ids.category, null]);
+    assert.equal((await store.listCatalogV2AddonCategories()).find(item => item.id === ids.category).productCount, 1);
+    assert.equal((await store.upsertCatalogV2AddonCategory({ id: ids.category, name: "Renamed", sortOrder: 3 })).name, "Renamed");
+    await store.saveCatalogV2Product({ ...manual, addonCategoryId: null });
+    assert.equal((await store.listCatalogV2Products()).find(item => item.id === ids.manual).addonCategoryId, null);
+    await store.saveCatalogV2Product(manual);
+    await store.deleteCatalogV2AddonCategory(ids.category);
+    products = await store.listCatalogV2Products();
+    assert.equal(products.find(item => item.id === ids.manual).addonCategoryId, null, "deleting a category leaves its products uncategorised");
     const recurringQuote = resolvePurchase(products, { productId: ids.recurring, periodId: "30d", trafficSteps: 2 }, { taxRate: 3 });
     assert.deepEqual([recurringQuote.baseAmount, recurringQuote.trafficCustomizationAmount, recurringQuote.originalAmount, recurringQuote.amount, recurringQuote.trafficGb, recurringQuote.duration, recurringQuote.devices], [10, 4, 14, 14.42, 120, "monthly", 2]);
     const lifetimeQuote = resolvePurchase(products, { productId: ids.lifetime }, { taxRate: 3 });
@@ -108,7 +128,7 @@ async function main() {
     assert.deepEqual(new Set(delivered), new Set([recurringOrder.id, lifetimeOrder.id, trafficOrder.id, manualOrder.id]));
     assert.equal(persisted.length, 4);
     products = await store.listCatalogV2Products();
-    assert.deepEqual(products.filter(item => createdProducts.includes(item.id)).map(item => [item.id, item.stock]), [[ids.lifetime, 3], [ids.manual, 1], [ids.recurring, 3], [ids.traffic, 0]].sort((a, b) => a[0].localeCompare(b[0])));
+    assert.deepEqual(products.filter(item => createdProducts.includes(item.id)).map(item => [item.id, item.stock]), [[ids.customNode, null], [ids.lifetime, 3], [ids.manual, 1], [ids.recurring, 3], [ids.traffic, 0]].sort((a, b) => a[0].localeCompare(b[0])));
 
     await assert.rejects(store.reserveCatalogV2Inventory({ id: crypto.randomUUID(), productId: ids.traffic, orderId: `sold-out-${suffix}`, quantity: 1, expiresAt: new Date(Date.now() + 60000).toISOString() }), /库存不足/);
     const cancellable = await workflow.submit({ id: `cancel-${suffix}`, number: "cancel", accountId: "catalog-test", email: "catalog@example.test", purpose: "plan", quote: recurringQuote, purchaseCount: 0, now: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString() }, { totalCents: 1442, planCents: 1442, useBalance: false });
@@ -161,13 +181,14 @@ async function main() {
     assert.equal(replayedCli.status, 0, replayedCli.stderr);
     assert.match(replayedCli.stdout, /"alreadyMigrated": 2/);
     fs.rmSync(cliDirectory, { recursive: true, force: true });
-    console.log("Catalog V2 checks passed: all product types, quotes, inventory reservations, payment collection, late-payment safety, and idempotent user migration.");
+    console.log("Catalog V2 checks passed: all product types, quotes, inventory reservations, payment collection, late-payment safety, and idempotent user migration, add-on categories, custom-node handler and buyer input.");
   } finally {
     await store.saveCollection("users", originalUsers);
     await store.pool.query("DELETE FROM app_records WHERE collection='migrationState' AND id=$1", [`cli-${suffix}`]);
     await store.pool.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id = ANY($1::text[])", [createdProducts]);
     for (const id of createdProducts.reverse()) await store.deleteCatalogV2Product(id);
     await store.deleteCatalogV2LineGroup(ids.group);
+    await store.deleteCatalogV2AddonCategory(ids.category);
     await store.close();
   }
 }

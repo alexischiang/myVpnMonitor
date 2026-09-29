@@ -22,6 +22,7 @@ const { createSettlementService } = require("./commerce/settlement");
 const { createPaymentService, manualReceipt, transactionError } = require("./commerce/payments");
 const { createCheckoutWorkflow } = require("./commerce/checkout-workflow");
 const { resolvePurchase: resolveCatalogV2Purchase, visibleProducts: visibleCatalogV2Products } = require("./commerce/catalog-v2");
+const addonServices = require("./commerce/addon-services");
 
 loadLocalEnv();
 
@@ -65,7 +66,7 @@ const XUI_VISION_FLOW = "xtls-rprx-vision";
 const LEGACY_RECURRING_TRAFFIC_GB = Object.freeze({ basic: 50, pro: 100, ultra: 100 });
 const TRAFFIC_PACK_BYTES = 100 * 1024 ** 3;
 const TRAFFIC_PACK_PRICE = 20;
-const CHECKOUT_TAX_RATE = 3;
+const DEFAULT_CHECKOUT_TAX_RATE = 3;
 const CHINA_TIME_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_SUBCONVERTER_TARGET = "clash";
 const SUBCONVERTER_BOOLEAN_DEFAULTS = Object.freeze({
@@ -142,6 +143,17 @@ function normalizeCatalogV2LineGroup(input = {}) {
   return { id: normalizeCatalogV2Id(input.id, "权限组标识"), name, isEnabled: input.isEnabled !== false, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "权限组排序" }), inboundKeys };
 }
 
+function normalizeCatalogV2AddonCategory(input = {}) {
+  const name = String(input.name || "").trim().slice(0, 40);
+  if (!name) throw new Error("分类名称不能为空。");
+  return { id: input.id ? normalizeCatalogV2Id(input.id, "分类标识") : `cat-${crypto.randomBytes(4).toString("hex")}`, name, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "分类排序" }) };
+}
+
+async function assertCatalogV2ProductReferences(product) {
+  if (product.lineGroupId && !(await dataStore.listCatalogV2LineGroups()).some(group => group.id === product.lineGroupId && group.isEnabled)) throw new Error("请选择已启用的线路权限组。");
+  if (product.addonCategoryId && !(await dataStore.listCatalogV2AddonCategories()).some(category => category.id === product.addonCategoryId)) throw new Error("附加服务分类不存在，请刷新后重新选择。");
+}
+
 function validateCatalogV2LineGroupInbounds(group, inbounds, existing = null) {
   const validKeys = new Set((inbounds || []).filter(inbound => inbound.inboundType !== "custom").map(inbound => inbound.key));
   const existingKeys = new Set(existing?.inboundKeys || []);
@@ -181,8 +193,9 @@ function normalizeCatalogV2Product(input = {}) {
   if (customizationEnabled && periods.some(period => period.trafficBytes === null)) throw new Error("无限流量周期不能启用流量定制。");
   const fulfillment = input.fulfillment || {};
   const isAddon = type === "addon";
-  const fulfillmentMode = isAddon && fulfillment.mode === "automatic" ? "automatic" : isAddon ? "manual" : null;
-  const fulfillmentHandler = isAddon && fulfillmentMode === "automatic" && fulfillment.handler === "traffic_credit" ? "traffic_credit" : isAddon ? "manual" : null;
+  const handler = isAddon ? addonServices.addonHandler(addonServices.addonHandlerIdFromInput(fulfillment)) : null;
+  const fulfillmentMode = handler?.mode || null;
+  const fulfillmentHandler = handler?.id || null;
   const config = fulfillmentHandler === "traffic_credit" ? { trafficBytes: catalogV2Integer(fulfillment.config?.trafficBytes, { nullable: !isEnabled, min: 1, label: "自动交付流量" }) } : {};
   const minQuantity = isAddon ? catalogV2Integer(input.minQuantity ?? 1, { min: 1, label: "最少购买数量" }) : 1;
   const maxQuantity = isAddon ? catalogV2Integer(input.maxQuantity, { nullable: true, min: minQuantity, label: "最多购买数量" }) : null;
@@ -191,15 +204,21 @@ function normalizeCatalogV2Product(input = {}) {
     stock, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "商品排序" }), name,
     description: String(input.description || "").trim().slice(0, 500), features: normalizeCatalogV2Features(input.features),
     isRecommended: type !== "addon" && input.isRecommended === true, lineGroupId,
+    addonCategoryId: isAddon && input.addonCategoryId ? normalizeCatalogV2Id(input.addonCategoryId, "附加服务分类") : null,
     durationDays: type === "lifetime_plan" ? null : null,
     trafficBytes: type === "lifetime_plan" ? catalogV2Integer(input.trafficBytes, { nullable: true, label: "默认流量" }) : null,
     deviceLimit: type === "lifetime_plan" ? catalogV2Integer(input.deviceLimit, { nullable: !isEnabled, label: "在线IP数量" }) : null,
     priceCents: type === "lifetime_plan" || isAddon ? catalogV2Integer(input.priceCents, { nullable: !isEnabled, label: "商品价格" }) : null,
     trafficCustomization: normalizedCustomization, periods,
-    purchaseRequirement: isAddon && input.purchaseRequirement === "requires_recurring_plan" ? "requires_recurring_plan" : isAddon ? "standalone" : null,
+    purchaseRequirement: isAddon && (handler.requiresRecurringPlan || input.purchaseRequirement === "requires_recurring_plan") ? "requires_recurring_plan" : isAddon ? "standalone" : null,
     fulfillment: { mode: fulfillmentMode, handler: fulfillmentHandler, config },
     deliveryDescription: isAddon ? String(input.deliveryDescription || "").trim().slice(0, 500) : "",
-    serviceDurationDays: isAddon ? catalogV2Integer(input.serviceDurationDays, { nullable: true, min: 1, label: "服务有效天数" }) : null,
+    // Traffic packs end with the traffic cycle; custom nodes always have a fixed length per unit.
+    serviceDurationDays: !isAddon || handler.lifetime === "traffic_cycle" ? null
+      : handler.lifetime === "days" ? catalogV2Integer(input.serviceDurationDays ?? handler.defaultDays, { min: 1, label: "服务有效天数" })
+      : catalogV2Integer(input.serviceDurationDays, { nullable: true, min: 1, label: "服务有效天数" }),
+    buyerInputLabel: isAddon ? String(input.buyerInputLabel || "").trim().slice(0, 30) : "",
+    chargeTax: input.chargeTax !== false,
     allowQuantity: isAddon ? input.allowQuantity !== false : false, minQuantity, maxQuantity
   };
 }
@@ -211,7 +230,8 @@ function catalogV2Selection(payload = {}) {
     productId: String(payload.productId || match?.[1] || "").trim(),
     periodId: payload.periodId == null ? String(match?.[2] || "").trim() : String(payload.periodId).trim(),
     trafficSteps: payload.trafficSteps ?? (payload.trafficTier == null ? 0 : Number(payload.trafficTier) - 1),
-    quantity: payload.quantity
+    quantity: payload.quantity,
+    buyerInput: payload.buyerInput
   };
 }
 
@@ -249,9 +269,12 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) 
   const vipPercent = isPlan ? vipDiscountPercent(vipLevel) : 0;
   const afterCouponCents = originalCents - discountCents;
   const subtotalCents = Math.round(afterCouponCents * (100 - vipPercent) / 100);
-  const taxCents = Math.round(subtotalCents * CHECKOUT_TAX_RATE / 100);
+  const taxRate = product.chargeTax === false ? 0 : checkoutTaxRate();
+  const taxCents = Math.round(subtotalCents * taxRate / 100);
   const terms = isPlan ? paymentPurchaseTerms(userForAccount(account)) : { purchaseAction: "add_on", cashCredit: 0 };
-  const traffic = selected.unlimited ? "无限流量" : selected.trafficBytes == null ? "" : `${Number((selected.trafficBytes / 1024 ** 3).toFixed(2))} GB`;
+  const creditBytes = Number(selected.fulfillment?.config?.trafficBytes || 0) * (selected.quantity || 1);
+  const traffic = selected.purpose === "addon" ? creditBytes ? `当前周期增加 ${Number((creditBytes / 1024 ** 3).toFixed(2))} GB 流量` : ""
+    : selected.unlimited ? "无限流量" : selected.trafficBytes == null ? "" : `${Number((selected.trafficBytes / 1024 ** 3).toFixed(2))} GB`;
   const cycles = product.type === "recurring_plan" ? product.periods.filter(period => period.isEnabled).map(period => {
     const quote = resolveCatalogV2Purchase(products, { productId: product.id, periodId: period.id }, { allowUnlisted, hasRecurringPlan: true });
     return { optionId: quote.optionId, label: quote.optionLabel, amount: quote.originalAmount, devices: quote.devices, durationDays: quote.durationDays };
@@ -277,7 +300,7 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) 
     vipDiscountPercent: vipPercent,
     vipDiscountAmount: (afterCouponCents - subtotalCents) / 100,
     subtotal: subtotalCents / 100,
-    taxRate: CHECKOUT_TAX_RATE,
+    taxRate,
     taxAmount: taxCents / 100,
     beforeCreditAmount: (subtotalCents + taxCents) / 100,
     amount: (subtotalCents + taxCents) / 100,
@@ -476,6 +499,7 @@ let embyVendors = [];
 let pricing = [];
 let paymentOrders = [];
 let salesSettings = [];
+let checkoutSettings = [];
 let paymentSettings = [];
 let referralRewards = [];
 let tickets = [];
@@ -544,6 +568,7 @@ async function initializeDataFile() {
   pricing = state.pricing || [];
   paymentOrders = state.paymentOrders || [];
   salesSettings = state.salesSettings || [];
+  checkoutSettings = state.checkoutSettings || [];
   paymentSettings = state.paymentSettings || [];
   referralRewards = state.referralRewards || [];
   tickets = state.tickets || [];
@@ -674,6 +699,7 @@ function _doLoad({ strict = false } = {}) {
     pricing = state.pricing || [];
     paymentOrders = state.paymentOrders || [];
     salesSettings = state.salesSettings || [];
+    checkoutSettings = state.checkoutSettings || [];
     paymentSettings = state.paymentSettings || [];
     referralRewards = state.referralRewards || [];
     tickets = state.tickets || [];
@@ -769,6 +795,11 @@ async function saveEmbyVendors() {
 async function savePricing() {
   _markWritten();
   await dataStore.saveCollection("pricing", pricing);
+}
+
+async function saveCheckoutSettings() {
+  _markWritten();
+  await dataStore.saveCollection("checkoutSettings", checkoutSettings);
 }
 
 async function saveSalesSettings() {
@@ -1448,6 +1479,7 @@ function publicPaymentOrder(order) {
     vipSpendBefore: Number.isFinite(Number(order.vipSpendBefore)) ? Number(order.vipSpendBefore) : Math.max(vipSpendAfter - vipSpendAmount, 0),
     vipSpendAfter,
     subtotal: order.subtotal ?? order.amount,
+    taxRate: Number(order.taxRate ?? order.productSnapshot?.taxRate) || 0,
     taxAmount: order.taxAmount || 0,
     beforeCreditAmount: order.beforeCreditAmount ?? order.amount,
     cashCredit: order.cashCredit || 0,
@@ -1468,6 +1500,7 @@ function publicPaymentOrder(order) {
     fulfillmentStartedAt: order.fulfillmentStartedAt || "",
     fulfilledAt: order.fulfilledAt || "",
     deliveryNote: order.deliveryNote || "",
+    services: addonServices.serviceRecords(order),
     fulfillmentError: poolFulfillmentError || (order.fulfillmentError ? (order.purpose === "recharge" ? "充值暂未成功入账。" : order.purpose === "traffic_pack" ? "流量包暂未成功发放。" : order.purpose === "addon" ? "附加服务暂未进入交付流程。" : "套餐暂未成功发放。") : ""),
     paymentError: order.paymentError || "",
     createdAt: order.createdAt,
@@ -1491,6 +1524,9 @@ function adminPaymentOrder(order) {
     reversalError: order.reversalError || "",
     manualPaidBy: order.manualPaidBy || "",
     manualPaymentNote: order.manualPaymentNote || "",
+    deliveredBy: order.deliveredBy || "",
+    deliveryNotifiedAt: order.deliveryNotifiedAt || "",
+    deliveryNotifyError: order.deliveryNotifyError || "",
     duplicatePaymentReferences: order.duplicatePaymentReferences || []
   };
 }
@@ -1719,6 +1755,19 @@ async function saveImageUpload(req) {
   return `/uploads/markdown/${filename}`;
 }
 
+// Tax rate (percent) applied at checkout; stored in checkoutSettings, 3% until an admin changes it.
+function checkoutTaxRate() {
+  const rate = Number(checkoutSettings[0]?.taxRate);
+  return Number.isFinite(rate) && rate >= 0 && rate <= 100 ? rate : DEFAULT_CHECKOUT_TAX_RATE;
+}
+
+function normalizeCheckoutSettings(payload = {}) {
+  const taxRate = Number(payload.taxRate);
+  if (payload.taxRate === "" || payload.taxRate === null || !Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) throw new Error("税率必须是 0 到 100 之间的数字。");
+  if (Math.abs(Math.round(taxRate * 100) - taxRate * 100) > 1e-9) throw new Error("税率最多保留两位小数。");
+  return { id: "default", taxRate };
+}
+
 function currentSalesSettings() {
   const settings = salesSettings[0];
   return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], userAlerts: settings.userAlerts || [] } : initialSalesSettings();
@@ -1914,13 +1963,7 @@ function normalizeReferralCode(value) {
 }
 
 function accountServiceInstances(accountId, now = Date.now()) {
-  return paymentOrders.filter(order => order.accountId === accountId && order.status === "paid" && !order.reversedAt).flatMap(order => (order.addOnSnapshots || []).map((item, index) => {
-    const startedAt = order.paidAt || order.createdAt;
-    const durationDays = Number(item.durationDays || 0);
-    const expiresAt = durationDays ? new Date(new Date(startedAt).getTime() + durationDays * 864e5).toISOString() : "";
-    const status = expiresAt && new Date(expiresAt).getTime() <= now ? "expired" : order.fulfillmentStatus === "manual_pending" ? "pending" : order.fulfillmentStatus === "fulfilled" ? "active" : "processing";
-    return { id: `${order.id}:${index}`, orderId: order.id, name: item.name, optionId: item.optionId, regionName: item.regionName || "", amount: item.amount, durationDays, startedAt, expiresAt, status, deliveryNote: order.deliveryNote || "" };
-  }));
+  return paymentOrders.filter(order => order.accountId === accountId && !order.reversedAt).flatMap(order => addonServices.serviceRecords(order, now));
 }
 
 function publicInviterLabel(account, linkedUser = userForAccount(account)) {
@@ -2094,7 +2137,7 @@ function trafficPackConfig() {
 }
 
 function checkoutTaxAmount(subtotal) {
-  return Math.round(Math.round(Number(subtotal) * 100) * CHECKOUT_TAX_RATE / 100) / 100;
+  return Math.round(Math.round(Number(subtotal) * 100) * checkoutTaxRate() / 100) / 100;
 }
 
 function trafficPackQuote(account) {
@@ -2122,7 +2165,7 @@ function trafficPackQuote(account) {
     vipDiscountPercent: 0,
     vipDiscountAmount: 0,
     subtotal: price,
-    taxRate: CHECKOUT_TAX_RATE,
+    taxRate: checkoutTaxRate(),
     taxAmount,
     beforeCreditAmount,
     cashCredit: 0,
@@ -2173,7 +2216,7 @@ function homeIpQuote(account, requestedOptionId = "") {
     vipDiscountPercent: 0,
     vipDiscountAmount: 0,
     subtotal: amount,
-    taxRate: CHECKOUT_TAX_RATE,
+    taxRate: checkoutTaxRate(),
     taxAmount,
     beforeCreditAmount,
     cashCredit: 0,
@@ -2595,7 +2638,7 @@ function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1"
     vipDiscountPercent: vipPercent,
     vipDiscountAmount,
     subtotal,
-    taxRate: CHECKOUT_TAX_RATE,
+    taxRate: checkoutTaxRate(),
     taxAmount,
     beforeCreditAmount,
     cashCredit: terms.cashCredit,
@@ -2656,12 +2699,19 @@ async function fulfillTrafficPackOrderOnce(order, req) {
   return order;
 }
 
+// Service window fields stored on an add-on order when it is delivered.
+function serviceWindowFields(handlerId, order, { trafficCycleEndsAt = "", deliveredAt = order.fulfilledAt || new Date().toISOString() } = {}) {
+  const item = order.addOnSnapshots?.[0] || {};
+  const window = addonServices.serviceWindow(handlerId, { deliveredAt, durationDays: item.durationDays, quantity: item.quantity, trafficCycleEndsAt });
+  return { serviceStartedAt: window.startedAt, serviceExpiresAt: window.expiresAt };
+}
+
 async function fulfillStandaloneAddOnOrderOnce(order, req) {
   const account = accounts.find(item => item.id === order.accountId);
   if (!account) throw new Error("购买账户不存在。");
   const v2 = order.catalogVersion === 2 ? order.productSnapshot?.v2 : null;
-  const requiresPlan = v2 ? v2.purchaseRequirement === "requires_recurring_plan" : true;
-  const user = requiresPlan || v2?.fulfillment?.handler === "traffic_credit" ? requireRecurringPlanUser(account) : userForAccount(account);
+  const requiresPlan = v2 ? v2.purchaseRequirement === "requires_recurring_plan" || addonServices.addonHandler(v2.fulfillment?.handler).requiresRecurringPlan : true;
+  const user = requiresPlan ? requireRecurringPlanUser(account) : userForAccount(account);
   const wallet = await dataStore.settleWalletPurchase({ id: crypto.randomUUID(), accountId: account.id, orderId: order.id, vipDeltaCents: 0, description: `${order.planName} ${order.optionLabel}`, initialVipCents: initialWalletVipCents(account) });
   syncWalletVip(account, wallet);
   order.userId = user?.id || "";
@@ -2669,13 +2719,15 @@ async function fulfillStandaloneAddOnOrderOnce(order, req) {
   order.vipSpendBefore = wallet.vipSpendCents / 100;
   order.vipSpendAfter = wallet.vipSpendCents / 100;
   order.fulfillmentStartedAt = new Date().toISOString();
-  if (v2?.fulfillment?.handler === "traffic_credit") {
+  const handler = addonServices.addonHandler(v2?.fulfillment?.handler);
+  if (v2 && handler.id === "traffic_credit") {
     const bytes = Math.max(0, Number(v2.fulfillment.config?.trafficBytes) || 0) * Math.max(1, Number(v2.quantity) || 1);
     if (!bytes) throw new Error("自动交付流量配置无效。");
     grantTrafficPack(user, order.id, bytes);
     await enableXuiClientAfterTrafficIncrease(user);
     order.trafficPackBytes = bytes;
     order.fulfilledAt = new Date().toISOString();
+    Object.assign(order, serviceWindowFields(handler.id, order, { trafficCycleEndsAt: user.xuiNextTrafficResetAt || "" }));
     order.fulfillmentStatus = "fulfilled";
   } else {
     order.fulfillmentStatus = "manual_pending";
@@ -2687,6 +2739,55 @@ async function fulfillStandaloneAddOnOrderOnce(order, req) {
   await savePaymentOrders();
   await notifyPaymentOrder(order);
   return order;
+}
+
+// Admin delivery of a manual add-on: validates per handler, binds custom-node inbounds, fixes the
+// service window, then emails the customer a link. A mail failure is recorded, not rolled back.
+async function deliverAddonOrder(order, payload, req) {
+  const handler = addonServices.handlerOf(order, order.addOnSnapshots?.[0]);
+  const { deliveryNote, inboundIds } = addonServices.normalizeDelivery(handler.id, payload);
+  const user = users.find(item => item.id === order.userId);
+  const previousUser = user ? structuredClone(user) : null;
+  const deliveredAt = new Date().toISOString();
+  const actor = currentSession(req)?.account || "admin";
+  try {
+    let inboundNames = {};
+    if (inboundIds.length) {
+      if (!user) throw new Error("该订单没有关联用户，无法授权定制入站。");
+      const nextIds = [...new Set([...normalizeXuiInboundIdList(user.xuiExtraInboundIds), ...inboundIds])];
+      ({ inboundNames } = await applyUserCustomInbounds(user, nextIds, { req, actor, reason: `交付订单 ${order.merOrderTid}` }));
+    }
+    Object.assign(order, {
+      deliveryNote, customInboundIds: inboundIds, fulfillmentStatus: "fulfilled", fulfilledAt: deliveredAt, deliveredBy: actor, updatedAt: deliveredAt,
+      ...serviceWindowFields(handler.id, order, { deliveredAt })
+    });
+    if (user) {
+      const names = order.addOnSnapshots?.map(item => item.name).join("、") || order.planName;
+      appendUserLogToUser(user, createUserLog({ event: "user-action", status: "recorded", reason: "addon-delivered", req, message: `附加服务已完成交付：${names}`, details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, handler: handler.id, customInboundIds: inboundIds, inboundNames, serviceExpiresAt: order.serviceExpiresAt || "" } }));
+      await saveUsers();
+    }
+    await savePaymentOrders();
+  } catch (error) {
+    if (user && previousUser) { Object.keys(user).forEach(key => delete user[key]); Object.assign(user, previousUser); }
+    throw error;
+  }
+  await notifyAddonDelivered(order, req);
+  return order;
+}
+
+async function notifyAddonDelivered(order, req) {
+  const account = accounts.find(item => item.id === order.accountId);
+  const to = normalizePaymentEmail(order.email || account?.email || "");
+  try {
+    if (!to) throw new Error("订单没有客户邮箱。");
+    if (!notifier.isMailConfigured()) throw new Error("邮件服务未配置。");
+    const url = `${String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "")}/account/orders/${encodeURIComponent(order.id)}`;
+    await notifier.sendMail({ to, ...addonServices.deliveryNotificationMail({ order, serviceNames: order.addOnSnapshots?.map(item => item.name).join("、"), url }) });
+    Object.assign(order, { deliveryNotifiedAt: new Date().toISOString(), deliveryNotifyError: "" });
+  } catch (error) {
+    order.deliveryNotifyError = error.message;
+  }
+  await savePaymentOrders();
 }
 
 const paymentFulfillmentTasks = new Map();
@@ -3100,6 +3201,7 @@ async function submitPurchaseOrder(payload, req, account, manualAmount) {
     : payload.product === "home_ip" ? homeIpQuote(account, payload.optionId)
     : planQuoteWithAddOns(paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id, payload.trafficTier), payload.addOns);
   const purpose = selected.purpose || (payload.product === "traffic_pack" ? "traffic_pack" : payload.product === "home_ip" ? "addon" : "plan");
+  if (selection.productId && manualAmount === undefined) addonServices.assertBuyerInputs(selected.selectedAddOnSnapshots);
   if (manualAmount === undefined && purpose === "plan" && selected.purchaseAction === "replace" && payload.confirmReplacement !== true) throw new Error("请确认新套餐将立即覆盖当前套餐。");
   assertPendingPaymentOrderLimit(account.id);
   const quote = manualAmount === undefined ? selected : { ...selected, amount: manualAmount, subtotal: manualAmount, beforeCreditAmount: manualAmount, taxAmount: 0, discountAmount: 0, vipDiscountPercent: 0, vipDiscountAmount: 0, cashCredit: 0 };
@@ -4860,6 +4962,46 @@ async function xuiInboundIdsForUser(user, groupInboundIds = null, allInboundIds 
   return effectiveXuiInboundIds(inheritedIds || [], user.xuiExtraInboundIds, validIds);
 }
 
+// Sets a user's personal custom inbounds and pushes the change to 3x-ui. Used by manual edits,
+// custom-node delivery and custom-node expiry; callers save users afterwards.
+async function applyUserCustomInbounds(user, inboundIds, { req = null, actor = "admin", reason = "" } = {}) {
+  if (!user || !isSelfHostedUser(user)) throw new Error("仅自研线路用户可以管理个人定制入站。");
+  if (!user.xuiClientEmail) throw new Error("用户尚未关联3x-ui Client。");
+  const previousIds = normalizeXuiInboundIdList(user.xuiExtraInboundIds);
+  const nextIds = normalizeXuiInboundIdList(inboundIds);
+  const addedIds = nextIds.filter(id => !previousIds.includes(id));
+  const removedIds = previousIds.filter(id => !nextIds.includes(id));
+  if (!addedIds.length && !removedIds.length) return { addedIds, removedIds, inboundNames: {} };
+  await refreshXuiInboundCatalog();
+  const management = await xuiInboundManagementView();
+  const inboundsById = new Map(management.inbounds.map(inbound => [inbound.id, inbound]));
+  for (const id of addedIds) {
+    const inbound = inboundsById.get(id);
+    if (!inbound) throw new Error(`入站 #${id} 不存在，无法新增授权。`);
+    if (!inbound.enabled) throw new Error(`${inbound.name} 已停用，无法新增授权。`);
+  }
+  const allInboundIds = management.inbounds.map(inbound => inbound.id);
+  const inheritedInboundIds = await xuiInboundIdsForUser({ ...user, xuiExtraInboundIds: [] }, null, allInboundIds);
+  const effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, nextIds, allInboundIds);
+  await syncXuiClientAccess([String(user.xuiClientEmail).toLowerCase()], effectiveInboundIds, allInboundIds);
+  user.xuiExtraInboundIds = nextIds;
+  user.xuiInboundIds = effectiveInboundIds;
+  user.xuiLastSyncedAt = new Date().toISOString();
+  user.xuiLastError = "";
+  const inboundName = id => inboundsById.get(id)?.name || `入站 #${id}`;
+  appendUserLogToUser(user, createUserLog({
+    event: "user-action",
+    status: "recorded",
+    reason: "custom-inbounds-updated",
+    req,
+    message: userActionMessage("custom-inbounds-updated", { actor, addedNames: addedIds.map(inboundName), removedNames: removedIds.map(inboundName) }) + (reason ? `（${reason}）` : ""),
+    details: { actor, reason, addedInboundIds: addedIds, removedInboundIds: removedIds, addedNames: addedIds.map(inboundName), removedNames: removedIds.map(inboundName), effectiveInboundIds }
+  }));
+  // Keeps the binding but leaves the client disabled while the user's plan is expired.
+  await saveXuiClientProjection(user, !isUserExpired(user) && !isUserAccountDisabled(user));
+  return { addedIds, removedIds, inboundNames: Object.fromEntries(nextIds.map(id => [id, inboundName(id)])) };
+}
+
 let xuiInboundCatalogRefresh = null;
 let xuiInboundProbeRun = null;
 
@@ -5145,7 +5287,8 @@ const SYNC_JOB_MODULES = [
   { id: "xui", name: "3x-ui" },
   { id: "traffic", name: "流量" },
   { id: "subscriptions", name: "订阅" },
-  { id: "referrals", name: "钱包与返利" }
+  { id: "referrals", name: "钱包与返利" },
+  { id: "addons", name: "附加服务" }
 ];
 const SYNC_JOB_RETENTION_DAYS = 14;
 
@@ -5185,6 +5328,14 @@ const SYNC_JOBS = [
     }
   },
   {
+    id: "addon-service-expiry", module: "addons", name: "定制节点到期解绑", description: "移除已到期节点定制订单授权的个人入站；仍被其他有效订单覆盖的入站保留。未解绑任何入站的轮次不记录。",
+    intervalMs: 10 * 60 * 1000, requiresXui: true, recordOnlyWhenChanged: true,
+    run: async () => {
+      const summary = await releaseExpiredCustomNodes();
+      return { status: summary.failed.length ? "partial" : "success", summary, changed: summary.released + summary.failed.length > 0 };
+    }
+  },
+  {
     id: "referral-settlement", module: "referrals", name: "邀请返利结算", description: "将到期的待结算返利计入邀请人钱包；未结算任何返利的轮次不记录。",
     intervalMs: 60 * 1000, requiresXui: false, recordOnlyWhenChanged: true,
     run: async () => {
@@ -5193,6 +5344,34 @@ const SYNC_JOBS = [
     }
   }
 ];
+// Unbinds inbounds granted by expired custom-node orders. Plan expiry alone never unbinds: the
+// client is disabled but keeps its custom inbounds until the custom-node service itself ends.
+async function releaseExpiredCustomNodes(now = Date.now()) {
+  await loadLatestData({ force: true });
+  const summary = { released: 0, orders: 0, failed: [] };
+  const userIds = [...new Set(paymentOrders.map(order => order.userId).filter(Boolean))];
+  for (const userId of userIds) {
+    const { orders, releaseInboundIds } = addonServices.expiredCustomNodeGrants(paymentOrders, userId, now);
+    if (!orders.length) continue;
+    const user = users.find(item => item.id === userId);
+    try {
+      if (user && releaseInboundIds.length) {
+        const nextIds = normalizeXuiInboundIdList(user.xuiExtraInboundIds).filter(id => !releaseInboundIds.includes(id));
+        await applyUserCustomInbounds(user, nextIds, { actor: "system", reason: `节点定制到期：${orders.map(order => order.merOrderTid).join("、")}` });
+        await saveUsers();
+      }
+      const endedAt = new Date(now).toISOString();
+      for (const order of orders) Object.assign(order, { serviceEndedAt: endedAt, updatedAt: endedAt });
+      await savePaymentOrders();
+      summary.released += releaseInboundIds.length;
+      summary.orders += orders.length;
+    } catch (error) {
+      summary.failed.push({ userId, error: error.message });
+    }
+  }
+  return summary;
+}
+
 const syncJobRunning = new Map();
 const syncJobLastCheckedAt = new Map();
 
@@ -9326,6 +9505,11 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/public/catalog-v2/addon-categories" && req.method === "GET") {
+    sendJson(res, 200, (await dataStore.listCatalogV2AddonCategories()).map(({ id, name, sortOrder }) => ({ id, name, sortOrder })));
+    return;
+  }
+
   if (pathname === "/api/public/catalog-v2" && req.method === "GET") {
     sendJson(res, 200, visibleCatalogV2Products(await dataStore.listCatalogV2Products()));
     return;
@@ -9922,6 +10106,22 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/checkout-settings" && req.method === "GET") {
+    sendJson(res, 200, { taxRate: checkoutTaxRate() });
+    return;
+  }
+
+  if (pathname === "/api/checkout-settings" && req.method === "PUT") {
+    try {
+      checkoutSettings = [normalizeCheckoutSettings(await readJson(req))];
+      await saveCheckoutSettings();
+      sendJson(res, 200, { taxRate: checkoutTaxRate() });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/payment-settings" && req.method === "GET") {
     sendJson(res, 200, publicPaymentSettings());
     return;
@@ -10231,28 +10431,45 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/admin/custom-inbounds" && req.method === "GET") {
+    const management = await xuiInboundManagementView();
+    sendJson(res, 200, management.inbounds.filter(inbound => inbound.inboundType === "custom").map(({ id, name, enabled, region, nodeName }) => ({ id, name, enabled, region, nodeName })));
+    return;
+  }
+
+  if (pathname === "/api/admin/deliveries" && req.method === "GET") {
+    await loadLatestData({ force: true });
+    const manualAddonOrders = paymentOrders.filter(order => (order.purpose || "plan") === "addon" && order.status === "paid" && !order.reversedAt && addonServices.handlerOf(order, order.addOnSnapshots?.[0]).mode === "manual");
+    const deliveryItem = order => {
+      const account = accounts.find(item => item.id === order.accountId);
+      const user = users.find(item => item.id === order.userId);
+      return { ...adminPaymentOrder(order), customerID: user?.customerID || account?.customerID || null, services: addonServices.serviceRecords(order) };
+    };
+    sendJson(res, 200, {
+      pending: manualAddonOrders.filter(addonServices.isPendingDelivery).sort((a, b) => new Date(a.paidAt || a.createdAt) - new Date(b.paidAt || b.createdAt)).map(deliveryItem),
+      delivered: manualAddonOrders.filter(order => order.fulfillmentStatus === "fulfilled").sort((a, b) => new Date(b.fulfilledAt || 0) - new Date(a.fulfilledAt || 0)).slice(0, 50).map(deliveryItem)
+    });
+    return;
+  }
+
+  if (pathname === "/api/admin/work-summary" && req.method === "GET") {
+    await loadLatestData();
+    sendJson(res, 200, {
+      pendingDeliveries: paymentOrders.filter(addonServices.isPendingDelivery).length,
+      pendingTickets: tickets.filter(ticket => ticket.status === "pending_support").length
+    });
+    return;
+  }
+
   const adminOrderMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)$/);
   if (adminOrderMatch && req.method === "PUT") {
     const order = paymentOrders.find(item => item.id === adminOrderMatch[1]);
     if (!order) { sendJson(res, 404, { error: "没有找到这个订单。" }); return; }
-    if (order.status !== "paid" || order.fulfillmentStatus !== "manual_pending") { sendJson(res, 400, { error: "该订单没有待交付的人工服务。" }); return; }
+    if (!addonServices.isPendingDelivery(order)) { sendJson(res, 400, { error: "该订单没有待交付的人工服务。" }); return; }
     try {
-      const payload = await readJson(req);
-      const deliveryNote = String(payload.deliveryNote || "").trim();
-      if (!deliveryNote) throw new Error("请填写交付说明。");
-      order.deliveryNote = deliveryNote.slice(0, 1000);
-      order.fulfillmentStatus = "fulfilled";
-      order.fulfilledAt = new Date().toISOString();
-      order.updatedAt = order.fulfilledAt;
-      const user = users.find(item => item.id === order.userId);
-      if (user) {
-        appendUserLogToUser(user, createUserLog({ event: "user-action", status: "recorded", reason: "addon-delivered", req, message: `附加服务已完成交付：${order.addOnSnapshots?.map(item => item.name).join("、") || order.planName}`, details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, deliveryNote: order.deliveryNote, addOns: order.addOnSnapshots || [] } }));
-        await saveUsers();
-      }
-      await savePaymentOrders();
-      sendJson(res, 200, adminPaymentOrder(order));
+      sendJson(res, 200, adminPaymentOrder(await deliverAddonOrder(order, await readJson(req), req)));
     } catch (error) {
-      sendJson(res, 400, { error: error.message });
+      sendJson(res, error.statusCode || 400, { error: error.message });
     }
     return;
   }
@@ -10647,6 +10864,41 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  if (pathname === "/api/catalog-v2/addon-categories" && req.method === "GET") {
+    sendJson(res, 200, await dataStore.listCatalogV2AddonCategories());
+    return;
+  }
+
+  if (pathname === "/api/catalog-v2/addon-categories" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const category = normalizeCatalogV2AddonCategory({ name: payload.name, sortOrder: payload.sortOrder });
+      sendJson(res, 201, await dataStore.upsertCatalogV2AddonCategory(category, { create: true }));
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
+    return;
+  }
+
+  const catalogV2AddonCategoryMatch = pathname.match(/^\/api\/catalog-v2\/addon-categories\/([^/]+)$/);
+  if (catalogV2AddonCategoryMatch) {
+    const id = decodeURIComponent(catalogV2AddonCategoryMatch[1]);
+    if (req.method === "PUT") {
+      try {
+        const category = await dataStore.upsertCatalogV2AddonCategory(normalizeCatalogV2AddonCategory({ ...(await readJson(req)), id }));
+        if (!category) { sendJson(res, 404, { error: "分类不存在。" }); return; }
+        sendJson(res, 200, category);
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+    if (req.method === "DELETE") {
+      try {
+        const result = await dataStore.deleteCatalogV2AddonCategory(id);
+        if (!result.rowCount) { sendJson(res, 404, { error: "分类不存在。" }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+  }
+
   if (pathname === "/api/catalog-v2/products" && req.method === "GET") {
     sendJson(res, 200, await dataStore.listCatalogV2Products());
     return;
@@ -10655,8 +10907,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/catalog-v2/products" && req.method === "POST") {
     try {
       const product = normalizeCatalogV2Product(await readJson(req));
-      const groups = await dataStore.listCatalogV2LineGroups();
-      if (product.lineGroupId && !groups.some(group => group.id === product.lineGroupId && group.isEnabled)) throw new Error("请选择已启用的线路权限组。");
+      await assertCatalogV2ProductReferences(product);
       const saved = await dataStore.saveCatalogV2Product(product, { create: true });
       sendJson(res, 201, saved);
     } catch (error) {
@@ -10673,8 +10924,7 @@ async function handleApi(req, res, pathname) {
         const payload = await readJson(req);
         if (String(payload.id || id) !== id) throw new Error("商品 ID 创建后不可修改。");
         const product = normalizeCatalogV2Product({ ...payload, id });
-        const groups = await dataStore.listCatalogV2LineGroups();
-        if (product.lineGroupId && !groups.some(group => group.id === product.lineGroupId && group.isEnabled)) throw new Error("请选择已启用的线路权限组。");
+        await assertCatalogV2ProductReferences(product);
         sendJson(res, 200, await dataStore.saveCatalogV2Product(product));
       } catch (error) { sendJson(res, error.statusCode || (error.code === "23505" ? 409 : 400), { error: error.message }); }
       return;
@@ -11086,45 +11336,9 @@ async function handleApi(req, res, pathname) {
     if (action === "custom-inbounds" && req.method === "PUT") {
       const previous = item ? structuredClone(item) : null;
       try {
-        if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以管理个人定制入站。");
-        if (!item.xuiClientEmail) throw new Error("用户尚未关联3x-ui Client。");
         const payload = await readJson(req);
         if (!Array.isArray(payload.inboundIds)) throw new Error("个人定制入站格式无效。");
-        const previousIds = normalizeXuiInboundIdList(item.xuiExtraInboundIds);
-        const nextIds = normalizeXuiInboundIdList(payload.inboundIds);
-        const addedIds = nextIds.filter(id => !previousIds.includes(id));
-        const removedIds = previousIds.filter(id => !nextIds.includes(id));
-        if (!addedIds.length && !removedIds.length) {
-          sendJson(res, 200, publicUser(item));
-          return;
-        }
-        await refreshXuiInboundCatalog();
-        const management = await xuiInboundManagementView();
-        const inboundsById = new Map(management.inbounds.map(inbound => [inbound.id, inbound]));
-        for (const id of addedIds) {
-          const inbound = inboundsById.get(id);
-          if (!inbound) throw new Error(`入站 #${id} 不存在，无法新增授权。`);
-          if (!inbound.enabled) throw new Error(`${inbound.name} 已停用，无法新增授权。`);
-        }
-        const allInboundIds = management.inbounds.map(inbound => inbound.id);
-        const inheritedInboundIds = await xuiInboundIdsForUser({ ...item, xuiExtraInboundIds: [] }, null, allInboundIds);
-        const effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, nextIds, allInboundIds);
-        await syncXuiClientAccess([String(item.xuiClientEmail).toLowerCase()], effectiveInboundIds, allInboundIds);
-        item.xuiExtraInboundIds = nextIds;
-        item.xuiInboundIds = effectiveInboundIds;
-        item.xuiLastSyncedAt = new Date().toISOString();
-        item.xuiLastError = "";
-        const inboundName = id => inboundsById.get(id)?.name || `\u5165\u7ad9 #${id}`;
-        const actor = currentSession(req)?.account || "admin";
-        appendUserLogToUser(item, createUserLog({
-          event: "user-action",
-          status: "recorded",
-          reason: "custom-inbounds-updated",
-          req,
-          message: userActionMessage("custom-inbounds-updated", { actor, addedNames: addedIds.map(inboundName), removedNames: removedIds.map(inboundName) }),
-          details: { actor, addedInboundIds: addedIds, removedInboundIds: removedIds, addedNames: addedIds.map(inboundName), removedNames: removedIds.map(inboundName), effectiveInboundIds }
-        }));
-        await saveXuiClientProjection(item, !isUserExpired(item) && !isUserAccountDisabled(item));
+        await applyUserCustomInbounds(item, payload.inboundIds, { req, actor: currentSession(req)?.account || "admin" });
         await saveUsers();
         sendJson(res, 200, publicUser(item));
       } catch (error) {
@@ -11796,6 +12010,8 @@ async function serveStatic(req, res, pathname) {
   const isAppRoute = !isDocsRoute && !path.extname(requestedPath);
   const isLoginRoute = /^\/(?:login|register|forgot-password|reset-password)\/?$/.test(requestedPath) || requestedPath === "/login.html";
   const isPublicAppRoute = /^\/delivery\/[^/]+\/?$/.test(requestedPath) || /^\/(?:pricing|buy)\/?$/.test(requestedPath) || isLoginRoute;
+  // Customer pages: the account area plus the standalone order page, whose API checks ownership.
+  const isCustomerAppRoute = requestedPath.startsWith("/account") || /^\/cashier\/[^/]+\/?$/.test(requestedPath);
   const session = currentSession(req);
   const markdownImageMatch = requestedPath.match(/^\/uploads\/markdown\/([0-9a-f-]+\.(?:png|jpg|webp|gif))$/);
   if (requestedPath === "/docs") {
@@ -11829,7 +12045,7 @@ async function serveStatic(req, res, pathname) {
     res.end();
     return;
   }
-  if (isAppRoute && !isPublicAppRoute && !requestedPath.startsWith("/account") && session?.role === "user") {
+  if (isAppRoute && !isPublicAppRoute && !isCustomerAppRoute && session?.role === "user") {
     res.writeHead(302, { "location": "/account", "cache-control": "no-store, max-age=0" });
     res.end();
     return;
@@ -11985,6 +12201,7 @@ async function main() {
 
   setInterval(() => scheduleSyncJob("referral-settlement"), 60 * 1000);
   if (XUI_BASE_URL && XUI_API_TOKEN) {
+    setInterval(() => scheduleSyncJob("addon-service-expiry"), 10 * 60 * 1000);
     // The first probe waits for the first panel sync to fill the inbound table.
     scheduleSyncJob("xui-panel-sync", "startup").then(() => scheduleSyncJob("xui-inbound-probe", "startup"));
     setInterval(() => scheduleSyncJob("xui-inbound-probe"), XUI_INBOUND_PROBE_INTERVAL_MS);
@@ -12088,6 +12305,10 @@ module.exports = Object.assign(requestHandler, {
   normalizeCatalogV2LineGroup,
   validateCatalogV2LineGroupInbounds,
   normalizeCatalogV2Product,
+  normalizeCatalogV2AddonCategory,
+  normalizeCheckoutSettings,
+  releaseExpiredCustomNodes,
+  deliverAddonOrder,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
   publicAccountNodeStatus,

@@ -1,4 +1,4 @@
-const COLLECTIONS = ["subscriptions", "users", "accounts", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "paymentOrders", "salesSettings", "paymentSettings", "referralRewards", "tickets"];
+const COLLECTIONS = ["subscriptions", "users", "accounts", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "paymentOrders", "salesSettings", "paymentSettings", "referralRewards", "tickets", "checkoutSettings"];
 const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
 const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
 const { appendXuiAuditLog, initXuiAudit, listXuiAuditLogs } = require("./xui-audit");
@@ -237,7 +237,7 @@ class PostgresDataStore {
         traffic_max_steps INTEGER NOT NULL DEFAULT 10 CHECK (traffic_max_steps > 0),
         purchase_requirement TEXT CHECK (purchase_requirement IS NULL OR purchase_requirement IN ('standalone', 'requires_recurring_plan')),
         fulfillment_mode TEXT CHECK (fulfillment_mode IS NULL OR fulfillment_mode IN ('automatic', 'manual')),
-        fulfillment_handler TEXT CHECK (fulfillment_handler IS NULL OR fulfillment_handler IN ('traffic_credit', 'manual')),
+        fulfillment_handler TEXT CHECK (fulfillment_handler IS NULL OR fulfillment_handler IN ('traffic_credit', 'custom_node', 'manual')),
         fulfillment_config JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(fulfillment_config) = 'object'),
         delivery_description TEXT NOT NULL DEFAULT '',
         service_duration_days INTEGER CHECK (service_duration_days IS NULL OR service_duration_days > 0),
@@ -274,6 +274,22 @@ class PostgresDataStore {
       CREATE INDEX IF NOT EXISTS catalog_v2_products_sort_idx ON catalog_v2_products (sort_order, id);
       CREATE INDEX IF NOT EXISTS catalog_v2_line_groups_sort_idx ON catalog_v2_line_groups (sort_order, id);
       CREATE INDEX IF NOT EXISTS catalog_v2_inventory_active_idx ON catalog_v2_inventory_reservations (product_id, status, expires_at);
+      CREATE TABLE IF NOT EXISTS catalog_v2_addon_categories (
+        id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9-]{1,63}$'),
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      ALTER TABLE catalog_v2_products ADD COLUMN IF NOT EXISTS addon_category_id TEXT REFERENCES catalog_v2_addon_categories(id) ON UPDATE RESTRICT ON DELETE SET NULL;
+      ALTER TABLE catalog_v2_products ADD COLUMN IF NOT EXISTS buyer_input_label TEXT NOT NULL DEFAULT '';
+      ALTER TABLE catalog_v2_products ADD COLUMN IF NOT EXISTS charge_tax BOOLEAN NOT NULL DEFAULT TRUE;
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'catalog_v2_products_fulfillment_handler_check' AND pg_get_constraintdef(oid) LIKE '%custom_node%') THEN
+          ALTER TABLE catalog_v2_products DROP CONSTRAINT IF EXISTS catalog_v2_products_fulfillment_handler_check;
+          ALTER TABLE catalog_v2_products ADD CONSTRAINT catalog_v2_products_fulfillment_handler_check CHECK (fulfillment_handler IS NULL OR fulfillment_handler IN ('traffic_credit', 'custom_node', 'manual'));
+        END IF;
+      END $$;
       `), "catalog v2 init");
     } catch (error) {
       if (this.pool === pool) this.pool = null;
@@ -922,6 +938,29 @@ class PostgresDataStore {
     return withPgRetry(() => this.pool.query("DELETE FROM catalog_v2_line_groups WHERE id=$1", [id]), `delete catalog v2 line group ${id}`);
   }
 
+  async listCatalogV2AddonCategories() {
+    const result = await withPgRetry(() => this.pool.query(
+      `SELECT c.*, COUNT(p.id)::int AS product_count
+       FROM catalog_v2_addon_categories c
+       LEFT JOIN catalog_v2_products p ON p.addon_category_id = c.id
+       GROUP BY c.id ORDER BY c.sort_order, c.id`
+    ), "list catalog v2 addon categories");
+    return result.rows.map(row => ({ id: row.id, name: row.name, sortOrder: row.sort_order, productCount: Number(row.product_count || 0), createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
+  async upsertCatalogV2AddonCategory(category, { create = false } = {}) {
+    const query = create
+      ? "INSERT INTO catalog_v2_addon_categories (id, name, sort_order) VALUES ($1, $2, $3) RETURNING *"
+      : "UPDATE catalog_v2_addon_categories SET name=$2, sort_order=$3, updated_at=NOW() WHERE id=$1 RETURNING *";
+    const result = await withPgRetry(() => this.pool.query(query, [category.id, category.name, category.sortOrder]), `save catalog v2 addon category ${category.id}`);
+    const row = result.rows[0];
+    return row ? { id: row.id, name: row.name, sortOrder: row.sort_order, createdAt: row.created_at, updatedAt: row.updated_at } : null;
+  }
+
+  async deleteCatalogV2AddonCategory(id) {
+    return withPgRetry(() => this.pool.query("DELETE FROM catalog_v2_addon_categories WHERE id=$1", [id]), `delete catalog v2 addon category ${id}`);
+  }
+
   async listCatalogV2Products() {
     const [products, periods] = await Promise.all([
       withPgRetry(() => this.pool.query("SELECT * FROM catalog_v2_products ORDER BY sort_order, id"), "list catalog v2 products"),
@@ -940,7 +979,7 @@ class PostgresDataStore {
     return {
       id: row.id, type: row.type, isEnabled: row.is_enabled, isForSale: row.is_for_sale, stock: row.stock,
       sortOrder: row.sort_order, name: row.name, description: row.description, features: row.features || [],
-      isRecommended: row.is_recommended, lineGroupId: row.line_group_id, durationDays: row.duration_days,
+      isRecommended: row.is_recommended, lineGroupId: row.line_group_id, addonCategoryId: row.addon_category_id || null, buyerInputLabel: row.buyer_input_label || "", chargeTax: row.charge_tax !== false, durationDays: row.duration_days,
       trafficBytes: row.traffic_bytes === null ? null : Number(row.traffic_bytes), deviceLimit: row.device_limit,
       priceCents: row.price_cents === null ? null : Number(row.price_cents),
       trafficCustomization: { enabled: row.traffic_customization_enabled, stepBytes: row.traffic_step_bytes === null ? null : Number(row.traffic_step_bytes), stepPriceCents: row.traffic_step_price_cents === null ? null : Number(row.traffic_step_price_cents), maxSteps: row.traffic_max_steps },
@@ -956,10 +995,10 @@ class PostgresDataStore {
       const client = await this.pool.connect();
       try {
         await client.query("BEGIN");
-        const values = [product.id, product.type, product.isEnabled, product.isForSale, product.stock, product.sortOrder, product.name, product.description, JSON.stringify(product.features), product.isRecommended, product.lineGroupId, product.durationDays, product.trafficBytes, product.deviceLimit, product.priceCents, product.trafficCustomization.enabled, product.trafficCustomization.stepBytes, product.trafficCustomization.stepPriceCents, product.trafficCustomization.maxSteps, product.purchaseRequirement, product.fulfillment.mode, product.fulfillment.handler, JSON.stringify(product.fulfillment.config), product.deliveryDescription, product.serviceDurationDays, product.allowQuantity, product.minQuantity, product.maxQuantity];
+        const values = [product.id, product.type, product.isEnabled, product.isForSale, product.stock, product.sortOrder, product.name, product.description, JSON.stringify(product.features), product.isRecommended, product.lineGroupId, product.durationDays, product.trafficBytes, product.deviceLimit, product.priceCents, product.trafficCustomization.enabled, product.trafficCustomization.stepBytes, product.trafficCustomization.stepPriceCents, product.trafficCustomization.maxSteps, product.purchaseRequirement, product.fulfillment.mode, product.fulfillment.handler, JSON.stringify(product.fulfillment.config), product.deliveryDescription, product.serviceDurationDays, product.allowQuantity, product.minQuantity, product.maxQuantity, product.addonCategoryId, product.buyerInputLabel || "", product.chargeTax !== false];
         const result = create
-          ? await client.query(`INSERT INTO catalog_v2_products (id,type,is_enabled,is_for_sale,stock,sort_order,name,description,features,is_recommended,line_group_id,duration_days,traffic_bytes,device_limit,price_cents,traffic_customization_enabled,traffic_step_bytes,traffic_step_price_cents,traffic_max_steps,purchase_requirement,fulfillment_mode,fulfillment_handler,fulfillment_config,delivery_description,service_duration_days,allow_quantity,min_quantity,max_quantity) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24,$25,$26,$27,$28) RETURNING *`, values)
-          : await client.query(`UPDATE catalog_v2_products SET type=$2,is_enabled=$3,is_for_sale=$4,stock=$5,sort_order=$6,name=$7,description=$8,features=$9::jsonb,is_recommended=$10,line_group_id=$11,duration_days=$12,traffic_bytes=$13,device_limit=$14,price_cents=$15,traffic_customization_enabled=$16,traffic_step_bytes=$17,traffic_step_price_cents=$18,traffic_max_steps=$19,purchase_requirement=$20,fulfillment_mode=$21,fulfillment_handler=$22,fulfillment_config=$23::jsonb,delivery_description=$24,service_duration_days=$25,allow_quantity=$26,min_quantity=$27,max_quantity=$28,updated_at=NOW() WHERE id=$1 RETURNING *`, values);
+          ? await client.query(`INSERT INTO catalog_v2_products (id,type,is_enabled,is_for_sale,stock,sort_order,name,description,features,is_recommended,line_group_id,duration_days,traffic_bytes,device_limit,price_cents,traffic_customization_enabled,traffic_step_bytes,traffic_step_price_cents,traffic_max_steps,purchase_requirement,fulfillment_mode,fulfillment_handler,fulfillment_config,delivery_description,service_duration_days,allow_quantity,min_quantity,max_quantity,addon_category_id,buyer_input_label,charge_tax) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING *`, values)
+          : await client.query(`UPDATE catalog_v2_products SET type=$2,is_enabled=$3,is_for_sale=$4,stock=$5,sort_order=$6,name=$7,description=$8,features=$9::jsonb,is_recommended=$10,line_group_id=$11,duration_days=$12,traffic_bytes=$13,device_limit=$14,price_cents=$15,traffic_customization_enabled=$16,traffic_step_bytes=$17,traffic_step_price_cents=$18,traffic_max_steps=$19,purchase_requirement=$20,fulfillment_mode=$21,fulfillment_handler=$22,fulfillment_config=$23::jsonb,delivery_description=$24,service_duration_days=$25,allow_quantity=$26,min_quantity=$27,max_quantity=$28,addon_category_id=$29,buyer_input_label=$30,charge_tax=$31,updated_at=NOW() WHERE id=$1 RETURNING *`, values);
         if (!result.rows[0]) throw Object.assign(new Error("商品不存在。"), { statusCode: 404 });
         await client.query("DELETE FROM catalog_v2_product_periods WHERE product_id=$1", [product.id]);
         for (const period of product.periods) {

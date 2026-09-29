@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { FieldError } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { NexoraLogo } from "@/components/features/nexora-logo"
 import { StatusPage } from "@/components/features/status-page"
 
 type AuthResponse = { role?: "admin" | "user" }
@@ -18,7 +19,7 @@ function AuthLayout({ title, description, children }: { title: string; descripti
   return (
     <main className="grid min-h-svh lg:grid-cols-2">
       <section className="flex flex-col gap-4 p-6 md:p-10">
-        <Link to="/pricing" className="inline-flex w-fit items-end text-base font-semibold">NEXORA<span className="text-[10px] font-bold leading-none text-muted-foreground">.beta</span></Link>
+        <NexoraLogo to="/pricing" />
         <div className="flex flex-1 items-center justify-center">
           <div className="grid w-full max-w-sm gap-6">
             <header className="grid gap-2 text-center">

@@ -13,6 +13,16 @@ const planDurationLabels: Record<string, string> = { monthly: "30天", quarterly
 
 type PurchasedPlan = Partial<Pick<User, "activeGroup" | "duration" | "unlimited" | "trafficTier" | "purchasedTrafficGb" | "currentProductSnapshot">> & { traffic?: string }
 
+// Product name plus option, without repeating the name: add-ons use the product name as their
+// option label, and some option labels already start with the product name.
+export function orderProductLabel(order: { planName?: string; optionLabel?: string }, separator = " / ") {
+  const name = String(order.planName || "").trim()
+  const option = String(order.optionLabel || "").trim()
+  if (!option || option === name) return name || option
+  if (!name || option.startsWith(name)) return option
+  return `${name}${separator}${option}`
+}
+
 export function purchasedPlanName(plan: PurchasedPlan, pricing: PricingRow[] = [], trafficBytes?: number | null) {
   const snapshot = plan.currentProductSnapshot || {}
   const group = typeof snapshot.group === "string" ? snapshot.group : plan.activeGroup
@@ -124,8 +134,13 @@ export function userStatus(user?: User | null) {
   return "ok"
 }
 
-export function copyText(value: string) {
-  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value)
+export const OPEN_IN_BROWSER_PATH = "/open-in-browser"
+
+export function isWechatBrowser(userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent) {
+  return /MicroMessenger/i.test(userAgent)
+}
+
+function copyTextWithSelection(value: string) {
   const input = document.createElement("textarea")
   input.value = value
   input.setAttribute("readonly", "")
@@ -133,9 +148,15 @@ export function copyText(value: string) {
   input.style.opacity = "0"
   document.body.appendChild(input)
   input.select()
-  document.execCommand("copy")
+  const copied = document.execCommand("copy")
   input.remove()
-  return Promise.resolve()
+  return copied ? Promise.resolve() : Promise.reject(new Error("copy failed"))
+}
+
+export function copyText(value: string) {
+  // 微信等内置浏览器可能拒绝 Clipboard API，失败时回退到选区复制
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value).catch(() => copyTextWithSelection(value))
+  return copyTextWithSelection(value)
 }
 
 export function subscriptionLabel(item: { serviceProvider?: string; provider?: string; email?: string; url?: string; metrics?: { expireAt?: string } }) {

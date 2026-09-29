@@ -3,7 +3,7 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useParams } from "react-router-dom"
 import { AlertCircle, BadgeCheck, Eye, Link2, Loader2, Undo2 } from "lucide-react"
 
-import { fetchJson, postJson, putJson } from "@/api"
+import { fetchJson, postJson } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -18,8 +18,10 @@ import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/compone
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { EmptyState, PageHeader } from "@/components/features/shared"
 import { BackButton } from "@/components/features/back-button"
+import { ServiceDeliveryForm } from "@/components/features/service-delivery"
 import { useSearchParamState } from "@/hooks/use-search-param-state"
-import { durationLabels, formatDateTime, formatMoney } from "@/utils"
+import { durationLabels, formatDateTime, formatMoney, orderProductLabel } from "@/utils"
+import type { AddonService } from "@/types"
 
 type AdminOrder = {
   manualPaidBy?: string
@@ -62,6 +64,7 @@ type AdminOrder = {
   fulfillmentStartedAt?: string
   fulfilledAt?: string
   deliveryNote?: string
+  services?: AddonService[]
   fulfillmentError?: string
   internalFulfillmentError?: string
   paymentError?: string
@@ -128,7 +131,7 @@ function displayOrderNumber(value: string) {
 
 function renderMobileOrder(order: AdminOrder) {
   const status = orderStatus(order)
-  return <OrderMobileItem amount={formatMoney(order.totalAmount ?? order.amount)} createdAt={order.createdAt} customer={order.email || "-"} customerUrl={order.userId ? `/users/detail/${order.userId}` : undefined} detailUrl={`/orders/${order.id}`} orderNumber={displayOrderNumber(order.merOrderTid)} product={`${order.planName} / ${order.optionLabel}`} status={orderStatusLabels[status] || order.statusText} statusVariant={statusBadgeVariant(status)} />
+  return <OrderMobileItem amount={formatMoney(order.totalAmount ?? order.amount)} createdAt={order.createdAt} customer={order.email || "-"} customerUrl={order.userId ? `/users/detail/${order.userId}` : undefined} detailUrl={`/orders/${order.id}`} orderNumber={displayOrderNumber(order.merOrderTid)} product={orderProductLabel(order)} status={orderStatusLabels[status] || order.statusText} statusVariant={statusBadgeVariant(status)} />
 }
 
 export function OrdersPage() {
@@ -171,7 +174,7 @@ export function OrdersPage() {
       accessorFn: order => `${order.planName} ${order.optionLabel}`,
       header: DataTableColumnHeader({ title: "商品" }),
       meta: { label: "商品" },
-      cell: ({ row }) => `${row.original.planName} / ${row.original.optionLabel}`,
+      cell: ({ row }) => orderProductLabel(row.original),
     },
     {
       id: "type",
@@ -235,8 +238,6 @@ export function OrderDetailPage() {
   const [markPaidOpen, setMarkPaidOpen] = React.useState(false)
   const [manualNote, setManualNote] = React.useState("")
   const [markingPaid, setMarkingPaid] = React.useState(false)
-  const [deliveryNote, setDeliveryNote] = React.useState("")
-  const [delivering, setDelivering] = React.useState(false)
 
   React.useEffect(() => {
     if (!id) return
@@ -300,19 +301,6 @@ export function OrderDetailPage() {
       setRetryError(error instanceof Error ? error.message : "标记付款失败")
     } finally {
       setMarkingPaid(false)
-    }
-  }
-
-  async function completeDelivery() {
-    if (!id || !deliveryNote.trim()) return
-    setDelivering(true)
-    try {
-      setOrder(await putJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}`, { deliveryNote }))
-      setDeliveryNote("")
-    } catch (error) {
-      setRetryError(error instanceof Error ? error.message : "提交交付记录失败")
-    } finally {
-      setDelivering(false)
     }
   }
 
@@ -386,7 +374,7 @@ export function OrderDetailPage() {
         <Card>
           <CardHeader><CardTitle>支付详情</CardTitle></CardHeader>
           <CardContent><Table><TableBody>
-            <DetailRow label="商品" value={`${order.planName} · ${order.optionLabel}`} />
+            <DetailRow label="商品" value={orderProductLabel(order, " · ")} />
             <DetailRow label="支付渠道" value={paymentChannelLabels[order.channelCode || ""] || order.channelCode || "未知"} />
             <DetailRow label="套餐第 1 档原价" value={formatMoney(order.baseAmount ?? order.originalAmount ?? order.totalAmount ?? order.amount)} />
             {(order.originalAmount || 0) > (order.baseAmount || order.originalAmount || 0) ? <DetailRow label="流量定制加价" value={`+${formatMoney((order.originalAmount || 0) - (order.baseAmount || 0))}`} /> : null}
@@ -405,7 +393,7 @@ export function OrderDetailPage() {
           </TableBody></Table></CardContent>
         </Card>
       </div>
-      {order.addOnSnapshots?.length ? <Card><CardHeader><CardTitle>附加服务快照</CardTitle></CardHeader><CardContent><Table><TableBody>{order.addOnSnapshots.map(addOn => <React.Fragment key={addOn.optionId}><DetailRow label="服务" value={`${addOn.name}${addOn.regionName ? ` · ${addOn.regionName}` : ""}`} /><DetailRow label="成交价格" value={formatMoney(addOn.amount)} />{addOn.durationDays ? <DetailRow label="服务期限" value={`${addOn.durationDays} 天`} /> : null}<DetailRow label="交付方式" value={addOn.deliveryMode === "manual" ? "人工交付" : "自动交付"} />{addOn.deliveryDescription ? <DetailRow label="交付约定" value={addOn.deliveryDescription} /> : null}</React.Fragment>)}</TableBody></Table>{order.fulfillmentStatus === "manual_pending" ? <section className="grid gap-3 pt-4"><Textarea aria-label="交付说明" value={deliveryNote} onChange={event => setDeliveryNote(event.target.value)} placeholder="填写已交付的账号、地区、有效期、联系记录或其他必要说明" rows={5} /><Button onClick={() => void completeDelivery()} disabled={delivering || !deliveryNote.trim()}>{delivering ? <Loader2 className="animate-spin" /> : null}标记人工服务已交付</Button></section> : null}</CardContent></Card> : null}
+      {order.addOnSnapshots?.length ? <Card><CardHeader><CardTitle>附加服务快照</CardTitle></CardHeader><CardContent><Table><TableBody>{order.addOnSnapshots.map(addOn => <React.Fragment key={addOn.optionId}><DetailRow label="服务" value={`${addOn.name}${addOn.regionName ? ` · ${addOn.regionName}` : ""}`} /><DetailRow label="成交价格" value={formatMoney(addOn.amount)} />{addOn.durationDays ? <DetailRow label="服务期限" value={`${addOn.durationDays} 天`} /> : null}<DetailRow label="交付方式" value={addOn.deliveryMode === "manual" ? "人工交付" : "自动交付"} />{addOn.deliveryDescription ? <DetailRow label="交付约定" value={addOn.deliveryDescription} /> : null}</React.Fragment>)}{order.services?.map(service => <React.Fragment key={service.id}><DetailRow label="服务类型" value={service.handlerLabel} />{service.buyerInputLabel ? <DetailRow label={service.buyerInputLabel} value={service.buyerInput || "未填写"} /> : null}{service.expiresAt ? <DetailRow label="有效期至" value={formatDateTime(service.expiresAt)} /> : null}</React.Fragment>)}</TableBody></Table>{order.fulfillmentStatus === "manual_pending" ? <section className="grid gap-3 pt-4"><ServiceDeliveryForm order={order} onDelivered={delivered => setOrder(delivered as AdminOrder)} /></section> : null}</CardContent></Card> : null}
     </div>
   )
 }

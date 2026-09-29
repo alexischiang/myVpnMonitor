@@ -133,7 +133,7 @@ async function main() {
 
   let app;
   let handler;
-  const catalogV2Ids = { group: `payment-v2-group-${Date.now()}`, product: `payment-v2-plan-${Date.now()}`, lifetime: `payment-v2-lifetime-${Date.now()}` };
+  const catalogV2Ids = { group: `payment-v2-group-${Date.now()}`, product: `payment-v2-plan-${Date.now()}`, lifetime: `payment-v2-lifetime-${Date.now()}`, customNode: `payment-v2-node-${Date.now()}`, topUp: `payment-v2-topup-${Date.now()}` };
   try {
     const gatewayPort = await listen(gateway);
     const xuiPort = await listen(xui);
@@ -206,7 +206,12 @@ async function main() {
       XUI_BASE_URL: `http://127.0.0.1:${xuiPort}`,
       XUI_API_TOKEN: "xui-test-token",
       XUI_READ_ONLY: "false",
-      XUI_SUBSCRIPTION_BASE_URL: "https://subscription.test"
+      XUI_SUBSCRIPTION_BASE_URL: "https://subscription.test",
+      // Never send real mail from tests; .env may hold live mail credentials.
+      RESEND_API_KEY: "",
+      RESEND_EMAIL_FROM: "",
+      ALERT_EMAIL_FROM: "",
+      ALERT_EMAIL_PASS: ""
     });
 
     handler = require("./server");
@@ -960,6 +965,78 @@ async function main() {
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientPresent, true);
     assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "3x-ui sync must not write panel state back to V2 catalog data");
 
+    // Add-on delivery: buyer input, delivery queue, custom-node inbound binding and expiry, card-key delivery.
+    const v2Cookie = v2Registration.response.headers.get("set-cookie").split(";", 1)[0];
+    const addonProduct = (id, name, fulfillment, extra) => ({ id, type: "addon", isEnabled: true, isForSale: true, stock: null, sortOrder: 0, name, description: "", features: [], priceCents: 100, purchaseRequirement: "standalone", fulfillment, allowQuantity: false, minQuantity: 1, maxQuantity: null, periods: [], ...extra });
+    assert.strictEqual((await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: addonProduct(catalogV2Ids.customNode, "家宽节点", { mode: "manual", handler: "custom_node", config: {} }, { buyerInputLabel: "期望地区" }) })).response.status, 201);
+    assert.strictEqual((await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: addonProduct(catalogV2Ids.topUp, "AI 代充值", { mode: "manual", handler: "manual", config: {} }, { buyerInputLabel: "充值账号" }) })).response.status, 201);
+    const missingInput = await request("/api/orders", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, useBalance: false } });
+    assert.deepStrictEqual([missingInput.response.status, missingInput.data.error], [400, "请填写充值账号。"]);
+    const withInput = await request("/api/orders", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, buyerInput: "me@ai.test", useBalance: false } });
+    assert.deepStrictEqual([withInput.response.status, withInput.data.addOnSnapshots[0].buyerInput], [201, "me@ai.test"]);
+    await request(`/api/orders/${withInput.data.id}`, { method: "DELETE", cookie: v2Cookie });
+    await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { metadata: { "local:1": { region: "香港", inboundType: "package" }, "local:2": { region: "美国", inboundType: "custom" } } } });
+
+    const nodeOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.customNode}`, amount: 1 } });
+    assert.deepStrictEqual([nodeOrder.response.status, nodeOrder.data.fulfillmentStatus], [201, "manual_pending"]);
+    assert.ok((await request("/api/admin/work-summary", { cookie: adminCookie })).data.pendingDeliveries >= 1);
+    const queue = await request("/api/admin/deliveries", { cookie: adminCookie });
+    assert.ok(queue.data.pending.some(order => order.id === nodeOrder.data.id && order.services[0].handler === "custom_node"));
+    assert.deepStrictEqual((await request("/api/admin/custom-inbounds", { cookie: adminCookie })).data.map(inbound => inbound.id), [2]);
+    assert.strictEqual((await request("/api/admin/deliveries", { cookie: v2Cookie })).response.status, 403);
+    const noInbound = await request(`/api/admin/orders/${nodeOrder.data.id}`, { method: "PUT", cookie: adminCookie, body: { deliveryNote: "x" } });
+    assert.match(noInbound.data.error, /定制入站/);
+    const beforeDelivery = Date.now();
+    const deliveredNode = await request(`/api/admin/orders/${nodeOrder.data.id}`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2], deliveryNote: "美国家宽已开通" } });
+    assert.strictEqual(deliveredNode.response.status, 200, deliveredNode.text);
+    assert.deepStrictEqual([deliveredNode.data.fulfillmentStatus, deliveredNode.data.deliveryNotifyError], ["fulfilled", "邮件服务未配置。"], "a mail failure is recorded without undoing delivery");
+    const nodeExpiresAt = new Date(deliveredNode.data.services[0].expiresAt).getTime();
+    assert.ok(Math.abs(nodeExpiresAt - beforeDelivery - 30 * 86400000) < 60000, "custom node lasts 30 days from delivery");
+    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds.sort(), [1, 2]);
+    assert.deepStrictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiExtraInboundIds, [2]);
+    const customerNodeOrder = await request(`/api/orders/${nodeOrder.data.id}`, { cookie: v2Cookie });
+    assert.deepStrictEqual([customerNodeOrder.data.services[0].status, customerNodeOrder.data.services[0].inboundIds], ["active", [2]]);
+    assert.deepStrictEqual(await handler.releaseExpiredCustomNodes(), { released: 0, orders: 0, failed: [] }, "active custom nodes stay bound");
+    const expiry = await handler.releaseExpiredCustomNodes(nodeExpiresAt + 1000);
+    assert.deepStrictEqual(expiry, { released: 1, orders: 1, failed: [] });
+    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
+    assert.deepStrictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiExtraInboundIds, []);
+    assert.deepStrictEqual(await handler.releaseExpiredCustomNodes(nodeExpiresAt + 1000), { released: 0, orders: 0, failed: [] }, "expiry is processed once");
+
+    const topUpOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.topUp}`, amount: 1 } });
+    assert.strictEqual(topUpOrder.data.fulfillmentStatus, "manual_pending");
+    assert.match((await request(`/api/admin/orders/${topUpOrder.data.id}`, { method: "PUT", cookie: adminCookie, body: {} })).data.error, /交付内容/);
+    await request(`/api/admin/orders/${topUpOrder.data.id}`, { method: "PUT", cookie: adminCookie, body: { deliveryNote: "充值凭证 ABC-123" } });
+    const customerTopUp = await request(`/api/orders/${topUpOrder.data.id}`, { cookie: v2Cookie });
+    assert.deepStrictEqual([customerTopUp.data.services[0].status, customerTopUp.data.services[0].deliveryNote, customerTopUp.data.services[0].expiresAt], ["delivered", "充值凭证 ABC-123", ""]);
+    assert.strictEqual((await request(`/api/orders/${topUpOrder.data.id}`, { cookie })).response.status, 404, "other customers cannot read delivered content");
+    const cashierReload = await request(`/cashier/${topUpOrder.data.id}`, { cookie: v2Cookie, redirect: "manual" });
+    assert.strictEqual(cashierReload.response.status, 200, "customers can open or refresh their order page directly");
+    assert.match(cashierReload.text, /<div id="root">/);
+    const anonymousCashier = await request(`/cashier/${topUpOrder.data.id}`, { redirect: "manual" });
+    assert.deepStrictEqual([anonymousCashier.response.status, anonymousCashier.response.headers.get("location")], [302, "/login"]);
+    const nestedCashier = await request(`/cashier/${topUpOrder.data.id}/extra`, { cookie: v2Cookie, redirect: "manual" });
+    assert.deepStrictEqual([nestedCashier.response.status, nestedCashier.response.headers.get("location")], [302, "/account"], "only /cashier/<id> is opened to customers");
+    assert.ok((await request("/api/admin/deliveries", { cookie: adminCookie })).data.delivered.some(order => order.id === topUpOrder.data.id));
+
+    // Tax rate is stored in checkoutSettings and each product can opt out of tax.
+    assert.strictEqual((await request("/api/checkout-settings", { cookie: v2Cookie })).response.status, 403);
+    assert.strictEqual((await request("/api/checkout-settings", { cookie: adminCookie })).data.taxRate, 3, "default tax rate is 3%");
+    assert.match((await request("/api/checkout-settings", { method: "PUT", cookie: adminCookie, body: { taxRate: 120 } })).data.error, /税率/);
+    assert.strictEqual((await request("/api/checkout-settings", { method: "PUT", cookie: adminCookie, body: { taxRate: 5 } })).data.taxRate, 5);
+    assert.deepStrictEqual((await database.query("SELECT data FROM app_records WHERE collection='checkoutSettings'")).rows.map(row => row.data.taxRate), [5], "the rate is stored in the database");
+    const taxedQuote = await request("/api/orders/quote", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, useBalance: false } });
+    assert.deepStrictEqual([taxedQuote.data.taxRate, taxedQuote.data.taxAmount, taxedQuote.data.amount], [5, 0.05, 1.05]);
+    const taxedOrder = await request("/api/orders", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, buyerInput: "tax@ai.test", useBalance: false } });
+    assert.deepStrictEqual([taxedOrder.response.status, taxedOrder.data.taxRate, taxedOrder.data.taxAmount], [201, 5, 0.05], "orders record the rate they were charged");
+    await request(`/api/orders/${taxedOrder.data.id}`, { method: "DELETE", cookie: v2Cookie });
+    const exemptSave = await request(`/api/catalog-v2/products/${catalogV2Ids.topUp}`, { method: "PUT", cookie: adminCookie, body: addonProduct(catalogV2Ids.topUp, "AI 代充值", { mode: "manual", handler: "manual", config: {} }, { buyerInputLabel: "充值账号", chargeTax: false }) });
+    assert.strictEqual(exemptSave.data.chargeTax, false);
+    const exemptQuote = await request("/api/orders/quote", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, useBalance: false } });
+    assert.deepStrictEqual([exemptQuote.data.taxRate, exemptQuote.data.taxAmount, exemptQuote.data.amount], [0, 0, 1]);
+    await request("/api/checkout-settings", { method: "PUT", cookie: adminCookie, body: { taxRate: 3 } });
+    await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { metadata: { "local:1": { region: "香港", inboundType: "package" } } } });
+
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 60 * 1024 ** 3 } })]);
     xuiClients.get("v2-sync@example.test").enable = false;
     await handler.syncCatalogV2ToXui({ forceReload: true });
@@ -1039,7 +1116,8 @@ async function main() {
     const manualProbe = await request("/api/sync-jobs/xui-inbound-probe/run", { method: "POST", cookie: adminCookie, body: {} });
     assert.strictEqual(manualProbe.response.status, 202);
     const syncJobs = await waitForSyncJob("xui-inbound-probe");
-    assert.deepStrictEqual(syncJobs.data.modules.map(module => module.id), ["xui", "traffic", "subscriptions", "referrals"]);
+    assert.deepStrictEqual(syncJobs.data.modules.map(module => module.id), ["xui", "traffic", "subscriptions", "referrals", "addons"]);
+    assert.deepStrictEqual(syncJobs.data.modules.find(module => module.id === "addons").jobs.map(job => [job.id, job.configured]), [["addon-service-expiry", true]]);
     const probeJob = syncJobs.data.modules[0].jobs.find(job => job.id === "xui-inbound-probe");
     assert.deepStrictEqual([probeJob.configured, probeJob.running, probeJob.lastRun.status, probeJob.lastRun.trigger, probeJob.stats24h.total], [true, false, "success", "manual", 1]);
     const probeRuns = await request("/api/sync-jobs/xui-inbound-probe/runs?limit=10", { cookie: adminCookie });
@@ -1272,6 +1350,10 @@ async function main() {
   } finally {
     await database.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id=$1", [catalogV2Ids.product]).catch(() => {});
     await database.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id=$1", [catalogV2Ids.lifetime]).catch(() => {});
+    for (const id of [catalogV2Ids.customNode, catalogV2Ids.topUp]) {
+      await database.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id=$1", [id]).catch(() => {});
+      await database.query("DELETE FROM catalog_v2_products WHERE id=$1", [id]).catch(() => {});
+    }
     await database.query("DELETE FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.product]).catch(() => {});
     await database.query("DELETE FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.lifetime]).catch(() => {});
     await database.query("DELETE FROM catalog_v2_line_groups WHERE id=$1", [catalogV2Ids.group]).catch(() => {});

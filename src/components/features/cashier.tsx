@@ -12,6 +12,7 @@ import { CashierCard } from "./cashier-card"
 import { OrderSummary } from "./order-summary"
 import { OnlinePayment } from "./online-payment"
 import { NoticeBadge } from "./notice-badge"
+import { PurchasedServices } from "./purchased-services"
 import type { PaymentOrder } from "./cashier-types"
 
 function collectionTitle(order: PaymentOrder) {
@@ -87,6 +88,7 @@ export function Cashier({ initialOrder }: { initialOrder: PaymentOrder }) {
         {order.paymentProvider === "test" ? <Button variant="outline" className="min-h-11" disabled={disabled} onClick={() => void operate("test")}>模拟测试支付成功</Button> : null}
       </> : null}
       {order.status === "paid" ? <Alert variant={order.fulfillmentStatus === "failed" ? "warning" : "default"}><AlertTitle>{collectionTitle(order)}</AlertTitle><AlertDescription>{order.fulfillmentStatus === "failed" ? `款项已确认，请勿再次付款。请联系客服处理${order.purpose === "recharge" ? "余额入账" : "套餐发放"}。` : order.fulfillmentStatus === "manual_pending" ? "客服将继续处理人工服务交付，你可以在订单详情中查看后续结果。" : order.fulfillmentStatus === "fulfilled" ? "服务已生效，可以前往账户查看。" : "款项已确认，正在为你处理服务。"}{order.manualPaidAt ? " 本订单由客服确认人工收款。" : ""}</AlertDescription></Alert> : null}
+      {order.services?.length ? <PurchasedServices services={order.services} /> : null}
       <div className="grid gap-2">
         {pending || (order.status === "paid" && order.fulfillmentStatus !== "fulfilled") ? <Button variant="outline" className="min-h-11" disabled={busy || paymentBusy} onClick={() => void operate("refresh")}>{busy ? <Loader2 className="animate-spin" /> : <RefreshCw />}检查支付状态</Button> : null}
         {order.status === "paid" ? <Button asChild className="min-h-11">{order.purpose === "recharge" ? <Link to="/account/wallet">查看账户余额</Link> : <Link to="/account">查看我的套餐</Link>}</Button> : null}
