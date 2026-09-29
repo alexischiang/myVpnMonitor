@@ -20,7 +20,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyButton, EmptyState } from "@/components/features/shared"
-import { ProductCard } from "@/components/features/product-card"
+import { BentoButton } from "@/components/features/bento-button"
+import { PlanOfferCard } from "@/components/features/plan-offer-card"
 import { CategoryPills } from "@/components/features/category-pills"
 import type { CatalogV2AddonCategory, CatalogV2Product, FaqSetting } from "@/types"
 import { formatDate, formatMoney, orderProductLabel } from "@/utils"
@@ -47,11 +48,11 @@ function billingMonths(optionId: string) {
 function lifetimeTrafficLabel(bytes: number | undefined, fallback: string) {
   const value = Number(bytes)
   if (Number.isFinite(value) && value >= 0) {
-    if (value === 0) return "不限流量"
+    if (value === 0) return "不限"
     const gb = value / 1024 ** 3
-    return `${Number.isInteger(gb) ? gb : Number(gb.toFixed(2))}G 固定流量`
+    return `${Number.isInteger(gb) ? gb : Number(gb.toFixed(2))}G`
   }
-  return fallback || "固定流量"
+  return fallback
 }
 
 const defaultPlans = [
@@ -96,10 +97,10 @@ export function PricingPage() {
         return {
           ...defaultPlans[0], id: row.id, name: row.name, title: row.type === "lifetime_plan" ? "固定流量不限时长" : "周期性套餐", description: row.description,
           recommended: row.type === "recurring_plan" && row.isRecommended, recurringAvailable: row.type === "recurring_plan", prices, devices, optionIds,
-          traffic: firstPeriod?.trafficBytes === null ? "无限流量" : firstPeriod ? `${Number((firstPeriod.trafficBytes / 1024 ** 3).toFixed(2))}G 流量` : "",
+          traffic: firstPeriod?.trafficBytes === null ? "不限" : firstPeriod ? `${Number((firstPeriod.trafficBytes / 1024 ** 3).toFixed(2))}G/月` : "-",
           features: included, unavailableFeatures: excluded,
           lifetimeName: row.name, lifetimeTitle: "固定流量不限时长", lifetimeDescription: row.description,
-          lifetimeTraffic: lifetimeTrafficLabel(row.trafficBytes ?? undefined, "固定流量"), lifetimeTrafficBytes: row.trafficBytes ?? undefined,
+          lifetimeTraffic: lifetimeTrafficLabel(row.trafficBytes ?? undefined, "-"), lifetimeTrafficBytes: row.trafficBytes ?? undefined,
           lifetimePrice: row.type === "lifetime_plan" ? Number(row.priceCents) / 100 : Number.NaN, lifetimeOptionId: `v2:${row.id}`,
           lifetimeAvailable: row.type === "lifetime_plan", lifetimeDevices: row.deviceLimit || 0, lifetimeRecommended: row.type === "lifetime_plan" && row.isRecommended,
           lifetimeFeatures: included, lifetimeUnavailableFeatures: excluded,
@@ -158,25 +159,25 @@ export function PricingPage() {
               {visiblePlans.map(plan => {
                 const displayedPrice = lifetime ? plan.lifetimePrice : plan.prices[periodIndex]
                 const checkoutOption = lifetime ? plan.lifetimeOptionId : plan.optionIds[periodIndex]
-                const recommended = lifetime ? plan.lifetimeRecommended : plan.recommended
+                const specs = [
+                  { label: lifetime ? "固定流量" : "每月流量", value: lifetime ? plan.lifetimeTraffic : plan.traffic },
+                  { label: "在线IP数量", value: (lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]) || "-" },
+                ]
                 const features = [
-                  { label: lifetime ? plan.lifetimeTraffic : plan.traffic },
-                  { label: `在线IP数量：${lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]}` },
                   ...(lifetime ? plan.lifetimeFeatures || [] : plan.features).map(label => ({ label })),
                   ...(lifetime ? plan.lifetimeUnavailableFeatures || [] : plan.unavailableFeatures).map(label => ({ label, available: false })),
                 ]
-                return <ProductCard
+                return <PlanOfferCard
                   key={plan.id}
                   title={lifetime ? plan.lifetimeName : plan.name}
                   description={<><span className="block font-medium text-foreground">{lifetime ? plan.lifetimeTitle : plan.title}</span><span className="mt-1 block">{lifetime ? plan.lifetimeDescription : plan.description}</span></>}
                   price={`￥${Number.isFinite(displayedPrice) ? displayedPrice : "—"}`}
                   priceUnit={`/ ${lifetime ? "不限时" : periods[periodIndex].days}`}
                   priceExtra={!lifetime ? <BillingDiscount monthlyPrice={plan.prices[0]} totalPrice={plan.prices[periodIndex]} months={periods[periodIndex].months} /> : null}
+                  specs={specs}
                   featuresTitle="套餐内容"
                   features={features}
-                  action={Number.isFinite(displayedPrice) ? <Button variant={recommended ? "orange" : "outline"} className="min-h-11" asChild>{inAccount ? <Link to={`/account/plans/checkout?option=${checkoutOption}`}>选择套餐</Link> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</Button> : <Button className="min-h-11" disabled>当前周期未开放</Button>}
-                  recommended={recommended}
-                  recommendationLabel="推荐套餐"
+                  action={Number.isFinite(displayedPrice) ? <BentoButton asChild>{inAccount ? <Link to={`/account/plans/checkout?option=${checkoutOption}`}>选择套餐</Link> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</BentoButton> : <BentoButton disabled>当前周期未开放</BentoButton>}
                 />
               })}
               {visiblePlans.length ? null : <EmptyState title="当前暂无可购买套餐" description="请稍后再试或联系客服。" />}

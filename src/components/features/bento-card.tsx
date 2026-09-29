@@ -40,7 +40,7 @@ export function BentoGrid({ className, ...props }: React.ComponentProps<"div">) 
   return <div data-slot="bento-grid" className={cn("grid grid-cols-8 gap-4 xl:auto-rows-(--bento-row)", className)} {...props} />
 }
 
-const bentoCardVariants = cva(`${bentoRadius} col-span-8 gap-4 xl:overflow-y-auto`, {
+const bentoCardVariants = cva(`${bentoRadius} gap-4 xl:overflow-y-auto`, {
   variants: {
     tone: {
       default: "border-transparent bg-bento-surface",
@@ -53,10 +53,10 @@ const bentoCardVariants = cva(`${bentoRadius} col-span-8 gap-4 xl:overflow-y-aut
 })
 
 export type BentoCardProps = Omit<React.ComponentProps<typeof Card>, "title"> & VariantProps<typeof bentoCardVariants> & {
-  /** How many of the 8 columns the card occupies on desktop. */
-  span?: BentoSpan
-  /** How many row units the card occupies on wide screens. */
-  rowSpan?: BentoRowSpan
+  /** How many of the 8 columns the card occupies on desktop; null when the card is placed outside a BentoGrid. */
+  span?: BentoSpan | null
+  /** How many row units the card occupies on wide screens; null when the card is placed outside a BentoGrid. */
+  rowSpan?: BentoRowSpan | null
   /** Card heading, rendered in the shared bento title style. */
   title?: React.ReactNode
   /** Optional icon shown before the title; none by default. */
@@ -66,7 +66,7 @@ export type BentoCardProps = Omit<React.ComponentProps<typeof Card>, "title"> & 
 }
 
 export function BentoCard({ span = 8, rowSpan = 2, tone, title, icon: Icon, action, className, children, ...props }: BentoCardProps) {
-  return <Card data-slot="bento-card" data-tone={tone ?? "default"} className={cn(bentoCardVariants({ tone }), spanClasses[span], rowSpanClasses[rowSpan], rowSpan === 1 && "gap-2 py-4", className)} {...props}>
+  return <Card data-slot="bento-card" data-tone={tone ?? "default"} className={cn(bentoCardVariants({ tone }), span && bentoSpanClass(span), rowSpan && rowSpanClasses[rowSpan], rowSpan === 1 && "gap-2 py-4", className)} {...props}>
     {title ? <CardHeader>
       <CardTitle className="flex min-w-0 items-center gap-2 text-lg font-bold text-foreground">{Icon ? <Icon className="size-5 shrink-0" aria-hidden /> : null}{title}</CardTitle>
       {action ? <CardAction>{action}</CardAction> : null}
