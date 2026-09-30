@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
-import { ArrowRight, ArrowUpRight, BadgeCheck, BookOpen, Check, ChevronDown, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Info, Loader2, PackagePlus, Percent, RefreshCw, Users, WalletCards, type LucideIcon } from "lucide-react"
+import { ArrowRight, ArrowUpRight, BadgeCheck, Banknote, BookOpen, CalendarDays, Check, ChevronDown, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Globe, Loader2, MapPin, PackagePlus, Percent, RefreshCw, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { clearJsonCache, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
@@ -19,29 +19,30 @@ import { Input } from "@/components/ui/input"
 import { Item, ItemGroup } from "@/components/ui/item"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
+import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
 import type { AccountNodeUsage } from "@/components/features/account-traffic-chart"
-import { BentoButton } from "@/components/features/bento-button"
-import { BentoCard, BentoGrid, bentoSpanClass, type BentoRowSpan, type BentoSpan } from "@/components/features/bento-card"
+import { BentoButton, BentoIconLink } from "@/components/features/bento-button"
+import { BentoCard, BentoCardBadge, BentoGrid, bentoSpanClass, type BentoRowSpan, type BentoSpan } from "@/components/features/bento-card"
 import { DataTableRowActions } from "@/components/features/data-table"
 import { MarkdownContent } from "@/components/features/markdown-content"
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { ProgressRing } from "@/components/features/progress-ring"
-import { VipBadge } from "@/components/features/vip-badge"
+import { CopyButton, EmptyState } from "@/components/features/shared"
 import { cn } from "@/lib/utils"
-import { formatDate, formatDateTime, formatMoney, orderProductLabel, purchasedPlanName } from "@/utils"
+import { formatDate, formatDateTime, formatMoney, orderProductLabel, purchasedPlanParts } from "@/utils"
 
 import type { PaymentOrder } from "@/components/features/cashier-types"
-type Subscription = { status: string; activeGroup: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; unlimited?: boolean; trafficTier?: number; purchasedTrafficGb?: number; currentProductSnapshot?: Record<string, unknown>; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number } | null }
+type Subscription = { status: string; activeGroup: string; lineGroupId?: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; unlimited?: boolean; trafficTier?: number; purchasedTrafficGb?: number; currentProductSnapshot?: Record<string, unknown>; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number } | null }
 type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; nodeUsage: AccountNodeUsage; stale?: boolean; error?: string }
 type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
 type IpInfo = { ip: string; asn?: number; asOrganization?: string; country?: string; countryCode?: string; region?: string; regionCode?: string; city?: string; timezone?: string; fraudScore?: number; isResidential?: boolean; isBroadcast?: boolean }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type AccountService = { id: string; orderId: string; name: string; regionName?: string; amount: number; durationDays?: number; startedAt: string; expiresAt?: string; status: "pending" | "processing" | "active" | "expired"; deliveryNote?: string }
-type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
+type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; referral: { rate: number; invitedCount: number }; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
 type WalletData = { balance: number; cashBalance: number; giftBalance: number; referralBalance: number; realCashBalance?: number; virtualCashBalance?: number; availableRealCashBalance?: number; availableVirtualCashBalance?: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
 // Local development cannot resolve a loopback address, so the overview shows this sample instead of an error.
@@ -104,46 +105,48 @@ function CopySubscription({ value }: { value: string }) {
   return <BentoButton variant={copied ? "success" : "default"} aria-label={copied ? "订阅链接已复制" : "复制订阅链接"} onClick={copySubscription}><span className={copied ? "motion-safe:animate-[copy-success_180ms_ease-out]" : ""}>{copied ? <Check /> : <Copy />}</span>{copied ? "复制订阅成功" : "复制订阅链接"}</BentoButton>
 }
 
-function PersonalInfoCard({ account, span, rowSpan, className }: { account: Overview; span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
+function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }: { account: Overview; ipInfo: IpInfo | null; ipInfoError: string; span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
   const accountType = account.isSuperAccount ? "super" : account.isBusiness ? "business" : account.isFamilyFriend ? "family" : "regular"
-  const details = [
-    ["ID", `#${account.customerID}`],
-    ["注册时间", formatDate(account.createdAt)],
+  const ipValue = (value: string) => ipInfo ? value : ipInfoError ? <span className="text-muted-foreground" title={ipInfoError}>暂不可用</span> : <Skeleton className="ml-auto h-5 w-24" />
+  const location = ipInfo ? ipLocation(ipInfo) : ""
+  const details: Array<{ label: string; icon: LucideIcon; value: React.ReactNode; title?: string }> = [
+    { label: "注册时间", icon: CalendarDays, value: formatDate(account.createdAt) },
+    { label: "IP", icon: Globe, value: ipValue(ipInfo?.ip || ""), title: ipInfo?.ip },
+    { label: "位置", icon: MapPin, value: ipValue(location), title: location || undefined },
   ]
-
-  return <BentoCard span={span} rowSpan={rowSpan} className={className} title="个人信息">
-    <CardContent className="grid flex-1 content-between gap-3">
-      <div className="flex min-w-0 items-center gap-3">
-        <Avatar size="lg" className="data-[size=lg]:size-12"><AvatarFallback className="bg-slate-600 text-base font-semibold text-white dark:bg-slate-500">{account.email.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
-        <div className="grid min-w-0 flex-1 gap-1.5">
-          <p className="flex min-w-0 items-center gap-1.5 font-semibold"><span className="truncate" title={account.email}>{account.email}</span><AccountVerificationIcon type={accountType} /></p>
-          <div className="flex"><VipBadge level={account.vipLevel} /></div>
-        </div>
-      </div>
-      <Item className="rounded-2xl bg-background p-3">
-        <dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
-          {details.map(([label, value]) => <React.Fragment key={label}><dt className="text-muted-foreground">{label}</dt><dd className="truncate text-right font-medium tabular-nums">{value}</dd></React.Fragment>)}
-        </dl>
-      </Item>
-    </CardContent>
-  </BentoCard>
-}
-
-function VipLevelCard({ account, span, rowSpan, className }: { account: Overview; span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
   const vipTarget = account.vipSpend < 360 ? { level: "VIP 2", start: 0, amount: 360 } : account.vipSpend < 900 ? { level: "VIP 3", start: 360, amount: 900 } : null
   const vipProgress = vipTarget ? Math.min(100, Math.max(0, (account.vipSpend - vipTarget.start) / (vipTarget.amount - vipTarget.start) * 100)) : 100
   const currentLevel = account.vipLevel.replace(/^vip\s*/i, "VIP ")
 
-  return <BentoCard span={span} rowSpan={rowSpan} className={className} title="VIP 等级">
-    <CardContent className="grid flex-1 content-between justify-items-center gap-2 text-center">
-      <ProgressRing value={vipProgress} size={96} sweep={270} className="text-bento-green-strong" label={vipTarget ? `距离 ${vipTarget.level} 已完成 ${Math.round(vipProgress)}%` : "已达到最高 VIP 等级"}>
-        <strong className="text-xl font-semibold">{currentLevel}</strong>
-      </ProgressRing>
-      <div className="grid text-xs text-muted-foreground tabular-nums">
-        <span>累计消费 <span className="font-medium text-foreground">{formatMoney(account.vipSpend)}</span></span>
-        <span>{vipTarget ? `距离 ${vipTarget.level} 还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "已达到最高等级"}</span>
-        <span className="flex items-center justify-center gap-1">专属折扣 {account.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>VIP 1：0% · VIP 2：5% · VIP 3：10%</TooltipContent></Tooltip></span>
+  // Personal details on the left, VIP progress on the right; they stack with a horizontal divider on phones.
+  return <BentoCard span={span} rowSpan={rowSpan} className={className} title="个人信息">
+    <CardContent className="flex flex-1 flex-col gap-4 sm:flex-row">
+      <div className="grid min-w-0 flex-1 content-between gap-3 sm:flex-[3]">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar size="lg" className="data-[size=lg]:size-12"><AvatarFallback className="bg-slate-600 text-base font-semibold text-white dark:bg-slate-500">{account.email.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
+          <div className="grid min-w-0 flex-1 gap-0.5">
+            <p className="flex min-w-0 items-center gap-1.5 font-semibold"><span className="truncate" title={account.email}>{account.email}</span><AccountVerificationIcon type={accountType} /></p>
+            <p className="text-sm text-muted-foreground tabular-nums">ID #{account.customerID}</p>
+          </div>
+        </div>
+        <Item className="rounded-2xl bg-background px-3 py-2">
+          <dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+            {details.map(({ label, icon: Icon, value, title }) => <React.Fragment key={label}><dt className="flex items-center gap-1.5 text-muted-foreground"><Icon className="size-4" aria-hidden />{label}</dt><dd className="truncate text-right font-medium tabular-nums" title={title}>{value}</dd></React.Fragment>)}
+          </dl>
+        </Item>
       </div>
+      <Separator className="sm:hidden" />
+      <Separator orientation="vertical" className="hidden sm:block data-[orientation=vertical]:h-auto" />
+      <section aria-label="VIP 等级" className="grid min-w-0 content-between justify-items-center gap-1 text-center sm:flex-[2]">
+        <ProgressRing value={vipProgress} size={100} sweep={270} className="text-bento-green-strong" label={vipTarget ? `距离 ${vipTarget.level} 已完成 ${Math.round(vipProgress)}%` : "已达到最高 VIP 等级"}>
+          <strong className="text-2xl font-semibold">{currentLevel}</strong>
+        </ProgressRing>
+        <div className="grid text-xs text-muted-foreground tabular-nums">
+          <span>累计消费 <span className="font-medium text-foreground">{formatMoney(account.vipSpend)}</span></span>
+          <span>{vipTarget ? `距离 ${vipTarget.level} 还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "已达到最高等级"}</span>
+          <span className="flex items-center justify-center gap-1">专属折扣 {account.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>VIP 1：0% · VIP 2：5% · VIP 3：10%</TooltipContent></Tooltip></span>
+        </div>
+      </section>
     </CardContent>
   </BentoCard>
 }
@@ -166,7 +169,7 @@ function NodeStatusCard({ status, error, inactive, span, rowSpan }: { status: No
   return <BentoCard span={span} rowSpan={rowSpan} title="节点状态">
     <CardContent className="flex flex-1 items-end justify-between gap-3">
       {available ? <p className="flex flex-wrap items-baseline gap-x-1.5" title={status?.checkedAt ? `最近检测 ${formatDateTime(status.checkedAt)}` : undefined}><strong className="text-3xl font-semibold tabular-nums">{status?.onlineNodes}</strong><span className="text-sm text-muted-foreground tabular-nums">/ {status?.totalNodes} 在线</span></p> : !inactive && !status && !error ? <Skeleton className="h-9 w-24" /> : <p className="flex min-w-0 items-baseline gap-1.5"><strong className="text-3xl font-semibold">-</strong><span className="truncate text-sm text-muted-foreground">{note}</span></p>}
-      {inactive ? null : <Button asChild variant="outline" size="icon" className="-mr-2 size-11 shrink-0 rounded-full border-transparent bg-background md:size-10 shadow-none dark:border-transparent dark:bg-background"><Link to="/account/nodes" aria-label="查看节点状态"><Eye /></Link></Button>}
+      {inactive ? null : <BentoIconLink to="/account/nodes" label="查看节点状态" icon={Eye} />}
     </CardContent>
   </BentoCard>
 }
@@ -180,38 +183,23 @@ function DeviceLimitCard({ subscription, traffic, span, rowSpan }: { subscriptio
   </BentoCard>
 }
 
-function IpInfoCard({ info, error, span, rowSpan, className }: { info: IpInfo | null; error: string; span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
-  if (info) {
-    const organization = info.asOrganization || ""
-    const translatedOrganization = /(?:CHINANET|CHINA TELECOM|TELECOM)/i.test(organization)
-      ? "中国电信"
-      : /(?:CMNET|CHINA MOBILE|MOBILE)/i.test(organization)
-        ? "中国移动"
-        : /(?:CHINA UNICOM|UNICOM)/i.test(organization)
-          ? "中国联通"
-          : organization || "-"
-    const countryNames: Record<string, string> = { CN: "中国", JP: "日本", US: "美国", HK: "中国香港", MO: "中国澳门", TW: "中国台湾", SG: "新加坡", KR: "韩国", GB: "英国", DE: "德国", FR: "法国", CA: "加拿大", AU: "澳大利亚" }
-    const chinaRegions: Record<string, string> = { BJ: "北京市", SH: "上海市", GD: "广东省", ZJ: "浙江省", JS: "江苏省", SC: "四川省", HN: "湖南省", HB: "湖北省", SD: "山东省", FJ: "福建省" }
-    const cityNames: Record<string, string> = { Tokyo: "东京", Shenzhen: "深圳", Guangzhou: "广州", Beijing: "北京", Shanghai: "上海", Singapore: "新加坡", Seoul: "首尔", London: "伦敦", Paris: "巴黎", Frankfurt: "法兰克福", "Los Angeles": "洛杉矶", "San Francisco": "旧金山", "New York": "纽约" }
-    info = { ...info, asOrganization: translatedOrganization, country: info.countryCode ? countryNames[info.countryCode] || "" : "", region: info.countryCode === "CN" ? chinaRegions[info.regionCode || ""] || "" : "", city: info.city ? cityNames[info.city] || "" : "" }
-  }
-  const details = info ? [
-    ["网络组织", info.asOrganization || "-"],
-    ["位置", [info.country, info.region, info.city].filter(Boolean).join(" · ") || "-"],
-    ["ASN", info.asn ? `AS${info.asn}` : "-"],
-  ] : []
-  return <BentoCard span={span} rowSpan={rowSpan} className={className} title="您的IP">
-    <CardContent className="grid flex-1 content-between gap-3">
-      {error ? <Alert variant="warning"><Info /><AlertDescription>{error}</AlertDescription></Alert> : info ? <>
-        <p className="truncate font-mono text-2xl font-semibold" title={info.ip}>{info.ip}</p>
-        <Item className="rounded-2xl bg-background p-3">
-          <dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
-            {details.map(([label, value]) => <React.Fragment key={label}><dt className="text-muted-foreground">{label}</dt><dd className="truncate text-right font-medium tabular-nums" title={value}>{value}</dd></React.Fragment>)}
-          </dl>
-        </Item>
-      </> : <><Skeleton className="h-12 w-48" /><Skeleton className="h-24 rounded-2xl" /></>}
-    </CardContent>
-  </BentoCard>
+const ipCountryNames: Record<string, string> = { CN: "中国", JP: "日本", US: "美国", HK: "中国香港", MO: "中国澳门", TW: "中国台湾", SG: "新加坡", KR: "韩国", GB: "英国", DE: "德国", FR: "法国", CA: "加拿大", AU: "澳大利亚" }
+const ipChinaRegions: Record<string, string> = { BJ: "北京市", SH: "上海市", GD: "广东省", ZJ: "浙江省", JS: "江苏省", SC: "四川省", HN: "湖南省", HB: "湖北省", SD: "山东省", FJ: "福建省" }
+const ipCityNames: Record<string, string> = { Tokyo: "东京", Shenzhen: "深圳", Guangzhou: "广州", Beijing: "北京", Shanghai: "上海", Singapore: "新加坡", Seoul: "首尔", London: "伦敦", Paris: "巴黎", Frankfurt: "法兰克福", "Los Angeles": "洛杉矶", "San Francisco": "旧金山", "New York": "纽约" }
+
+function ipLocation(info: IpInfo) {
+  const country = info.countryCode ? ipCountryNames[info.countryCode] || "" : ""
+  const region = info.countryCode === "CN" ? ipChinaRegions[info.regionCode || ""] || "" : ""
+  const city = info.city ? ipCityNames[info.city] || "" : ""
+  return [country, region, city].filter(Boolean).join(" · ") || "-"
+}
+
+function WalletBalanceCard({ account, span, rowSpan }: { account: Overview; span: BentoSpan; rowSpan: BentoRowSpan }) {
+  return <BentoStatCard span={span} rowSpan={rowSpan} title="钱包余额" value={formatMoney(account.wallet.balance)} trailing={<BentoIconLink to="/account/wallet" label="查看钱包余额" icon={ArrowRight} />} />
+}
+
+function InviteFriendsCard({ account, span, rowSpan }: { account: Overview; span: BentoSpan; rowSpan: BentoRowSpan }) {
+  return <BentoStatCard span={span} rowSpan={rowSpan} title="邀请好友" action={<BentoCardBadge tone="green" icon={Banknote}>获取{account.referral.rate}%返利</BentoCardBadge>} value={account.referral.invitedCount} unit="位好友已邀请" trailing={<BentoIconLink to="/account/referrals" label="查看邀请返利" icon={ArrowRight} />} />
 }
 
 type PlanView = { subscription: Subscription | null; status: "active" | "expired" | "depleted" | "inactive"; trafficTotal: string; trafficUsed: string; usagePercent: number | null; remainingPercent: number | null }
@@ -242,40 +230,41 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
   const renewal = status === "expired" ? account.subscription?.renewal : null
   const renewalUrl = renewal ? `/account/plans/checkout?${new URLSearchParams({ option: renewal.optionId, traffic: String(renewal.trafficTier) })}` : ""
 
-  return <BentoCard id="subscription" tone="yellow" span={span} rowSpan={rowSpan} className="scroll-mt-16" title="套餐详情">
+  // Current or expired plan as "NAME (period-traffic/月)"; the period and traffic part is set smaller.
+  const shownPlan = subscription ?? account.subscription
+  // The headline name is the V2 line group, not the legacy tier in activeGroup.
+  const nameParts = shownPlan ? { ...purchasedPlanParts(shownPlan, [], shownPlan.planTrafficBytes || null), name: shownPlan.lineGroupId?.toUpperCase() || "-" } : null
+  const planDetail = nameParts ? `${nameParts.duration}-${nameParts.traffic}${nameParts.perMonth ? "/月" : ""}` : ""
+  // No card title: plan name and grey facts share the top row; the headline figure sits bottom-left, the action bottom-right.
+  return <BentoCard id="subscription" tone="yellow" span={span} rowSpan={rowSpan} className="scroll-mt-16">
     <CardContent className="flex flex-1 flex-col justify-between gap-4">
-      <p className="-mt-4 truncate text-3xl font-semibold">{subscription ? purchasedPlanName(subscription, [], subscription.planTrafficBytes || null) : renewal ? account.subscription?.productName : "暂无套餐"}</p>
-      {subscription ? <div className="grid gap-4">
-        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
-          {subscription.duration === "lifetime" ? <p className="text-4xl font-semibold">永久有效</p> : <p className="flex items-baseline gap-2"><strong className="text-4xl font-semibold tabular-nums">{remainingDays ?? "-"}</strong><span className="text-sm">天后到期</span></p>}
-          <div className="grid text-sm text-muted-foreground tabular-nums sm:text-right">
-            <p>到期日期 {formatDate(subscription.expiresAt)}{subscription.giftedDays ? `（已赠送 ${subscription.giftedDays} 天）` : ""}</p>
-            <p>流量配额 {planQuota}</p>
-          </div>
-        </div>
-        {canBuyHomeIp ? <BentoButton asChild size="lg" className="h-auto w-full justify-between py-3 whitespace-normal"><Link to="/account/plans/checkout?product=home-ip"><span className="text-left sm:hidden">定制家宽IP</span><span className="hidden text-left sm:inline">AI被降智？定制纯净家宽 IP{Number.isFinite(homeIpStartingPrice) ? ` · ${formatMoney(homeIpStartingPrice)} 起` : ""}</span><ArrowUpRight className="size-5 text-white" strokeWidth={2.5} aria-hidden /></Link></BentoButton> : null}
-      </div> : renewalUrl ? <div className="grid gap-4">
-        <p className="text-sm">套餐已于 {formatDate(account.subscription?.expiresAt)} 到期，续费后恢复使用。</p>
-        <BentoButton asChild size="lg" className="w-fit"><Link to={renewalUrl}><RefreshCw />续费</Link></BentoButton>
-      </div> : <div className="grid gap-4">
-        <p className="text-sm">开通套餐后，这里会显示到期时间、流量配额和在线IP数量。</p>
-        <BentoButton asChild size="lg" className="w-fit"><Link to="/account/plans"><PackagePlus />购买服务</Link></BentoButton>
-      </div>}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+        <h2 className="min-w-0 text-3xl font-bold wrap-anywhere xl:text-4xl" title={nameParts ? `${nameParts.name} (${planDetail})` : undefined}>{nameParts ? <><span className="text-extrude font-black">{nameParts.name}</span><span className="mt-4 block whitespace-nowrap text-xl xl:text-2xl">({planDetail})</span></> : "暂无套餐"}</h2>
+        {subscription ? <div className="grid text-sm text-muted-foreground tabular-nums sm:text-right">
+          <p>到期日期 {formatDate(subscription.expiresAt)}{subscription.giftedDays ? `（已赠送 ${subscription.giftedDays} 天）` : ""}</p>
+          <p>流量配额 {planQuota}</p>
+        </div> : null}
+      </div>
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+        {subscription ? subscription.duration === "lifetime" ? <p className="text-4xl font-semibold">永久有效</p> : <p className="flex items-baseline gap-2"><strong className="text-4xl font-semibold tabular-nums">{remainingDays ?? "-"}</strong><span className="text-sm">天后到期</span></p>
+          : <p className="max-w-80 text-sm">{renewalUrl ? `套餐已于 ${formatDate(account.subscription?.expiresAt)} 到期，续费后恢复使用。` : "开通套餐后，这里会显示到期时间、流量配额和在线IP数量。"}</p>}
+        {subscription ? canBuyHomeIp ? <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans/checkout?product=home-ip"><span className="sm:hidden">定制家宽IP</span><span className="hidden sm:inline">AI被降智？定制纯净家宽 IP{Number.isFinite(homeIpStartingPrice) ? ` · ${formatMoney(homeIpStartingPrice)} 起` : ""}</span><ArrowUpRight className="size-5 text-white" strokeWidth={2.5} aria-hidden /></Link></BentoButton> : null
+          : renewalUrl ? <BentoButton asChild size="lg" className="ml-auto"><Link to={renewalUrl}><RefreshCw />续费</Link></BentoButton>
+          : <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans"><PackagePlus />购买服务</Link></BentoButton>}
+      </div>
     </CardContent>
   </BentoCard>
 }
 
-// Bar color per usage band (up to 20/40/60/80% of the quota, then above 80%): a solid indicator on a light track of the same color.
+// Bar color per usage band (up to 50%, up to 99%, then above 99% of the quota): a solid indicator on a light track of the same color.
 const usageBarBands = [
-  [20, "bg-usage-20/20 *:data-[slot=progress-indicator]:bg-usage-20"],
-  [40, "bg-usage-40/20 *:data-[slot=progress-indicator]:bg-usage-40"],
-  [60, "bg-usage-60/20 *:data-[slot=progress-indicator]:bg-usage-60"],
-  [80, "bg-usage-80/20 *:data-[slot=progress-indicator]:bg-usage-80"],
+  [50, "bg-usage-20/20 *:data-[slot=progress-indicator]:bg-usage-20"],
+  [99, "bg-usage-60/20 *:data-[slot=progress-indicator]:bg-usage-60"],
   [Infinity, "bg-usage-100/20 *:data-[slot=progress-indicator]:bg-usage-100"],
 ] as const
 
 function usageBarClass(percent: number) {
-  return usageBarBands.find(([limit]) => percent <= limit)?.[1] ?? usageBarBands[4][1]
+  return usageBarBands.find(([limit]) => percent <= limit)?.[1] ?? usageBarBands[2][1]
 }
 
 function TrafficUsageCard({ plan, trafficLoading, trafficError, nextResetAt, span, rowSpan }: { plan: PlanView; trafficLoading: boolean; trafficError: string; nextResetAt?: string; span: BentoSpan; rowSpan: BentoRowSpan }) {
@@ -416,8 +405,8 @@ export function AccountOverviewPage() {
   const hasAnnouncements = data.announcements.length > 0
   // With a plan: plan 4x2 on the left; traffic 4x1 on the right above devices 2x1 and nodes 2x1.
   // Without an active plan the traffic, device and node cards are hidden and the plan card spans the row.
-  const subscriptionLinkSpan: BentoSpan = hasAnnouncements ? 5 : 8
   const announcementSpan: BentoSpan = plan.subscription ? 3 : 8
+  const profileCard = <ProfileCard account={data} ipInfo={ipInfo} ipInfoError={ipInfoError} span={plan.subscription && !hasAnnouncements ? 8 : 5} rowSpan={2} className="md:col-span-8" />
   const [emailLocal, emailDomain] = data.email.split(/@(.*)/)
   const importConfig = importClient ? importClients[importClient] : null
   const importUrl = subscription && importConfig ? `${importConfig.scheme}${encodeURIComponent(subscription.subscriptionUrl)}` : ""
@@ -440,11 +429,11 @@ export function AccountOverviewPage() {
             <DeviceLimitCard subscription={plan.subscription} traffic={selfHostedTraffic} span={2} rowSpan={1} />
             <NodeStatusCard status={nodeStatus} error={nodeStatusError} inactive={!canViewNodes} span={2} rowSpan={1} />
           </> : null}
-          {/* Tablets stack these full width; the 2 + 3 + 3 row starts at lg. */}
-          <VipLevelCard account={data} span={2} rowSpan={2} className="md:col-span-8" />
-          <PersonalInfoCard account={data} span={3} rowSpan={2} className="md:col-span-8" />
-          <IpInfoCard info={ipInfo} error={ipInfoError} span={3} rowSpan={2} className="md:col-span-8" />
-          {plan.subscription ? <SubscriptionLinkCard subscriptionUrl={plan.subscription.subscriptionUrl} onImportClient={setImportClient} span={subscriptionLinkSpan} rowSpan={2} /> : null}
+          {/* From lg the subscription link (or, without a plan, the profile) 5 sits beside wallet over invite (3 each); the profile then pairs with announcements. */}
+          {plan.subscription ? <SubscriptionLinkCard subscriptionUrl={plan.subscription.subscriptionUrl} onImportClient={setImportClient} span={5} rowSpan={2} /> : profileCard}
+          <WalletBalanceCard account={data} span={3} rowSpan={1} />
+          <InviteFriendsCard account={data} span={3} rowSpan={1} />
+          {plan.subscription ? profileCard : null}
           {hasAnnouncements ? <BentoCard span={announcementSpan} rowSpan={2} className="md:col-span-8" title="网站公告" action={data.announcements.length > 1 ? <Badge variant="outline" className="bg-background tabular-nums">{carouselIndex + 1} / {data.announcements.length}</Badge> : null}>
             <CardContent className="grid flex-1">
               <Carousel opts={{ loop: data.announcements.length > 1 }} setApi={setCarouselApi} aria-label="网站公告" className="grid content-between gap-3">
@@ -498,6 +487,37 @@ export function AccountDocsPage() {
   return <PageLoading />
 }
 
+// Shared inputs on bento surfaces: the rounded, borderless field used by the overview subscription link.
+const bentoInputClass = "h-11 min-w-0 rounded-4xl border-0 bg-background px-4 shadow-none dark:bg-background"
+
+// Figure card for one headline number, with an optional trailing control (usually a BentoIconLink).
+function BentoStatCard({ title, value, unit, action, trailing, span, rowSpan }: { title: React.ReactNode; value: React.ReactNode; unit?: React.ReactNode; action?: React.ReactNode; trailing?: React.ReactNode; span: BentoSpan; rowSpan: BentoRowSpan }) {
+  return <BentoCard span={span} rowSpan={rowSpan} title={title} action={action}>
+    <CardContent className="flex flex-1 items-end justify-between gap-3">
+      <p className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"><strong className="truncate text-3xl font-semibold tabular-nums">{value}</strong>{unit ? <span className="text-sm text-muted-foreground">{unit}</span> : null}</p>
+      {trailing}
+    </CardContent>
+  </BentoCard>
+}
+
+// Titled bento card for full-width record lists; sits outside BentoGrid so its height follows the content.
+function BentoListCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return <BentoCard span={null} rowSpan={null} title={title}>
+    <CardContent className="grid gap-3">
+      <p className="-mt-2 text-sm text-muted-foreground">{description}</p>
+      <div className="rounded-2xl bg-background px-3 py-1">{children}</div>
+    </CardContent>
+  </BentoCard>
+}
+
+const walletBalanceKinds = [
+  { key: "giftBalance", label: "赠送余额", icon: Gift, help: "后台赠送所得，不累计 VIP 和返利；购买套餐时优先抵扣。" },
+  { key: "referralBalance", label: "返利余额", icon: Percent, help: "已结算的邀请返利，无需划转；购买套餐时在赠送余额之后抵扣。" },
+  { key: "cashBalance", label: "充值余额", icon: Coins, help: "用户主动充值所得；充值时累计 VIP，购买套餐时最后抵扣。" },
+] as const
+
+const walletEntryLabels: Record<string, string> = { recharge: "充值", purchase: "消费", reward: "赠送", referral: "返利", reversal: "撤销" }
+
 export function AccountWalletPage() {
   const navigate = useNavigate()
   const { data, error } = useCachedAccountData<WalletData>("/api/account/wallet")
@@ -522,60 +542,88 @@ export function AccountWalletPage() {
     }
   }
 
-  if (!data) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
+  if (!data) return error ? <p className="text-sm text-destructive">{error}</p> : <PageLoading />
+  const canRecharge = data.paymentMethods.alipay || data.paymentMethods.wechat
   return (
     <div className="grid gap-4">
-      <section className="grid gap-4 md:grid-cols-3" aria-label="钱包余额">
-        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Coins className="size-4" />充值余额<Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="充值余额说明"><CircleHelp /></Button></TooltipTrigger><TooltipContent className="max-w-64">用户主动充值所得；充值时累计 VIP，购买套餐时最后抵扣。</TooltipContent></Tooltip></CardDescription><CardTitle>{formatMoney(data.cashBalance)}</CardTitle></CardHeader></Card>
-        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Gift className="size-4" />赠送余额<Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="赠送余额说明"><CircleHelp /></Button></TooltipTrigger><TooltipContent className="max-w-64">后台赠送所得，不累计 VIP 和返利；购买套餐时优先抵扣。</TooltipContent></Tooltip></CardDescription><CardTitle>{formatMoney(data.giftBalance)}</CardTitle></CardHeader></Card>
-        <Card><CardHeader><CardDescription className="flex items-center gap-2"><Percent className="size-4" />返利余额<Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="返利余额说明"><CircleHelp /></Button></TooltipTrigger><TooltipContent className="max-w-64">已结算的邀请返利，无需划转；购买套餐时在赠送余额之后抵扣。</TooltipContent></Tooltip></CardDescription><CardTitle>{formatMoney(data.referralBalance)}</CardTitle></CardHeader></Card>
-      </section>
-      {data.heldBalance ? <p className="text-sm text-muted-foreground">可用总额 {formatMoney(data.availableBalance)}，订单冻结中 {formatMoney(data.heldBalance)}</p> : null}
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><WalletCards />充值余额</CardTitle><CardDescription>支持任意金额充值，充值成功后立即累计 VIP 成长值。</CardDescription></CardHeader>
-        <CardContent><Field><FieldLabel htmlFor="recharge-amount">充值金额</FieldLabel><Input id="recharge-amount" inputMode="decimal" placeholder="0.00" value={amount} onChange={event => setAmount(event.target.value)} disabled={paying} /><FieldDescription>单次充值范围 ¥0.01–¥10,000.00，下一步在收银台选择支付宝或微信付款。</FieldDescription><Button type="button" className="min-h-11 sm:w-fit" onClick={() => void recharge()} disabled={paying || !(data.paymentMethods.alipay || data.paymentMethods.wechat)}>{paying ? <Loader2 className="animate-spin" /> : null}{data.paymentMethods.alipay || data.paymentMethods.wechat ? "去付款" : "在线充值维护中"}</Button></Field></CardContent>
-      </Card>
-      <Card>
-        <CardHeader><CardTitle>余额流水</CardTitle><CardDescription>充值、赠送、消费和返利都会保留不可删除的记录。</CardDescription></CardHeader>
-        <CardContent>{data.entries.length ? <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>类型</TableHead><TableHead>说明</TableHead><TableHead>余额变动</TableHead><TableHead className="text-right">余额</TableHead></TableRow></TableHeader><TableBody>{data.entries.map(entry => { const delta = entry.cashDelta + entry.giftDelta + entry.referralDelta; return <TableRow key={entry.id}><TableCell>{formatDateTime(entry.createdAt)}</TableCell><TableCell><Badge variant="outline">{entry.type === "recharge" ? "充值" : entry.type === "purchase" ? "消费" : entry.type === "reward" ? "赠送" : entry.type === "referral" ? "返利" : entry.type === "reversal" ? "撤销" : "其他"}</Badge></TableCell><TableCell>{entry.description || "-"}</TableCell><TableCell className={delta >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-foreground"}>{delta >= 0 ? "+" : ""}{formatMoney(delta)}</TableCell><TableCell className="text-right">{formatMoney(entry.balance)}</TableCell></TableRow> })}</TableBody></Table> : <p className="text-sm text-muted-foreground">暂无余额流水</p>}</CardContent>
-      </Card>
+      <BentoGrid>
+        <BentoCard tone="yellow" span={4} rowSpan={2} title="账户余额" action={data.heldBalance ? <BentoCardBadge icon={Clock3} className="tabular-nums">冻结中 {formatMoney(data.heldBalance)}</BentoCardBadge> : null}>
+          <CardContent className="flex flex-1 flex-col justify-between gap-3">
+            <p className="-mt-4 flex flex-wrap items-baseline gap-x-2"><strong className="text-4xl font-semibold tabular-nums">{formatMoney(data.balance)}</strong>{data.heldBalance ? <span className="text-sm tabular-nums">可用 {formatMoney(data.availableBalance)}</span> : null}</p>
+            <Item className="rounded-2xl p-3">
+              <dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
+                {walletBalanceKinds.map(kind => <React.Fragment key={kind.key}>
+                  <dt className="flex items-center gap-1.5 text-muted-foreground"><kind.icon className="size-4" aria-hidden />{kind.label}<Tooltip><TooltipTrigger aria-label={`${kind.label}说明`}><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent className="max-w-64">{kind.help}</TooltipContent></Tooltip></dt>
+                  <dd className="truncate text-right font-medium tabular-nums">{formatMoney(data[kind.key])}</dd>
+                </React.Fragment>)}
+              </dl>
+            </Item>
+          </CardContent>
+        </BentoCard>
+        <BentoCard span={4} rowSpan={2} title="在线充值" action={<BentoCardBadge icon={BadgeCheck}>累计 VIP 成长值</BentoCardBadge>}>
+          <CardContent className="flex flex-1 flex-col justify-end">
+            <Field>
+              <FieldLabel htmlFor="recharge-amount">充值金额</FieldLabel>
+              <form className="flex gap-2" onSubmit={event => { event.preventDefault(); void recharge() }}>
+                <Input id="recharge-amount" inputMode="decimal" placeholder="0.00" className={cn(bentoInputClass, "tabular-nums")} value={amount} onChange={event => setAmount(event.target.value)} disabled={paying || !canRecharge} />
+                <BentoButton type="submit" className="shrink-0" disabled={paying || !canRecharge}>{paying ? <Loader2 className="animate-spin" /> : null}{canRecharge ? "去付款" : "在线充值维护中"}</BentoButton>
+              </form>
+              <FieldDescription>单次 ¥0.01–¥10,000.00，下一步在收银台选择支付宝或微信付款。</FieldDescription>
+            </Field>
+          </CardContent>
+        </BentoCard>
+      </BentoGrid>
+      <BentoListCard title="余额流水" description="充值、赠送、消费和返利都会保留不可删除的记录。">
+        {data.entries.length ? <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>类型</TableHead><TableHead>说明</TableHead><TableHead className="text-right">余额变动</TableHead><TableHead className="text-right">余额</TableHead></TableRow></TableHeader><TableBody>{data.entries.map(entry => { const delta = entry.cashDelta + entry.giftDelta + entry.referralDelta; return <TableRow key={entry.id}><TableCell className="tabular-nums">{formatDateTime(entry.createdAt)}</TableCell><TableCell><Badge variant="outline">{walletEntryLabels[entry.type] || "其他"}</Badge></TableCell><TableCell>{entry.description || "-"}</TableCell><TableCell className={cn("text-right font-medium tabular-nums", delta >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-foreground")}>{delta >= 0 ? "+" : ""}{formatMoney(delta)}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(entry.balance)}</TableCell></TableRow> })}</TableBody></Table>
+          : <EmptyState title="暂无余额流水" description="充值、购买套餐或获得返利后，余额变动会显示在这里。" />}
+      </BentoListCard>
     </div>
   )
 }
 
 type ReferralReward = { id: string; sourceOrderId: string; rewardAmount: number; baseAmount: number; status: string; availableAt: string; createdAt: string }
+type ReferralData = { code: string; invitedCount: number; referralBalance: number; pendingAmount: number; earnedAmount: number; referralRate: number; recurringReferral: boolean; rewards: ReferralReward[] }
 
-function ReferralMetric({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: React.ReactNode }) {
-  return <Card><CardContent className="flex items-stretch gap-3"><span className="flex self-stretch min-w-12 items-center justify-center rounded-md bg-muted"><Icon className="size-6" /></span><span className="grid min-w-0 content-center gap-1"><span className="text-xs text-muted-foreground">{label}</span><strong className="text-base font-semibold">{value}</strong></span></CardContent></Card>
-}
-
-function CopyValue({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = React.useState(false)
-  async function copy() {
-    await navigator.clipboard.writeText(value)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
-    toast.success(`${label}已复制`)
-  }
-  return <div className="grid gap-2"><Label>{label}</Label><div className="flex gap-2"><Input value={value} readOnly /><Button type="button" variant="outline" onClick={() => void copy()}>{copied ? "已复制" : "复制"}</Button></div></div>
+function InviteCopyField({ id, label, value }: { id: string; label: string; value: string }) {
+  return <div className="flex items-center gap-2">
+    <Label htmlFor={id} className="w-16 shrink-0">{label}</Label>
+    <Input id={id} readOnly value={value} className={cn(bentoInputClass, "font-medium")} onFocus={event => event.currentTarget.select()} />
+    <CopyButton value={value} aria-label={`复制${label}`} feedback="inline" variant="default" size="default" className="min-h-11 shrink-0 rounded-4xl px-5" />
+  </div>
 }
 
 export function AccountReferralPage() {
-  const [data, setData] = React.useState<{ code: string; invitedCount: number; referralBalance: number; pendingAmount: number; earnedAmount: number; referralRate: number; recurringReferral: boolean; rewards: ReferralReward[] } | null>(null)
-  const load = React.useCallback(() => fetchJson<typeof data>("/api/account/referrals").then(setData), [])
-  React.useEffect(() => { void load() }, [load])
-  if (!data) return <PageLoading />
+  const [data, setData] = React.useState<ReferralData | null>(null)
+  const [error, setError] = React.useState("")
+  React.useEffect(() => {
+    let active = true
+    fetchJson<ReferralData>("/api/account/referrals")
+      .then(value => { if (active) setData(value) })
+      .catch(error => { if (active) setError(error instanceof Error ? error.message : "邀请返利加载失败") })
+    return () => { active = false }
+  }, [])
+  if (!data) return error ? <p className="text-sm text-destructive">{error}</p> : <PageLoading />
   const inviteUrl = `${window.location.origin}/register?ref=${data.code}`
-  return <div className="grid gap-4 px-4 lg:px-6">
-    <section className="grid gap-4 sm:grid-cols-2" aria-label="邀请返利统计">
-      <ReferralMetric icon={Users} label="已注册用户数" value={`${data.invitedCount} 人`} />
-      <ReferralMetric icon={Percent} label="佣金比例" value={`${data.referralRate}%`} />
-      <ReferralMetric icon={Clock3} label="确认中的佣金" value={formatMoney(data.pendingAmount)} />
-      <ReferralMetric icon={Coins} label="累计获得佣金" value={formatMoney(data.earnedAmount)} />
-    </section>
-    <Card><CardContent className="grid gap-4 pt-6 sm:grid-cols-2"><CopyValue label="邀请码" value={data.code} /><CopyValue label="邀请链接" value={inviteUrl} /></CardContent></Card>
-    <Card><CardHeader><CardTitle>邀请返利</CardTitle><CardDescription>分享邀请码，邀请好友购买套餐后获得返利。</CardDescription></CardHeader><CardContent className="grid gap-4 sm:grid-cols-3"><Metric label="我的邀请码" value={data.code} /><Metric label="返利比例" value={`${data.referralRate}%${data.recurringReferral ? "（循环返利）" : "（首次购买）"}`} /><Metric label="返利余额" value={formatMoney(data.referralBalance)} description="已到账返利可在购买套餐时直接抵扣，无需划转。" /></CardContent></Card>
-    <Card><CardHeader><CardTitle>返利明细</CardTitle></CardHeader><CardContent>{data.rewards.length ? <Table><TableHeader><TableRow><TableHead>来源订单</TableHead><TableHead>实际投入</TableHead><TableHead>返利金额</TableHead><TableHead>状态</TableHead><TableHead>到账时间</TableHead></TableRow></TableHeader><TableBody>{data.rewards.map(item => <TableRow key={item.id}><TableCell className="font-mono text-xs">{item.sourceOrderId}</TableCell><TableCell>{formatMoney(item.baseAmount)}</TableCell><TableCell>{formatMoney(item.rewardAmount)}</TableCell><TableCell><Badge variant={item.status === "available" ? "success" : "secondary"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "审核中" : item.status}</Badge></TableCell><TableCell>{formatDateTime(item.availableAt)}</TableCell></TableRow>)}</TableBody></Table> : <p className="text-sm text-muted-foreground">暂无返利记录</p>}</CardContent></Card>
+  return <div className="grid gap-4">
+    <BentoGrid>
+      <BentoCard tone="green" span={5} rowSpan={2} className="md:col-span-8" title="邀请好友，一起加速" action={<BentoCardBadge icon={Banknote}>获取{data.referralRate}%返利</BentoCardBadge>}>
+        <CardContent className="flex flex-1 flex-col justify-between gap-3">
+          <p className="text-sm">好友通过你的链接注册并购买套餐后，你将获得实付金额 {data.referralRate}% 的返利{data.recurringReferral ? "，好友每次购买都返" : "（仅限首次购买）"}，到账后可直接抵扣。</p>
+          <div className="grid gap-2">
+            <InviteCopyField id="invite-code" label="邀请码" value={data.code} />
+            <InviteCopyField id="invite-url" label="邀请链接" value={inviteUrl} />
+          </div>
+        </CardContent>
+      </BentoCard>
+      <BentoStatCard span={3} rowSpan={1} title="已邀请好友" value={data.invitedCount} unit="位" />
+      <BentoStatCard span={3} rowSpan={1} title="返利余额" value={formatMoney(data.referralBalance)} trailing={<BentoIconLink to="/account/wallet" label="查看账户余额" icon={ArrowRight} />} />
+      <BentoStatCard span={4} rowSpan={1} title="确认中的返利" value={formatMoney(data.pendingAmount)} unit="确认后自动到账" />
+      <BentoStatCard span={4} rowSpan={1} title="累计获得返利" value={formatMoney(data.earnedAmount)} />
+    </BentoGrid>
+    <BentoListCard title="返利明细" description="好友订单确认后，返利自动计入返利余额。">
+      {data.rewards.length ? <Table><TableHeader><TableRow><TableHead>来源订单</TableHead><TableHead className="text-right">实际投入</TableHead><TableHead className="text-right">返利金额</TableHead><TableHead>状态</TableHead><TableHead>到账时间</TableHead></TableRow></TableHeader><TableBody>{data.rewards.map(item => <TableRow key={item.id}><TableCell className="font-mono text-xs">{item.sourceOrderId}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(item.baseAmount)}</TableCell><TableCell className="text-right font-medium tabular-nums">{formatMoney(item.rewardAmount)}</TableCell><TableCell><Badge variant={item.status === "available" ? "success" : "secondary"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "确认中" : item.status}</Badge></TableCell><TableCell className="tabular-nums">{formatDateTime(item.availableAt)}</TableCell></TableRow>)}</TableBody></Table>
+        : <EmptyState title="暂无返利记录" description="好友通过你的邀请链接注册并购买套餐后，返利会显示在这里。" />}
+    </BentoListCard>
   </div>
 }
 

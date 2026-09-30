@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -28,8 +29,6 @@ type XuiClientData = {
   importPreview: { email: string; totalBytes: number; limitIp: number; expiresAt: string; resetDay: number }
 }
 
-const groups = ["basic", "pro", "ultra"]
-
 export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
   user: User
   open: boolean
@@ -37,7 +36,6 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
   onComplete: () => Promise<void>
 }) {
   const [mode, setMode] = React.useState("import")
-  const [group, setGroup] = React.useState("pro")
   const [clientEmail, setClientEmail] = React.useState("")
   const [clients, setClients] = React.useState<XuiClientOption[]>([])
   const [loading, setLoading] = React.useState(false)
@@ -48,12 +46,11 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
   React.useEffect(() => {
     if (!open) return
     setMode("import")
-    setGroup(groups.includes(user.activeGroup || "") ? user.activeGroup || "pro" : "pro")
     setClientEmail("")
     setError("")
     setLoading(false)
     if (clientsLoadedFor.current !== user.id) setClients([])
-  }, [open, user.activeGroup, user.id])
+  }, [open, user.id])
 
   React.useEffect(() => {
     if (!open || mode !== "link") return
@@ -82,7 +79,7 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
     setSaving(true)
     setError("")
     try {
-      await postJson(`/api/users/${user.id}/xui`, { mode, activeGroup: group, clientEmail })
+      await postJson(`/api/users/${user.id}/xui`, { mode, clientEmail })
       await onComplete()
       onOpenChange(false)
       toast.success(mode === "link" ? "已关联3x-ui Client并切换线路" : "已导入3x-ui并切换线路")
@@ -100,7 +97,7 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
       <form className="grid gap-5" onSubmit={submit}>
         <DialogHeader>
           <DialogTitle>切换到自研线路</DialogTitle>
-          <DialogDescription>选择创建新 Client 或关联已有 Client；节点自动跟随套餐分组。</DialogDescription>
+          <DialogDescription>选择创建新 Client 或关联已有 Client；节点自动跟随 V2 套餐的线路权限组。</DialogDescription>
         </DialogHeader>
         <Tabs value={mode} onValueChange={value => { setMode(value); setClientEmail(""); setError("") }}>
           <TabsList className="grid w-full grid-cols-2">
@@ -110,12 +107,9 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
         </Tabs>
         <FieldGroup>
           <Field>
-            <FieldLabel htmlFor="xui-plan-group">套餐分组</FieldLabel>
-            <Select value={group} onValueChange={setGroup} disabled={saving}>
-              <SelectTrigger id="xui-plan-group" className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>{groups.map(value => <SelectItem key={value} value={value}>{value.toUpperCase()}</SelectItem>)}</SelectContent>
-            </Select>
-            <FieldDescription>使用“入站管理”中该分组配置的所有节点。</FieldDescription>
+            <FieldLabel htmlFor="xui-line-group">线路权限组</FieldLabel>
+            <Input id="xui-line-group" value={user.v2LineGroupId || "未绑定 V2 套餐"} readOnly />
+            <FieldDescription>使用该权限组在 V2 商品库中配置的所有入站；如需更换请先更改套餐。</FieldDescription>
           </Field>
           {mode === "link" ? <Field>
             <FieldLabel htmlFor="xui-client">3x-ui Client</FieldLabel>
@@ -133,7 +127,7 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
         </Item> : null}
         <Alert><Network /><AlertDescription>确认后旧订阅池停止交付；3x-ui 原生额度改为不限，由后台按节点倍率计费、停用并按购买日重置。</AlertDescription></Alert>
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
-        <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={saving}>取消</Button></DialogClose><Button type="submit" disabled={saving || (mode === "link" && !selectedClient)}>{saving ? <Loader2 className="animate-spin" /> : <Network />}{saving ? "处理中..." : "确认切换"}</Button></DialogFooter>
+        <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={saving}>取消</Button></DialogClose><Button type="submit" disabled={saving || !user.v2LineGroupId || (mode === "link" && !selectedClient)}>{saving ? <Loader2 className="animate-spin" /> : <Network />}{saving ? "处理中..." : "确认切换"}</Button></DialogFooter>
       </form>
     </DialogContent>
   </Dialog>

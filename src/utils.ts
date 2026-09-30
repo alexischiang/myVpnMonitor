@@ -24,6 +24,12 @@ export function orderProductLabel(order: { planName?: string; optionLabel?: stri
 }
 
 export function purchasedPlanName(plan: PurchasedPlan, pricing: PricingRow[] = [], trafficBytes?: number | null) {
+  const { name, duration, traffic } = purchasedPlanParts(plan, pricing, trafficBytes)
+  return `${name}-${duration}-${traffic}`
+}
+
+/** Product name, period label and traffic label of a purchased plan; `perMonth` is false for lifetime or unlimited plans. */
+export function purchasedPlanParts(plan: PurchasedPlan, pricing: PricingRow[] = [], trafficBytes?: number | null) {
   const snapshot = plan.currentProductSnapshot || {}
   const group = typeof snapshot.group === "string" ? snapshot.group : plan.activeGroup
   const name = typeof snapshot.planName === "string" ? snapshot.planName : typeof snapshot.name === "string" ? snapshot.name : group?.toUpperCase()
@@ -35,7 +41,7 @@ export function purchasedPlanName(plan: PurchasedPlan, pricing: PricingRow[] = [
   const candidates = [Number(snapshot.trafficGb), Number(plan.purchasedTrafficGb), Number(trafficBytes) / 1024 ** 3, Number(trafficText?.[1]), lifetime ? Number(row?.lifetimeTrafficBytes) / 1024 ** 3 : Number(row?.trafficBaseGb) * Number(plan.trafficTier || 1)]
   const trafficGb = candidates.find(value => Number.isFinite(value) && value > 0)
   const traffic = unlimited ? "无限流量" : trafficGb ? `${Number(trafficGb.toFixed(2))}G` : "-"
-  return `${name || "-"}-${planDurationLabels[duration || ""] || "-"}-${traffic}`
+  return { name: name || "-", duration: planDurationLabels[duration || ""] || "-", traffic, perMonth: !lifetime && !unlimited }
 }
 
 export const billTypeLabels: Record<string, string> = {

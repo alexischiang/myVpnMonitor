@@ -64,10 +64,22 @@
   /* Darker green for progress graphics on light cards (3:1 against white). */
   --color-bento-green-strong: #2fa92e;
   --color-usage-20: #72c238;
-  --color-usage-40: #d1b60c;
   --color-usage-60: #ff9e07;
-  --color-usage-80: #ff7825;
   --color-usage-100: #ff594c;
+}
+
+/* Poster-style display text: white fill, a thick dark outline and a long diagonal block extrusion; sizes in em so it scales with the font.
+   The outline is a ring of text-shadows (Chrome drops -webkit-text-stroke once a shadow or filter is present). The extrusion is a
+   drop-shadow chain applied to the outlined glyphs: offsets 1+2+4+8+16+5 (x0.01em) cover every step up to 0.36em, so its edges stay straight. */
+@utility text-extrude {
+  color: white;
+  text-shadow:
+    0.08em 0em 0 var(--foreground), 0.074em 0.031em 0 var(--foreground), 0.057em 0.057em 0 var(--foreground), 0.031em 0.074em 0 var(--foreground),
+    0em 0.08em 0 var(--foreground), -0.031em 0.074em 0 var(--foreground), -0.057em 0.057em 0 var(--foreground), -0.074em 0.031em 0 var(--foreground),
+    -0.08em 0em 0 var(--foreground), -0.074em -0.031em 0 var(--foreground), -0.057em -0.057em 0 var(--foreground), -0.031em -0.074em 0 var(--foreground),
+    0em -0.08em 0 var(--foreground), 0.031em -0.074em 0 var(--foreground), 0.057em -0.057em 0 var(--foreground), 0.074em -0.031em 0 var(--foreground);
+  filter: drop-shadow(0.01em 0.01em 0 var(--foreground)) drop-shadow(0.02em 0.02em 0 var(--foreground)) drop-shadow(0.04em 0.04em 0 var(--foreground))
+    drop-shadow(0.08em 0.08em 0 var(--foreground)) drop-shadow(0.16em 0.16em 0 var(--foreground)) drop-shadow(0.05em 0.05em 0 var(--foreground));
 }
 
 /* Bright surfaces that stay light in both themes: keep text and controls dark and AA-legible on them. */

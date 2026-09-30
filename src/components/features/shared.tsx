@@ -44,7 +44,7 @@ export function EmptyState({ title = "暂无数据", description }: { title?: st
 }
 
 // feedback="inline" 时复制结果直接显示在按钮上（带动画），不弹出 Toast
-export function CopyButton({ value, label = "复制", variant = "ghost", size = "sm", className, feedback = "toast" }: { value?: string; label?: string; variant?: React.ComponentProps<typeof Button>["variant"]; size?: React.ComponentProps<typeof Button>["size"]; className?: string; feedback?: "toast" | "inline" }) {
+export function CopyButton({ value, label = "复制", variant = "ghost", size = "sm", className, feedback = "toast", "aria-label": ariaLabel }: { value?: string; label?: string; variant?: React.ComponentProps<typeof Button>["variant"]; size?: React.ComponentProps<typeof Button>["size"]; className?: string; feedback?: "toast" | "inline"; "aria-label"?: string }) {
   const [result, setResult] = React.useState<"copied" | "failed" | null>(null)
   const resetTimer = React.useRef<number>()
 
@@ -74,6 +74,7 @@ export function CopyButton({ value, label = "复制", variant = "ghost", size = 
       variant={result === "copied" ? "success" : result === "failed" ? "destructive" : variant}
       size={size}
       className={className}
+      aria-label={result ? undefined : ariaLabel}
       onClick={() => void copy()}
       disabled={!value}
     >

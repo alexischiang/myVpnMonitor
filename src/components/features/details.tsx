@@ -28,8 +28,9 @@ import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStat
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserBillsCard } from "@/components/features/user-bills-card"
 import { BackButton } from "@/components/features/back-button"
+import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalogPurchaseOptionsFor, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
-import type { CatalogV2Product, User, XuiCustomInboundManagement } from "@/types"
+import type { User, XuiCustomInboundManagement } from "@/types"
 import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, purchasedPlanName, userStatus } from "@/utils"
 
 type GiftPreview = {
@@ -54,7 +55,6 @@ type ReferralDetails = {
   rewards: Array<{ id: string; sourceOrderId: string; orderNumber: string; inviteeEmail: string; baseAmount: number; rate: number; rewardAmount: number; status: string; availableAt?: string }>
 }
 
-const lineGroups = [{ value: "basic", label: "BASIC" }, { value: "pro", label: "PRO" }, { value: "ultra", label: "ULTRA" }]
 function formatPoolExpiryDifference(days?: number | null) {
   if (days === null || days === undefined) return "暂无法判断"
   if (days === 0) return "与用户同日到期"
@@ -303,10 +303,7 @@ export function UserDetailPage() {
   const [userTypeOpen, setUserTypeOpen] = React.useState(false)
   const [selectedUserType, setSelectedUserType] = React.useState<keyof typeof userTypeLabels>("regular")
   const [userTypeSaving, setUserTypeSaving] = React.useState(false)
-  const [lineOpen, setLineOpen] = React.useState(false)
   const [xuiOpen, setXuiOpen] = React.useState(false)
-  const [lineGroup, setLineGroup] = React.useState("pro")
-  const [lineSaving, setLineSaving] = React.useState(false)
   const [planOpen, setPlanOpen] = React.useState(false)
   const [planConfirmOpen, setPlanConfirmOpen] = React.useState(false)
   const [planOptionId, setPlanOptionId] = React.useState("")
@@ -325,7 +322,7 @@ export function UserDetailPage() {
   const [customInboundLoading, setCustomInboundLoading] = React.useState(false)
   const [customInboundSaving, setCustomInboundSaving] = React.useState(false)
   const [walletBalance, setWalletBalance] = React.useState<number | null>(null)
-  const [catalogV2Products, setCatalogV2Products] = React.useState<CatalogV2Product[]>([])
+  const catalogV2Products = useCatalogV2Products()
   const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const purchaseCount = userBills.filter(item => !item.reversedAt).length
@@ -333,20 +330,15 @@ export function UserDetailPage() {
   const productName = React.useMemo(() => {
     return user ? purchasedPlanName(user, pricing) : "-"
   }, [pricing, user])
-  const catalogPurchaseOptions = React.useMemo(() => catalogV2Products.filter(product => product.isEnabled).flatMap(product => product.type === "recurring_plan"
-    ? product.periods.filter(period => period.isEnabled).map(period => ({ value: `v2:${product.id}:${period.id}`, label: `${product.name} · ${period.durationDays} 天`, product, period }))
-    : [{ value: `v2:${product.id}`, label: `${product.name} · ${product.type === "lifetime_plan" ? "不限时" : "附加服务"}`, product, period: null }]), [catalogV2Products])
+  const catalogPurchaseOptions = React.useMemo(() => catalogPurchaseOptionsFor(catalogV2Products || []), [catalogV2Products])
   const catalogPlanOptions = React.useMemo(() => catalogPurchaseOptions.filter(option => option.product.type !== "addon"), [catalogPurchaseOptions])
   const planOptions = React.useMemo(() => {
-    const currentDays = user?.productCatalogVersion === 2 ? Number(user.v2ProductSnapshot?.durationDays) : ({ monthly: 30, quarterly: 90, half_yearly: 180, yearly: 360 })[user?.duration || ""]
+    const currentDays = Number(user?.v2ProductSnapshot?.durationDays)
     return catalogPlanOptions.filter(option => option.product.type === "lifetime_plan" || option.period?.durationDays === currentDays)
   }, [catalogPlanOptions, user])
   const selectedPlanConfig = React.useMemo(() => {
     const option = planOptions.find(item => item.value === planOptionId)
-    if (!option) return null
-    const lifetime = option.product.type === "lifetime_plan"
-    const trafficBytes = lifetime ? option.product.trafficBytes : option.period?.trafficBytes
-    return { option, lifetime, unlimited: trafficBytes === null, baseBytes: Number(trafficBytes) || 0, stepBytes: Number(option.product.trafficCustomization.stepBytes) || 0, maxTier: option.product.trafficCustomization.enabled ? option.product.trafficCustomization.maxSteps + 1 : 1, targetDevices: lifetime ? option.product.deviceLimit || 0 : option.period?.deviceLimit || 0 }
+    return option ? catalogPlanConfig(option) : null
   }, [planOptionId, planOptions])
   const planPreview = React.useMemo(() => {
     if (!user || !selectedPlanConfig) return null
@@ -388,10 +380,6 @@ export function UserDetailPage() {
     void fetchJson<User>(`/api/users/${id}`).then(data => { if (active) setLoadedUser(data) }).catch(() => undefined)
     return () => { active = false }
   }, [id])
-
-  React.useEffect(() => {
-    void fetchJson<CatalogV2Product[]>("/api/catalog-v2/products").then(setCatalogV2Products).catch(() => setCatalogV2Products([]))
-  }, [])
 
   React.useEffect(() => {
     if (!planOpen || !selectedPlanConfig || selectedPlanConfig.lifetime || selectedPlanConfig.unlimited) return
@@ -662,7 +650,6 @@ export function UserDetailPage() {
 
   function openPlanDialog() {
     const optionId = planOptions.find(option => option.value === user.currentOptionId)?.value
-      || planOptions.find(option => option.value.startsWith(`${user.activeGroup}-`))?.value
       || planOptions[0]?.value
       || ""
     setPlanOptionId(optionId)
@@ -732,35 +719,14 @@ export function UserDetailPage() {
   async function recoverXuiClient() {
     setXuiRecoverSaving(true)
     try {
-      const v2 = user.productCatalogVersion === 2
-      await postJson(`/api/users/${user.id}/${v2 ? "xui-sync" : "xui-recover"}`, {})
+      await postJson(`/api/users/${user.id}/xui-sync`, {})
       await refreshUserDetails()
       setXuiRecoverOpen(false)
-      toast.success(v2 ? "已按V2套餐同步到3x-ui" : "3x-ui 客户端已恢复")
+      toast.success("已按V2套餐同步到3x-ui")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "3x-ui 同步失败")
     } finally {
       setXuiRecoverSaving(false)
-    }
-  }
-
-  function openLineDialog() {
-    setLineGroup(lineGroups.some(item => item.value === user.activeGroup) ? user.activeGroup || "pro" : "pro")
-    setLineOpen(true)
-  }
-
-  async function migrateToSelfHosted() {
-    if (user.lineType === "self_hosted" && lineGroup === user.activeGroup) return
-    setLineSaving(true)
-    try {
-      await postJson(`/api/users/${user.id}/line`, { lineType: "self_hosted", activeGroup: lineGroup })
-      await refreshUserDetails()
-      setLineOpen(false)
-      toast.success(user.lineType === "self_hosted" ? "权限组已更新" : "用户已迁移到自研线路")
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "线路迁移失败")
-    } finally {
-      setLineSaving(false)
     }
   }
 
@@ -904,13 +870,6 @@ export function UserDetailPage() {
           <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={userTypeSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void saveUserType()} disabled={userTypeSaving}>{userTypeSaving ? <Loader2 className="animate-spin" /> : <UserCog />}{userTypeSaving ? "保存中..." : "保存类型"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={lineOpen} onOpenChange={setLineOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{user.lineType === "self_hosted" ? "调整权限组" : "迁移到自研线路"}</DialogTitle><DialogDescription>系统将按入站管理中的套餐分组关联可用节点。未配置有效入站时不会迁移。</DialogDescription></DialogHeader>
-          <Field><FieldLabel htmlFor="self-hosted-plan">{user.lineType === "self_hosted" ? "权限组" : "套餐分组"}</FieldLabel><Select value={lineGroup} onValueChange={setLineGroup} disabled={lineSaving}><SelectTrigger id="self-hosted-plan" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{lineGroups.map(group => <SelectItem key={group.value} value={group.value}>{group.label}</SelectItem>)}</SelectContent></Select></Field>
-          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={lineSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void migrateToSelfHosted()} disabled={lineSaving || (user.lineType === "self_hosted" && lineGroup === user.activeGroup)}>{lineSaving ? <Loader2 className="animate-spin" /> : <Network />}{lineSaving ? "同步中..." : user.lineType === "self_hosted" ? "保存权限组" : "确认迁移"}</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
       <Dialog open={customInboundOpen} onOpenChange={setCustomInboundOpen}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-4xl">
           <DialogHeader><DialogTitle>管理个人定制入站</DialogTitle><DialogDescription>个人定制授权不随套餐变更或到期清除。用户到期时仍只显示占位节点，重新购买套餐后自动恢复授权。</DialogDescription></DialogHeader>
@@ -942,8 +901,7 @@ export function UserDetailPage() {
           <form className="grid gap-4" onSubmit={previewPlanChange}>
             <DialogHeader><DialogTitle>更改套餐</DialogTitle><DialogDescription>可选择商品库中的套餐规格，包括未上架商品；附加商品和旧版规格不可选择。操作原因会写入用户记录。</DialogDescription></DialogHeader>
             <FieldGroup>
-              <Field><FieldLabel htmlFor="plan-option">目标商品规格</FieldLabel><Select value={planOptionId} onValueChange={setPlanOptionId} disabled={planSaving || !planOptions.length}><SelectTrigger id="plan-option" className="w-full"><SelectValue placeholder="当前周期没有可用商品规格" /></SelectTrigger><SelectContent>{planOptions.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select><FieldDescription>切换至不限时规格后，到期日将改为永久有效。</FieldDescription></Field>
-              {selectedPlanConfig && !selectedPlanConfig.lifetime && !selectedPlanConfig.unlimited ? <Field><FieldLabel htmlFor="plan-traffic-tier">定制流量</FieldLabel><Select value={planTrafficTier} onValueChange={setPlanTrafficTier} disabled={planSaving}><SelectTrigger id="plan-traffic-tier" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: selectedPlanConfig.maxTier }, (_, index) => index + 1).map(tier => <SelectItem key={tier} value={String(tier)}>第 {tier} 档 · {formatBytes(selectedPlanConfig.baseBytes + (tier - 1) * selectedPlanConfig.stepBytes)}</SelectItem>)}</SelectContent></Select><FieldDescription>后台调整不计算价格，所选流量配额会直接同步到 3x-ui。</FieldDescription></Field> : null}
+              <CatalogPlanFields idPrefix="plan" label="目标商品规格" placeholder="当前周期没有可用商品规格" options={planOptions} value={planOptionId} onValueChange={setPlanOptionId} trafficTier={planTrafficTier} onTrafficTierChange={setPlanTrafficTier} disabled={planSaving} description="切换至不限时规格后，到期日将改为永久有效。" tierDescription="后台调整不计算价格，所选流量配额会直接同步到 3x-ui。" />
               <Field><FieldLabel htmlFor="plan-note">变更原因</FieldLabel><Input id="plan-note" maxLength={200} value={planNote} onChange={event => { setPlanNote(event.target.value); setPlanError("") }} placeholder="例如：客服补偿、套餐升级" aria-invalid={Boolean(planError)} autoFocus required /><FieldError>{planError}</FieldError></Field>
             </FieldGroup>
             {planPreview?.changes.length ? <Item variant="muted"><ItemContent><ItemTitle>变更预览</ItemTitle><Table><TableHeader><TableRow><TableHead>项目</TableHead><TableHead>当前</TableHead><TableHead>变更后</TableHead></TableRow></TableHeader><TableBody>{planPreview.changes.map(change => <TableRow key={change.label}><TableCell className="font-medium">{change.label}</TableCell><TableCell className="whitespace-normal text-muted-foreground">{change.before}</TableCell><TableCell className="whitespace-normal">{change.after}</TableCell></TableRow>)}</TableBody></Table></ItemContent></Item> : null}
@@ -979,8 +937,8 @@ export function UserDetailPage() {
       </AlertDialog>
       <AlertDialog open={xuiRecoverOpen} onOpenChange={setXuiRecoverOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>{user.productCatalogVersion === 2 ? "同步V2套餐到3x-ui？" : "恢复3x-ui客户端？"}</AlertDialogTitle><AlertDialogDescription>{user.productCatalogVersion === 2 ? "将按当前V2套餐的额度、到期时间、在线IP数量和入站组更新或补建3x-ui客户端，不清空已有流量。" : "将使用原邮箱、套餐额度、到期时间、重置日和入站组重新创建客户端。已有折算流量和历史账本不会清空。"}</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={xuiRecoverSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "同步中..." : user.productCatalogVersion === 2 ? "立即同步" : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
+          <AlertDialogHeader><AlertDialogTitle>同步V2套餐到3x-ui？</AlertDialogTitle><AlertDialogDescription>将按当前V2套餐的额度、到期时间、在线IP数量和入站组更新或补建3x-ui客户端，不清空已有流量。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={xuiRecoverSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "同步中..." : "立即同步"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
       {user.accountStatus === "disabled" ? <Alert variant="warning"><AlertCircle /><AlertDescription>该用户已停用</AlertDescription></Alert> : null}
@@ -1028,12 +986,12 @@ export function UserDetailPage() {
               {user.accountStatus === "active" && user.accountId ? <Button variant="outline" className="w-full" onClick={openManualPaymentDialog}><Banknote />人工收款</Button> : null}
               {user.registeredOnly ? null : <>
                 <Button variant="outline" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
-                <Button variant="outline" className="w-full" onClick={user.lineType === "self_hosted" ? openLineDialog : () => setXuiOpen(true)}><Network />{user.lineType === "self_hosted" ? "调整权限组" : "切换到自研线路"}</Button>
+                {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={() => setXuiOpen(true)}><Network />切换到自研线路</Button>}
                 {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => void openCustomInbounds()}><Network />管理个人定制入站</Button> : null}
                 {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={openPlanDialog}><ArrowRightLeft />更改套餐</Button> : null}
                 {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => setTrafficResetOpen(true)}><RotateCcw />重置流量</Button> : null}
                 {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={() => { setTrafficGiftError(""); setTrafficGiftOpen(true) }}><Gift />单向赠送流量</Button> : null}
-                {user.lineType === "self_hosted" && (user.productCatalogVersion === 2 || user.xuiClientPresent === false) ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)} disabled={xuiRecoverSaving}><RefreshCw />{user.productCatalogVersion === 2 ? "同步V2套餐到3x-ui" : "恢复3x-ui客户端"}</Button> : null}
+                {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)} disabled={xuiRecoverSaving}><RefreshCw />同步V2套餐到3x-ui</Button> : null}
                 {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
                 <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
               </>}
@@ -1152,7 +1110,7 @@ export function UserDetailPage() {
             </Card>
           </TabsContent>
           <TabsContent value="catalog-v2" className="grid min-w-0 gap-4">
-            {user.productCatalogVersion === 2 && user.v2ProductSnapshot ? <>
+            {user.v2ProductSnapshot ? <>
               <Card>
                 <CardHeader><CardTitle>当前 V2 商品</CardTitle><CardDescription>用户迁移后生效的商品绑定快照。</CardDescription><CardAction><Badge variant="success">已迁移</Badge></CardAction></CardHeader>
                 <CardContent className="grid gap-4 sm:grid-cols-2">

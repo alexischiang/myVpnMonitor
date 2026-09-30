@@ -3,6 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import type { LucideIcon } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { Card, CardAction, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
@@ -73,6 +74,13 @@ export function BentoCard({ span = 8, rowSpan = 2, tone, title, icon: Icon, acti
     </CardHeader> : null}
     {children}
   </Card>
+}
+
+/** Small pill for a bento card's secondary figure, usually passed as the card `action`. */
+export function BentoCardBadge({ icon: Icon, tone = "default", className, children, ...props }: React.ComponentProps<typeof Badge> & { icon?: LucideIcon; tone?: "default" | "green" }) {
+  return <Badge data-slot="bento-card-badge" data-tone={tone} variant="outline" className={cn("h-7 gap-1.5 rounded-full border-transparent bg-background px-2.5 text-xs font-medium", tone === "green" && "bento-light-surface bg-bento-green text-foreground", className)} {...props}>
+    {Icon ? <Icon aria-hidden /> : null}{children}
+  </Badge>
 }
 
 export function bentoSpanClass(span: BentoSpan, rowSpan?: BentoRowSpan) {

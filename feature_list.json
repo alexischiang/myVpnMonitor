@@ -1978,6 +1978,271 @@
         "page_errors": [],
         "checked_at": "2026-09-30"
       }
+    },
+    {
+      "id": "overview-wallet-invite-cards-usage-bands",
+      "name": "Overview wallet/invite cards, IP merged into personal info, 3-band traffic bar",
+      "description": "Account overview: traffic bar uses three colors from the usage palette, new wallet balance and invite friends cards replace the IP card, and IP + location move into the personal info card.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Traffic usage bar: <=50% usage-20 green, <=99% #ff9e07 (usage-60), >99% usage-100 red; unused usage-40/80 tokens removed.",
+        "钱包余额 card shows wallet.balance (cash + gift + referral) with a round → link to /account/wallet.",
+        "邀请好友 card shows referral.invitedCount (new overview field) with a round → link to /account/referrals and a BentoCardBadge (Banknote icon + 获取{rate}%返利) in the header action.",
+        "From lg the row is VIP 2 + 个人信息 3 + wallet over invite (3x1 each); tablets show wallet and invite side by side; phones stack.",
+        "个人信息 shows ID, 注册时间, IP and 位置 in a 2x2 grid without overflowing its 2-row height; IP shows a skeleton while loading and 暂不可用 on error."
+      ],
+      "verification": [
+        "2026-09-30: npm run check, verify:fast, verify:harness, git diff --check passed; browser verification on isolated server (local DB, port 3100, 3x-ui disabled)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/wallet",
+          "/account/referrals"
+        ],
+        "interactions": [
+          "1440x1000: VIP/个人信息/钱包余额/邀请好友 in one row; every bento card scrollHeight-clientHeight = 0 after compacting the personal info details (first build overflowed 16px, fixed).",
+          "Badge text 获取10%返利 with lucide-banknote icon on white background.",
+          "Clicked 查看钱包余额 -> /account/wallet; clicked 查看邀请返利 -> /account/referrals.",
+          "375x812: cards stack, no horizontal scroll.",
+          "Traffic bar not exercised: seeded local accounts have no active self-hosted plan."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-30"
+      }
+    },
+    {
+      "id": "account-wallet-referral-bento",
+      "name": "Wallet and referral pages in the overview bento style",
+      "description": "Rebuild 账户余额 and 邀请返利 with BentoGrid/BentoCard tones, headline figures, round arrow links, BentoCardBadge and white inset panels, matching the account overview.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-wallet-invite-cards-usage-bands"
+      ],
+      "done_criteria": [
+        "账户余额: yellow 4x2 card with total balance, 冻结中 badge and 可用 amount when funds are held, and a 赠送/返利/充值 breakdown (deduction order) with explanatory tooltips; 在线充值 4x2 card with inline amount field + 去付款 (Enter submits) and the existing validation.",
+        "余额流水 and 返利明细 are full-width BentoListCards (outside the grid, height follows content) with the table in a white rounded panel, right-aligned tabular amounts and explanatory empty states.",
+        "邀请返利: green 5x2 hero with 获取{rate}%返利 badge, rule text (首次/循环), 邀请码 and 邀请链接 fields with inline copy feedback; 已邀请好友 and 返利余额 (→ /account/wallet) 3x1; 确认中的返利 and 累计获得返利 4x1; pending status renamed 确认中 to match; load errors are shown.",
+        "BentoStatCard is shared by the overview wallet/invite cards and the referral stats; CopyButton accepts an optional aria-label."
+      ],
+      "verification": [
+        "2026-09-30: npm run check, verify:fast, verify:harness, git diff --check passed; browser verification on isolated server (local DB, port 3100, 3x-ui disabled)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/wallet",
+          "/account/referrals",
+          "/account"
+        ],
+        "interactions": [
+          "1280x900 /account/wallet: 账户余额 and 在线充值 448x256 side by side, 余额流水 full width, no card overflow; hover on 赠送余额说明 showed the tooltip; typing 0.001 and pressing Enter showed the validation toast without leaving the page.",
+          "1280x900 /account/referrals: hero 563x256, stats 332x120 and 448x120, no overflow; badge 获取10%返利; invite code and link filled.",
+          "375x812: both pages stack with no horizontal scroll; clicking 复制邀请链接 switched the button to success 已复制 and reset after 2s; 查看账户余额 navigated to /account/wallet.",
+          "/account wallet and invite cards still render value, unit and arrow links after moving to BentoStatCard.",
+          "Stale ERR_CONNECTION_REFUSED entries in the long-lived tab came from the period the verification server was stopped; a fresh tab across all three routes had no console errors.",
+          "Ledger/reward tables with rows not exercised: seeded local accounts have no wallet entries or rewards."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-30"
+      }
+    },
+    {
+      "id": "overview-plan-card-profile-merge",
+      "name": "Overview plan card layout, merged profile + VIP card, green referral badge",
+      "description": "Plan card loses its title (name + grey facts on top, headline bottom-left, auto-width action bottom-right); VIP and personal info merge into one 个人信息 card split by a divider; the overview 获取返利 badge gets a green tone.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-wallet-invite-cards-usage-bands"
+      ],
+      "done_criteria": [
+        "套餐详情 card has no title; plan name top-left, 到期日期/流量配额 grey text top-right; xx 天后到期 (or the expired/no-plan note) bottom-left; 家宽 IP / 续费 / 购买服务 buttons bottom-right with content width.",
+        "One 个人信息 card (5x2 from lg): left avatar, email, ID and 注册时间/IP/位置 rows with icons; vertical divider; right VIP ring with spend, next-level gap and discount; stacked with a horizontal divider on phones.",
+        "BentoCardBadge gains tone=\"green\" (bento-green on a light surface); the overview invite card uses it; the referral hero keeps the default white badge because the card itself is green."
+      ],
+      "verification": [
+        "2026-09-30: npm run check, verify:fast, verify:harness, git diff --check passed; browser verification on isolated server (local DB, port 3100, 3x-ui disabled)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/referrals"
+        ],
+        "interactions": [
+          "1440x1000 expired plan: no card title, 续费 button 84px wide at bottom-right, expiry note bottom-left, no overflow.",
+          "Active plan state via an in-page fetch override of /api/account/overview (no DB change): name top-left, 到期日期/流量配额 right-aligned top-right, 30 天后到期 bottom-left, 家宽 IP button 304px bottom-right, card 528x256 without overflow; at 375x812 the short 定制家宽IP label sits right of the days figure.",
+          "个人信息 card 663x256 with no overflow, vertical separator 154px; at 375x812 the VIP part stacks under a horizontal divider, no horizontal scroll.",
+          "Overview badge computed background rgb(88, 224, 87) with dark text; referral hero badge stays white.",
+          "Fresh tab over /account and /account/referrals: no console errors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-30"
+      }
+    },
+    {
+      "id": "overview-plan-name-status-profile-swap",
+      "name": "Overview plan name format, subscription link / profile swap, larger VIP share",
+      "description": "Plan name shows as NAME (period-traffic/月) in bold with a smaller black bracket part; the subscription link card takes the profile card's slot beside wallet/invite; the VIP side of the profile card grows.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-plan-card-profile-merge"
+      ],
+      "done_criteria": [
+        "Plan name uses purchasedPlanParts: NAME on the first line, (duration-traffic/月) on a second line (/月 omitted for lifetime or unlimited); bold, name 30px (36px from xl), bracket line 20px (24px from xl) in the foreground color; expired plans also show their name.",
+        "No status badge in the plan card (added, then removed at the user's request on 2026-09-30).",
+        "With a plan, the subscription link (5x2) sits beside wallet over invite and the profile card pairs with announcements (8 wide when there are none); without a plan the profile keeps the slot beside wallet/invite.",
+        "Profile card splits 3:2 between details and VIP (was a fixed 160px VIP column); VIP ring 100px with 2xl level text."
+      ],
+      "verification": [
+        "2026-09-30: npm run check, verify:fast, verify:harness, git diff --check passed; browser verification on isolated server (local DB, port 3100, 3x-ui disabled).",
+        "2026-09-30: badge removed and bracket restyled; npm run check, verify:fast, verify:harness, git diff --check passed.",
+        "2026-09-30: bracket moved to its own line; npm run check, verify:fast, verify:harness, git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Expired seed plan at 1440x1000: title PRO (90天-200G/月), 36px/700, bracket rgb(125, 132, 144), badge 已过期 with red icon.",
+          "Active plan via in-page fetch override of /api/account/overview (no DB change), 30 and 5 days left: badges 生效中 and 即将到期; order plan, traffic, devices, nodes, 订阅链接 663x256 beside 钱包余额/邀请好友, 个人信息 663x256 beside 网站公告; every card scrollHeight-clientHeight = 0.",
+          "First build overflowed the profile card by 6px with a 104px ring; reduced to 100px and gap-1, re-verified with 0 overflow; VIP column 232px vs 348px details (40%).",
+          "1180x820: bracket part no longer breaks mid-text after adding whitespace-nowrap and xl-only 36px size.",
+          "375x812: name wraps with the bracket on its own line, badge and 定制家宽IP button visible, no horizontal scroll.",
+          "Fresh tab on /account: no console errors.",
+          "Revision: active plan via fetch override at 1440x1000: title PRO (90天-200G/月), name 36px, bracket 24px/700 oklch(0.145 0 0), 0 badges in #subscription, no overflow; 1180x820 screenshot shows the bracket on the same line; fresh tab on /account had no console errors.",
+          "Revision: 1440x1000 active plan via fetch override: h2 72px tall with the bracket line at y+40 (32px), card overflow 0; 1180x820 screenshot shows PRO / (90天-200G/月) on two lines with 到期日期/流量配额 back in the top-right; fresh tab on /account had no console errors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-30"
+      }
+    },
+    {
+      "id": "account-plan-card-line-group",
+      "name": "Plan card headline shows the V2 line group",
+      "description": "The account overview plan details card headline is the user V2 line group id (v2LineGroupId) in upper case, instead of the legacy activeGroup tier that falls back to PRO for groups outside basic/pro/ultra. The overview API exposes subscription.lineGroupId.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "/api/account/overview returns subscription.lineGroupId from user.v2LineGroupId.",
+        "The plan card headline renders lineGroupId upper-cased (e.g. SUPER), with the poster text-extrude style."
+      ],
+      "verification": [
+        "2026-09-30: npm run agent:init, npm run check, npm run verify:fast and git diff --check passed; overview API returned lineGroupId test-line-standard (activeGroup still the legacy pro) for the seeded expired-renew test account."
+      ],
+      "browser_verification": {
+        "routes": ["/account"],
+        "interactions": [
+          "Logged in as the seeded expired-renew@xela.test account on http://[::1]:5173 (separate cookie jar, admin session on localhost untouched); dismissed the announcement dialog.",
+          "Plan card headline rendered TEST-LINE-STANDARD with the extruded poster style, title attribute TEST-LINE-STANDARD (90天-200G/月); no layout overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-30"
+      }
+    },
+    {
+      "id": "admin-user-v2-plans",
+      "name": "Admin user create, edit and plan change use V2 only",
+      "description": "The admin 新增用户 dialog creates self-hosted users bound to a V2 plan spec (product, period, traffic tier; unlisted allowed) like a paid order, with a purchase date and amount defaulting to the spec price. Editing a user only changes identity fields. The legacy tier admin renewal entry and the legacy branch of admin plan change are removed; the V2 spec picker is a shared CatalogPlanFields component also used by the plan change dialog.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["account-plan-card-line-group"],
+      "done_criteria": [
+        "POST /api/users requires a V2 plan spec and binds productCatalogVersion 2, v2ProductId, v2LineGroupId, expiry, traffic and IP limit from it; legacy tier payloads are rejected.",
+        "PUT /api/users/:id ignores plan, expiry and spend fields and never rebinds the product.",
+        "POST /api/users/:id/renew is rejected; POST /api/users/:id/plan accepts only V2 specs.",
+        "The create dialog lists V2 plan specs, shows traffic tiers, computes expiry and default amount; the edit dialog shows identity fields only."
+      ],
+      "verification": [
+        "2026-09-30: npm run check, npm run verify:fast and git diff --check passed. Isolated schema run of test-checkout, test-payment (new admin create/edit/renew assertions), test-wallet and test-catalog-v2 passed and the schema was dropped; scripts/verify-catalog-v2.js itself cannot spawn npm on Windows (ENOENT for npm.cmd), so the same steps were run with node directly."
+      ],
+      "browser_verification": {
+        "routes": ["/users", "/users/detail/24e685b3-15db-431b-aa54-985201cccdf8"],
+        "interactions": [
+          "新增用户: empty step 1 showed user ID and email errors; step 2 listed V2 specs, BASIC 套餐 · 90 天 showed tiers, expiry 2026/12/29 and 109, tier 3 changed it to 139; PRO 不限时套餐 showed 永久有效, no tier field and 159. Cancelled without creating a user (user list unchanged).",
+          "Fixed during the check: the next button turned into the submit button mid-click (distinct keys now) and the spec placeholder wrongly said no specs were available.",
+          "编辑 on an unclaimed user shows identity fields only with 保存修改 disabled until changed; cancelled.",
+          "User detail 更改套餐 dialog renders the shared spec and traffic tier fields with the change preview; cancelled without submitting."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-30"
+      }
+    },
+    {
+      "id": "user-entitlement-v2-only",
+      "name": "User entitlements read V2 only; legacy plan specs are no longer sold",
+      "description": "Line access, plan traffic, 3x-ui quota, IP limit, inbounds, renewal offers and overview/delivery/list/ticket labels read only the user's V2 snapshot and v2LineGroupId; the legacy tier fallbacks (pricing rows, LEGACY_RECURRING_TRAFFIC_GB, basic/pro/ultra group checks) are removed. Legacy (v1) plan specs are rejected at quote and order submission so a paid order can never lack a V2 entitlement. The admin 调整权限组 dialog, the line endpoint (410) and the xui-recover endpoint are removed; 切换到自研线路 shows the V2 line group read-only. Payment regression tests buy V2 products instead of the test-only pro-test-001 option, which is removed. Order-side legacy code for historical orders (fulfillment, rollback, refund, bills) and upstream pool group checks are unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["admin-user-v2-plans"],
+      "done_criteria": [
+        "planTrafficBytes, xuiTrafficLimitBytes, planDeviceLimit and accessGroupForUser use only v2ProductSnapshot / v2LineGroupId; users without a V2 snapshot get no quota.",
+        "Quotes and orders for legacy plan specs (e.g. basic-30, pro-lifetime) return 400; traffic pack, home IP and V2 products still work.",
+        "Account overview, delivery page, users list and subscription info labels show the V2 line group.",
+        "Unit, payment, wallet and catalog V2 suites pass with the payment flow on V2 products."
+      ],
+      "verification": [
+        "2026-09-30: npm test, npm run check and git diff --check passed. Isolated schema run of test-checkout, test-payment (flow on V2 products, legacy spec rejection, line-group inbounds), test-wallet and test-catalog-v2 passed and the schema was dropped. One run hit the pre-existing sync-job status race at test-payment xui-inbound-probe (running vs success); the rerun passed without changes there."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users",
+          "/users/detail/c4ce1abd-5052-4f9f-a2b5-f115c009773b",
+          "/users/detail/d31cab8b-df74-45ec-925a-5f9a5a47112f",
+          "/delivery/:token",
+          "/account"
+        ],
+        "interactions": [
+          "Users list 套餐等级 column shows line groups (seeded test accounts TEST-LINE-STANDARD instead of PRO).",
+          "Self-hosted admin001 detail: no 调整权限组 button, single 同步V2套餐到3x-ui button; its confirm dialog opened and was cancelled.",
+          "Upstream user detail: 切换到自研线路 dialog shows the read-only line group pro with the V2 description; cancelled without switching.",
+          "admin001 delivery page shows 套餐等级 SUPER; seeded customer overview card shows TEST-LINE-STANDARD with productName, traffic and devices from the V2 snapshot."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-09-30"
+      }
+    },
+    {
+      "id": "verify-catalog-v2-windows",
+      "name": "verify:catalog-v2 runs on Windows",
+      "description": "scripts/verify-catalog-v2.js ran the test:* npm scripts with spawnSync(\"npm\"), which fails with ENOENT on Windows (npm.cmd). It now runs npm's CLI (npm_execpath) through the current node binary on every platform, and reports spawn errors.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "npm run verify:catalog-v2 runs test:payment, test:wallet and test:catalog-v2 on Windows (PowerShell and Git Bash) and Linux without a shell.",
+        "The temporary schema is dropped on success and failure; a direct node run fails with a clear message."
+      ],
+      "verification": [
+        "2026-09-30: npm run verify:catalog-v2 passed from PowerShell and from Git Bash; one earlier Git Bash run failed inside test-payment and the unchanged rerun passed (consistent with the known sync-job status race). Direct `node scripts/verify-catalog-v2.js` exits 1 with the npm run hint; no codex_catalog_v2_test_* schemas left behind."
+      ]
+    },
+    {
+      "id": "retire-legacy-v1-order-code",
+      "name": "Retire unreachable legacy v1 plan order code",
+      "description": "Removed the v1 plan quote chain (paymentQuote, planQuoteWithAddOns, resolvePaymentPlanOption, dynamicPaymentPlanOption, PAYMENT_PLAN_OPTIONS, recurringPlanOption, planCycleOptions, traffic tier helpers, PRICING_PERIODS, productVariantAvailable), the completed one-time user-product-binding-v5 startup migration and its v1 binding helpers (inferUserProductBinding, inferCustomUserDuration, productBinding, bindUserProduct, latestMatchingPlanOrder, familyGrantOrder), the v1 branch of bindUserProductFromOrder, and the orphan test-vip.js. Plan fulfillment now throws for a paid legacy plan order (manual handling) instead of building a v1 entitlement. Kept: legacy pricing rows and the pricing settings page (traffic pack, home IP, historical bill labels), historical order rollback/reversal/bills, renewUser (used by V2 fulfillment), upstream pool USER_GROUPS logic.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["user-entitlement-v2-only"],
+      "done_criteria": [
+        "No code path quotes, orders, binds or fulfills a v1 plan spec; a paid legacy plan order fails fulfillment with 旧版套餐订单不再自动交付.",
+        "Historical v1 orders still reverse and roll back; traffic pack, home IP and V2 flows unchanged.",
+        "Unit and isolated payment, wallet and catalog V2 suites pass."
+      ],
+      "verification": [
+        "2026-09-30: npm test, npm run check, npm run verify:catalog-v2 (checkout, payment, wallet, catalog V2 on an isolated schema) and git diff --check passed; local DB migrationState shows user-product-binding-v5 completed 2026-08-22; the watched dev server restarted and /api/public/catalog-v2 and /api/public/pricing return 200. No dedicated test covers the new legacy-fulfillment error because legacy plan orders can no longer be created through the API."
+      ]
     }
   ]
 }
