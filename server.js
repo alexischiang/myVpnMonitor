@@ -63,7 +63,6 @@ const XUI_PROVISION_RETRY_DELAYS_MS = [300, 1000];
 // even then only a few per sync so clients migrate to "unlimited on panel" gradually.
 const XUI_PANEL_QUOTA_CLEAR_PER_SYNC = Math.max(0, Number(process.env.XUI_PANEL_QUOTA_CLEAR_PER_SYNC) || 0);
 const XUI_VISION_FLOW = "xtls-rprx-vision";
-const LEGACY_RECURRING_TRAFFIC_GB = Object.freeze({ basic: 50, pro: 100, ultra: 100 });
 const TRAFFIC_PACK_BYTES = 100 * 1024 ** 3;
 const TRAFFIC_PACK_PRICE = 20;
 const DEFAULT_CHECKOUT_TAX_RATE = 3;
@@ -107,9 +106,6 @@ function publicPricing() {
   });
 }
 
-function productVariantAvailable(product, variant) {
-  return product?.availability?.[variant] === true;
-}
 const CATALOG_V2_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
 function catalogV2Integer(value, { nullable = false, min = 0, label = "数值" } = {}) {
@@ -235,9 +231,18 @@ function catalogV2Selection(payload = {}) {
   };
 }
 
+// Admin-created users get a V2 plan spec (unlisted products allowed), bound the same way as a paid order.
+async function adminCatalogV2PlanOption(payload) {
+  const selection = catalogV2Selection(payload);
+  if (!selection.productId) throw new Error("请选择 V2 商品规格。");
+  const option = resolveCatalogV2Purchase(await dataStore.listCatalogV2Products(), selection, { allowUnlisted: true });
+  if (option.purpose !== "plan") throw new Error("附加服务不能作为用户套餐。");
+  return option;
+}
+
 // Renewal is a new purchase of the expired plan's product, period and traffic; only products still publicly sold qualify.
 function planRenewalOffer(user, products) {
-  const snapshot = user?.productCatalogVersion === 2 ? user.v2ProductSnapshot : null;
+  const snapshot = user?.v2ProductSnapshot;
   if (!snapshot || !isUserExpired(user)) return null;
   try {
     const selected = resolveCatalogV2Purchase(products, { productId: snapshot.productId, periodId: snapshot.periodId, trafficSteps: snapshot.trafficSteps || 0 });
@@ -248,7 +253,7 @@ function planRenewalOffer(user, products) {
 }
 
 function userHasV2RecurringPlan(user) {
-  return Boolean(user && !isUserExpired(user) && user.productCatalogVersion === 2 && user.v2ProductSnapshot?.productType === "recurring_plan");
+  return Boolean(user && !isUserExpired(user) && user.v2ProductSnapshot?.productType === "recurring_plan");
 }
 
 async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) {
@@ -310,95 +315,11 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) 
     cycles
   };
 }
-const PRICING_PERIODS = {
-  30: { priceKey: "monthly", duration: "monthly", label: "月付 30天" },
-  90: { priceKey: "quarterly", duration: "quarterly", label: "季付 90天" },
-  180: { priceKey: "half_yearly", duration: "half_yearly", label: "半年付 180天" },
-  360: { priceKey: "yearly", duration: "yearly", label: "年付 360天" }
-};
 
 function pricingProduct(group) {
   return publicPricing().find(item => item.group === group) || null;
 }
 
-function recurringTrafficConfig(plan = {}) {
-  const parsed = String(plan.traffic || "").match(/(\d+(?:\.\d+)?)\s*(?:GB|G)/i);
-  const baseGb = Number(plan.trafficBaseGb ?? parsed?.[1]);
-  const maxTier = Number(plan.trafficMaxTier ?? 10);
-  const markupPercent = Number(plan.trafficTierMarkupPercent ?? 50);
-  return {
-    baseGb: Number.isFinite(baseGb) && baseGb > 0 ? baseGb : 0,
-    maxTier: Number.isSafeInteger(maxTier) && maxTier > 0 ? Math.min(maxTier, 50) : 1,
-    markupPercent: Number.isFinite(markupPercent) && markupPercent >= 0 ? Math.min(markupPercent, 1000) : 0
-  };
-}
-
-function normalizeTrafficTier(plan, value) {
-  const { maxTier } = recurringTrafficConfig(plan);
-  const tier = Number(value ?? 1);
-  if (!Number.isSafeInteger(tier) || tier < 1 || tier > maxTier) throw new Error(`流量档位必须为 1-${maxTier} 档。`);
-  return tier;
-}
-
-function recurringPlanOption(plan, period) {
-  const unlimited = plan.unlimited === true;
-  return { planId: plan.group, planName: plan.name || plan.group.toUpperCase(), optionLabel: `${period.label}${unlimited ? " · 无限流量" : ""}`, priceKey: period.priceKey, duration: period.duration, group: normalizeUserGroup(plan.permissionGroup, normalizeUserGroup(plan.group)), lineType: "self_hosted", ...(unlimited ? { unlimited: true } : {}), fallbackPrice: Number(plan[period.priceKey]) };
-}
-
-function dynamicPaymentPlanOption(optionId, { allowUnlisted = false } = {}) {
-  const id = String(optionId || "");
-  const lifetimeMatch = id.match(/^(.+)-lifetime$/);
-  if (lifetimeMatch) {
-    const plan = pricingProduct(lifetimeMatch[1]);
-    if (!plan || (plan.productKind && plan.productKind !== "plan") || plan.lifetimeDeleted === true || (!allowUnlisted && (plan.internal === true || !productVariantAvailable(plan, "lifetime") || plan.lifetimeStock === 0)) || !Number.isFinite(Number(plan.lifetimePrice))) return null;
-    return { planId: plan.group, planName: plan.lifetimeName || `${plan.name || plan.group} 不限时`, optionLabel: plan.lifetimeUnlimited === true ? "不限流量 · 不限时" : "固定流量 · 不限时", priceKey: "lifetimePrice", duration: "lifetime", group: normalizeUserGroup(plan.lifetimePermissionGroup, normalizeUserGroup(plan.group)), lineType: "self_hosted", lifetime: true, ...(plan.lifetimeUnlimited === true ? { unlimited: true } : {}), fallbackPrice: Number(plan.lifetimePrice) };
-  }
-  const recurringMatch = id.match(/^(.+)-(30|90|180|360)$/);
-  if (!recurringMatch) return null;
-  const plan = pricingProduct(recurringMatch[1]);
-  const period = PRICING_PERIODS[recurringMatch[2]];
-  if (!plan || (plan.productKind && plan.productKind !== "plan") || plan.recurringDeleted === true || (!allowUnlisted && (plan.internal === true || !productVariantAvailable(plan, "recurring") || plan.stock === 0)) || !Number.isFinite(Number(plan[period.priceKey]))) return null;
-  return recurringPlanOption(plan, period);
-}
-
-function planCycleOptions(plan, selectedOption) {
-  if (selectedOption.lifetime) return [{ optionId: `${plan.group}-lifetime`, label: selectedOption.unlimited ? "无限流量 · 不限时" : "固定流量 · 不限时", amount: Number(plan.lifetimePrice), devices: Number(plan.lifetimeDevices || 0) }];
-  return Object.entries(PRICING_PERIODS).flatMap(([days, period]) => Number.isFinite(Number(plan[period.priceKey]))
-    ? [{ optionId: `${plan.group}-${days}`, label: `${period.label}${selectedOption.unlimited ? " · 无限流量" : ""}`, amount: Number(plan[period.priceKey]), devices: Number(plan[`${period.duration}Devices`] || 0) }]
-    : []);
-}
-const PAYMENT_PLAN_OPTIONS = {
-  "basic-30": { planId: "basic", planName: "BASIC", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "basic", fallbackPrice: 39 },
-  "basic-90": { planId: "basic", planName: "BASIC", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "basic", fallbackPrice: 109 },
-  "basic-180": { planId: "basic", planName: "BASIC", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "basic", fallbackPrice: 199 },
-  "basic-360": { planId: "basic", planName: "BASIC", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "basic", fallbackPrice: 369 },
-  "basic-unlimited-30": { planId: "basic", planName: "BASIC", optionLabel: "月付 30天 无限流量", priceKey: "unlimitedMonthly", duration: "monthly", group: "basic", unlimited: true, fallbackPrice: 79 },
-  "basic-unlimited-90": { planId: "basic", planName: "BASIC", optionLabel: "季付 90天 无限流量", priceKey: "unlimitedQuarterly", duration: "quarterly", group: "basic", unlimited: true, fallbackPrice: 219 },
-  "basic-unlimited-180": { planId: "basic", planName: "BASIC", optionLabel: "半年付 180天 无限流量", priceKey: "unlimitedHalfYearly", duration: "half_yearly", group: "basic", unlimited: true, fallbackPrice: 399 },
-  "basic-unlimited-360": { planId: "basic", planName: "BASIC", optionLabel: "年付 360天 无限流量", priceKey: "unlimitedYearly", duration: "yearly", group: "basic", unlimited: true, fallbackPrice: 599 },
-  "pro-30": { planId: "pro", planName: "PRO", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "pro", fallbackPrice: 49 },
-  "pro-90": { planId: "pro", planName: "PRO", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "pro", fallbackPrice: 129 },
-  "pro-180": { planId: "pro", planName: "PRO", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "pro", fallbackPrice: 229 },
-  "pro-360": { planId: "pro", planName: "PRO", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "pro", fallbackPrice: 429 },
-  "pro-unlimited-30": { planId: "pro", planName: "PRO", optionLabel: "月付 30天 无限流量", priceKey: "unlimitedMonthly", duration: "monthly", group: "pro", unlimited: true, fallbackPrice: 95 },
-  "pro-unlimited-90": { planId: "pro", planName: "PRO", optionLabel: "季付 90天 无限流量", priceKey: "unlimitedQuarterly", duration: "quarterly", group: "pro", unlimited: true, fallbackPrice: 249 },
-  "pro-unlimited-180": { planId: "pro", planName: "PRO", optionLabel: "半年付 180天 无限流量", priceKey: "unlimitedHalfYearly", duration: "half_yearly", group: "pro", unlimited: true, fallbackPrice: 439 },
-  "pro-unlimited-360": { planId: "pro", planName: "PRO", optionLabel: "年付 360天 无限流量", priceKey: "unlimitedYearly", duration: "yearly", group: "pro", unlimited: true, fallbackPrice: 679 },
-  "ultra-30": { planId: "ultra", planName: "ULTRA", optionLabel: "月付 30天", priceKey: "monthly", duration: "monthly", group: "ultra", fallbackPrice: 89 },
-  "ultra-90": { planId: "ultra", planName: "ULTRA", optionLabel: "季付 90天", priceKey: "quarterly", duration: "quarterly", group: "ultra", fallbackPrice: 239 },
-  "ultra-180": { planId: "ultra", planName: "ULTRA", optionLabel: "半年付 180天", priceKey: "half_yearly", duration: "half_yearly", group: "ultra", fallbackPrice: 449 },
-  "ultra-360": { planId: "ultra", planName: "ULTRA", optionLabel: "年付 360天", priceKey: "yearly", duration: "yearly", group: "ultra", fallbackPrice: 859 },
-  "ultra-unlimited-30": { planId: "ultra", planName: "ULTRA", optionLabel: "月付 30天 无限流量", priceKey: "unlimitedMonthly", duration: "monthly", group: "ultra", unlimited: true, fallbackPrice: 129 },
-  "ultra-unlimited-90": { planId: "ultra", planName: "ULTRA", optionLabel: "季付 90天 无限流量", priceKey: "unlimitedQuarterly", duration: "quarterly", group: "ultra", unlimited: true, fallbackPrice: 349 },
-  "ultra-unlimited-180": { planId: "ultra", planName: "ULTRA", optionLabel: "半年付 180天 无限流量", priceKey: "unlimitedHalfYearly", duration: "half_yearly", group: "ultra", unlimited: true, fallbackPrice: 659 },
-  "ultra-unlimited-360": { planId: "ultra", planName: "ULTRA", optionLabel: "年付 360天 无限流量", priceKey: "unlimitedYearly", duration: "yearly", group: "ultra", unlimited: true, fallbackPrice: 1109 }
-};
-for (const row of DEFAULT_PRICING.filter(item => item.lifetimePrice !== undefined && item.internal !== true)) {
-  PAYMENT_PLAN_OPTIONS[`${row.group}-lifetime`] = { planId: row.group, planName: row.lifetimeName, optionLabel: "固定流量 · 不限时", priceKey: "lifetimePrice", duration: "lifetime", group: row.group, lifetime: true, fallbackPrice: row.lifetimePrice };
-}
-if (process.env.NODE_ENV === "test") {
-  PAYMENT_PLAN_OPTIONS["pro-test-001"] = { planId: "pro", planName: "PRO", optionLabel: "支付测试 1 元", duration: "monthly", group: "pro", fallbackPrice: 1 };
-}
 const DEFAULT_PRICING_FAQS = [
   { id: "devices", question: "“在线IP数量”是指什么？", answer: "指同一订阅可同时在线的 IP 数量，同一网络下的多个设备通常只占用一个 IP；具体数量以所选套餐和计费周期显示为准。", enabled: true },
   { id: "gpt", question: "哪些套餐支持 GPT 解锁？", answer: "当前 PRO 套餐明确包含稳定 GPT 解锁。其他套餐能力请以套餐卡片的功能列表为准；实际可用性可能受目标平台策略和网络环境影响。", enabled: true },
@@ -595,7 +516,6 @@ async function initializeDataFile() {
   const usersMigrated = ensureUserRelayTokens();
   const cashValuesMigrated = ensureUserCashValues();
   if (usersMigrated || cashValuesMigrated) await saveUsers();
-  await ensureUserProductBindings();
 
   // 预设解耦迁移：将 vendor.defaultSubconverterConfig 拆为全局预设 + 供应商覆盖字段
   const existingPreset = presets.find(p => p.id === "default");
@@ -1132,7 +1052,7 @@ function publicTicket(ticket, { admin = false } = {}) {
         id: linkedUser?.id || "",
         email: account?.email || ticket.email,
         customerID: account?.customerID || "",
-        planName: linkedUser?.currentProductSnapshot?.name || (linkedUser ? activeUserGroup(linkedUser).toUpperCase() : ""),
+        planName: linkedUser?.v2ProductSnapshot?.name || "",
         optionLabel: linkedUser?.currentProductSnapshot?.optionLabel || "",
         duration: linkedUser?.duration || "",
         expiresAt: linkedUser?.expiresAt || "",
@@ -1604,24 +1524,6 @@ function normalizePaymentAmountForGateway(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Invalid payment amount.");
   return amount.toFixed(2);
-}
-
-function resolvePaymentPlanOption(optionId, { allowLegacy = false, allowUnlisted = false } = {}) {
-  const id = String(optionId || "");
-  const option = dynamicPaymentPlanOption(id, { allowUnlisted })
-    || ((allowLegacy || (process.env.NODE_ENV === "test" && id === "pro-test-001")) ? PAYMENT_PLAN_OPTIONS[id] : null);
-  if (!option) throw new Error("Unsupported pricing option.");
-  const priceRow = pricingProduct(option.planId);
-  const managedPrice = option.priceKey ? Number(priceRow?.[option.priceKey]) : NaN;
-  const amount = Number.isFinite(managedPrice) && managedPrice >= 0 ? managedPrice : option.fallbackPrice;
-  return { ...option, amount };
-}
-
-function resolvePlanChangeOption(user, optionId) {
-  const option = resolvePaymentPlanOption(optionId, { allowUnlisted: true });
-  const currentDuration = String(user?.duration || "");
-  if (option.duration !== currentDuration && !(currentDuration !== "lifetime" && option.duration === "lifetime")) throw new Error("目标商品必须与当前周期一致，或为不限时规格。");
-  return option;
 }
 
 const PLAN_CHANGE_STATE_FIELDS = ["group", "activeGroup", "unlimited", "trafficTier", "purchasedTrafficGb", "duration", "expiresAt", "planExpiresAt", "currentProductId", "currentOptionId", "currentProductOrderId", "currentProductSource", "currentProductBoundAt", "currentProductSnapshot", "productCatalogVersion", "v2ProductId", "v2PeriodId", "v2LineGroupId", "v2ProductSnapshot", "xuiTrafficPackBytes", "xuiTrafficPackCycleKey", "xuiTrafficPackOrderIds", "xuiNextTrafficResetAt"];
@@ -2231,31 +2133,9 @@ function homeIpQuote(account, requestedOptionId = "") {
   };
 }
 
-function planQuoteWithAddOns(quote, requestedAddOns) {
-  const selectedAddOns = [...new Set(Array.isArray(requestedAddOns) ? requestedAddOns.map(String) : [])];
-  const homeIp = pricingProduct("home_ip");
-  const homeIpAvailable = !quote.lifetime && homeIp?.productKind === "addon" && homeIp.enabled !== false && homeIp.stock !== 0;
-  const regions = Array.isArray(homeIp?.addonRegions) ? homeIp.addonRegions : [];
-  const selectedAddOnSnapshots = selectedAddOns.map(id => {
-    const match = id.match(/^home_ip:([a-z0-9_-]+)$/i);
-    const region = match && regions.find(item => item.id === match[1]);
-    if (!homeIpAvailable || !region) throw new Error(quote.lifetime ? "不限时套餐不能购买附加服务。" : "家宽 IP 地区无效。");
-    return { id: "home_ip", optionId: id, name: homeIp.name || "家宽 IP 定制", regionId: region.id, regionName: region.name, amount: Number(region.price), durationDays: Number(homeIp.addonDurationDays || 30), deliveryMode: homeIp.addonDeliveryMode || "manual", deliveryDescription: homeIp.addonDeliveryDescription || "" };
-  });
-  const addOnAmount = selectedAddOnSnapshots.reduce((sum, item) => sum + item.amount, 0);
-  const taxAmount = checkoutTaxAmount(quote.subtotal + addOnAmount);
-  const beforeCreditAmount = Number((quote.subtotal + addOnAmount + taxAmount).toFixed(2));
-  return {
-    ...quote,
-    planAmount: quote.amount,
-    addOnAmount,
-    taxAmount,
-    beforeCreditAmount,
-    amount: beforeCreditAmount,
-    selectedAddOns,
-    selectedAddOnSnapshots,
-    availableAddOns: homeIp ? [{ id: "home_ip", name: homeIp.name || "家宽 IP 定制", description: homeIp.description || "按地区定制家庭宽带出口 IP。", available: homeIpAvailable, unavailableReason: homeIpAvailable ? "" : "仅适用于周期性套餐", options: regions.map(region => ({ id: `home_ip:${region.id}`, label: region.name, amount: Number(region.price) })) }] : []
-  };
+// Legacy (v1) plan specs are no longer sold: users are entitled only through V2 products.
+function rejectLegacyPlanOption() {
+  throw new Error("旧版套餐规格已下架，请选择 V2 商品。");
 }
 
 async function paymentQuoteForAccount(payload, account, { allowUnlisted = false } = {}) {
@@ -2264,7 +2144,7 @@ async function paymentQuoteForAccount(payload, account, { allowUnlisted = false 
   const quote = selection.productId ? await catalogV2Quote(payload, account, { allowUnlisted })
     : payload.product === "traffic_pack" ? trafficPackQuote(account)
     : payload.product === "home_ip" ? homeIpQuote(account, payload.optionId)
-    : planQuoteWithAddOns(paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id, payload.trafficTier), payload.addOns);
+    : rejectLegacyPlanOption();
   return quoteWithWallet(quote, wallet, payload.useBalance !== false);
 }
 
@@ -2341,150 +2221,24 @@ function billCashValueAmount(bill) {
   return Math.max(Number(order.amount || 0) + Number(order.walletCashAmount || 0), 0);
 }
 
-const PRODUCT_BINDING_MIGRATION_ID = "user-product-binding-v5";
-const PRODUCT_DURATION_SUFFIX = Object.freeze({ monthly: "30", quarterly: "90", half_yearly: "180", yearly: "360" });
-
-function inferCustomUserDuration(user = {}) {
-  const group = pricingProduct(user.currentProductId) ? user.currentProductId : activeUserGroup(user);
-  const prices = pricingProduct(group) || {};
-  const logs = Array.isArray(user.userLogs) ? user.userLogs : [];
-  const customLog = logs.find(log => log.details?.duration === "custom" && Number(log.details.amount) > 0);
-  const amount = Number(customLog?.details?.amount ?? user.actualPaid);
-  const exactPrice = Object.keys(PRODUCT_DURATION_SUFFIX).find(duration => Number(prices[duration]) === amount);
-  if (exactPrice) return { duration: exactPrice, rule: `金额匹配${exactPrice}` };
-  const monthlyPrice = Number(prices.monthly);
-  const monthlyUnits = amount / monthlyPrice;
-  if (monthlyPrice > 0 && Number.isInteger(monthlyUnits) && monthlyUnits >= 1 && monthlyUnits <= 12) {
-    return { duration: "monthly", rule: `金额为月付价格的 ${monthlyUnits} 倍` };
-  }
-  for (const log of logs) {
-    const change = log.details?.changes?.find(item => item.field === "duration" && item.after === "custom" && PRODUCT_DURATION_SUFFIX[item.before]);
-    if (change) return { duration: change.before, rule: `日志记录由 ${change.before} 改为 custom` };
-  }
-  const days = (Date.parse(user.expiresAt || "") - Date.parse(user.purchasedAt || "")) / 864e5;
-  if (!Number.isFinite(days) || days <= 0) return { error: "自定义期限缺少有效的购买或到期时间" };
-  const duration = Object.keys(PRODUCT_DURATION_SUFFIX).reduce((best, candidate) => Math.abs(durationDays(candidate) - days) < Math.abs(durationDays(best) - days) ? candidate : best, "monthly");
-  return { duration, rule: `有效期 ${Number(days.toFixed(1))} 天，映射到最接近的标准周期` };
-}
-
-function inferUserProductBinding(user = {}) {
-  let duration = String(user.duration || "");
-  const group = pricingProduct(user.currentProductId) ? user.currentProductId : activeUserGroup(user);
-  if (duration === "lifetime") {
-    return productBinding(FRIENDS_PRODUCT_ID, `${FRIENDS_PRODUCT_ID}-lifetime`, user, {
-      name: "亲友永久不限量",
-      optionLabel: "永久有效 · 不限流量",
-      internal: true,
-      lifetime: true,
-      unlimited: true
-    });
-  }
-  if (duration === "custom") {
-    const inferred = inferCustomUserDuration(user);
-    if (inferred.error) return inferred;
-    duration = inferred.duration;
-    const optionId = `${group}-${PRODUCT_DURATION_SUFFIX[duration]}`;
-    let option;
-    try { option = resolvePaymentPlanOption(optionId, { allowLegacy: true }); } catch { return { error: `找不到匹配商品：${optionId}` }; }
-    return { ...productBinding(option.planId, optionId, user, { name: option.planName, optionLabel: option.optionLabel, duration, mappingRule: inferred.rule }), normalizedDuration: duration };
-  }
-  const suffix = duration === "lifetime" ? "lifetime" : PRODUCT_DURATION_SUFFIX[duration];
-  if (!suffix) return { error: `无法识别套餐周期：${duration || "空"}` };
-  const optionId = `${group}${user.unlimited && suffix !== "lifetime" && pricingProduct(group)?.unlimited !== true ? "-unlimited" : ""}-${suffix}`;
-  let option;
-  try { option = resolvePaymentPlanOption(optionId, { allowLegacy: true }); } catch { return { error: `找不到匹配商品：${optionId}` }; }
-  return productBinding(option.planId, optionId, user, {
-    name: option.planName,
-    optionLabel: option.optionLabel,
-    lifetime: Boolean(option.lifetime),
-    unlimited: Boolean(option.unlimited)
-  });
-}
-
-function productBinding(productId, optionId, user, details = {}) {
-  return {
-    productId,
-    optionId,
-    snapshot: {
-      version: 1,
-      productId,
-      optionId,
-      name: details.name || productId,
-      optionLabel: details.optionLabel || optionId,
-      productKind: details.custom ? "legacy_custom_plan" : "plan",
-      internal: details.internal === true,
-      group: activeUserGroup(user),
-      duration: details.duration || String(user.duration || ""),
-      lifetime: details.lifetime === true,
-      unlimited: details.unlimited === true,
-      trafficTier: Number(user.trafficTier || 1),
-      trafficGb: user.purchasedTrafficGb ?? null,
-      expiresAt: user.expiresAt || "",
-      ...(details.mappingRule ? { mappingRule: details.mappingRule, migratedFromDuration: "custom" } : {})
-    }
-  };
-}
-
-function bindUserProduct(user, binding, { source, orderId = "", boundAt = new Date().toISOString() } = {}) {
-  if (!user || binding?.error || !binding?.productId || !binding?.optionId) return false;
-  if (binding.productId === FRIENDS_PRODUCT_ID) {
-    user.duration = "lifetime";
-    user.expiresAt = LIFETIME_EXPIRES_AT;
-    user.unlimited = true;
-    if (isSelfHostedUser(user)) {
-      user.xuiTrafficLimitBytes = 0;
-      if (user.xuiWeightedTraffic) Object.assign(user.xuiWeightedTraffic, { totalBytes: 0, remainingBytes: null, usagePercent: null, depleted: false });
-      if (user.xuiLastTraffic) Object.assign(user.xuiLastTraffic, { totalBytes: 0, remainingBytes: null, usagePercent: null, status: "active" });
-    }
-  }
-  if (binding.normalizedDuration) user.duration = binding.normalizedDuration;
+function bindUserProductFromOrder(user, order) {
+  if (order.catalogVersion !== 2 || !order.productSnapshot?.v2) throw new Error("只能按 V2 商品快照绑定用户套餐。");
+  const snapshot = structuredClone(order.productSnapshot.v2);
+  user.legacyProductBinding ||= user.currentProductId && user.currentOptionId ? { productId: user.currentProductId, optionId: user.currentOptionId, snapshot: structuredClone(user.currentProductSnapshot || null) } : undefined;
   Object.assign(user, {
-    currentProductId: binding.productId,
-    currentOptionId: binding.optionId,
-    currentProductOrderId: orderId,
-    currentProductSource: source || "unknown",
-    currentProductBoundAt: boundAt,
-    currentProductSnapshot: structuredClone(binding.snapshot)
+    productCatalogVersion: 2,
+    v2ProductId: snapshot.productId,
+    v2PeriodId: snapshot.periodId || null,
+    v2LineGroupId: snapshot.lineGroupId || null,
+    v2ProductSnapshot: snapshot,
+    currentProductId: snapshot.productId,
+    currentOptionId: order.optionId,
+    currentProductOrderId: order.id,
+    currentProductSource: order.paymentProvider === "manual" ? "manual_order" : "payment_order",
+    currentProductBoundAt: order.paidAt || new Date().toISOString(),
+    currentProductSnapshot: { ...structuredClone(order.productSnapshot), version: 2 }
   });
   return true;
-}
-
-function bindUserProductFromOrder(user, order) {
-  if (order.catalogVersion === 2 && order.productSnapshot?.v2) {
-    const snapshot = structuredClone(order.productSnapshot.v2);
-    user.legacyProductBinding ||= user.currentProductId && user.currentOptionId ? { productId: user.currentProductId, optionId: user.currentOptionId, snapshot: structuredClone(user.currentProductSnapshot || null) } : undefined;
-    Object.assign(user, {
-      productCatalogVersion: 2,
-      v2ProductId: snapshot.productId,
-      v2PeriodId: snapshot.periodId || null,
-      v2LineGroupId: snapshot.lineGroupId || null,
-      v2ProductSnapshot: snapshot,
-      currentProductId: snapshot.productId,
-      currentOptionId: order.optionId,
-      currentProductOrderId: order.id,
-      currentProductSource: order.paymentProvider === "manual" ? "manual_order" : "payment_order",
-      currentProductBoundAt: order.paidAt || new Date().toISOString(),
-      currentProductSnapshot: { ...structuredClone(order.productSnapshot), version: 2 }
-    });
-    return true;
-  }
-  const snapshot = {
-    version: 1,
-    ...(order.productSnapshot || {}),
-    productId: order.planId,
-    optionId: order.optionId,
-    name: order.planName,
-    optionLabel: order.optionLabel,
-    productKind: "plan",
-    internal: false,
-    group: order.group,
-    duration: order.duration,
-    lifetime: order.duration === "lifetime",
-    unlimited: Boolean(order.unlimited),
-    trafficTier: order.trafficTier || 1,
-    trafficGb: order.trafficGb ?? null
-  };
-  return bindUserProduct(user, { productId: order.planId, optionId: order.optionId, snapshot }, { source: order.paymentProvider === "manual" ? "manual_order" : "payment_order", orderId: order.id, boundAt: order.paidAt || new Date().toISOString() });
 }
 
 function paymentOrderNeedsBindingRepair(order) {
@@ -2494,165 +2248,6 @@ function paymentOrderNeedsBindingRepair(order) {
   return Boolean(order?.status === "paid" && order.fulfillmentStatus === "fulfilled" && !order.reversedAt && (order.purpose || "plan") === "plan" && snapshot && user && orderIndex >= 0 &&
     !paymentOrders.some((item, index) => index < orderIndex && item.accountId === order.accountId && (item.purpose || "plan") === "plan" && item.status === "paid" && !item.reversedAt) &&
     (user.currentProductOrderId !== order.id || user.v2ProductId !== snapshot.productId || user.currentOptionId !== order.optionId));
-}
-
-function latestMatchingPlanOrder(user) {
-  const account = accounts.find(item => item.linkedUserId === user.id);
-  return paymentOrders
-    .filter(order => order.status === "paid" && !order.reversedAt && (order.purpose || "plan") === "plan" && (order.userId === user.id || account && order.accountId === account.id) && order.group === activeUserGroup(user) && order.duration === user.duration)
-    .sort((a, b) => Date.parse(b.paidAt || b.createdAt || 0) - Date.parse(a.paidAt || a.createdAt || 0))[0] || null;
-}
-
-function familyGrantOrder(user, binding, now) {
-  const account = accounts.find(item => item.linkedUserId === user.id);
-  const id = `family-grant-${user.id}`;
-  return {
-    id,
-    merOrderTid: id,
-    purpose: "plan",
-    planId: binding.productId,
-    planName: binding.snapshot.name,
-    optionId: binding.optionId,
-    optionLabel: binding.snapshot.optionLabel,
-    duration: "lifetime",
-    group: activeUserGroup(user),
-    unlimited: true,
-    trafficTier: 1,
-    trafficGb: null,
-    baseAmount: 0,
-    originalAmount: 0,
-    subtotal: 0,
-    taxAmount: 0,
-    beforeCreditAmount: 0,
-    cashCredit: 0,
-    totalAmount: 0,
-    amount: 0,
-    purchaseAction: "grant",
-    productSnapshot: binding.snapshot,
-    paymentProvider: "manual",
-    paymentPlatformName: "后台内部授予",
-    channelCode: "manual",
-    status: "paid",
-    fulfillmentStatus: "fulfilled",
-    accountId: account?.id || "",
-    userId: user.id,
-    email: user.email || account?.email || "",
-    createdAt: now,
-    updatedAt: now,
-    paidAt: now,
-    planFulfilledAt: now,
-    fulfilledAt: now
-  };
-}
-
-async function ensureUserProductBindings() {
-  const previous = await dataStore.getRecord("migrationState", PRODUCT_BINDING_MIGRATION_ID);
-  if (previous?.completedAt) return previous;
-  const now = new Date().toISOString();
-  const report = { id: PRODUCT_BINDING_MIGRATION_ID, startedAt: now, total: users.length, mapped: 0, alreadyBound: 0, familyGrants: 0, lifetimeMapped: 0, customMapped: 0, deprecatedSelfHostedMapped: 0, failed: [] };
-  let ordersChanged = false;
-  for (const user of users) {
-    const remapCustom = user.duration === "custom" || user.currentProductId === LEGACY_CUSTOM_PRODUCT_ID;
-    const remapDeprecatedSelfHosted = user.currentProductId === "self_hosted" || user.currentOptionId === "self-hosted-test-30" || user.activeGroup === "self_hosted" || user.group === "self_hosted";
-    const remapLifetime = user.duration === "lifetime" && (user.currentProductId !== FRIENDS_PRODUCT_ID || user.unlimited !== true || isSelfHostedUser(user) && Number(user.xuiTrafficLimitBytes) !== 0);
-    if (user.currentProductId && user.currentOptionId && !remapCustom && !remapDeprecatedSelfHosted && !remapLifetime) { report.alreadyBound++; continue; }
-    if ((user.currentProductId || user.currentOptionId) && !(user.currentProductId && user.currentOptionId)) {
-      report.failed.push({ userId: user.id, reason: "商品绑定字段不完整" });
-      continue;
-    }
-    const binding = inferUserProductBinding(remapDeprecatedSelfHosted ? { ...user, group: "pro", activeGroup: "pro" } : user);
-    if (binding.error) { report.failed.push({ userId: user.id, reason: binding.error }); continue; }
-    if (remapDeprecatedSelfHosted) { user.group = "pro"; user.activeGroup = "pro"; }
-    let order = latestMatchingPlanOrder(user);
-    let source = order ? "payment_order_migration" : "legacy_migration";
-    if (binding.productId === FRIENDS_PRODUCT_ID) {
-      user.unlimited = true;
-      const grantId = `family-grant-${user.id}`;
-      order = paymentOrders.find(item => item.id === grantId) || familyGrantOrder(user, binding, now);
-      if (!paymentOrders.some(item => item.id === grantId)) { paymentOrders.unshift(order); ordersChanged = true; }
-      source = "family_friend_grant";
-      report.familyGrants++;
-    }
-    if (remapCustom) report.customMapped++;
-    if (user.duration === "lifetime") report.lifetimeMapped++;
-    if (remapDeprecatedSelfHosted) report.deprecatedSelfHostedMapped++;
-    bindUserProduct(user, binding, { source, orderId: order?.id || "", boundAt: now });
-    appendUserLogToUser(user, createUserLog({ event: "system", status: "recorded", reason: "product-binding-migrated", message: `已绑定商品：${binding.snapshot.name} / ${binding.snapshot.optionLabel}`, details: { migrationId: PRODUCT_BINDING_MIGRATION_ID, productBinding: binding, orderId: order?.id || "" } }));
-    report.mapped++;
-  }
-  if (report.mapped) await saveUsers();
-  if (ordersChanged) await savePaymentOrders();
-  if (!users.some(user => user.currentProductId === LEGACY_CUSTOM_PRODUCT_ID || user.currentProductId === "self_hosted")) {
-    const nextPricing = pricing.filter(item => item.group !== LEGACY_CUSTOM_PRODUCT_ID && item.group !== "self_hosted");
-    if (nextPricing.length !== pricing.length) { pricing = nextPricing; await savePricing(); }
-  }
-  report.completedAt = new Date().toISOString();
-  report.status = report.failed.length ? "needs_review" : "completed";
-  await dataStore.setRecord("migrationState", PRODUCT_BINDING_MIGRATION_ID, report);
-  console.log(`[migration:${PRODUCT_BINDING_MIGRATION_ID}] ${JSON.stringify({ total: report.total, mapped: report.mapped, alreadyBound: report.alreadyBound, familyGrants: report.familyGrants, lifetimeMapped: report.lifetimeMapped, customMapped: report.customMapped, deprecatedSelfHostedMapped: report.deprecatedSelfHostedMapped, failed: report.failed.length })}`);
-  return report;
-}
-
-function paymentQuote(optionId, couponCode = "", couponConfig, vipLevel = "vip1", accountId = "", requestedTrafficTier = 1) {
-  const option = resolvePaymentPlanOption(optionId);
-  const plan = pricingProduct(option.planId) || {};
-  const trafficConfig = recurringTrafficConfig(plan);
-  const trafficTier = option.lifetime || option.unlimited ? 1 : normalizeTrafficTier(plan, requestedTrafficTier);
-  const trafficGb = option.lifetime ? planTrafficBytes({ currentProductId: option.planId, activeGroup: option.group, duration: "lifetime", unlimited: Boolean(option.unlimited) }) / 1024 ** 3 : trafficConfig.baseGb * trafficTier;
-  const trafficPriceFactor = option.lifetime || option.unlimited ? 1 : 1 + (trafficTier - 1) * trafficConfig.markupPercent / 100;
-  const code = String(couponCode || "").trim().toUpperCase();
-  const coupon = code ? paymentCoupons(couponConfig).get(code) : null;
-  if (code && !coupon) throw new Error("优惠码无效。");
-  if (coupon) validateCouponUsage(coupon, option, accountId);
-  const percent = Number(coupon?.percent) || 0;
-  const baseAmount = Number(option.amount.toFixed(2));
-  const originalAmount = Number((baseAmount * trafficPriceFactor).toFixed(2));
-  const originalCents = Math.round(originalAmount * 100);
-  const discountCents = Math.round(originalCents * percent / 100);
-  const discountAmount = discountCents / 100;
-  const vipPercent = vipDiscountPercent(vipLevel);
-  const afterCouponCents = originalCents - discountCents;
-  const subtotalCents = Math.round(afterCouponCents * (100 - vipPercent) / 100);
-  const vipDiscountAmount = (afterCouponCents - subtotalCents) / 100;
-  const subtotal = subtotalCents / 100;
-  const taxAmount = checkoutTaxAmount(subtotal);
-  const beforeCreditAmount = Number((subtotal + taxAmount).toFixed(2));
-  const account = accounts.find(item => item.id === accountId);
-  const terms = paymentPurchaseTerms(userForAccount(account));
-  const cycleSource = planCycleOptions(plan, option);
-  const cycles = cycleSource.map(item => ({ ...item, amount: Number((item.amount * trafficPriceFactor).toFixed(2)) }));
-  if (!cycles.some(item => item.optionId === String(optionId))) cycles.unshift({ optionId: String(optionId), label: option.optionLabel, amount: originalAmount, devices: 0 });
-  return {
-    ...option,
-    optionId: String(optionId),
-    baseAmount,
-    originalAmount,
-    trafficCustomizationAmount: originalAmount - baseAmount,
-    trafficTier,
-    trafficBaseGb: trafficConfig.baseGb,
-    trafficGb,
-    trafficMaxTier: trafficConfig.maxTier,
-    trafficTierMarkupPercent: trafficConfig.markupPercent,
-    discountAmount,
-    vipLevel,
-    vipDiscountPercent: vipPercent,
-    vipDiscountAmount,
-    subtotal,
-    taxRate: checkoutTaxRate(),
-    taxAmount,
-    beforeCreditAmount,
-    cashCredit: terms.cashCredit,
-    purchaseAction: terms.purchaseAction,
-    amount: beforeCreditAmount,
-    couponCode: code,
-    discountPercent: percent || 0,
-    title: option.lifetime ? plan.lifetimeTitle || option.planName : plan.title || option.planName,
-    description: option.lifetime ? plan.lifetimeDescription || "" : plan.description || "",
-    traffic: option.unlimited ? "无限流量" : option.lifetime ? trafficGb ? `${Number.isInteger(trafficGb) ? trafficGb : Number(trafficGb.toFixed(2))}G 固定流量` : plan.lifetimeTraffic || "固定流量" : `每月 ${trafficGb} GB`,
-    features: option.lifetime ? Array.isArray(plan.lifetimeFeatures) ? plan.lifetimeFeatures : [] : Array.isArray(plan.features) ? plan.features : [],
-    devices: Number(option.lifetime ? plan.lifetimeDevices : plan[`${option.duration}Devices`] || 0),
-    cycles
-  };
 }
 
 async function fulfillTrafficPackOrderOnce(order, req) {
@@ -2824,9 +2419,11 @@ async function fulfillPaymentOrderOnce(order, req) {
   }
   if (order.purpose === "traffic_pack") return fulfillTrafficPackOrderOnce(order, req);
   if (order.purpose === "addon") return fulfillStandaloneAddOnOrderOnce(order, req);
+  // Plans are delivered only from V2 products; a paid legacy (v1) plan order is left for manual handling.
+  if (order.catalogVersion !== 2 || !order.productSnapshot?.v2) throw new Error("旧版套餐订单不再自动交付，请人工处理。");
   const email = normalizePaymentEmail(order.email);
-  const selectedOption = order.catalogVersion === 2 ? { ...(order.productSnapshot || {}) } : { ...resolvePaymentPlanOption(order.optionId, { allowLegacy: true }), ...(order.productSnapshot || {}) };
-  const selectedTrafficBytes = order.catalogVersion === 2 ? Math.max(0, Number(order.trafficBytes) || 0) : Number(order.trafficGb) > 0 ? Math.round(Number(order.trafficGb) * 1024 ** 3) : 0;
+  const selectedOption = { ...order.productSnapshot };
+  const selectedTrafficBytes = Math.max(0, Number(order.trafficBytes) || 0);
   const purchasedAt = order.paidAt || new Date().toISOString();
   const account = order.accountId ? accounts.find(item => item.id === order.accountId) : null;
   let user = account?.linkedUserId
@@ -2951,9 +2548,8 @@ async function fulfillPaymentOrderOnce(order, req) {
     user.outputMode = "subconverter";
     user.blockUserinfo = false;
     user.trafficTier = order.trafficTier || 1;
-    if (selectedTrafficBytes) user.xuiTrafficLimitBytes = selectedTrafficBytes;
     bindUserProductFromOrder(user, order);
-    if (order.catalogVersion === 2) user.xuiTrafficLimitBytes = selectedTrafficBytes;
+    user.xuiTrafficLimitBytes = selectedTrafficBytes;
     await provisionXuiClient(user);
     await resetXuiTrafficAfterPlanPurchase(user, order);
     users.unshift(user);
@@ -2989,7 +2585,7 @@ async function fulfillPaymentOrderOnce(order, req) {
     }));
   }
 
-  if (selectedTrafficBytes || order.catalogVersion === 2) user.xuiTrafficLimitBytes = selectedTrafficBytes;
+  user.xuiTrafficLimitBytes = selectedTrafficBytes;
   user.trafficTier = order.trafficTier || 1;
   user.purchasedTrafficGb = order.trafficGb ?? null;
   if (Array.isArray(order.addOnSnapshots) && order.addOnSnapshots.length) {
@@ -3194,12 +2790,11 @@ function checkoutWorkflow(account, req) {
 }
 
 async function submitPurchaseOrder(payload, req, account, manualAmount) {
-  const wallet = await walletForAccount(account);
   const selection = catalogV2Selection(payload);
   const selected = selection.productId ? await catalogV2Quote(payload, account, { allowUnlisted: manualAmount !== undefined })
     : payload.product === "traffic_pack" ? trafficPackQuote(account)
     : payload.product === "home_ip" ? homeIpQuote(account, payload.optionId)
-    : planQuoteWithAddOns(paymentQuote(payload.optionId, payload.couponCode, undefined, vipLevelForSpend(wallet.vipSpendCents / 100), account.id, payload.trafficTier), payload.addOns);
+    : rejectLegacyPlanOption();
   const purpose = selected.purpose || (payload.product === "traffic_pack" ? "traffic_pack" : payload.product === "home_ip" ? "addon" : "plan");
   if (selection.productId && manualAmount === undefined) addonServices.assertBuyerInputs(selected.selectedAddOnSnapshots);
   if (manualAmount === undefined && purpose === "plan" && selected.purchaseAction === "replace" && payload.confirmReplacement !== true) throw new Error("请确认新套餐将立即覆盖当前套餐。");
@@ -3560,12 +3155,9 @@ function activeUserGroup(user = {}) {
   return normalizeUserGroup(user.activeGroup || user.group, "pro");
 }
 
-function strictActiveUserGroup(user = {}) {
-  return normalizeUserGroup(user.activeGroup, normalizeUserGroup(user.group, ""));
-}
-
+// A user's line access comes only from their V2 line group.
 function accessGroupForUser(user = {}) {
-  return user.productCatalogVersion === 2 && user.v2LineGroupId ? String(user.v2LineGroupId) : strictActiveUserGroup(user);
+  return String(user.v2LineGroupId || "");
 }
 
 function isSelfHostedUser(user = {}) {
@@ -3608,40 +3200,19 @@ function normalizeXuiInboundEnable(idValue, enable) {
   return { id, enable };
 }
 
-function pricingForUser(user = {}) {
-  return publicPricing().find(item => item.group === user.currentProductId) || publicPricing().find(item => item.group === activeUserGroup(user)) || null;
-}
-
+// Plan-only quota from the user's V2 product snapshot; null traffic means unlimited.
 function planTrafficBytes(user = {}) {
-  if (user.unlimited) return 0;
-  if (user.productCatalogVersion === 2 && user.v2ProductSnapshot) {
-    const value = user.v2ProductSnapshot.trafficBytes;
-    return value === null ? 0 : Math.max(0, Number(value) || 0);
-  }
-  const plan = pricingForUser(user);
-  const lifetime = user.duration === "lifetime";
-  const purchasedTrafficGb = Number(user.purchasedTrafficGb);
-  if (!lifetime && Number.isFinite(purchasedTrafficGb) && purchasedTrafficGb > 0) return Math.round(purchasedTrafficGb * 1024 ** 3);
-  const configured = Number(lifetime ? plan?.lifetimeTrafficBytes : plan?.trafficBytes);
-  if (Number.isFinite(configured) && configured >= 0) return Math.round(configured);
-  const match = String(lifetime ? plan?.lifetimeTraffic : plan?.traffic || "").match(/(\d+(?:\.\d+)?)\s*(TB|GB|G|MB|M)/i);
-  if (!match) return 0;
-  const factors = { TB: 1024 ** 4, GB: 1024 ** 3, G: 1024 ** 3, MB: 1024 ** 2, M: 1024 ** 2 };
-  return Math.round(Number(match[1]) * factors[match[2].toUpperCase()]);
+  const value = user.v2ProductSnapshot?.trafficBytes;
+  if (user.unlimited || value === null) return 0;
+  return Math.max(0, Number(value) || 0);
 }
 
 function xuiTrafficLimitBytes(user = {}) {
-  const hasLocalProductEntitlement = Boolean(
-    user.productCatalogVersion === 2 && user.v2ProductSnapshot
-    || String(user.currentProductId || user.currentOptionId || user.activeGroup || user.group || "").trim()
-  );
-  if (!hasLocalProductEntitlement) throw new Error("App 本地缺少可验证的套餐流量权益，不能从3x-ui或默认值推导额度。");
-  if (user.unlimited || user.productCatalogVersion === 2 && user.v2ProductSnapshot?.trafficBytes === null) return 0;
+  const snapshot = user.v2ProductSnapshot;
+  if (!snapshot) throw new Error("App 本地缺少可验证的套餐流量权益，不能从3x-ui或默认值推导额度。");
+  if (user.unlimited || snapshot.trafficBytes === null) return 0;
   const productBytes = planTrafficBytes(user);
-  const hasExplicitV2Traffic = user.productCatalogVersion === 2
-    && Number.isFinite(Number(user.v2ProductSnapshot?.trafficBytes))
-    && Number(user.v2ProductSnapshot.trafficBytes) >= 0;
-  if (productBytes > 0 || hasExplicitV2Traffic) {
+  if (Number.isFinite(Number(snapshot.trafficBytes)) && Number(snapshot.trafficBytes) >= 0) {
     const trafficPackBytes = Math.max(0, Number(user.xuiTrafficPackBytes) || 0);
     const adminGiftBytes = (Array.isArray(user.xuiAdminTrafficGifts) ? user.xuiAdminTrafficGifts : [])
       .filter(gift => gift?.kind === "admin_traffic_gift" && gift.id && gift.createdAt)
@@ -3775,16 +3346,10 @@ function initializeXuiTrafficSchedule(user, _remote = {}, mode = "import", now =
   user.xuiLastTrafficResetAt = "";
 }
 
-function legacyMigrationTrafficLimitBytes(user = {}) {
-  if (user.unlimited) return 0;
-  if (user.duration === "lifetime") return planTrafficBytes(user);
-  return (LEGACY_RECURRING_TRAFFIC_GB[activeUserGroup(user)] || 100) * 1024 ** 3;
-}
-
 function initializeLegacyXuiMigration(user, existing, now = Date.now()) {
   const purchased = chinaDateParts(user.purchasedAt || user.createdAt || now);
   user.xuiManagementMode = existing ? "link" : "import";
-  user.xuiTrafficLimitBytes = legacyMigrationTrafficLimitBytes(user);
+  user.xuiTrafficLimitBytes = planTrafficBytes(user);
   user.xuiTrafficResetAnchorDay ||= purchased?.day || chinaDateParts(now).day;
   user.xuiTrafficCycleKey ||= `migration:${new Date(now).toISOString()}`;
   user.xuiNextTrafficResetAt ||= user.duration === "lifetime" ? "" : xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
@@ -3794,10 +3359,7 @@ function initializeLegacyXuiMigration(user, existing, now = Date.now()) {
 }
 
 function planDeviceLimit(user = {}) {
-  if (user.productCatalogVersion === 2 && user.v2ProductSnapshot) return Math.max(0, Number(user.v2ProductSnapshot.deviceLimit) || 0);
-  const plan = pricingForUser(user);
-  const value = Number(user.duration === "lifetime" ? plan?.lifetimeDevices : plan?.[`${user.duration}Devices`]);
-  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  return Math.max(0, Number(user.v2ProductSnapshot?.deviceLimit) || 0);
 }
 
 function xuiConfigured() {
@@ -4334,7 +3896,7 @@ async function xuiUserNodeUsage(user, days = 30, now = Date.now()) {
   const [rawRows, management, groups, billingState] = await Promise.all([
     dataStore.xuiUserDailyNodeSeries(String(xuiClientEmail(user) || "").trim().toLowerCase(), dates[0], dates[dates.length - 1]),
     xuiInboundManagementView(),
-    user.productCatalogVersion === 2 ? dataStore.listCatalogV2LineGroups() : [],
+    dataStore.listCatalogV2LineGroups(),
     getXuiBillingState()
   ]);
   const multipliers = billingState?.multipliers || {};
@@ -4378,7 +3940,7 @@ function xuiTrafficSamples(directionalTraffic = {}, usersByEmail = new Map(), no
         nodeGuid,
         userId: user?.id || "",
         userLabel: user ? billUserLabel(user) : email,
-        planId: user ? user.productCatalogVersion === 2 ? user.v2ProductId || "" : activeUserGroup(user) : "",
+        planId: user?.v2ProductId || "",
         nodeName: nodeNames[nodeGuid] || nodeGuid,
         up: Math.max(0, Number(dir?.inBytes) || 0),
         down: Math.max(0, Number(dir?.outBytes) || 0)
@@ -4953,7 +4515,7 @@ function xuiClientWritePayload(existing, desired) {
 // a V2 line group inherit nothing.
 async function xuiInboundIdsForUser(user, groupInboundIds = null, allInboundIds = null) {
   let inheritedIds = groupInboundIds;
-  if (!inheritedIds && user.productCatalogVersion === 2 && user.v2LineGroupId) {
+  if (!inheritedIds && user.v2LineGroupId) {
     const group = (await dataStore.listCatalogV2LineGroups()).find(item => item.id === user.v2LineGroupId && item.isEnabled);
     const idsByKey = new Map((await xuiInboundRows()).map(inbound => [inbound.key, inbound.id]));
     inheritedIds = (group?.inboundKeys || []).map(key => idsByKey.get(key)).filter(Boolean);
@@ -5006,7 +4568,7 @@ let xuiInboundCatalogRefresh = null;
 let xuiInboundProbeRun = null;
 
 function publicAccountNodeStatus(user, management, v2Group = null) {
-  const currentGroup = accessGroupForUser(user) || activeUserGroup(user);
+  const currentGroup = accessGroupForUser(user);
   const extraIds = new Set(normalizeXuiInboundIdList(user?.xuiExtraInboundIds));
   const idsByKey = new Map((management.inbounds || []).map(inbound => [inbound.key, inbound.id]));
   const inheritedIds = v2Group ? v2Group.inboundKeys.map(key => idsByKey.get(key)).filter(Boolean) : [];
@@ -5188,7 +4750,7 @@ async function runCatalogV2Sync({ forceReload = false, snapshot = {}, readOnly =
   const findClient = async email => clientsByEmail.get(String(email).trim().toLowerCase()) || null;
   // Inbound changes are collected per user and sent in batches after the loop.
   const inboundChanges = [];
-  for (const user of users.filter(item => item.productCatalogVersion === 2 && isSelfHostedUser(item))) {
+  for (const user of users.filter(item => item.v2ProductSnapshot && isSelfHostedUser(item))) {
     report.checked++;
     let repairedTrafficLimit = false;
     try {
@@ -5558,7 +5120,7 @@ function desiredXuiClient(user, { email, group, existing = null, depletionDisabl
     // totalGB would make 3x-ui disable clients the app still considers within quota.
     totalGB: 0,
     expiryTime: new Date(user.expiresAt).getTime(),
-    limitIp: user.productCatalogVersion === 2 ? planDeviceLimit(user) : Number.isFinite(Number(user.xuiIpLimit)) ? Math.max(0, Number(user.xuiIpLimit)) : planDeviceLimit(user),
+    limitIp: planDeviceLimit(user),
     reset: 0,
     flow: XUI_VISION_FLOW,
     groupName: group,
@@ -5749,7 +5311,7 @@ async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
         req,
         stage: "xui-migration",
         message: existing ? "旧套餐已关联现有3x-ui Client并完成迁移。" : "旧套餐已创建3x-ui Client并完成迁移。",
-        details: { source: user.xuiMigrationSource, email, group: activeUserGroup(user), trafficLimitBytes: user.xuiTrafficLimitBytes, resetAnchorDay: user.xuiTrafficResetAnchorDay, nextResetAt: user.xuiNextTrafficResetAt, flow: XUI_VISION_FLOW, inboundIds: user.xuiInboundIds || [], inheritedUsedTrafficBytes: existing ? remote.usedTraffic : 0 }
+        details: { source: user.xuiMigrationSource, email, group: accessGroupForUser(user), trafficLimitBytes: user.xuiTrafficLimitBytes, resetAnchorDay: user.xuiTrafficResetAnchorDay, nextResetAt: user.xuiNextTrafficResetAt, flow: XUI_VISION_FLOW, inboundIds: user.xuiInboundIds || [], inheritedUsedTrafficBytes: existing ? remote.usedTraffic : 0 }
       }));
       await saveUsers();
       return { status: "completed", inboundIds: user.xuiInboundIds || [] };
@@ -5768,7 +5330,7 @@ async function connectXuiClient(user, { mode, email = "", importedIpLimit } = {}
   if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
   const group = accessGroupForUser(user);
   if (!group) throw new Error("Self-hosted user is missing a valid access group.");
-  if (user.productCatalogVersion === 2) await xuiInboundIdsForUser(user);
+  await xuiInboundIdsForUser(user);
   const userEmail = nexoraUserEmail(user);
   if (!userEmail) throw new Error("自研线路用户缺少有效的注册邮箱。");
   user.email = userEmail;
@@ -7717,7 +7279,7 @@ function buildUserInfoNodes(user) {
     nodes.push(`到期: ${expires.toISOString().slice(0, 10)} | 剩余 ${remaining} 天`);
   }
   const level = userVipLevel(user);
-  const group = activeUserGroup(user).toUpperCase();
+  const group = (accessGroupForUser(user) || "-").toUpperCase();
   const traffic = isSelfHostedUser(user) ? (user.xuiWeightedTraffic || user.xuiLastTraffic) : null;
   const usedBytes = Number(traffic?.usedBytes);
   const totalBytes = Number(traffic?.totalBytes);
@@ -8766,6 +8328,7 @@ function publicDeliveryPayload(user, req) {
     planExpiresAt: user.planExpiresAt || user.expiresAt || "",
     giftedDays: Number(user.giftedDays) || 0,
     activeGroup: activeUserGroup(user),
+    lineGroupId: user.v2LineGroupId || "",
     vipLevel: userVipLevel(user),
     subscriptionUrl: `${origin}/sub/${token}`,
     tutorials: deliveryTutorials()
@@ -8800,7 +8363,7 @@ function formatTelegramUserResult({ user, subscription }) {
     `Status: ${userTelegramStatus(user)}`,
     `Expires: ${formatTelegramDate(user.expiresAt)}`,
     `Duration: ${user.duration || "-"}`,
-    `Active group: ${activeUserGroup(user)}`,
+    `Line group: ${accessGroupForUser(user) || "-"}`,
     `Paid: ${user.actualPaid ?? "-"}`,
     `iMessage: ${userImessageIds(user).join(", ") || "-"}`,
     `Pool: ${subscription?.email || subscription?.name || "-"}`,
@@ -9189,7 +8752,6 @@ async function handleApi(req, res, pathname) {
     const user = account?.linkedUserId ? users.find(item => item.id === account.linkedUserId) : null;
     const wallet = await walletForAccount(account);
     const walletVipLevel = vipLevelForSpend(wallet.vipSpendCents / 100);
-    const plan = user ? publicPricing().find(item => item.group === activeUserGroup(user)) : null;
     sendJson(res, 200, {
       customerID: account.customerID,
       email: account.email,
@@ -9205,7 +8767,8 @@ async function handleApi(req, res, pathname) {
         code: account.referralCode,
         balance: wallet.referralCents / 100,
         rate: Number(account.referralRate ?? 10),
-        recurring: account.recurringReferral === true
+        recurring: account.recurringReferral === true,
+        invitedCount: accounts.filter(item => item.referredByAccountId === account.id).length
       },
       subscription: user ? {
         ...publicDeliveryPayload(user, req),
@@ -9217,9 +8780,9 @@ async function handleApi(req, res, pathname) {
         unlimited: Boolean(user.unlimited),
         // Plan-only quota per cycle, excluding traffic packs and admin gifts.
         planTrafficBytes: planTrafficBytes(user),
-        traffic: user.unlimited || user.productCatalogVersion === 2 && user.v2ProductSnapshot?.trafficBytes === null ? "无限流量" : user.productCatalogVersion === 2 ? `${Number((planTrafficBytes(user) / 1024 ** 3).toFixed(2))} GB` : Number(user.purchasedTrafficGb) > 0 ? `每月 ${user.purchasedTrafficGb} GB` : (plan?.traffic || "-"),
-        devices: user.productCatalogVersion === 2 ? planDeviceLimit(user) : plan?.[`${user.duration}Devices`] || "-",
-        productName: user.productCatalogVersion === 2 ? user.v2ProductSnapshot?.name || user.v2ProductId : plan?.name || activeUserGroup(user),
+        traffic: user.unlimited || user.v2ProductSnapshot?.trafficBytes === null ? "无限流量" : `${Number((planTrafficBytes(user) / 1024 ** 3).toFixed(2))} GB`,
+        devices: planDeviceLimit(user),
+        productName: user.v2ProductSnapshot?.name || user.v2ProductId || "",
         renewal: isUserExpired(user) ? planRenewalOffer(user, await dataStore.listCatalogV2Products()) : null
       } : null,
       services: accountServiceInstances(account.id),
@@ -9259,7 +8822,7 @@ async function handleApi(req, res, pathname) {
       return;
     }
     const management = await xuiInboundManagementView();
-    const v2Group = user.productCatalogVersion === 2 ? (await dataStore.listCatalogV2LineGroups()).find(group => group.id === user.v2LineGroupId && group.isEnabled) : null;
+    const v2Group = (await dataStore.listCatalogV2LineGroups()).find(group => group.id === user.v2LineGroupId && group.isEnabled) || null;
     sendJson(res, 200, publicAccountNodeStatus(user, management, v2Group));
     return;
   }
@@ -10554,27 +10117,33 @@ async function handleApi(req, res, pathname) {
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString()
       };
-      const normalized = normalizeUser(payload, item);
-      const productBinding = inferUserProductBinding(normalized);
-      if (productBinding.error) throw new Error(productBinding.error);
-      bindUserProduct(normalized, productBinding, { source: productBinding.productId === FRIENDS_PRODUCT_ID ? "family_friend_grant" : "admin_create" });
-      if (productBinding.productId === FRIENDS_PRODUCT_ID) { normalized.lineType = "self_hosted"; normalized.subscriptionId = ""; }
-      const selectedSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
-      if (selectedSubscription && subscriptionAtCapacity(selectedSubscription) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
+      const option = await adminCatalogV2PlanOption(payload);
+      const purchasedTime = Date.parse(payload.purchasedAt || new Date().toISOString());
+      if (!Number.isFinite(purchasedTime)) throw new Error("购买时间格式不正确。");
+      const normalized = normalizeUser({
+        ...payload,
+        lineType: "self_hosted",
+        subscriptionId: "",
+        duration: option.duration,
+        expiresAt: option.lifetime ? undefined : new Date(purchasedTime + option.durationDays * 86400000).toISOString(),
+        group: option.group,
+        activeGroup: option.group,
+        unlimited: option.unlimited === true,
+        actualPaid: payload.actualPaid ?? option.amount
+      }, item);
+      normalized.trafficTier = option.trafficSteps + 1;
+      normalized.purchasedTrafficGb = option.trafficGb;
+      bindUserProductFromOrder(normalized, { id: "", paidAt: normalized.purchasedAt, paymentProvider: "manual", catalogVersion: 2, optionId: option.optionId, productSnapshot: { ...option, v2: option.productSnapshotV2 } });
+      normalized.currentProductSource = "admin_create";
+      normalized.xuiTrafficLimitBytes = Math.max(0, Number(option.trafficBytes) || 0);
       normalized.outputMode = userOutputMode(payload);
-      normalized.blockUserinfo = isSelfHostedUser(normalized) ? false : payload.blockUserinfo !== false;
+      normalized.blockUserinfo = false;
       users.unshift(normalized);
       try {
-        if (isSelfHostedUser(normalized)) await provisionXuiClient(normalized);
+        await provisionXuiClient(normalized);
       } catch (error) {
         users = users.filter(entry => entry.id !== normalized.id);
         throw error;
-      }
-      if (productBinding.productId === FRIENDS_PRODUCT_ID) {
-        const grantOrder = familyGrantOrder(normalized, productBinding, new Date().toISOString());
-        paymentOrders.unshift(grantOrder);
-        normalized.currentProductOrderId = grantOrder.id;
-        await savePaymentOrders();
       }
       bills.unshift(makeBill({
         user: normalized,
@@ -11351,66 +10920,9 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
+    // Admin renewal used legacy tiers; plans now change only through V2 (plan change, gifts, manual orders).
     if (action === "renew" && req.method === "POST") {
-      const previousUserState = structuredClone(item);
-      try {
-        if (userHasClaimedAccount(item.id)) throw new Error("已认领用户只能通过自主购买变更付款信息。");
-        const payload = await readJson(req);
-        const before = userSnapshotForLog(item);
-        const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
-        if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
-        if (isSelfHostedUser(item)) item.blockUserinfo = false;
-        else if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
-        const renewal = renewUser(item, payload);
-        if (isSelfHostedUser(item)) await provisionXuiClient(item);
-        else if (item.xuiClientEmail) await disableXuiClient(item);
-        const toSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
-        bills.unshift(makeBill({
-          user: item,
-          type: "renewal",
-          amount: renewal.amount,
-          occurredAt: renewal.renewedAt,
-          duration: item.duration,
-          beforeExpiresAt: renewal.beforeExpiresAt,
-          afterExpiresAt: renewal.afterExpiresAt,
-          description: "用户续费"
-        }));
-        const renewalLog = createUserLog({
-          event: "user-action",
-          status: "recorded",
-          reason: "user-renewed",
-          fromSubscription,
-          toSubscription,
-          req,
-          message: userActionMessage("user-renewed", {
-            amount: renewal.amount,
-            duration: item.duration,
-            beforeExpiresAt: renewal.beforeExpiresAt,
-            afterExpiresAt: renewal.afterExpiresAt
-          }),
-          details: {
-            amount: renewal.amount,
-            duration: item.duration,
-            renewedAt: renewal.renewedAt,
-            beforeExpiresAt: renewal.beforeExpiresAt,
-            afterExpiresAt: renewal.afterExpiresAt,
-            before,
-            after: userSnapshotForLog(item)
-          }
-        });
-        appendUserLogToUser(item, renewalLog);
-        const productBinding = inferUserProductBinding(item);
-        if (productBinding.error) throw new Error(productBinding.error);
-        bindUserProduct(item, productBinding, { source: "admin_renewal" });
-        renewalLog.details.after = userSnapshotForLog(item);
-        await saveUsers();
-        await saveBills();
-        sendJson(res, 200, publicUser(item));
-      } catch (error) {
-        Object.keys(item).forEach(key => delete item[key]);
-        Object.assign(item, previousUserState);
-        sendJson(res, 400, { error: error.message });
-      }
+      sendJson(res, 400, { error: userHasClaimedAccount(item.id) ? "已认领用户只能通过自主购买变更付款信息。" : "后台续费入口已停用，请使用 V2 更改套餐、赠送时长或手动订单。" });
       return;
     }
 
@@ -11616,39 +11128,26 @@ async function handleApi(req, res, pathname) {
       try {
         if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以直接更改套餐。");
         const payload = await readJson(req);
-        const selection = catalogV2Selection(payload);
-        const option = selection.productId
-          ? resolveCatalogV2Purchase(await dataStore.listCatalogV2Products(), selection, { allowUnlisted: true, hasRecurringPlan: userHasV2RecurringPlan(item) })
-          : resolvePlanChangeOption(item, payload.optionId);
-        if (selection.productId && option.purpose !== "plan") throw new Error("附加服务不能作为当前套餐。");
-        const currentDuration = String(item.duration || "");
-        const currentDurationDays = item.productCatalogVersion === 2 ? Number(item.v2ProductSnapshot?.durationDays) : ({ monthly: 30, quarterly: 90, half_yearly: 180, yearly: 360 })[currentDuration];
-        if (selection.productId && !option.lifetime && option.durationDays !== currentDurationDays) throw new Error("目标商品必须与当前周期一致，或为不限时规格。");
+        const option = await adminCatalogV2PlanOption(payload);
+        if (!option.lifetime && option.durationDays !== Number(item.v2ProductSnapshot?.durationDays)) throw new Error("目标商品必须与当前周期一致，或为不限时规格。");
         const group = option.group;
         const unlimited = option.unlimited === true;
-        const plan = pricingProduct(option.planId) || {};
-        const trafficTier = selection.productId ? option.trafficSteps + 1 : option.lifetime || unlimited ? 1 : normalizeTrafficTier(plan, payload.trafficTier);
-        const baseTrafficGb = selection.productId ? Math.max(0, Number(option.trafficBytes) || 0) / 1024 ** 3 : unlimited ? 0 : option.lifetime ? planTrafficBytes({ activeGroup: group, duration: "lifetime", unlimited: false }) / 1024 ** 3 : recurringTrafficConfig(plan).baseGb;
-        const purchasedTrafficGb = option.lifetime || unlimited ? null : baseTrafficGb * trafficTier;
+        const trafficTier = option.trafficSteps + 1;
+        const purchasedTrafficGb = option.lifetime || unlimited ? null : Math.max(0, Number(option.trafficBytes) || 0) / 1024 ** 3;
         const note = String(payload.note || "").trim().slice(0, 200);
         if (!note) throw new Error("请填写套餐变更原因。");
         const before = userSnapshotForLog(item);
         const rollbackState = planChangeState(item);
-        const beforePlan = `${activeUserGroup(item).toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
-        Object.assign(item, { group, activeGroup: group, unlimited, trafficTier, purchasedTrafficGb, ...(selection.productId ? { duration: option.duration } : {}), updatedAt: new Date().toISOString() });
+        const beforePlan = `${(accessGroupForUser(item) || "-").toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
+        Object.assign(item, { group, activeGroup: group, unlimited, trafficTier, purchasedTrafficGb, duration: option.duration, updatedAt: new Date().toISOString() });
         if (option.lifetime === true) Object.assign(item, { duration: "lifetime", expiresAt: LIFETIME_EXPIRES_AT, planExpiresAt: LIFETIME_EXPIRES_AT, xuiNextTrafficResetAt: "" });
-        if (selection.productId) {
-          bindUserProductFromOrder(item, { id: "", paidAt: new Date().toISOString(), paymentProvider: "manual", catalogVersion: 2, optionId: option.optionId, productSnapshot: { ...option, v2: option.productSnapshotV2 } });
-          item.xuiTrafficLimitBytes = Math.max(0, Number(option.trafficBytes) || 0);
-        } else {
-          const binding = productBinding(option.planId, String(payload.optionId), item, { name: option.planName, optionLabel: option.optionLabel, lifetime: option.lifetime === true, unlimited });
-          bindUserProduct(item, binding, { source: "admin_plan_change" });
-        }
+        bindUserProductFromOrder(item, { id: "", paidAt: new Date().toISOString(), paymentProvider: "manual", catalogVersion: 2, optionId: option.optionId, productSnapshot: { ...option, v2: option.productSnapshotV2 } });
+        item.xuiTrafficLimitBytes = Math.max(0, Number(option.trafficBytes) || 0);
         expireUserTrafficPacks(item);
         refreshUserPlanTraffic(item);
         await provisionXuiClient(item);
         const actor = currentSession(req)?.account || "admin";
-        const afterPlan = `${activeUserGroup(item).toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
+        const afterPlan = `${(accessGroupForUser(item) || "-").toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
         const changes = summarizeUserChanges(before, userSnapshotForLog(item));
         appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "plan-changed", req, message: userActionMessage("plan-changed", { beforePlan, afterPlan, actor, note }), details: { actor, note, beforePlan, afterPlan, changes, before, after: userSnapshotForLog(item), rollbackState, changedState: planChangeState(item) } }));
         await saveUsers();
@@ -11672,12 +11171,12 @@ async function handleApi(req, res, pathname) {
         if (!latestPlanEvent || latestPlanEvent.reason !== "plan-changed" || latestPlanEvent.id !== String(payload.changeId || "") || !latestPlanEvent.details?.rollbackState) throw new Error("只能撤销最近一次尚未撤销的套餐变更。");
         if (JSON.stringify(planChangeState(item)) !== JSON.stringify(latestPlanEvent.details.changedState)) throw new Error("套餐权益已发生后续变化，不能直接撤销。");
         const before = userSnapshotForLog(item);
-        const beforePlan = `${activeUserGroup(item).toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
+        const beforePlan = `${(accessGroupForUser(item) || "-").toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
         restorePlanChangeState(item, latestPlanEvent.details.rollbackState);
         refreshUserPlanTraffic(item);
         await provisionXuiClient(item);
         const actor = currentSession(req)?.account || "admin";
-        const afterPlan = `${activeUserGroup(item).toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
+        const afterPlan = `${(accessGroupForUser(item) || "-").toUpperCase()} / ${item.unlimited ? "无限流量" : "固定流量"}`;
         const changes = summarizeUserChanges(before, userSnapshotForLog(item));
         appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "plan-change-rolled-back", req, message: userActionMessage("plan-change-rolled-back", { beforePlan, afterPlan, actor }), details: { actor, sourceChangeId: latestPlanEvent.id, beforePlan, afterPlan, changes, before, after: userSnapshotForLog(item) } }));
         await saveUsers();
@@ -11697,12 +11196,8 @@ async function handleApi(req, res, pathname) {
       try {
         if (!item) throw new Error("未开通订阅的账户不能切换自研线路。");
         const payload = await readJson(req);
-        const requestedGroup = normalizeUserGroup(payload.activeGroup, "");
-        const currentGroup = strictActiveUserGroup(item);
-        if (!requestedGroup || !currentGroup) throw new Error("Self-hosted user is missing a valid access group.");
-        if (requestedGroup !== currentGroup) throw new Error("3x-ui import/link does not change the user's access group.");
-        const group = requestedGroup;
-        if (!["basic", "pro", "ultra"].includes(group)) throw new Error("请选择有效的套餐分组。");
+        // Nodes follow the user's V2 line group; import/link never changes it.
+        if (!accessGroupForUser(item)) throw new Error("该用户缺少 V2 线路权限组，请先更改为 V2 套餐。");
         const importedIpLimit = planDeviceLimit(item);
         const before = userSnapshotForLog(item);
         Object.assign(item, { updatedAt: new Date().toISOString() });
@@ -11724,7 +11219,7 @@ async function handleApi(req, res, pathname) {
     if (action === "xui-sync" && req.method === "POST") {
       const previous = item ? structuredClone(item) : null;
       try {
-        if (!item || !isSelfHostedUser(item) || item.productCatalogVersion !== 2 || !item.v2ProductSnapshot) throw new Error("仅已绑定V2套餐的自研线路用户可以同步3x-ui。");
+        if (!item || !isSelfHostedUser(item) || !item.v2ProductSnapshot) throw new Error("仅已绑定V2套餐的自研线路用户可以同步3x-ui。");
         refreshUserPlanTraffic(item);
         await provisionXuiClient(item, { checkLegacyEmail: false });
         item.xuiClientPresent = true;
@@ -11742,75 +11237,9 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    if (action === "xui-recover" && req.method === "POST") {
-      const previous = item ? structuredClone(item) : null;
-      try {
-        if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以恢复3x-ui Client。");
-        if (isUserExpired(item)) throw new Error("套餐已过期，不能恢复3x-ui Client。");
-        if (isUserAccountDisabled(item)) throw new Error("账户已停用，不能恢复3x-ui Client。");
-        if (!item.xuiClientEmail) throw new Error("用户尚未关联3x-ui Client。");
-        const previousSubId = item.xuiSubId || "";
-        const remote = await provisionXuiClient(item, { checkLegacyEmail: false });
-        item.xuiClientPresent = true;
-        item.xuiRecoveredAt = new Date().toISOString();
-        item.xuiLastSyncedAt = item.xuiRecoveredAt;
-        item.xuiLastError = "";
-        delete item.xuiClientMissingAt;
-        appendUserLogToUser(item, createUserLog({
-          event: "user-action",
-          status: "recorded",
-          reason: "xui-client-recovered",
-          req,
-          stage: "xui-recovery",
-          message: "已恢复被删除的3x-ui Client。",
-          details: { email: item.xuiClientEmail, previousSubId, newSubId: item.xuiSubId || remote.subId || "", trafficLimitBytes: item.xuiTrafficLimitBytes, resetAnchorDay: item.xuiTrafficResetAnchorDay, nextResetAt: item.xuiNextTrafficResetAt, flow: XUI_VISION_FLOW, inboundIds: item.xuiInboundIds || [] }
-        }));
-        await saveUsers();
-        sendJson(res, 200, publicUser(item));
-      } catch (error) {
-        if (item && previous) {
-          Object.keys(item).forEach(key => delete item[key]);
-          Object.assign(item, previous);
-        }
-        sendJson(res, error.statusCode || 400, { error: error.message });
-      }
-      return;
-    }
-
+    // Line access follows the V2 line group; it changes only through the V2 plan change.
     if (action === "line" && req.method === "POST") {
-      const previous = item ? structuredClone(item) : null;
-      try {
-        if (!item) throw new Error("未开通订阅的账户不能迁移线路。");
-        const payload = await readJson(req);
-        const lineType = String(payload.lineType || "");
-        if (lineType === "upstream") throw Object.assign(new Error("池 URL 分配入口已停用。"), { statusCode: 410 });
-        const group = normalizeUserGroup(payload.activeGroup, "");
-        if (!["upstream", "self_hosted"].includes(lineType) || !group) throw new Error("请选择有效的线路类型和套餐分组。");
-        const before = userSnapshotForLog(item);
-        if (lineType === "self_hosted") {
-          if (item.lineType === "self_hosted" && activeUserGroup(item) === group) {
-            sendJson(res, 200, publicUser(item));
-            return;
-          }
-          Object.assign(item, { lineType, activeGroup: group, subscriptionId: "", updatedAt: new Date().toISOString() });
-          await provisionXuiClient(item);
-        } else {
-          const subscription = subscriptions.find(entry => entry.id === String(payload.subscriptionId || ""));
-          if (!subscription || !subscriptionAllowsGroup(subscription, group)) throw new Error("请选择允许该套餐使用的订阅池。");
-          Object.assign(item, { lineType, activeGroup: group, subscriptionId: subscription.id, updatedAt: new Date().toISOString() });
-          if (item.xuiClientEmail) await disableXuiClient(item);
-        }
-        const changes = summarizeUserChanges(before, userSnapshotForLog(item));
-        if (changes.length) appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "user-updated", req, message: userActionMessage("user-updated", { changes }), details: { changes } }));
-        await saveUsers();
-        sendJson(res, 200, publicUser(item));
-      } catch (error) {
-        if (item && previous) {
-          Object.keys(item).forEach(key => delete item[key]);
-          Object.assign(item, previous);
-        }
-        sendJson(res, error.statusCode || 400, { error: error.message });
-      }
+      sendJson(res, 410, { error: "权限组由 V2 套餐的线路权限组决定，请使用更改套餐。" });
       return;
     }
 
@@ -11833,10 +11262,9 @@ async function handleApi(req, res, pathname) {
         const linkedAccount = accounts.find(account => account.linkedUserId === item.id);
         const before = userSnapshotForLog(item);
         const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
-        const normalized = normalizeUser({ ...payload, group: item.group, activeGroup: item.activeGroup }, item);
-        const productBinding = inferUserProductBinding(normalized);
-        if (productBinding.error) throw new Error(productBinding.error);
-        bindUserProduct(normalized, productBinding, { source: "admin_update", orderId: item.currentProductOrderId || "" });
+        // Editing covers identity only; plan, expiry and spend change through the V2 plan change, gifts and orders.
+        const identity = Object.fromEntries(["userId", "wechatName", "email", "imessage", "imessageId", "imessageIds"].filter(key => payload[key] !== undefined).map(key => [key, payload[key]]));
+        const normalized = normalizeUser({ ...identity, expiresAt: item.expiresAt }, item);
         const toSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
         if (fromSubscription?.id !== toSubscription?.id && toSubscription && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
         Object.assign(item, normalized);
@@ -12253,16 +11681,10 @@ module.exports = Object.assign(requestHandler, {
   startOfUtcDate,
   remainingPlanCashValue,
   billTypeForPurchaseAction,
-  inferUserProductBinding,
-  recurringPlanOption,
-  resolvePlanChangeOption,
   planTrafficBytes,
   xuiTrafficLimitBytes,
   planChangeState,
   restorePlanChangeState,
-  bindUserProduct,
-  paymentQuote,
-  planQuoteWithAddOns,
   checkoutTaxAmount,
   vipLevelForSpend,
   vipDiscountPercent,
@@ -12324,9 +11746,7 @@ module.exports = Object.assign(requestHandler, {
   xuiClientCycleKey,
   xuiBillingPayload,
   xuiMonthlyResetAt,
-  legacyMigrationTrafficLimitBytes,
   initializeXuiTrafficSchedule,
-  strictActiveUserGroup,
   isXuiTimeoutError,
   provisionXuiClient,
   writeXuiClient,

@@ -45,7 +45,7 @@ function OnlineIndicator({ online }: { online: boolean }) {
 }
 
 export function UsersPage() {
-  const { users, subscriptions, pricing, reload, runAsync } = useData()
+  const { users, subscriptions, reload, runAsync } = useData()
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const [editing, setEditing] = React.useState<User | null>(null)
@@ -81,7 +81,7 @@ export function UsersPage() {
   const [batchGiftLoading, setBatchGiftLoading] = React.useState(false)
   const [batchGiftSaving, setBatchGiftSaving] = React.useState(false)
   const currentPool = subscriptions.find(item => item.id === poolUser?.subscriptionId)
-  const planOptions = React.useMemo(() => [...new Set(users.map(item => item.activeGroup).filter((value): value is string => Boolean(value)))].sort(), [users])
+  const planOptions = React.useMemo(() => [...new Set(users.map(item => item.v2LineGroupId).filter((value): value is string => Boolean(value)))].sort(), [users])
   const onlineGuidsByEmail = React.useMemo(() => {
     const result: Record<string, string[]> = {}
     for (const [guid, emails] of Object.entries(presence?.onlineByGuid || {})) {
@@ -103,7 +103,7 @@ export function UsersPage() {
   }, [activityFilter, onlineGuidsByEmail, presence])
   const filteredUsers = React.useMemo(() => users.filter(item =>
     (accountFilter === "all" || (item.accountStatus || "unclaimed") === accountFilter) &&
-    (planFilter === "all" || item.activeGroup === planFilter) &&
+    (planFilter === "all" || item.v2LineGroupId === planFilter) &&
     (statusFilter === "all" || userStatus(item) === statusFilter) &&
     matchesActivity(item)
   ), [users, accountFilter, planFilter, statusFilter, matchesActivity])
@@ -239,17 +239,11 @@ export function UsersPage() {
 
   async function save(values: UserFormValues) {
     await runAsync(async () => {
-      const payload = {
-        ...values,
-        outputMode: "subconverter",
-        blockUserinfo: true,
-        purchasedAt: values.purchasedAt || new Date().toISOString().slice(0, 10),
-      }
       if (editing?.id) {
-        await putJson(`/api/users/${editing.id}`, payload)
+        await putJson(`/api/users/${editing.id}`, values)
         toast.success("用户已更新")
       } else {
-        await postJson("/api/users", payload)
+        await postJson("/api/users", { ...values, lineType: "self_hosted", outputMode: "subconverter", trafficTier: Number(values.trafficTier) || 1 })
         toast.success("用户已创建")
       }
       await reload(["users", "bills"])
@@ -295,7 +289,7 @@ export function UsersPage() {
   function renderMobileUser(item: User) {
     const claimed = ["active", "disabled"].includes(item.accountStatus || "unclaimed")
     const xui = xuiPresenceFor(item)
-    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="min-w-0 truncate">{item.userId ? <span className="font-medium">{item.userId}</span> : null}<span className={`${item.userId ? "ml-1 " : ""}text-xs font-normal text-muted-foreground`}>#{item.customerID}</span></span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}</ItemTitle><ItemDescription className="flex items-center gap-2 text-xs"><span>{item.registeredOnly ? formatDate(item.createdAt) : `${formatDate(item.expiresAt)} · ${formatMoney(item.actualPaid)} · ${(item.activeGroup || "-").toUpperCase()}`}</span>{item.subscription ? <ProviderBadge name={item.subscription.serviceProvider || item.subscription.provider} /> : null}</ItemDescription>{xui.available ? <ItemDescription className="flex items-center gap-1.5 text-xs"><span>{xui.online ? xui.nodes.join(" / ") : xui.lastOnline ? `最后在线 ${formatDateTime(new Date(xui.lastOnline * 1000).toISOString())}` : "从未在线"}</span><OnlineIndicator online={xui.online} /></ItemDescription> : null}</ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}{item.lineType === "self_hosted" ? null : <DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem>}<DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
+    return <Item variant="outline"><ItemContent><ItemTitle className="flex w-full items-center gap-2"><span className="min-w-0 truncate">{item.userId ? <span className="font-medium">{item.userId}</span> : null}<span className={`${item.userId ? "ml-1 " : ""}text-xs font-normal text-muted-foreground`}>#{item.customerID}</span></span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}</ItemTitle><ItemDescription className="flex items-center gap-2 text-xs"><span>{item.registeredOnly ? formatDate(item.createdAt) : `${formatDate(item.expiresAt)} · ${formatMoney(item.actualPaid)} · ${(item.v2LineGroupId || "-").toUpperCase()}`}</span>{item.subscription ? <ProviderBadge name={item.subscription.serviceProvider || item.subscription.provider} /> : null}</ItemDescription>{xui.available ? <ItemDescription className="flex items-center gap-1.5 text-xs"><span>{xui.online ? xui.nodes.join(" / ") : xui.lastOnline ? `最后在线 ${formatDateTime(new Date(xui.lastOnline * 1000).toISOString())}` : "从未在线"}</span><OnlineIndicator online={xui.online} /></ItemDescription> : null}</ItemContent><ItemActions><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link to={`/users/detail/${item.id}${location.search}`}><ExternalLink />查看详情</Link></DropdownMenuItem>{item.registeredOnly ? null : <>{deliveryUrl(item) ? <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast.success("交付链接已复制"))}><Copy />复制交付链接</DropdownMenuItem> : null}{item.lineType === "self_hosted" ? null : <DropdownMenuItem onSelect={() => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) }}><RefreshCw />更换订阅池</DropdownMenuItem>}<DropdownMenuItem onSelect={() => openGift(item)}><Gift />赠送时长</DropdownMenuItem>{!claimed ? <DropdownMenuItem onSelect={() => { setEditing(item); setOpen(true) }}><Pencil />编辑</DropdownMenuItem> : null}{!claimed ? <DropdownMenuItem variant="destructive" onSelect={() => void remove(item)}><Trash2 />删除</DropdownMenuItem> : null}</>}</DropdownMenuContent></DropdownMenu></ItemActions></Item>
   }
 
   const columns = React.useMemo<ColumnDef<User>[]>(() => [
@@ -333,10 +327,10 @@ export function UsersPage() {
       cell: ({ row }) => { const value = row.getValue<number>("dailyTraffic"); return value < 0 ? "-" : formatBytes(value) },
     },
     {
-      accessorKey: "activeGroup",
+      accessorKey: "v2LineGroupId",
       header: DataTableColumnHeader({ title: "套餐等级" }),
       meta: { label: "套餐等级" },
-      cell: ({ row }) => row.original.activeGroup ? <Badge variant="outline">{row.original.activeGroup.toUpperCase()}</Badge> : "-",
+      cell: ({ row }) => row.original.v2LineGroupId ? <Badge variant="outline">{row.original.v2LineGroupId.toUpperCase()}</Badge> : "-",
     },
     {
       accessorKey: "expiresAt",
@@ -431,8 +425,6 @@ export function UsersPage() {
       <UserFormDialog
         open={open}
         user={editing}
-        subscriptions={subscriptions}
-        pricing={pricing}
         onOpenChange={setOpen}
         onSubmit={save}
       />

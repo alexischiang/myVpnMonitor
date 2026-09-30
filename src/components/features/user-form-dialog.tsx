@@ -1,7 +1,6 @@
 import * as React from "react"
 import { Loader2 } from "lucide-react"
 
-import { postJson } from "@/api"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -14,147 +13,77 @@ import {
 } from "@/components/ui/dialog"
 import {
   Field,
-  FieldContent,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
-  FieldTitle,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
+import { CatalogPlanFields, catalogPlanConfig, catalogPlanHasTiers, catalogPlanOptions, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import { DatePicker } from "@/components/features/date-picker"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import type { PricingRow, Subscription, User } from "@/types"
-import { durationLabels, formatDate, toDateInputValue } from "@/utils"
+import type { User } from "@/types"
+import { formatDate, toDateInputValue } from "@/utils"
 
+// New users are self-hosted and bound to a V2 plan spec; editing only changes identity fields.
 export type UserFormValues = {
   userId?: string
   wechatName?: string
   email?: string
   imessage?: string
-  subscriptionId?: string
-  allowDisabled?: boolean
-  allowFull?: boolean
-  lineType?: "upstream" | "self_hosted"
-  activeGroup?: string
-  unlimited?: boolean
-  duration?: string
+  optionId?: string
+  trafficTier?: string
   purchasedAt?: string
-  expiresAt?: string
   actualPaid?: number
-  note?: string
 }
 
-type Recommendation = {
-  subscription: Subscription | null
-  reason?: string
-  expiresAt: string
-}
-
-const planOptions = ["basic", "pro", "ultra"]
-const durationOptions = ["monthly", "quarterly", "half_yearly", "yearly", "custom", "lifetime"]
-const durationPriceKeys = {
-  monthly: ["monthly", "unlimitedMonthly"],
-  quarterly: ["quarterly", "unlimitedQuarterly"],
-  half_yearly: ["half_yearly", "unlimitedHalfYearly"],
-  yearly: ["yearly", "unlimitedYearly"],
-} as const
-const durationDescriptions: Record<string, string> = {
-  monthly: "30 天",
-  quarterly: "90 天",
-  half_yearly: "180 天",
-  yearly: "360 天",
-  custom: "手动指定到期日",
-  lifetime: "一次购买",
-}
-const steps = ["基本信息", "套餐信息", "线路配置"]
-
-function defaultFormValues(): UserFormValues {
-  return {
-    activeGroup: "pro",
-    lineType: "upstream",
-    unlimited: false,
-    duration: "monthly",
-    purchasedAt: toDateInputValue(),
-  }
-}
-
-function toInputDate(value?: string) {
-  return value ? value.slice(0, 10) : ""
-}
+const createSteps = ["基本信息", "套餐信息"]
+const editSteps = ["基本信息"]
 
 function toFormValues(user: User | null): UserFormValues {
-  const defaults = defaultFormValues()
-  if (!user) return defaults
-
+  if (!user) return { trafficTier: "1", purchasedAt: toDateInputValue() }
   return {
     userId: user.userId || "",
     wechatName: user.wechatName || "",
     email: user.email || "",
     imessage: user.imessage || "",
-    subscriptionId: user.subscriptionId || "",
-    lineType: user.lineType || "upstream",
-    activeGroup: user.activeGroup || defaults.activeGroup,
-    unlimited: Boolean(user.unlimited),
-    duration: durationOptions.includes(user.duration || "") ? user.duration : defaults.duration,
-    purchasedAt: toInputDate(user.purchasedAt) || defaults.purchasedAt,
-    expiresAt: toInputDate(user.expiresAt),
-    actualPaid: user.actualPaid,
   }
 }
 
-function selectedPrice(pricing: PricingRow[], values: UserFormValues) {
-  const row = pricing.find(item => item.group === values.activeGroup)
-  const keys = durationPriceKeys[values.duration as keyof typeof durationPriceKeys]
-  const value = row && keys ? row[values.unlimited ? keys[1] : keys[0]] : undefined
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
-}
-
-function durationExpiryValue(values: UserFormValues, duration: string) {
-  if (duration === "lifetime") return "永久"
-  if (duration === "custom") return values.expiresAt || ""
-  const days = { monthly: 30, quarterly: 90, half_yearly: 180, yearly: 360 }[duration]
-  const purchasedAt = values.purchasedAt ? new Date(`${values.purchasedAt}T00:00:00.000Z`) : null
-  if (!days || !purchasedAt || Number.isNaN(purchasedAt.getTime())) return ""
-  purchasedAt.setUTCDate(purchasedAt.getUTCDate() + days)
-  return toDateInputValue(purchasedAt)
-}
-
-function durationExpiryLabel(values: UserFormValues, duration: string) {
-  const expiry = durationExpiryValue(values, duration)
-  if (expiry === "永久") return "永久有效"
-  return expiry ? `到期 ${formatDate(expiry)}` : duration === "custom" ? "请选择到期日" : "待选择购买日期"
+function expiryDate(purchasedAt: string | undefined, durationDays: number) {
+  const date = purchasedAt ? new Date(`${purchasedAt}T00:00:00.000Z`) : null
+  if (!date || Number.isNaN(date.getTime())) return ""
+  date.setUTCDate(date.getUTCDate() + durationDays)
+  return toDateInputValue(date)
 }
 
 export function UserFormDialog({
   open,
   user,
-  subscriptions,
-  pricing,
   onOpenChange,
   onSubmit,
 }: {
   open: boolean
   user: User | null
-  subscriptions: Subscription[]
-  pricing: PricingRow[]
   onOpenChange: (open: boolean) => void
   onSubmit: (values: UserFormValues) => Promise<void> | void
 }) {
   const [values, setValues] = React.useState<UserFormValues>(() => toFormValues(user))
   const [stepIndex, setStepIndex] = React.useState(0)
   const [errors, setErrors] = React.useState<Partial<Record<keyof UserFormValues, string>>>({})
-  const [recommendationMessage, setRecommendationMessage] = React.useState("")
-  const [allowDisabledPool, setAllowDisabledPool] = React.useState(false)
-  const [allowFullPool, setAllowFullPool] = React.useState(false)
-  const [recommending, setRecommending] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
   const initialValues = React.useRef(toFormValues(user))
-  const price = selectedPrice(pricing, values)
+  const products = useCatalogV2Products()
+  const planOptions = React.useMemo(() => catalogPlanOptions(products || []), [products])
+  const steps = user ? editSteps : createSteps
+  const lastStep = stepIndex === steps.length - 1
   const changed = React.useMemo(() => JSON.stringify(values) !== JSON.stringify(initialValues.current), [values])
+
+  const selectedOption = planOptions.find(option => option.value === values.optionId)
+  const planConfig = selectedOption ? catalogPlanConfig(selectedOption) : null
+  const trafficTier = catalogPlanHasTiers(planConfig) ? Number(values.trafficTier) || 1 : 1
+  const price = planConfig ? (planConfig.priceCents + (trafficTier - 1) * planConfig.stepPriceCents) / 100 : undefined
+  const expiresAt = !planConfig ? "" : planConfig.lifetime ? "永久有效" : formatDate(expiryDate(values.purchasedAt, selectedOption?.period?.durationDays || 0))
 
   React.useEffect(() => {
     if (!open) return
@@ -163,10 +92,14 @@ export function UserFormDialog({
     setValues(nextValues)
     setStepIndex(0)
     setErrors({})
-    setRecommendationMessage("")
-    setAllowDisabledPool(false)
-    setAllowFullPool(false)
   }, [open, user])
+
+  // Keep the chosen traffic tier within the selected spec's range.
+  React.useEffect(() => {
+    if (!planConfig || !catalogPlanHasTiers(planConfig)) return
+    const tier = Math.min(planConfig.maxTier, Math.max(1, Number(values.trafficTier) || 1))
+    if (String(tier) !== values.trafficTier) setValues(current => ({ ...current, trafficTier: String(tier) }))
+  }, [planConfig, values.trafficTier])
 
   function update<K extends keyof UserFormValues>(key: K, value: UserFormValues[K]) {
     setValues(current => ({ ...current, [key]: value }))
@@ -175,66 +108,33 @@ export function UserFormDialog({
 
   function validateStep(index: number) {
     const nextErrors: Partial<Record<keyof UserFormValues, string>> = {}
-    if (index === 0 && !values.userId?.trim()) nextErrors.userId = "请填写用户 ID"
-    if (index === 1) {
-      if (!values.purchasedAt) nextErrors.purchasedAt = "请选择购买日期"
-      if (values.duration === "custom" && !values.expiresAt) nextErrors.expiresAt = "请选择到期日"
-      if (price === undefined && values.actualPaid === undefined) nextErrors.actualPaid = "请填写本次消费金额"
+    if (index === 0) {
+      if (!values.userId?.trim()) nextErrors.userId = "请填写用户 ID"
+      if (!user && !/^\S+@\S+\.\S+$/.test(values.email || "")) nextErrors.email = "请填写有效邮箱，用于创建 3x-ui 客户端"
     }
-    if (index === 2 && values.lineType !== "self_hosted" && !values.subscriptionId) nextErrors.subscriptionId = "请选择订阅池"
+    if (index === 1) {
+      if (!values.optionId) nextErrors.optionId = "请选择 V2 商品规格"
+      if (!values.purchasedAt) nextErrors.purchasedAt = "请选择购买日期"
+      if (values.actualPaid !== undefined && (!Number.isFinite(values.actualPaid) || values.actualPaid < 0)) nextErrors.actualPaid = "请填写正确的消费金额"
+    }
     setErrors(current => ({ ...current, ...nextErrors }))
     return Object.keys(nextErrors).length === 0
   }
 
-  async function nextStep() {
-    if (!validateStep(stepIndex)) return
-    if (stepIndex === 1 && values.lineType === "self_hosted" && !/^\S+@\S+\.\S+$/.test(values.email || "")) {
-      setErrors(current => ({ ...current, email: "自研线路需要有效邮箱，用于创建 3x-ui 客户端" }))
-      setStepIndex(0)
-      return
-    }
-    if (stepIndex === 0) {
-      setStepIndex(1)
-      return
-    }
-    if (values.lineType === "self_hosted") {
-      setValues(current => ({ ...current, actualPaid: current.actualPaid ?? price, subscriptionId: "" }))
-      setRecommendationMessage(`${String(values.activeGroup || "").toUpperCase()} 套餐会按入站管理中的分组自动筛选可用节点。`)
-      setStepIndex(2)
-      return
-    }
-    setRecommending(true)
-    setRecommendationMessage("")
-    try {
-      const recommendation = await postJson<Recommendation>("/api/subscriptions/recommend", {
-        purchasedAt: values.purchasedAt,
-        duration: values.duration,
-        expiresAt: values.duration === "custom" ? values.expiresAt : undefined,
-        ignoredUserId: user?.id,
-        group: user?.isSuperAccount ? "" : values.activeGroup,
-      })
-      setValues(current => ({
-        ...current,
-        actualPaid: current.actualPaid ?? price,
-        expiresAt: toInputDate(recommendation.expiresAt),
-        subscriptionId: recommendation.subscription?.id || current.subscriptionId,
-      }))
-      setRecommendationMessage(recommendation.subscription ? "已根据到期日推荐订阅池，可手动更换。" : recommendation.reason || "暂无推荐订阅池，请手动选择。")
-      setStepIndex(2)
-    } catch (error) {
-      setRecommendationMessage(error instanceof Error ? error.message : "推荐失败，请手动选择订阅池。")
-      setStepIndex(2)
-    } finally {
-      setRecommending(false)
-    }
+  function nextStep() {
+    if (validateStep(stepIndex)) setStepIndex(current => current + 1)
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!validateStep(2)) return
+    if (!lastStep) {
+      nextStep()
+      return
+    }
+    if (!validateStep(stepIndex)) return
     setSubmitting(true)
     try {
-      await onSubmit({ ...values, allowDisabled: allowDisabledPool, allowFull: allowFullPool, actualPaid: values.actualPaid ?? price })
+      await onSubmit(user ? values : { ...values, trafficTier: String(trafficTier), actualPaid: values.actualPaid ?? price })
       onOpenChange(false)
     } finally {
       setSubmitting(false)
@@ -246,94 +146,44 @@ export function UserFormDialog({
       <DialogContent className="flex min-w-0 max-h-[calc(100vh-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="shrink-0 bg-card px-6 pt-6 text-left text-card-foreground">
           <DialogTitle>{user ? "编辑用户" : "新增用户"}</DialogTitle>
-          <DialogDescription className="sr-only">填写用户购买信息</DialogDescription>
-          <FieldGroup className="gap-2 pt-2">
-            <FieldDescription>步骤 {stepIndex + 1} / {steps.length} · {steps[stepIndex]}</FieldDescription>
-            <Progress value={((stepIndex + 1) / steps.length) * 100} />
-          </FieldGroup>
+          <DialogDescription className={steps.length > 1 ? "sr-only" : undefined}>{user ? "修改用户的基本信息；套餐请在用户详情中通过更改套餐调整。" : "创建自研线路用户并绑定 V2 商品规格"}</DialogDescription>
+          {steps.length > 1 ? (
+            <FieldGroup className="gap-2 pt-2">
+              <FieldDescription>步骤 {stepIndex + 1} / {steps.length} · {steps[stepIndex]}</FieldDescription>
+              <Progress value={((stepIndex + 1) / steps.length) * 100} />
+            </FieldGroup>
+          ) : null}
         </DialogHeader>
 
         <form className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden" onSubmit={submit} noValidate>
           <FieldGroup className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pb-6">
             {stepIndex === 0 ? (
-              <>
-                <FieldGroup className="grid-cols-1 sm:grid-cols-2">
-                  <Field><FieldLabel htmlFor="userId">用户 ID</FieldLabel><Input id="userId" required aria-invalid={Boolean(errors.userId)} value={values.userId || ""} onChange={event => update("userId", event.target.value)} /><FieldError>{errors.userId}</FieldError></Field>
-                  <Field><FieldLabel htmlFor="wechatName">微信名</FieldLabel><Input id="wechatName" value={values.wechatName || ""} onChange={event => update("wechatName", event.target.value)} /></Field>
-                  <Field><FieldLabel htmlFor="email">邮箱</FieldLabel><Input id="email" type="email" value={values.email || ""} onChange={event => update("email", event.target.value)} /></Field>
-                  <Field><FieldLabel htmlFor="imessage">iMessage</FieldLabel><Input id="imessage" value={values.imessage || ""} onChange={event => update("imessage", event.target.value)} /></Field>
-                </FieldGroup>
-              </>
-            ) : stepIndex === 1 ? (
-              <>
-                <FieldGroup className="grid-cols-1 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel>线路类型</FieldLabel>
-                    <Tabs value={values.lineType} onValueChange={value => {
-                      const lineType = value as UserFormValues["lineType"]
-                      setValues(current => ({ ...current, lineType, subscriptionId: lineType === "self_hosted" ? "" : current.subscriptionId }))
-                    }}>
-                      <TabsList className="grid w-full grid-cols-2"><TabsTrigger value="upstream">订阅池</TabsTrigger><TabsTrigger value="self_hosted">自研线路</TabsTrigger></TabsList>
-                    </Tabs>
-                  </Field>
-                  <Field>
-                    <FieldLabel>套餐级别</FieldLabel>
-                    <Tabs value={values.activeGroup} onValueChange={value => update("activeGroup", value)}>
-                      <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3">
-                        {planOptions.map(plan => <TabsTrigger key={plan} value={plan}>{plan.toUpperCase()}</TabsTrigger>)}
-                      </TabsList>
-                    </Tabs>
-                  </Field>
-                  <Field>
-                    <FieldLabel>流量类型</FieldLabel>
-                    <Tabs value={values.unlimited ? "unlimited" : "limited"} onValueChange={value => update("unlimited", value === "unlimited")}>
-                      <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="limited">固定流量</TabsTrigger>
-                        <TabsTrigger value="unlimited">无限流量</TabsTrigger>
-                      </TabsList>
-                    </Tabs>
-                  </Field>
-                </FieldGroup>
-                <FieldGroup className="grid-cols-1 sm:grid-cols-2">
-                  <Field><FieldLabel htmlFor="purchasedAt">购买日期</FieldLabel><DatePicker id="purchasedAt" value={values.purchasedAt} onChange={value => update("purchasedAt", value)} /><FieldError>{errors.purchasedAt}</FieldError></Field>
-                  <Field><FieldLabel htmlFor="expiresAt">到期日</FieldLabel>{values.duration === "custom" ? <DatePicker id="expiresAt" value={values.expiresAt} onChange={value => update("expiresAt", value)} /> : <Input id="expiresAt" value={durationExpiryValue(values, values.duration || "")} readOnly />}<FieldError>{errors.expiresAt}</FieldError></Field>
-                </FieldGroup>
-                <Field>
-                  <FieldLabel>计费周期</FieldLabel>
-                  <RadioGroup value={values.duration} onValueChange={value => update("duration", value)} className="grid w-full grid-cols-1 sm:grid-cols-2" aria-label="计费周期">
-                    {durationOptions.map(duration => (
-                      <FieldLabel key={duration} htmlFor={`duration-${duration}`} className="w-full cursor-pointer">
-                        <Field orientation="horizontal" className="h-full w-full rounded-md border p-4 has-[[data-state=checked]]:border-primary">
-                          <FieldContent className="flex-1">
-                            <FieldTitle>{durationLabels[duration]}</FieldTitle>
-                            <FieldDescription>{durationDescriptions[duration]} · {durationExpiryLabel(values, duration)}</FieldDescription>
-                          </FieldContent>
-                          <RadioGroupItem id={`duration-${duration}`} value={duration} />
-                        </Field>
-                      </FieldLabel>
-                    ))}
-                  </RadioGroup>
-                </Field>
-        <Field><FieldLabel htmlFor="actualPaid">{user ? "累计消费金额" : "本次消费金额"}</FieldLabel><Input id="actualPaid" type="number" min="0" step="0.01" value={values.actualPaid ?? price ?? ""} aria-invalid={Boolean(errors.actualPaid)} onChange={event => update("actualPaid", event.target.value === "" ? undefined : Number(event.target.value))} />{price === undefined ? <FieldDescription>自定义和永久周期请手动填写金额。</FieldDescription> : null}<FieldError>{errors.actualPaid}</FieldError></Field>
-              </>
+              <FieldGroup className="grid-cols-1 sm:grid-cols-2">
+                <Field data-invalid={Boolean(errors.userId) || undefined}><FieldLabel htmlFor="userId">用户 ID</FieldLabel><Input id="userId" required aria-invalid={Boolean(errors.userId)} value={values.userId || ""} onChange={event => update("userId", event.target.value)} /><FieldError>{errors.userId}</FieldError></Field>
+                <Field><FieldLabel htmlFor="wechatName">微信名</FieldLabel><Input id="wechatName" value={values.wechatName || ""} onChange={event => update("wechatName", event.target.value)} /></Field>
+                <Field data-invalid={Boolean(errors.email) || undefined}><FieldLabel htmlFor="email">邮箱</FieldLabel><Input id="email" type="email" required={!user} aria-invalid={Boolean(errors.email)} value={values.email || ""} onChange={event => update("email", event.target.value)} /><FieldError>{errors.email}</FieldError></Field>
+                <Field><FieldLabel htmlFor="imessage">iMessage</FieldLabel><Input id="imessage" value={values.imessage || ""} onChange={event => update("imessage", event.target.value)} /></Field>
+              </FieldGroup>
             ) : (
               <>
-                {values.lineType === "self_hosted" ? (
-                  <Field><FieldLabel>自研线路</FieldLabel><FieldDescription>{recommendationMessage}</FieldDescription></Field>
-                ) : <SubscriptionPoolSelect
-                  id="subscriptionId"
-                  label="订阅池 URL"
-                  subscriptions={subscriptions}
-                  value={values.subscriptionId || ""}
-                  onValueChange={value => update("subscriptionId", value)}
-                  allowDisabled={allowDisabledPool}
-                  onAllowDisabledChange={setAllowDisabledPool}
-                  allowFull={allowFullPool}
-                  onAllowFullChange={setAllowFullPool}
-                  group={user?.isSuperAccount ? undefined : values.activeGroup}
-                  description={recommendationMessage}
-                  error={errors.subscriptionId}
-                />}
+                <CatalogPlanFields
+                  idPrefix="user-plan"
+                  label="V2 商品规格"
+                  placeholder={products === null ? "正在加载商品规格..." : planOptions.length ? "请选择商品规格" : "没有可用的商品规格"}
+                  options={planOptions}
+                  value={values.optionId || ""}
+                  onValueChange={value => update("optionId", value)}
+                  trafficTier={values.trafficTier || "1"}
+                  onTrafficTierChange={value => update("trafficTier", value)}
+                  disabled={submitting}
+                  description="包含未上架商品；用户会使用该商品的线路权限组，按自研线路创建 3x-ui 客户端。"
+                  error={errors.optionId}
+                />
+                <FieldGroup className="grid-cols-1 sm:grid-cols-2">
+                  <Field data-invalid={Boolean(errors.purchasedAt) || undefined}><FieldLabel htmlFor="purchasedAt">购买日期</FieldLabel><DatePicker id="purchasedAt" value={values.purchasedAt} onChange={value => update("purchasedAt", value)} /><FieldError>{errors.purchasedAt}</FieldError></Field>
+                  <Field><FieldLabel htmlFor="expiresAt">到期日</FieldLabel><Input id="expiresAt" value={expiresAt} placeholder="选择商品规格后自动计算" readOnly /></Field>
+                </FieldGroup>
+                <Field data-invalid={Boolean(errors.actualPaid) || undefined}><FieldLabel htmlFor="actualPaid">本次消费金额</FieldLabel><Input id="actualPaid" type="number" min="0" step="0.01" value={values.actualPaid ?? price ?? ""} aria-invalid={Boolean(errors.actualPaid)} onChange={event => update("actualPaid", event.target.value === "" ? undefined : Number(event.target.value))} /><FieldDescription>默认按商品规格和流量档位的售价填写，可按实际收款修改。</FieldDescription><FieldError>{errors.actualPaid}</FieldError></Field>
               </>
             )}
           </FieldGroup>
@@ -342,7 +192,8 @@ export function UserFormDialog({
             <DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose>
             <div className="flex gap-2">
               {stepIndex > 0 ? <Button type="button" variant="outline" onClick={() => setStepIndex(current => current - 1)}>上一步</Button> : null}
-              {stepIndex < 2 ? <Button type="button" onClick={nextStep} disabled={recommending}>{recommending ? <Loader2 className="animate-spin" /> : null}{recommending ? "推荐中..." : "下一步"}</Button> : <Button type="submit" disabled={submitting || Boolean(user && !changed)}>{submitting ? <Loader2 className="animate-spin" /> : null}{submitting ? "保存中..." : user ? "保存修改" : "完成添加"}</Button>}
+              {/* Distinct keys: reusing one element would turn the clicked "下一步" into a submit button mid-click. */}
+              {!lastStep ? <Button key="next" type="button" onClick={nextStep}>下一步</Button> : <Button key="submit" type="submit" disabled={submitting || Boolean(user && !changed)}>{submitting ? <Loader2 className="animate-spin" /> : null}{submitting ? "保存中..." : user ? "保存修改" : "创建用户"}</Button>}
             </div>
           </DialogFooter>
         </form>

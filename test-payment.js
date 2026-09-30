@@ -133,7 +133,9 @@ async function main() {
 
   let app;
   let handler;
-  const catalogV2Ids = { group: `payment-v2-group-${Date.now()}`, product: `payment-v2-plan-${Date.now()}`, lifetime: `payment-v2-lifetime-${Date.now()}`, customNode: `payment-v2-node-${Date.now()}`, topUp: `payment-v2-topup-${Date.now()}` };
+  const catalogV2Ids = { group: `payment-v2-group-${Date.now()}`, product: `payment-v2-plan-${Date.now()}`, lifetime: `payment-v2-lifetime-${Date.now()}`, customNode: `payment-v2-node-${Date.now()}`, topUp: `payment-v2-topup-${Date.now()}`, flow: `payment-v2-flow-${Date.now()}`, flowBasic: `payment-v2-basic-${Date.now()}`, flowGroup: `payment-v2-flow-group-${Date.now()}` };
+  // Payment-flow checks buy this unlimited-stock 1 元 V2 plan (users are entitled only through V2 products).
+  const paymentOptionId = `v2:${catalogV2Ids.flow}:30d`;
   try {
     const gatewayPort = await listen(gateway);
     const xuiPort = await listen(xui);
@@ -244,7 +246,7 @@ async function main() {
       return { ...started, response: started.response.ok ? submitted.response : started.response };
     }
 
-    const unauthenticated = await request("/api/payments/quote", { method: "POST", body: { optionId: "pro-test-001" } });
+    const unauthenticated = await request("/api/payments/quote", { method: "POST", body: { optionId: paymentOptionId } });
     assert.strictEqual(unauthenticated.response.status, 401);
 
     const registration = await request("/api/auth/register", {
@@ -304,6 +306,8 @@ async function main() {
 
     const v2Group = await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys: ["local:1"] } });
     assert.strictEqual(v2Group.response.status, 201, v2Group.text);
+    const flowGroup = await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: catalogV2Ids.flowGroup, name: "Payment flow", isEnabled: true, sortOrder: 0, inboundKeys: ["local:1"] } });
+    assert.strictEqual(flowGroup.response.status, 201, flowGroup.text);
     const v2Product = await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: {
       id: catalogV2Ids.product, type: "recurring_plan", isEnabled: true, isForSale: true, stock: 2, sortOrder: 0,
       name: "Payment V2 plan", description: "V2 checkout", features: [], isRecommended: false, lineGroupId: catalogV2Ids.group,
@@ -317,6 +321,23 @@ async function main() {
       trafficBytes: 0, deviceLimit: 3, priceCents: 100
     } });
     assert.strictEqual(lifetimeProduct.response.status, 201, lifetimeProduct.text);
+    const flowProduct = await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: {
+      id: catalogV2Ids.flow, type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, sortOrder: 0,
+      name: "PRO", description: "Payment flow checks", features: [], isRecommended: false, lineGroupId: catalogV2Ids.flowGroup,
+      trafficCustomization: { enabled: false, stepBytes: null, stepPriceCents: null, maxSteps: 10 },
+      periods: [{ id: "30d", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3, priceCents: 100, isEnabled: true, sortOrder: 0 }]
+    } });
+    assert.strictEqual(flowProduct.response.status, 201, flowProduct.text);
+    const flowBasicProduct = await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: {
+      id: catalogV2Ids.flowBasic, type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, sortOrder: 0,
+      name: "BASIC", description: "Plan replacement checks", features: [], isRecommended: false, lineGroupId: catalogV2Ids.flowGroup,
+      trafficCustomization: { enabled: false, stepBytes: null, stepPriceCents: null, maxSteps: 10 },
+      periods: [
+        { id: "30d", durationDays: 30, trafficBytes: 50 * 1024 ** 3, deviceLimit: 2, priceCents: 100, isEnabled: true, sortOrder: 0 },
+        { id: "90d", durationDays: 90, trafficBytes: 50 * 1024 ** 3, deviceLimit: 2, priceCents: 200, isEnabled: true, sortOrder: 1 }
+      ]
+    } });
+    assert.strictEqual(flowBasicProduct.response.status, 201, flowBasicProduct.text);
     const publicV2 = await request("/api/public/catalog-v2");
     assert.ok(publicV2.data.some(item => item.id === catalogV2Ids.product));
     const v2Quote = await request("/api/orders/quote", { method: "POST", cookie, body: { optionId: `v2:${catalogV2Ids.product}:30d`, useBalance: false } });
@@ -329,17 +350,17 @@ async function main() {
     assert.strictEqual((await database.query("SELECT status FROM catalog_v2_inventory_reservations WHERE order_id=$1", [v2Order.data.id])).rows[0].status, "released");
     xuiRequests.length = 0;
 
-    const quote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001" } });
+    const quote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: paymentOptionId } });
     assert.strictEqual(quote.response.status, 200);
     assert.strictEqual(quote.data.amount, 1.03);
-    const discountedQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001", couponCode: "save20" } });
+    const discountedQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: paymentOptionId, couponCode: "save20" } });
     assert.strictEqual(discountedQuote.data.amount, 0.82);
-    const expiredQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001", couponCode: "expired" } });
+    const expiredQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: paymentOptionId, couponCode: "expired" } });
     assert.strictEqual(expiredQuote.response.status, 400);
 
     for (const body of [
       { optionId: "missing", channelCode: "100" },
-      { optionId: "pro-test-001", channelCode: "100", couponCode: "INVALID" }
+      { optionId: paymentOptionId, channelCode: "100", couponCode: "INVALID" }
     ]) {
       const invalid = await purchase({ method: "POST", cookie, body });
       assert.strictEqual(invalid.response.status, 400);
@@ -350,7 +371,7 @@ async function main() {
         method: "POST",
         cookie,
         body: {
-          optionId: "pro-test-001",
+          optionId: paymentOptionId,
           channelCode: "100",
           confirmReplacement: true,
           returnUrl: `${origin}/account/payment/result`,
@@ -360,7 +381,7 @@ async function main() {
     }
 
     const callsBeforeSubmission = gatewayRequests.length;
-    const submittedOnly = await request("/api/orders", { method: "POST", cookie, body: { optionId: "pro-test-001", useBalance: false } });
+    const submittedOnly = await request("/api/orders", { method: "POST", cookie, body: { optionId: paymentOptionId, useBalance: false } });
     assert.strictEqual(submittedOnly.response.status, 201);
     assert.strictEqual(submittedOnly.data.status, "pending");
     assert.strictEqual(gatewayRequests.length, callsBeforeSubmission);
@@ -486,7 +507,7 @@ async function main() {
     const createdUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
     assert.strictEqual(createdUser.userId, "buyer@example.test");
     assert.strictEqual(createdUser.email, "buyer@example.test");
-    assert.deepStrictEqual([createdUser.currentProductId, createdUser.currentOptionId, createdUser.currentProductOrderId], ["pro", "pro-test-001", paidOrder.data.id]);
+    assert.deepStrictEqual([createdUser.currentProductId, createdUser.currentOptionId, createdUser.currentProductOrderId], [catalogV2Ids.flow, paymentOptionId, paidOrder.data.id]);
     assert.deepStrictEqual([xuiClients.get("buyer@example.test").flow, xuiClients.get("buyer@example.test").totalGB], ["xtls-rprx-vision", 0], "the panel quota stays unlimited; the app enforces the plan quota");
     const adminBills = await request("/api/bills", { cookie: adminCookie });
     const initialBill = adminBills.data.find(item => item.paymentOrderId === paidOrder.data.id);
@@ -533,15 +554,15 @@ async function main() {
     xuiRequests.length = 0;
     const reenabledUser = await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: false } });
     assert.strictEqual(reenabledUser.response.status, 200);
-    assert.strictEqual(xuiRequests.find(entry => entry.url === "/panel/api/clients/update/buyer%40example.test")?.body.group, "pro");
+    assert.strictEqual(xuiRequests.find(entry => entry.url === "/panel/api/clients/update/buyer%40example.test")?.body.group, catalogV2Ids.flowGroup);
     assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/groups/bulkAdd"));
     const customInboundOptions = await request(`/api/users/${managedUser.id}/custom-inbounds`, { cookie: adminCookie });
     assert.strictEqual(customInboundOptions.response.status, 200);
-    assert.deepStrictEqual(customInboundOptions.data.inheritedInboundIds, [], "users without a V2 line group inherit no inbounds");
+    assert.deepStrictEqual(customInboundOptions.data.inheritedInboundIds, [1], "users inherit their V2 line group inbounds");
     const customInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2] } });
     assert.strictEqual(customInboundUpdate.response.status, 200);
     assert.deepStrictEqual(customInboundUpdate.data.xuiExtraInboundIds, [2]);
-    assert.deepStrictEqual(customInboundUpdate.data.xuiInboundIds, [2]);
+    assert.deepStrictEqual(customInboundUpdate.data.xuiInboundIds, [1, 2]);
     xuiRequests.length = 0;
     const unchangedCustomInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2] } });
     assert.strictEqual(unchangedCustomInboundUpdate.response.status, 200);
@@ -592,40 +613,46 @@ async function main() {
     assert.strictEqual(unknownCallback.response.status, 200);
     assert.strictEqual(unknownCallback.text, "success");
 
-    const extensionQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-90" } });
+    const extensionQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: paymentOptionId } });
     assert.strictEqual(extensionQuote.data.purchaseAction, "replace");
     assert.strictEqual(extensionQuote.data.cashCredit, 0);
-    const unconfirmedReplacement = await purchase({ method: "POST", cookie, body: { optionId: "pro-90", channelCode: "100" } });
+    const unconfirmedReplacement = await purchase({ method: "POST", cookie, body: { optionId: paymentOptionId, channelCode: "100" } });
     assert.strictEqual(unconfirmedReplacement.response.status, 400);
     assert.match(unconfirmedReplacement.data.error, /确认新套餐/);
 
-    const replacementQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "basic-30" } });
+    const basicOptionId = `v2:${catalogV2Ids.flowBasic}:30d`;
+    const replacementQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: basicOptionId } });
     assert.strictEqual(replacementQuote.data.purchaseAction, "replace");
     assert.strictEqual(replacementQuote.data.cashCredit, 0);
-    const replacementOrder = await createOrder({ optionId: "basic-30" });
+    const replacementOrder = await createOrder({ optionId: basicOptionId });
     assert.strictEqual(replacementOrder.response.status, 201);
     assert.strictEqual(replacementOrder.data.purchaseCountBefore, 2);
     await callback(replacementOrder.data, 1, String(replacementOrder.data.amount), true);
     const replacedUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
-    assert.strictEqual(replacedUser.activeGroup, "basic");
+    assert.deepStrictEqual([replacedUser.v2ProductId, replacedUser.v2LineGroupId, replacedUser.v2ProductSnapshot.trafficBytes], [catalogV2Ids.flowBasic, catalogV2Ids.flowGroup, 50 * 1024 ** 3]);
     assert.deepStrictEqual(replacedUser.xuiExtraInboundIds, [2], "custom inbound grants must survive plan replacement");
-    assert.deepStrictEqual(replacedUser.xuiInboundIds, [2], "a V1 plan grants no inbounds; custom grants remain");
-    assert.deepStrictEqual([replacedUser.currentProductId, replacedUser.currentOptionId, replacedUser.currentProductOrderId], ["basic", "basic-30", replacementOrder.data.id]);
+    assert.deepStrictEqual(replacedUser.xuiInboundIds, [1, 2], "the line group inbounds plus custom grants");
+    assert.deepStrictEqual([replacedUser.currentProductId, replacedUser.currentOptionId, replacedUser.currentProductOrderId], [catalogV2Ids.flowBasic, basicOptionId, replacementOrder.data.id]);
     assert.strictEqual(replacedUser.unlimited, false);
     assert.strictEqual(replacedUser.cashValue, replacementOrder.data.amount, "replacement cash value must only include the new payment");
     assert.ok(new Date(replacedUser.expiresAt).getTime() < Date.now() + 31 * 86400000, "replacement must restart, not extend, the term");
 
-    const sameTierQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "basic-90" } });
+    const sameTierQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: `v2:${catalogV2Ids.flowBasic}:90d` } });
     assert.strictEqual(sameTierQuote.data.purchaseAction, "replace");
-    const unlimitedQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "basic-unlimited-90" } });
-    assert.strictEqual(unlimitedQuote.response.status, 400);
-    assert.match(unlimitedQuote.data.error, /Unsupported pricing option/);
+    // Legacy (v1) plan specs are no longer sold.
+    for (const legacyOptionId of ["basic-30", "pro-lifetime"]) {
+      const legacyQuote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: legacyOptionId } });
+      assert.strictEqual(legacyQuote.response.status, 400);
+      assert.match(legacyQuote.data.error, /旧版套餐规格已下架/);
+      const legacyPurchase = await purchase({ method: "POST", cookie, body: { optionId: legacyOptionId, channelCode: "100", confirmReplacement: true } });
+      assert.strictEqual(legacyPurchase.response.status, 400);
+    }
 
     const couponOrder = await createOrder({ couponCode: "SAVE20" });
     if (couponOrder.data.status === "pending") await callback(couponOrder.data, 1, String(couponOrder.data.amount), true);
     const couponSettings = await request("/api/sales-settings", { cookie: adminCookie });
     assert.strictEqual(couponSettings.data.coupons.find(item => item.code === "SAVE20").usedCount, 1);
-    const exhaustedCoupon = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: "pro-test-001", couponCode: "SAVE20" } });
+    const exhaustedCoupon = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: paymentOptionId, couponCode: "SAVE20" } });
     assert.strictEqual(exhaustedCoupon.response.status, 400);
 
     const manualRegistration = await request("/api/auth/register", {
@@ -635,9 +662,9 @@ async function main() {
     assert.strictEqual(manualRegistration.response.status, 201);
     const manualUsers = await request("/api/users", { cookie: adminCookie });
     const manualAccount = manualUsers.data.find(item => item.email === "manual@example.test");
-    const manualQuote = await request("/api/admin/manual-payments/quote", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: "pro-test-001" } });
+    const manualQuote = await request("/api/admin/manual-payments/quote", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: paymentOptionId } });
     assert.strictEqual(manualQuote.response.status, 200);
-    const manualOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: "pro-test-001", amount: 2.34 } });
+    const manualOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: paymentOptionId, amount: 2.34 } });
     assert.strictEqual(manualOrder.response.status, 201);
     assert.strictEqual(manualOrder.data.channelCode, "manual");
     assert.strictEqual(manualOrder.data.amount, 2.34);
@@ -649,7 +676,7 @@ async function main() {
     const manualPurchasedUser = manualPurchasedUsers.data.find(item => item.email === "manual@example.test");
     assert.ok(!manualPurchasedUser.registeredOnly);
     assert.strictEqual(manualPurchasedUser.vipSpend, 2.34);
-    const manualRenewal = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: "pro-test-001", amount: 3.21 } });
+    const manualRenewal = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: manualAccount.accountId, optionId: paymentOptionId, amount: 3.21 } });
     assert.strictEqual(manualRenewal.response.status, 201);
     assert.strictEqual(manualRenewal.data.purchaseAction, "replace");
     const manualRenewedUsers = await request("/api/users", { cookie: adminCookie });
@@ -669,7 +696,7 @@ async function main() {
     const inviteeOrder = await purchase({
       method: "POST",
       cookie: inviteeCookie,
-      body: { optionId: "pro-test-001", channelCode: "100", confirmReplacement: true }
+      body: { optionId: paymentOptionId, channelCode: "100", confirmReplacement: true }
     });
     await callback(inviteeOrder.data, 1, String(inviteeOrder.data.amount), true);
 
@@ -690,7 +717,7 @@ async function main() {
     const inviterOrder = await purchase({
       method: "POST",
       cookie: inviterCookie,
-      body: { optionId: "pro-test-001", channelCode: "100" }
+      body: { optionId: paymentOptionId, channelCode: "100" }
     });
     assert.strictEqual(inviterOrder.data.walletCashAmount, 0);
     assert.strictEqual(inviterOrder.data.walletReferralAmount, 0.1);
@@ -735,7 +762,7 @@ async function main() {
     assert.strictEqual((await request(`/api/payments/orders/${rechargeOrder.data.id}`, { cookie: inviteeCookie })).data.fulfillmentStatus, "fulfilled");
 
     // Legacy (pre checkout v2) pending orders are closed on startup and can never collect.
-    const legacyOrder = await request("/api/orders", { method: "POST", cookie: inviteeCookie, body: { optionId: "pro-test-001", confirmReplacement: true } });
+    const legacyOrder = await request("/api/orders", { method: "POST", cookie: inviteeCookie, body: { optionId: paymentOptionId, confirmReplacement: true } });
     assert.strictEqual(legacyOrder.response.status, 201);
     assert.ok((await request("/api/account/wallet", { cookie: inviteeCookie })).data.heldBalance > 0);
     await database.query("UPDATE app_records SET data = data - 'checkoutVersion' WHERE collection = 'paymentOrders' AND id = $1", [legacyOrder.data.id]);
@@ -757,7 +784,7 @@ async function main() {
     const walletOrder = await purchase({
       method: "POST",
       cookie: inviteeCookie,
-      body: { optionId: "pro-test-001", channelCode: "100", confirmReplacement: true }
+      body: { optionId: paymentOptionId, channelCode: "100", confirmReplacement: true }
     });
     assert.strictEqual(walletOrder.data.status, "paid");
     assert.deepStrictEqual(
@@ -846,14 +873,14 @@ async function main() {
     assert.strictEqual(reversalEntries.rows[0].count, 5, "four orders plus the settled referral must each be reversed once");
 
     await request(`/api/subscriptions/${subscription.id}`, { method: "PUT", cookie: adminCookie, body: { enabled: false } });
-    const noPoolOrder = await createOrder({ optionId: "basic-360" });
+    const noPoolOrder = await createOrder({ optionId: `v2:${catalogV2Ids.flowBasic}:90d` });
     assert.strictEqual(noPoolOrder.response.status, 201);
     await callback(noPoolOrder.data, 1, String(noPoolOrder.data.amount), true);
     status = await request(`/api/payments/orders/${noPoolOrder.data.id}`, { cookie });
     assert.strictEqual(status.data.fulfillmentStatus, "fulfilled");
     assert.strictEqual(status.data.fulfillmentError, "");
 
-    const visiblePendingOrder = await createOrder({ optionId: "ultra-360", useBalance: false });
+    const visiblePendingOrder = await createOrder({ optionId: paymentOptionId, useBalance: false });
     assert.strictEqual(visiblePendingOrder.response.status, 201);
     assert.strictEqual(visiblePendingOrder.data.status, "pending");
     const adminOrders = await request("/api/admin/orders", { cookie: adminCookie });
@@ -893,7 +920,7 @@ async function main() {
     const isolatedCookie = isolatedUser.response.headers.get("set-cookie").split(";", 1)[0];
     const priorCalls = gatewayRequests.length;
     await database.query("INSERT INTO app_records(collection,id,data) VALUES('paymentSettings','disabled',$1::jsonb)", [JSON.stringify({ id: "disabled", enabled: false, name: "Disabled gateway", provider: "legacy" })]);
-    const offlineOrder = await request("/api/orders", { method: "POST", cookie: isolatedCookie, body: { optionId: "pro-test-001", useBalance: false } });
+    const offlineOrder = await request("/api/orders", { method: "POST", cookie: isolatedCookie, body: { optionId: paymentOptionId, useBalance: false } });
     assert.strictEqual(offlineOrder.response.status, 201);
     assert.strictEqual(offlineOrder.data.status, "pending");
     const platforms = await request("/api/payments/platforms", { cookie: isolatedCookie });
@@ -918,14 +945,14 @@ async function main() {
     assert.strictEqual(offlineBills.rows[0].n, 1);
     assert.strictEqual(gatewayRequests.length, priorCalls, "manual settlement never needs a provider");
 
-    const expireOrder = await request("/api/orders", { method: "POST", cookie: isolatedCookie, body: { optionId: "pro-test-001", useBalance: false, confirmReplacement: true } });
+    const expireOrder = await request("/api/orders", { method: "POST", cookie: isolatedCookie, body: { optionId: paymentOptionId, useBalance: false, confirmReplacement: true } });
     await database.query("UPDATE app_records SET data=jsonb_set(data,'{createdAt}',to_jsonb($2::text)) WHERE collection='paymentOrders' AND id=$1", [expireOrder.data.id, new Date(Date.now() - 86400000).toISOString()]);
     const expiredManual = await request(`/api/admin/orders/${expireOrder.data.id}/mark-paid`, { method: "POST", cookie: adminCookie });
     assert.strictEqual(expiredManual.response.status, 400);
     assert.strictEqual((await request(`/api/orders/${expireOrder.data.id}`, { cookie: isolatedCookie })).data.status, "closed");
     await database.query("DELETE FROM app_records WHERE collection='paymentSettings'");
 
-    const racingOrder = await purchase({ method: "POST", cookie: isolatedCookie, body: { optionId: "pro-test-001", useBalance: false, confirmReplacement: true } });
+    const racingOrder = await purchase({ method: "POST", cookie: isolatedCookie, body: { optionId: paymentOptionId, useBalance: false, confirmReplacement: true } });
     assert.strictEqual(racingOrder.response.status, 201);
     const race = await Promise.all([
       callback(racingOrder.data, 1, String(racingOrder.data.amount), true),
@@ -964,6 +991,29 @@ async function main() {
     assert.strictEqual(xuiClients.get("v2-sync@example.test").group, catalogV2Ids.group);
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientPresent, true);
     assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "3x-ui sync must not write panel state back to V2 catalog data");
+
+    // Admin-created users are bound to a V2 plan spec (unlisted allowed); legacy tier payloads are rejected.
+    const adminLegacyCreate = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "admin-legacy", email: "admin-legacy@example.test", lineType: "self_hosted", activeGroup: "pro", duration: "monthly", actualPaid: 10 } });
+    assert.strictEqual(adminLegacyCreate.response.status, 400);
+    assert.match(adminLegacyCreate.data.error, /V2 商品规格/);
+    const adminCreated = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "admin-v2", email: "admin-v2@example.test", lineType: "self_hosted", optionId: hiddenOptionId, trafficTier: 1, purchasedAt: "2026-01-01", actualPaid: 5 } });
+    assert.strictEqual(adminCreated.response.status, 201, adminCreated.text);
+    assert.deepStrictEqual(
+      [adminCreated.data.productCatalogVersion, adminCreated.data.v2ProductId, adminCreated.data.v2LineGroupId, adminCreated.data.currentProductSource, adminCreated.data.expiresAt, adminCreated.data.xuiTrafficLimitBytes, adminCreated.data.deviceLimit],
+      [2, catalogV2Ids.product, catalogV2Ids.group, "admin_create", "2026-01-31T00:00:00.000Z", 50 * 1024 ** 3, 2]
+    );
+    assert.deepStrictEqual(xuiClients.get("admin-v2@example.test").inboundIds, [1]);
+    const adminCreatedBill = await database.query("SELECT data FROM app_records WHERE collection='bills' AND data->>'userId'=$1", [adminCreated.data.id]);
+    assert.deepStrictEqual(adminCreatedBill.rows.map(row => [row.data.type, row.data.amount]), [["initial", 5]]);
+    const adminIdentityEdit = await request(`/api/users/${adminCreated.data.id}`, { method: "PUT", cookie: adminCookie, body: { wechatName: "renamed", duration: "yearly", expiresAt: "2030-01-01", activeGroup: "ultra" } });
+    assert.strictEqual(adminIdentityEdit.response.status, 200, adminIdentityEdit.text);
+    assert.deepStrictEqual([adminIdentityEdit.data.wechatName, adminIdentityEdit.data.expiresAt, adminIdentityEdit.data.currentProductSnapshot, adminIdentityEdit.data.v2ProductId], ["renamed", "2026-01-31T00:00:00.000Z", adminCreated.data.currentProductSnapshot, catalogV2Ids.product], "editing a user must not touch the plan binding");
+    const adminRenewal = await request(`/api/users/${adminCreated.data.id}/renew`, { method: "POST", cookie: adminCookie, body: { actualPaid: 1, duration: "monthly" } });
+    assert.strictEqual(adminRenewal.response.status, 400);
+    assert.match(adminRenewal.data.error, /已停用/);
+    // Remove it so later line-group assertions only see the V2 purchaser.
+    const adminCreatedDelete = await request(`/api/users/${adminCreated.data.id}`, { method: "DELETE", cookie: adminCookie });
+    assert.strictEqual(adminCreatedDelete.response.status, 200, adminCreatedDelete.text);
 
     // Add-on delivery: buyer input, delivery queue, custom-node inbound binding and expiry, card-key delivery.
     const v2Cookie = v2Registration.response.headers.get("set-cookie").split(";", 1)[0];
@@ -1222,7 +1272,7 @@ async function main() {
     assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "provisionXuiClient entry points must not take over an unlinked panel client either");
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test"), unlinkedPanelClient);
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, undefined);
-    const legacyUser = { id: "legacy-conflict", customerID: "900001", email: "legacy-owner@example.test", lineType: "self_hosted", group: "pro", activeGroup: "pro", expiresAt: "2099-01-01T00:00:00.000Z", xuiTrafficLimitBytes: 1024 ** 3 };
+    const legacyUser = { id: "legacy-conflict", customerID: "900001", email: "legacy-owner@example.test", lineType: "self_hosted", group: "pro", activeGroup: "pro", v2LineGroupId: "pro", v2ProductSnapshot: { trafficBytes: 1024 ** 3, deviceLimit: 0 }, expiresAt: "2099-01-01T00:00:00.000Z", xuiTrafficLimitBytes: 1024 ** 3 };
     const legacyClients = new Map([["nexora_900001@internal", { email: "nexora_900001@internal", inboundIds: [1] }]]);
     const legacyFind = async email => legacyClients.get(email) || null;
     await assert.rejects(handler.writeXuiClient(structuredClone(legacyUser), { findClient: legacyFind, allInboundIds: [1, 2], groupInboundIds: [1], dryRun: true }), error => error.code === "XUI_CLIENT_CONFLICT" && error.email === "nexora_900001@internal", "a legacy-email panel client must be reported, not adopted");
@@ -1246,7 +1296,7 @@ async function main() {
 
     // Legacy pool migration on subscription refresh follows the same rule: a same-email panel
     // client is reported, not adopted, and the next refresh after deleting it creates one.
-    const legacyPool = { id: "legacy-pool-user", userId: "legacy-pool@example.test", email: "legacy-pool@example.test", wechatName: "legacy", customerID: "900002", lineType: "upstream", subscriptionId: subscription.id, subscriptionToken: "legacy-pool-token", group: "pro", activeGroup: "pro", duration: "monthly", purchasedAt: new Date().toISOString(), expiresAt: "2099-01-01T00:00:00.000Z", createdAt: new Date().toISOString() };
+    const legacyPool = { id: "legacy-pool-user", userId: "legacy-pool@example.test", email: "legacy-pool@example.test", wechatName: "legacy", customerID: "900002", lineType: "upstream", subscriptionId: subscription.id, subscriptionToken: "legacy-pool-token", group: "pro", activeGroup: "pro", productCatalogVersion: 2, v2ProductId: catalogV2Ids.flow, v2LineGroupId: catalogV2Ids.flowGroup, v2ProductSnapshot: { productId: catalogV2Ids.flow, productType: "recurring_plan", periodId: "30d", lineGroupId: catalogV2Ids.flowGroup, name: "PRO", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3 }, duration: "monthly", purchasedAt: new Date().toISOString(), expiresAt: "2099-01-01T00:00:00.000Z", createdAt: new Date().toISOString() };
     await database.query("INSERT INTO app_records (collection, id, data) VALUES ('users', $1, $2::jsonb)", [legacyPool.id, JSON.stringify(legacyPool)]);
     xuiClients.set("legacy-pool@example.test", { email: "legacy-pool@example.test", subId: "panel-only-sub", limitIp: 9, inboundIds: [2], enable: true });
     const panelOnlyClient = structuredClone(xuiClients.get("legacy-pool@example.test"));

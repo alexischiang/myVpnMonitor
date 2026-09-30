@@ -2,6 +2,14 @@ const { spawnSync } = require("node:child_process");
 const { Client } = require("pg");
 const { loadLocalEnv } = require("../env");
 
+// npm is npm.cmd on Windows, which spawnSync cannot start without a shell, so run npm's own CLI
+// (npm_execpath, set by `npm run`) through the current node binary on every platform.
+function runNpmScript(script, env) {
+  const npmCli = process.env.npm_execpath;
+  if (!npmCli) throw new Error("Run this through `npm run verify:catalog-v2` so the npm CLI path is known.");
+  return spawnSync(process.execPath, [npmCli, "run", script], { cwd: process.cwd(), env, stdio: "inherit" });
+}
+
 async function main() {
   loadLocalEnv();
   const source = process.env.LOCAL_DATABASE_URL;
@@ -20,12 +28,10 @@ async function main() {
       LOCAL_DATABASE_URL: "",
       DATABASE_SSL: "false",
     };
-    const result = spawnSync("npm", ["run", "test:payment"], { cwd: process.cwd(), env: isolatedEnv, encoding: "utf8", stdio: "inherit" });
-    if (result.status !== 0) throw new Error(`Payment tests failed with exit code ${result.status}.`);
-    const wallet = spawnSync("npm", ["run", "test:wallet"], { cwd: process.cwd(), env: isolatedEnv, encoding: "utf8", stdio: "inherit" });
-    if (wallet.status !== 0) throw new Error(`Wallet tests failed with exit code ${wallet.status}.`);
-    const catalog = spawnSync("npm", ["run", "test:catalog-v2"], { cwd: process.cwd(), env: isolatedEnv, encoding: "utf8", stdio: "inherit" });
-    if (catalog.status !== 0) throw new Error(`Catalog V2 tests failed with exit code ${catalog.status}.`);
+    for (const [script, label] of [["test:payment", "Payment"], ["test:wallet", "Wallet"], ["test:catalog-v2", "Catalog V2"]]) {
+      const result = runNpmScript(script, isolatedEnv);
+      if (result.status !== 0) throw new Error(`${label} tests failed with exit code ${result.status}${result.error ? ` (${result.error.message})` : ""}.`);
+    }
   } finally {
     await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`);
     await client.end();

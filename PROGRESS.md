@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-09-30
-- Current Objective: 微信内置浏览器拦截页：移除地球图，仅 WORLD. 循环打字并每轮换色
+- Current Objective: 删除不可达的V1套餐订单代码；修复verify:catalog-v2在Windows上运行
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -364,8 +364,24 @@
 
 - 2026-09-30: 2026-09-30: npm run check、verify:harness、verify:fast、git diff --check 通过；浏览器采样确认 WORLD. 循环打字且每轮开始换色、卡片居中、控制台无错误
 
+- 2026-09-30: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 1440 与 375 浏览器验证无溢出、无 console/page errors
+
+- 2026-09-30: npm run check、verify:fast、verify:harness、git diff --check 通过；/account/wallet、/account/referrals、/account 在 1280 与 375 下浏览器验证，新标签页无 console errors
+
+- 2026-09-30: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 1440 与 375 浏览器验证（含模拟生效套餐），新标签页无 console errors
+
+- 2026-09-30: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 1440/1180/375 浏览器验证（含模拟生效与即将到期），新标签页无 console errors
+
+- 2026-09-30: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 1440/1180 浏览器验证，新标签页无 console errors
+
+- 2026-09-30: npm run check、verify:fast、verify:harness、git diff --check 通过；/account 1440/1180 浏览器验证，新标签页无 console errors
+
+- 2026-09-30: npm test、npm run check、verify:fast、git diff --check通过；隔离schema跑通test-checkout/test-payment/test-wallet/test-catalog-v2；浏览器验证/account、/users、用户详情、/delivery无控制台错误
+
+- 2026-09-30: npm test、npm run check、verify:fast、npm run verify:catalog-v2（PowerShell）、git diff --check通过；开发服务器重启后接口200
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `src/components/features/auth-pages.tsx`, `src/components/features/shared.tsx`, `src/main.tsx`, `src/styles.css`, `src/utils.ts`, `src/components/features/nexora-logo.tsx`, `src/components/features/open-in-browser.tsx`, `src/components/features/typing-text.tsx`
+- Files: `PROGRESS.md`, `feature_list.json`, `scripts/verify-catalog-v2.js`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/bento-button.tsx`, `src/components/features/bento-card.tsx`, `src/components/features/details.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/shared.tsx`, `src/components/features/user-form-dialog.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/styles.css`, `src/utils.ts`, `test-payment.js`, `test-vip.js`, `test.js`, `.claude/skills/`, `src/components/features/catalog-plan-fields.tsx`
 - Known risks: none
-- Recommended Next Step: 无；如需上线请合并到 production
+- Recommended Next Step: 无阻塞；如需彻底下线旧pricing套餐行和定价设置页需另行规划（历史账单标签仍依赖）

@@ -474,7 +474,7 @@ export function DeliveryPage() {
         <Card>
           <CardContent className="grid gap-4 md:grid-cols-3">
             <Metric label="到期时间" value={formatDate(data.expiresAt)} />
-            <Metric label="套餐等级" value={data.activeGroup || "-"} />
+            <Metric label="套餐等级" value={String(data.lineGroupId || "-").toUpperCase()} />
             <Metric label="VIP 等级" value={String(data.vipLevel || "-").toUpperCase()} />
           </CardContent>
         </Card>
