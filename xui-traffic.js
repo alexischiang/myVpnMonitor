@@ -58,6 +58,35 @@ function cycleStartMs(purchasedAtMs, nowMs, { intervalDays = RESET_INTERVAL_DAYS
   return start + steps * intervalDays * MS_PER_DAY;
 }
 
+// The cycle window sums whole China days from the cycle-start day, so on that day it
+// also holds traffic from BEFORE the cycle began (the old plan's usage on the purchase
+// day). A cycle baseline removes it: { fromDate, requestedAt, nodes } where `nodes` is the
+// per-node { up, down } already in the window when the cycle began.
+//
+// A new baseline starts with `nodes: null` and is settled by the first sampling round whose
+// counter reads started at or after `requestedAt`: everything that round sums is pre-cycle
+// or so close to the start that it is given to the customer, so the cycle starts at exactly
+// zero and never counts old traffic. Until settled the cycle reports no usage.
+//
+// `perNode` = { guid: { up, down } } window sums. Returns the usage to bill and the
+// baseline to keep (null when it belongs to another cycle and should be dropped).
+function applyCycleBaseline(perNode = {}, baseline = null, { fromDate = "", roundStartedAt = 0 } = {}) {
+  if (!baseline || !fromDate || baseline.fromDate !== fromDate) return { usage: perNode, baseline: null };
+  if (!baseline.nodes) {
+    if (!(Number(roundStartedAt) >= Date.parse(baseline.requestedAt))) return { usage: {}, baseline };
+    const nodes = Object.fromEntries(Object.entries(perNode).map(([guid, dir]) => [guid, { up: Number(dir?.up) || 0, down: Number(dir?.down) || 0 }]));
+    return { usage: {}, baseline: { ...baseline, nodes } };
+  }
+  const usage = {};
+  for (const [guid, dir] of Object.entries(perNode)) {
+    const base = baseline.nodes[guid] || {};
+    const up = Math.max(0, (Number(dir?.up) || 0) - (Number(base.up) || 0));
+    const down = Math.max(0, (Number(dir?.down) || 0) - (Number(base.down) || 0));
+    if (up || down) usage[guid] = { up, down };
+  }
+  return { usage, baseline };
+}
+
 // --- quota & weighting ----------------------------------------------------
 
 function xuiMultiplier(value) {
@@ -158,36 +187,42 @@ function deductRemotesFromLocalNode(directionalByUser = {}, localGuid) {
   return directionalByUser;
 }
 
-// Plan B — derive the local (panel) node's per-round usage in DELTA space.
+// Derive the local (panel) node's usage for ONE user in ONE sampling round.
 //
-// The panel has no independent per-user counter for its own node: it reports each
-// client's GLOBAL total (LA-own + Σremotes) under the local guid, mirrored on every
-// inbound. Subtracting remotes in ABSOLUTE space (deductRemotesFromLocalNode) yields a
-// residual that legitimately falls whenever the central-global read lags the live
-// per-remote reads — and feeding that bouncy residual to counterDelta makes every dip
-// look like a counter reset, re-counting the full value and ballooning the local node
-// (observed in prod: LA-BWH daily accrued ~20x its real usage).
+// The panel has no per-user counter for its own node: under the local guid it reports
+// the client's GLOBAL counter, which equals LA-own + Σ(current remote counters) and so
+// drops whenever a remote counter restarts or the panel briefly loses a remote's share.
+// The local node's growth is therefore taken in SIGNED terms:
+//   raw = carry + (global − globalCursor) − Σ(remote − remoteCursor)
+// where the remote term is signed too (a restarted remote and the matching global drop
+// cancel). A negative raw — global read lagging the remote reads, or a transient dip in
+// the global — is carried to later rounds instead of being clamped away, so it nets out
+// rather than re-counting a remote's whole counter on LA.
 //
-// Instead, given ONE sampling round's monotonic per-node delta map for ONE user
-// (local guid = Δglobal, each remote = its own Δ), set the local node's delta to
-// max(0, Δglobal − ΣΔremote). Both operands are monotonic counters, so their per-round
-// deltas are always well-defined; the read-lag now nets out across rounds instead of
-// exploding. Remotes pass through unchanged. Mutates and returns the { guid: { up, down } } map.
-function applyLocalNodeDelta(perNodeDelta = {}, localGuid) {
-  if (!localGuid || !perNodeDelta[localGuid]) return perNodeDelta;
-  let remoteUp = 0;
-  let remoteDown = 0;
-  for (const [guid, d] of Object.entries(perNodeDelta)) {
-    if (guid === localGuid) continue;
-    remoteUp += Math.max(0, Number(d?.up) || 0);
-    remoteDown += Math.max(0, Number(d?.down) || 0);
+// `held` = a remote node could not be read this round, so its growth is unknown while
+// the global already includes it: the global cursor stays put and only the readable
+// remotes' growth is carried, so the whole interval settles in the next complete round.
+// The same applies when the global is absent this round (`current` null).
+//
+// Inputs are { up, down }; `cursor` null = first observation (seed only). Returns the
+// usage to record, the new carry (≤ 0) and the global cursor to store (null = keep).
+function localNodeRound({ current = null, cursor = null, carry = null, remoteChange = null, held = false } = {}) {
+  const value = (source, key) => Number(source?.[key]) || 0;
+  const delta = { up: 0, down: 0 };
+  if (current && !cursor) return { delta, carry: { up: 0, down: 0 }, cursor: { up: value(current, "up"), down: value(current, "down") } };
+  const nextCarry = {};
+  for (const key of ["up", "down"]) {
+    const pending = value(carry, key) - value(remoteChange, key);
+    if (!current || held) {
+      nextCarry[key] = pending;
+      continue;
+    }
+    const raw = pending + value(current, key) - value(cursor, key);
+    delta[key] = Math.max(0, raw);
+    nextCarry[key] = Math.min(0, raw);
   }
-  const global = perNodeDelta[localGuid];
-  perNodeDelta[localGuid] = {
-    up: Math.max(0, (Number(global.up) || 0) - remoteUp),
-    down: Math.max(0, (Number(global.down) || 0) - remoteDown)
-  };
-  return perNodeDelta;
+  const advance = current && !held ? { up: value(current, "up"), down: value(current, "down") } : null;
+  return { delta, carry: nextCarry, cursor: advance };
 }
 
 // --- account overview -----------------------------------------------------
@@ -233,11 +268,12 @@ module.exports = {
   RESET_INTERVAL_DAYS,
   MS_PER_DAY,
   deductRemotesFromLocalNode,
-  applyLocalNodeDelta,
+  localNodeRound,
   counterDelta,
   directionalDelta,
   isPeriodicPlan,
   cycleStartMs,
+  applyCycleBaseline,
   xuiMultiplier,
   sumRawBytes,
   weightedBytes,

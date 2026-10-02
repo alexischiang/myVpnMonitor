@@ -975,9 +975,27 @@ async function main() {
     assert.strictEqual(publicHiddenQuote.response.status, 400);
     const adminHiddenQuote = await request("/api/admin/manual-payments/quote", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: hiddenOptionId } });
     assert.strictEqual(adminHiddenQuote.response.status, 200);
+    // Traffic the client used earlier on the purchase day (China date) belongs to the old plan.
+    const purchaseDayKey = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+    await database.query("DELETE FROM xui_daily_traffic WHERE email='v2-sync@example.test'");
+    await database.query("INSERT INTO xui_daily_traffic (date, email, node_guid, up_bytes, down_bytes) VALUES ($1, 'v2-sync@example.test', 'local', $2, $3)", [purchaseDayKey, 4 * 1024 ** 3, 1024 ** 3]);
     const v2ManualOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.product}:30d`, amount: 1 } });
     assert.deepStrictEqual([v2ManualOrder.response.status, v2ManualOrder.data.productSnapshot.catalogVersion, v2ManualOrder.data.fulfillmentStatus], [201, 2, "fulfilled"]);
     const v2User = (await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "v2-sync@example.test");
+    await handler.syncXuiPanel();
+    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.usedBytes, 0, "a new plan starts at zero even when the purchase day already had traffic");
+    await database.query("UPDATE xui_daily_traffic SET down_bytes = down_bytes + $1 WHERE date=$2 AND email='v2-sync@example.test' AND node_guid='local'", [2 * 1024 ** 3, purchaseDayKey]);
+    await handler.syncXuiPanel();
+    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.usedBytes, 2 * 1024 ** 3, "only traffic after the purchase counts against the new plan");
+    // The admin traffic reset must survive the next sync: usage restarts at zero and only later growth counts.
+    const trafficReset = await request(`/api/users/${v2User.id}/traffic-reset`, { method: "POST", cookie: adminCookie, body: {} });
+    assert.strictEqual(trafficReset.response.status, 200, trafficReset.text);
+    await handler.syncXuiPanel();
+    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.usedBytes, 0, "a manual traffic reset is not undone by the next sync");
+    await database.query("UPDATE xui_daily_traffic SET up_bytes = up_bytes + $1 WHERE date=$2 AND email='v2-sync@example.test' AND node_guid='local'", [1024 ** 3, purchaseDayKey]);
+    await handler.syncXuiPanel();
+    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.usedBytes, 1024 ** 3, "traffic after a manual reset counts");
+    await database.query("DELETE FROM xui_daily_traffic WHERE email='v2-sync@example.test'");
     assert.deepStrictEqual([v2User.productCatalogVersion, v2User.v2ProductId, v2User.v2LineGroupId], [2, catalogV2Ids.product, catalogV2Ids.group]);
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
     assert.strictEqual((await database.query("SELECT stock FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.product])).rows[0].stock, 1);

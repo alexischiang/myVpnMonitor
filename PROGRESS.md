@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-09-30
-- Current Objective: 删除不可达的V1套餐订单代码；修复verify:catalog-v2在Windows上运行
+- Last Updated: 2026-10-03
+- Current Objective: 修复新套餐流量从0开始、LA节点重复计流量、管理员重置流量按钮无效
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -380,8 +380,12 @@
 
 - 2026-09-30: npm test、npm run check、verify:fast、npm run verify:catalog-v2（PowerShell）、git diff --check通过；开发服务器重启后接口200
 
+- 2026-10-03: npm run verify exit 0；git diff --check 通过；修复前复现测试失败、修复后通过
+
+- 2026-10-03: npm run verify exit 0；git diff --check 通过；三个问题修复前复现测试均失败、修复后通过
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `scripts/verify-catalog-v2.js`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/bento-button.tsx`, `src/components/features/bento-card.tsx`, `src/components/features/details.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/shared.tsx`, `src/components/features/user-form-dialog.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/styles.css`, `src/utils.ts`, `test-payment.js`, `test-vip.js`, `test.js`, `.claude/skills/`, `src/components/features/catalog-plan-fields.tsx`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `test-payment.js`, `test-xui-traffic.js`, `xui-traffic.js`
 - Known risks: none
-- Recommended Next Step: 无阻塞；如需彻底下线旧pricing套餐行和定价设置页需另行规划（历史账单标签仍依赖）
+- Recommended Next Step: 等待用户确认后提交并部署；部署后客服可用重置流量按钮处理 doriswangqi@outlook.com；再决定是否做受影响客户批量修正迁移

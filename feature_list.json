@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-30",
+  "updated_at": "2026-10-03",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -2242,6 +2242,39 @@
       ],
       "verification": [
         "2026-09-30: npm test, npm run check, npm run verify:catalog-v2 (checkout, payment, wallet, catalog V2 on an isolated schema) and git diff --check passed; local DB migrationState shows user-product-binding-v5 completed 2026-08-22; the watched dev server restarted and /api/public/catalog-v2 and /api/public/pricing return 200. No dedicated test covers the new legacy-fulfillment error because legacy plan orders can no longer be created through the API."
+      ]
+    },
+    {
+      "id": "xui-cycle-traffic-from-zero",
+      "name": "New plan traffic starts at zero; local-node usage never re-counts remote traffic",
+      "description": "Two causes of phantom usage (prod case doriswangqi@outlook.com: 18.5 GB shown right after a renewal on 2026-10-02). (1) The cycle window summed whole China days from the cycle-start day, so traffic from earlier on the purchase day (and before a 30-day rollover instant) counted against the new cycle. Purchases and rollovers now open a cycle baseline (user.xuiTrafficCycleBaseline) that is settled by the first sampling round whose counter reads started after the purchase/rollover instant; cycle usage = window sums minus the baseline, so the new plan starts at exactly zero (traffic within at most one sampling round after purchase is given to the customer). (2) The local panel node (LA BWH) derived its usage as max(0, Δglobal − ΣΔremote) per round: a failed remote read, a transient dip of the panel's global counter, or global read lag moved remote traffic onto LA (prod: LA 15.2 GB in one day vs ~0.16 GB real lifetime). The sampler now uses xuiTraffic.localNodeRound: signed global and remote growth with a carried deficit stored on the local cursor (carry_up/carry_down), and the local node is held while any configured remote node is unreadable.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "A plan bought mid-day reports 0 used right after purchase even when that China day already had traffic; only later growth is billed.",
+        "A 30-day rollover excludes that day's traffic from before the rollover instant.",
+        "Failed remote reads, transient global-counter dips and global read lag no longer add phantom usage to the local node; real local usage and remote counter restarts are still counted correctly.",
+        "Unit and isolated payment, wallet and catalog V2 suites pass."
+      ],
+      "verification": [
+        "2026-10-03: reproduced first: test-xui-traffic multi-round sampler simulation failed on the old code (failed remote read put 5000 on LA; global dip put 9500 on LA, the remote's whole counter, matching prod; read lag put 30 on LA); test-payment e2e (real Postgres + mock 3x-ui, real purchase + syncXuiPanel) failed with the old server.js (5368709120 used right after purchase, expected 0). With the fix both pass. npm run verify (check, docs build, test, payment, wallet, catalog V2) exit 0 and git diff --check passed. One earlier verify run hit an intermittent xui-inbound-probe job status assertion; its cause (syncJobsPayload ordering) is fixed under xui-admin-traffic-reset-baseline. Not deployed; existing prod users keep their current window until their next purchase or rollover."
+      ]
+    },
+    {
+      "id": "xui-admin-traffic-reset-baseline",
+      "name": "Admin traffic reset restarts the current cycle at zero",
+      "description": "The admin 重置流量 button (POST /api/users/:id/traffic-reset) reset the 3x-ui panel counter and zeroed the cached display, but cycle usage is summed from xui_daily_traffic, so the next sync restored the old usage. The route now opens a cycle baseline as of the reset instant (same mechanism as xui-cycle-traffic-from-zero) and no longer calls panel resetTraffic (which would also skew the local-node derivation); a client disabled for quota is still re-enabled immediately. Removed the now-unused resetXuiClientTraffic and xuiResetReference. Also fixed syncJobsPayload reading the in-memory running flag after the history query, which could report a finished job with a stale running last run (made test-payment intermittently fail).",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["xui-cycle-traffic-from-zero"],
+      "done_criteria": [
+        "After an admin traffic reset the next sync reports 0 used, and only later traffic counts.",
+        "Plan quota, traffic packs and the next reset date are unchanged; the existing dialog text stays accurate.",
+        "Unit and isolated payment, wallet and catalog V2 suites pass."
+      ],
+      "verification": [
+        "2026-10-03: reproduced first: new test-payment e2e step (reset after 2 GiB of usage, then syncXuiPanel) failed on the old route with 2147483648 used, expected 0; passes after the fix, and 1 GiB of later traffic is counted. The probe-job assertion flake was traced to syncJobsPayload ordering (original suite 5/5, changed suite 4/5 before the fix, 6/6 after). npm run verify exit 0 and git diff --check passed. No frontend code changed. Not deployed."
       ]
     }
   ]
