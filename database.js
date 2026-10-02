@@ -2,7 +2,7 @@ const COLLECTIONS = ["subscriptions", "users", "accounts", "bills", "vendors", "
 const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
 const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
 const { appendXuiAuditLog, initXuiAudit, listXuiAuditLogs } = require("./xui-audit");
-const { directionalDelta, applyLocalNodeDelta } = require("./xui-traffic");
+const { directionalDelta, localNodeRound } = require("./xui-traffic");
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -167,7 +167,9 @@ class PostgresDataStore {
         last_down BIGINT NOT NULL DEFAULT 0,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (email, node_guid)
-      )
+      );
+      ALTER TABLE xui_traffic_cursor ADD COLUMN IF NOT EXISTS carry_up BIGINT NOT NULL DEFAULT 0;
+      ALTER TABLE xui_traffic_cursor ADD COLUMN IF NOT EXISTS carry_down BIGINT NOT NULL DEFAULT 0
       `), "xui daily traffic init");
       await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS xui_inbounds (
@@ -741,7 +743,11 @@ class PostgresDataStore {
   // serialize and can never double-count (the second writer sees the advanced
   // cursor and derives a zero/partial delta). First observation of a pair records
   // no delta — it only seeds the cursor.
-  async recordXuiTrafficSamples(dateKey, samples, localGuid = "") {
+  //
+  // The local guid's sample is the client's GLOBAL counter; its own usage comes from
+  // localNodeRound, whose signed carry lives on the local cursor row. `localHeld` = a
+  // remote node could not be read this round, so the local node waits for a complete round.
+  async recordXuiTrafficSamples(dateKey, samples, localGuid = "", { localHeld = false } = {}) {
     const clean = (Array.isArray(samples) ? samples : [])
       .filter(sample => sample && sample.email && sample.nodeGuid)
       .map(sample => ({
@@ -762,44 +768,72 @@ class PostgresDataStore {
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["xui_traffic_sync"]);
         const emails = [...new Set(clean.map(sample => sample.email))];
         const cursorResult = await client.query(
-          "SELECT email, node_guid, last_up, last_down FROM xui_traffic_cursor WHERE email = ANY($1::text[])",
+          "SELECT email, node_guid, last_up, last_down, carry_up, carry_down FROM xui_traffic_cursor WHERE email = ANY($1::text[])",
           [emails]
         );
         const cursorByKey = new Map(
-          cursorResult.rows.map(row => [`${row.email} ${row.node_guid}`, { up: Number(row.last_up), down: Number(row.last_down) }])
+          cursorResult.rows.map(row => [`${row.email} ${row.node_guid}`, {
+            up: Number(row.last_up),
+            down: Number(row.last_down),
+            carry: { up: Number(row.carry_up) || 0, down: Number(row.carry_down) || 0 }
+          }])
         );
         const delta = { emails: [], nodes: [], userIds: [], userLabels: [], planIds: [], nodeNames: [], ups: [], downs: [] };
-        const cursor = { emails: [], nodes: [], ups: [], downs: [] };
+        const cursor = { emails: [], nodes: [], ups: [], downs: [], carryUps: [], carryDowns: [] };
+        const addDelta = (sample, change) => {
+          if (!(change.up > 0 || change.down > 0)) return;
+          delta.emails.push(sample.email);
+          delta.nodes.push(sample.nodeGuid);
+          delta.userIds.push(sample.userId);
+          delta.userLabels.push(sample.userLabel);
+          delta.planIds.push(sample.planId);
+          delta.nodeNames.push(sample.nodeName);
+          delta.ups.push(change.up);
+          delta.downs.push(change.down);
+        };
+        const addCursor = (email, nodeGuid, value, carry = { up: 0, down: 0 }) => {
+          cursor.emails.push(email);
+          cursor.nodes.push(nodeGuid);
+          cursor.ups.push(value.up);
+          cursor.downs.push(value.down);
+          cursor.carryUps.push(carry.up);
+          cursor.carryDowns.push(carry.down);
+        };
         let seeded = 0;
-        const deltaByEmail = new Map();
-        const sampleByKey = new Map();
+        const localByEmail = new Map();
+        const remoteChangeByEmail = new Map();
         for (const sample of clean) {
           const stored = cursorByKey.get(`${sample.email} ${sample.nodeGuid}`) || null;
           if (!stored) seeded += 1;
-          const change = directionalDelta({ up: sample.up, down: sample.down }, stored);
-          const perNode = deltaByEmail.get(sample.email) || {};
-          perNode[sample.nodeGuid] = change;
-          deltaByEmail.set(sample.email, perNode);
-          sampleByKey.set(`${sample.email} ${sample.nodeGuid}`, sample);
-          cursor.emails.push(sample.email);
-          cursor.nodes.push(sample.nodeGuid);
-          cursor.ups.push(sample.up);
-          cursor.downs.push(sample.down);
+          if (localGuid && sample.nodeGuid === localGuid) {
+            localByEmail.set(sample.email, sample);
+            continue;
+          }
+          addDelta(sample, directionalDelta({ up: sample.up, down: sample.down }, stored));
+          addCursor(sample.email, sample.nodeGuid, sample);
+          // Signed growth for the local derivation: a restarted remote counter goes negative
+          // here and cancels the matching drop of the global counter.
+          if (stored) {
+            const change = remoteChangeByEmail.get(sample.email) || { up: 0, down: 0 };
+            change.up += sample.up - stored.up;
+            change.down += sample.down - stored.down;
+            remoteChangeByEmail.set(sample.email, change);
+          }
         }
-        for (const [email, perNode] of deltaByEmail) {
-          applyLocalNodeDelta(perNode, localGuid);
-          for (const [node, change] of Object.entries(perNode)) {
-            if (change.up > 0 || change.down > 0) {
-              const sample = sampleByKey.get(`${email} ${node}`) || {};
-              delta.emails.push(email);
-              delta.nodes.push(node);
-              delta.userIds.push(sample.userId || "");
-              delta.userLabels.push(sample.userLabel || "");
-              delta.planIds.push(sample.planId || "");
-              delta.nodeNames.push(sample.nodeName || "");
-              delta.ups.push(change.up);
-              delta.downs.push(change.down);
-            }
+        if (localGuid) {
+          for (const email of emails) {
+            const sample = localByEmail.get(email) || null;
+            const stored = cursorByKey.get(`${email} ${localGuid}`) || null;
+            if (!sample && !stored) continue;
+            const round = localNodeRound({
+              current: sample,
+              cursor: stored,
+              carry: stored?.carry,
+              remoteChange: remoteChangeByEmail.get(email),
+              held: localHeld
+            });
+            if (sample) addDelta(sample, round.delta);
+            addCursor(email, localGuid, round.cursor || stored, round.carry);
           }
         }
         if (delta.emails.length) {
@@ -820,12 +854,13 @@ class PostgresDataStore {
           );
         }
         await client.query(
-          `INSERT INTO xui_traffic_cursor (email, node_guid, last_up, last_down, updated_at)
-           SELECT u.email, u.node, u.up, u.down, NOW()
-           FROM UNNEST($1::text[], $2::text[], $3::bigint[], $4::bigint[]) AS u(email, node, up, down)
+          `INSERT INTO xui_traffic_cursor (email, node_guid, last_up, last_down, carry_up, carry_down, updated_at)
+           SELECT u.email, u.node, u.up, u.down, u.carry_up, u.carry_down, NOW()
+           FROM UNNEST($1::text[], $2::text[], $3::bigint[], $4::bigint[], $5::bigint[], $6::bigint[]) AS u(email, node, up, down, carry_up, carry_down)
            ON CONFLICT (email, node_guid)
-           DO UPDATE SET last_up = EXCLUDED.last_up, last_down = EXCLUDED.last_down, updated_at = NOW()`,
-          [cursor.emails, cursor.nodes, cursor.ups, cursor.downs]
+           DO UPDATE SET last_up = EXCLUDED.last_up, last_down = EXCLUDED.last_down,
+                         carry_up = EXCLUDED.carry_up, carry_down = EXCLUDED.carry_down, updated_at = NOW()`,
+          [cursor.emails, cursor.nodes, cursor.ups, cursor.downs, cursor.carryUps, cursor.carryDowns]
         );
         await client.query("COMMIT");
         return { applied: delta.emails.length, seeded };
