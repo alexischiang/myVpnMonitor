@@ -61,6 +61,7 @@ const {
   normalizeXuiInboundIdList,
   effectiveXuiInboundIds,
   normalizeXuiInboundMetadata,
+  normalizeXuiInboundSettings,
   normalizeXuiInboundEnable,
   normalizeCatalogV2LineGroup,
   validateCatalogV2LineGroupInbounds,
@@ -505,6 +506,8 @@ assert.deepStrictEqual(normalizeXuiInboundIdList([3, "2", 3, 0, "bad"]), [3, 2])
 assert.deepStrictEqual(effectiveXuiInboundIds([1, 2], [2, 3, 9], [1, 2, 3]), [1, 2, 3]);
 assert.deepStrictEqual(normalizeXuiInboundMetadata({ "node:1": { inboundType: "custom" } }), { "node:1": { networkLevel: "", region: "", inboundType: "custom" } });
 assert.deepStrictEqual(normalizeXuiInboundMetadata({ "node:1": { inboundType: "invalid" } }), {});
+assert.deepStrictEqual(normalizeXuiInboundSettings({ region: " 日本 ", networkLevel: "vip", inboundType: "custom", extra: 1 }), { networkLevel: "", region: "日本", inboundType: "custom" });
+assert.deepStrictEqual(normalizeXuiInboundSettings(), { networkLevel: "", region: "", inboundType: "package" });
 assert.deepStrictEqual(xuiClientWritePayload({ uuid: "keep", createdAt: "readonly" }, { email: "self@test", totalGB: 1000 }), { email: "self@test", totalGB: 1000, uuid: "keep" });
 assert.strictEqual(xuiClientWritePayload({}, { flow: "xtls-rprx-vision" }).flow, "xtls-rprx-vision");
 assert.strictEqual(xuiClientWritePayload({ id: 123 }, {}).id, undefined);

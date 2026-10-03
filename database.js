@@ -191,7 +191,11 @@ class PostgresDataStore {
         probe_latency_ms INTEGER,
         probe_checked_at TIMESTAMPTZ,
         probe_error TEXT NOT NULL DEFAULT ''
-      )
+      );
+      ALTER TABLE xui_inbounds ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT '';
+      ALTER TABLE xui_inbounds ADD COLUMN IF NOT EXISTS network_level TEXT NOT NULL DEFAULT '';
+      ALTER TABLE xui_inbounds ADD COLUMN IF NOT EXISTS inbound_type TEXT NOT NULL DEFAULT 'package';
+      ALTER TABLE xui_inbounds ADD COLUMN IF NOT EXISTS missing_since TIMESTAMPTZ
       `), "xui inbounds init");
       await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS sync_job_runs (
@@ -1166,15 +1170,22 @@ class PostgresDataStore {
     return { deleted: result.rowCount || 0 };
   }
 
-  // Inbound catalog, replaced from each five-minute 3x-ui sync. Probe columns belong to the
-  // TCP probe and survive catalog refreshes; inbounds no longer in 3x-ui are removed.
+  // Inbound catalog, refreshed from 3x-ui. Probe and settings columns (region, network level,
+  // type) belong to the app and survive refreshes. An inbound missing from 3x-ui is marked
+  // missing_since rather than deleted, so its settings return with it; rows missing for 30 days
+  // are deleted. An empty list is refused while active inbounds exist, since it is more likely a
+  // bad panel read than every inbound being deleted.
   async replaceXuiInbounds(rows) {
     const list = Array.isArray(rows) ? rows : [];
     return withPgRetry(async () => {
       const client = await this.pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("DELETE FROM xui_inbounds WHERE NOT (key = ANY($1::text[]))", [list.map(row => row.key)]);
+        if (!list.length && (await client.query("SELECT 1 FROM xui_inbounds WHERE missing_since IS NULL LIMIT 1")).rows.length) {
+          throw new Error("3x-ui 返回的入站列表为空，已保留现有入站。");
+        }
+        await client.query("UPDATE xui_inbounds SET missing_since = NOW() WHERE missing_since IS NULL AND NOT (key = ANY($1::text[]))", [list.map(row => row.key)]);
+        await client.query("DELETE FROM xui_inbounds WHERE missing_since < NOW() - INTERVAL '30 days'");
         if (list.length) {
           await client.query(
             `INSERT INTO xui_inbounds (key, inbound_id, node_guid, node_name, node_host, port, protocol, name, tag, enabled, sub_sort_index, client_count, recently_active, synced_at)
@@ -1182,7 +1193,7 @@ class PostgresDataStore {
              FROM jsonb_to_recordset($1::jsonb) AS r(key TEXT, id INTEGER, "nodeGuid" TEXT, "nodeName" TEXT, "nodeHost" TEXT, port INTEGER, protocol TEXT, name TEXT, tag TEXT, enabled BOOLEAN, "subSortIndex" INTEGER, "clientCount" INTEGER, "recentlyActive" BOOLEAN)
              ON CONFLICT (key) DO UPDATE SET inbound_id = EXCLUDED.inbound_id, node_guid = EXCLUDED.node_guid, node_name = EXCLUDED.node_name, node_host = EXCLUDED.node_host,
                port = EXCLUDED.port, protocol = EXCLUDED.protocol, name = EXCLUDED.name, tag = EXCLUDED.tag, enabled = EXCLUDED.enabled, sub_sort_index = EXCLUDED.sub_sort_index,
-               client_count = EXCLUDED.client_count, recently_active = EXCLUDED.recently_active, synced_at = EXCLUDED.synced_at`,
+               client_count = EXCLUDED.client_count, recently_active = EXCLUDED.recently_active, synced_at = EXCLUDED.synced_at, missing_since = NULL`,
             [JSON.stringify(list)]
           );
         }
@@ -1198,16 +1209,43 @@ class PostgresDataStore {
     }, "replace xui inbounds");
   }
 
+  // Inbounds currently in 3x-ui; rows marked missing are left out.
   async listXuiInbounds() {
-    const result = await withPgRetry(() => this.pool.query("SELECT * FROM xui_inbounds ORDER BY node_guid, inbound_id"), "list xui inbounds");
+    const result = await withPgRetry(() => this.pool.query("SELECT * FROM xui_inbounds WHERE missing_since IS NULL ORDER BY node_guid, inbound_id"), "list xui inbounds");
     return result.rows.map(row => ({
       id: row.inbound_id, key: row.key, name: row.name, tag: row.tag, protocol: row.protocol, port: row.port,
       subSortIndex: row.sub_sort_index, enabled: row.enabled, recentlyActive: row.recently_active,
       nodeGuid: row.node_guid, nodeName: row.node_name, nodeHost: row.node_host, clientCount: row.client_count,
       syncedAt: row.synced_at ? row.synced_at.toISOString() : "",
       probeStatus: row.probe_status, probeLatencyMs: row.probe_latency_ms,
-      probeCheckedAt: row.probe_checked_at ? row.probe_checked_at.toISOString() : "", probeError: row.probe_error
+      probeCheckedAt: row.probe_checked_at ? row.probe_checked_at.toISOString() : "", probeError: row.probe_error,
+      region: row.region, networkLevel: row.network_level, inboundType: row.inbound_type
     }));
+  }
+
+  // Saves one inbound's app settings; returns null when the inbound is not (or no longer) in 3x-ui.
+  async updateXuiInboundSettings(key, { region, networkLevel, inboundType }) {
+    const result = await withPgRetry(() => this.pool.query(
+      `UPDATE xui_inbounds SET region = $2, network_level = $3, inbound_type = $4 WHERE key = $1 AND missing_since IS NULL
+       RETURNING key, region, network_level, inbound_type`,
+      [key, region, networkLevel, inboundType]
+    ), "update xui inbound settings");
+    const row = result.rows[0];
+    return row ? { key: row.key, region: row.region, networkLevel: row.network_level, inboundType: row.inbound_type } : null;
+  }
+
+  // One-time import of the legacy inbound-groups metadata. Keys without a row yet get a
+  // placeholder marked missing, which the next catalog refresh fills in if 3x-ui still has it.
+  async importXuiInboundSettings(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    if (!list.length) return;
+    await withPgRetry(() => this.pool.query(
+      `INSERT INTO xui_inbounds (key, inbound_id, node_guid, region, network_level, inbound_type, missing_since)
+       SELECT r.key, r.id, r."nodeGuid", r.region, r."networkLevel", r."inboundType", NOW()
+       FROM jsonb_to_recordset($1::jsonb) AS r(key TEXT, id INTEGER, "nodeGuid" TEXT, region TEXT, "networkLevel" TEXT, "inboundType" TEXT)
+       ON CONFLICT (key) DO UPDATE SET region = EXCLUDED.region, network_level = EXCLUDED.network_level, inbound_type = EXCLUDED.inbound_type`,
+      [JSON.stringify(list)]
+    ), "import xui inbound settings");
   }
 
   async recordXuiInboundProbes(results) {
@@ -1222,7 +1260,7 @@ class PostgresDataStore {
   }
 
   async setXuiInboundEnabled(inboundId, enabled) {
-    await withPgRetry(() => this.pool.query("UPDATE xui_inbounds SET enabled = $2 WHERE inbound_id = $1", [inboundId, enabled]), "set xui inbound enabled");
+    await withPgRetry(() => this.pool.query("UPDATE xui_inbounds SET enabled = $2 WHERE inbound_id = $1 AND missing_since IS NULL", [inboundId, enabled]), "set xui inbound enabled");
   }
 
   // Background job run history shown on the sync job monitor page.

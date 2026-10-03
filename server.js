@@ -3174,14 +3174,20 @@ function effectiveXuiInboundIds(groupInboundIds = [], extraInboundIds = [], vali
     .filter(id => !valid || valid.has(id));
 }
 
+// One inbound's app settings (region, network level, package/custom).
+function normalizeXuiInboundSettings(item = {}) {
+  const networkLevel = ["premium", "optimized", "standard"].includes(item?.networkLevel) ? item.networkLevel : "";
+  const region = String(item?.region || "").trim().slice(0, 64);
+  const inboundType = item?.inboundType === "custom" ? "custom" : "package";
+  return { networkLevel, region, inboundType };
+}
+
+// Legacy inbound-groups metadata keyed by inbound key; only read by the one-time table import.
 function normalizeXuiInboundMetadata(value = {}) {
   const source = value.metadata || value;
-  const levels = new Set(["premium", "optimized", "standard"]);
   return Object.fromEntries(Object.entries(source || {}).flatMap(([key, item]) => {
-    const networkLevel = levels.has(item?.networkLevel) ? item.networkLevel : "";
-    const region = String(item?.region || "").trim().slice(0, 64);
-    const inboundType = item?.inboundType === "custom" ? "custom" : "package";
-    return key && key.length <= 256 && (networkLevel || region || inboundType === "custom") ? [[key, { networkLevel, region, inboundType }]] : [];
+    const settings = normalizeXuiInboundSettings(item);
+    return key && key.length <= 256 && (settings.networkLevel || settings.region || settings.inboundType === "custom") ? [[key, settings]] : [];
   }));
 }
 
@@ -4652,11 +4658,34 @@ function xuiInboundCatalogRows({ status, nodes, inbounds, activeInbounds = null 
   }).filter(inbound => Number.isSafeInteger(inbound.id) && inbound.id > 0);
 }
 
-// Replaces the xui_inbounds table from 3x-ui. syncXuiPanel passes the reads it already made; write
+// Inbound settings used to live in the inbound-groups state; they are now xui_inbounds columns.
+// The first table access after an upgrade copies them over once and stamps the state so later
+// starts skip it. A failed import is retried on the next access.
+let xuiInboundSettingsImport = null;
+function importLegacyXuiInboundSettings() {
+  xuiInboundSettingsImport ||= (async () => {
+    const state = await getXuiState("inbound-groups", "xuiInboundGroups");
+    if (!state || state.importedToTableAt) return;
+    const entries = Object.entries(normalizeXuiInboundMetadata(state)).flatMap(([key, settings]) => {
+      const separator = key.lastIndexOf(":");
+      const id = Number(key.slice(separator + 1));
+      return separator > 0 && Number.isSafeInteger(id) && id > 0 ? [{ key, id, nodeGuid: key.slice(0, separator), ...settings }] : [];
+    });
+    await dataStore.importXuiInboundSettings(entries);
+    await setXuiState("inbound-groups", "xuiInboundGroups", { ...state, importedToTableAt: new Date().toISOString() });
+  })().catch(error => {
+    xuiInboundSettingsImport = null;
+    throw error;
+  });
+  return xuiInboundSettingsImport;
+}
+
+// Refreshes the xui_inbounds table from 3x-ui. syncXuiPanel passes the reads it already made; write
 // paths that must validate against the live inbound list call it without a snapshot.
 function refreshXuiInboundCatalog(snapshot = null) {
   if (!snapshot && xuiInboundCatalogRefresh) return xuiInboundCatalogRefresh;
   const run = (async () => {
+    await importLegacyXuiInboundSettings();
     const source = snapshot || await Promise.all([
       xuiRequest("/panel/api/server/status"),
       xuiRequest("/panel/api/nodes/list"),
@@ -4675,21 +4704,20 @@ function refreshXuiInboundCatalog(snapshot = null) {
 // Inbound list from the app table: no 3x-ui request and no probe. Before the first panel sync has
 // filled the table, it is filled once from 3x-ui.
 async function xuiInboundRows() {
+  await importLegacyXuiInboundSettings();
   const rows = await dataStore.listXuiInbounds();
   if (rows.length || !XUI_BASE_URL || !XUI_API_TOKEN) return rows;
   await refreshXuiInboundCatalog();
   return dataStore.listXuiInbounds();
 }
 
-// Inbound management view (metadata, inbounds with their latest probe result), read from the
+// Inbound management view (inbounds with their settings and latest probe result), read from the
 // app table.
 async function xuiInboundManagementView() {
-  if (!XUI_BASE_URL || !XUI_API_TOKEN) return { configured: false, metadata: {}, inbounds: [], checkedAt: "" };
-  const [rows, settings] = await Promise.all([xuiInboundRows(), getXuiState("inbound-groups", "xuiInboundGroups")]);
-  const metadata = normalizeXuiInboundMetadata(settings || {});
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) return { configured: false, inbounds: [], checkedAt: "" };
+  const rows = await xuiInboundRows();
   return {
     configured: true,
-    metadata,
     checkedAt: rows.reduce((latest, row) => row.probeCheckedAt > latest ? row.probeCheckedAt : latest, ""),
     inbounds: rows.map(row => ({
       id: row.id,
@@ -4704,9 +4732,7 @@ async function xuiInboundManagementView() {
       nodeGuid: row.nodeGuid,
       nodeName: row.nodeName,
       clientCount: row.clientCount,
-      networkLevel: metadata[row.key]?.networkLevel || "",
-      region: metadata[row.key]?.region || "",
-      inboundType: metadata[row.key]?.inboundType === "custom" ? "custom" : "package",
+      ...normalizeXuiInboundSettings(row),
       probeStatus: row.enabled ? row.probeStatus : "disabled",
       probeLatencyMs: row.probeLatencyMs,
       probeCheckedAt: row.probeCheckedAt,
@@ -9428,7 +9454,17 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/xui-inbounds" && req.method === "GET") {
     try {
-      sendJson(res, 200, await xuiInboundManagementView());
+      // ?refresh=1 re-reads the inbound list from 3x-ui first; if the panel is unreachable the last
+      // synced table is still returned, with refreshError set.
+      let refreshError = "";
+      if (new URL(req.url, "http://localhost").searchParams.get("refresh") === "1" && XUI_BASE_URL && XUI_API_TOKEN) {
+        try {
+          await refreshXuiInboundCatalog();
+        } catch (error) {
+          refreshError = error.message;
+        }
+      }
+      sendJson(res, 200, { ...await xuiInboundManagementView(), refreshError });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }
@@ -9449,13 +9485,15 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  // Inbound metadata (region, network level, package/custom) is app-only and never sent to 3x-ui.
-  if (pathname === "/api/xui-inbound-groups" && req.method === "PUT") {
+  // Inbound settings (region, network level, package/custom) are app-only and never sent to 3x-ui.
+  const xuiInboundSettingsMatch = pathname.match(/^\/api\/xui-inbounds\/([^/]+)\/settings$/);
+  if (xuiInboundSettingsMatch && req.method === "PUT") {
     try {
-      const payload = await readJson(req);
-      const metadata = normalizeXuiInboundMetadata(payload.metadata);
-      await setXuiState("inbound-groups", "xuiInboundGroups", { metadata });
-      sendJson(res, 200, { metadata });
+      const key = decodeURIComponent(xuiInboundSettingsMatch[1]);
+      await importLegacyXuiInboundSettings();
+      const settings = await dataStore.updateXuiInboundSettings(key, normalizeXuiInboundSettings(await readJson(req)));
+      if (!settings) throw Object.assign(new Error("入站不存在或已从 3x-ui 删除，请刷新后重试。"), { statusCode: 404 });
+      sendJson(res, 200, settings);
     } catch (error) {
       sendJson(res, error.statusCode || 400, { error: error.message });
     }
@@ -11749,6 +11787,7 @@ module.exports = Object.assign(requestHandler, {
   normalizeXuiInboundIdList,
   effectiveXuiInboundIds,
   normalizeXuiInboundMetadata,
+  normalizeXuiInboundSettings,
   normalizeXuiInboundEnable,
   normalizeCatalogV2LineGroup,
   validateCatalogV2LineGroupInbounds,

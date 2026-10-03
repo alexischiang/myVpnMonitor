@@ -65,6 +65,8 @@ async function main() {
   let failProvision = false;
   const xuiClients = new Map();
   const xuiRequests = [];
+  // Set to a filter to drop inbounds from the mock inbounds/list (null serves all of them).
+  let xuiInboundFilter = null;
   const xui = http.createServer(async (request, response) => {
     let body = {};
     if (request.method !== "GET") {
@@ -92,7 +94,7 @@ async function main() {
       { id: 1, remark: "套餐节点", protocol: "vless", enable: true, originNodeGuid: "local" },
       { id: 2, remark: "个人家宽", protocol: "vless", enable: true, originNodeGuid: "local" },
       { id: 3, remark: "停用家宽", protocol: "vless", enable: false, originNodeGuid: "local" }
-    ] });
+    ].filter(inbound => !xuiInboundFilter || xuiInboundFilter(inbound)) });
     if (request.url === "/panel/api/clients/add") {
       const client = { ...body.client, subId: body.client.subId || crypto.randomUUID(), inboundIds: body.inboundIds || [] };
       xuiClients.set(client.email, client);
@@ -152,7 +154,8 @@ async function main() {
     await database.query("TRUNCATE app_records");
     await database.query(
       "INSERT INTO app_records (collection, id, position, data) VALUES ('xuiInboundGroups', 'state', 0, $1::jsonb)",
-      [JSON.stringify({ groups: { basic: [1], pro: [1], ultra: [1], self_hosted: [1] } })]
+      // Legacy inbound settings, imported into xui_inbounds on first access.
+      [JSON.stringify({ groups: { basic: [1], pro: [1], ultra: [1], self_hosted: [1] }, metadata: { "local:1": { region: "迁移地区", networkLevel: "premium" }, "local:7": { region: "旧入站", inboundType: "custom" } } })]
     );
     const subscription = {
       id: "payment-test-pool",
@@ -542,11 +545,22 @@ async function main() {
     const purchaseLogs = adminUsers.data[0].userLogs;
     const managedUser = adminUsers.data[0];
     assert.strictEqual(managedUser.lineType, "self_hosted", "new purchases must use self-hosted delivery");
+    const saveInboundSettings = (key, settings) => request(`/api/xui-inbounds/${encodeURIComponent(key)}/settings`, { method: "PUT", cookie: adminCookie, body: settings });
+    // The legacy inbound-groups metadata was imported once: known inbounds keep their settings,
+    // keys 3x-ui no longer has are kept as missing rows, and the state is stamped.
+    const importedView = await request("/api/xui-inbounds", { cookie: adminCookie });
+    const importedInbound = importedView.data.inbounds.find(inbound => inbound.key === "local:1");
+    assert.deepStrictEqual([importedInbound.region, importedInbound.networkLevel, importedInbound.inboundType], ["迁移地区", "premium", "package"]);
+    assert.ok(!importedView.data.inbounds.some(inbound => inbound.key === "local:7"), "an imported key 3x-ui does not have stays hidden");
+    assert.deepStrictEqual((await database.query("SELECT region, inbound_type, missing_since IS NOT NULL AS missing FROM xui_inbounds WHERE key='local:7'")).rows, [{ region: "旧入站", inbound_type: "custom", missing: true }]);
+    assert.ok((await database.query("SELECT data FROM app_records WHERE collection='xuiInboundGroups' AND id='state'")).rows[0].data.importedToTableAt, "the import stamps the legacy state");
     xuiRequests.length = 0;
-    const metadataOnlyInboundSave = await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { metadata: { "node:local:1": { region: "香港", inboundType: "package" } } } });
-    assert.strictEqual(metadataOnlyInboundSave.response.status, 200);
-    assert.deepStrictEqual(metadataOnlyInboundSave.data.metadata["node:local:1"].region, "香港");
-    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/")), "metadata-only inbound saves must not request 3x-ui");
+    const settingsOnlyInboundSave = await saveInboundSettings("local:1", { region: " 香港 ", networkLevel: "vip", inboundType: "package" });
+    assert.strictEqual(settingsOnlyInboundSave.response.status, 200, settingsOnlyInboundSave.text);
+    assert.deepStrictEqual(settingsOnlyInboundSave.data, { key: "local:1", region: "香港", networkLevel: "", inboundType: "package" });
+    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/")), "settings-only inbound saves must not request 3x-ui");
+    assert.strictEqual((await saveInboundSettings("local:7", { region: "x" })).response.status, 404, "a missing inbound cannot be edited");
+    assert.strictEqual((await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { metadata: {} } })).response.status, 404, "the whole-metadata route is removed");
     const removedResync = await request("/api/xui-inbound-groups/resync", { method: "POST", cookie: adminCookie, body: {} });
     assert.strictEqual(removedResync.response.status, 404, "the V1 group resync route is removed");
     await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
@@ -1043,7 +1057,9 @@ async function main() {
     const withInput = await request("/api/orders", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, buyerInput: "me@ai.test", useBalance: false } });
     assert.deepStrictEqual([withInput.response.status, withInput.data.addOnSnapshots[0].buyerInput], [201, "me@ai.test"]);
     await request(`/api/orders/${withInput.data.id}`, { method: "DELETE", cookie: v2Cookie });
-    await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { metadata: { "local:1": { region: "香港", inboundType: "package" }, "local:2": { region: "美国", inboundType: "custom" } } } });
+    for (const [key, settings] of [["local:1", { region: "香港", inboundType: "package" }], ["local:2", { region: "美国", inboundType: "custom" }]]) {
+      assert.strictEqual((await saveInboundSettings(key, settings)).response.status, 200);
+    }
 
     const nodeOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.customNode}`, amount: 1 } });
     assert.deepStrictEqual([nodeOrder.response.status, nodeOrder.data.fulfillmentStatus], [201, "manual_pending"]);
@@ -1103,7 +1119,7 @@ async function main() {
     const exemptQuote = await request("/api/orders/quote", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, useBalance: false } });
     assert.deepStrictEqual([exemptQuote.data.taxRate, exemptQuote.data.taxAmount, exemptQuote.data.amount], [0, 0, 1]);
     await request("/api/checkout-settings", { method: "PUT", cookie: adminCookie, body: { taxRate: 3 } });
-    await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { metadata: { "local:1": { region: "香港", inboundType: "package" } } } });
+    assert.strictEqual((await saveInboundSettings("local:2", { region: "", inboundType: "package" })).response.status, 200);
 
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 60 * 1024 ** 3 } })]);
     xuiClients.get("v2-sync@example.test").enable = false;
@@ -1128,8 +1144,37 @@ async function main() {
       .map(url => xuiRequests.filter(entry => entry.url === url).length);
     assert.deepStrictEqual(panelReads, [1, 1, 1, 1, 1], "the merged five-minute job must read each shared panel endpoint once");
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1], "the merged job must still repair V2 inbound drift");
-    const inboundTable = (await database.query("SELECT key, inbound_id, enabled FROM xui_inbounds ORDER BY inbound_id")).rows;
-    assert.deepStrictEqual(inboundTable.map(row => [row.key, row.inbound_id, row.enabled]), [["local:1", 1, true], ["local:2", 2, true], ["local:3", 3, false]], "the panel sync must replace the inbound table");
+    const inboundTable = (await database.query("SELECT key, inbound_id, enabled FROM xui_inbounds WHERE missing_since IS NULL ORDER BY inbound_id")).rows;
+    assert.deepStrictEqual(inboundTable.map(row => [row.key, row.inbound_id, row.enabled]), [["local:1", 1, true], ["local:2", 2, true], ["local:3", 3, false]], "the panel sync must refresh the inbound table");
+    // An inbound deleted in 3x-ui stays in the cached table until a refresh; the inbound page's
+    // ?refresh=1 read hides it immediately.
+    await database.query(`INSERT INTO xui_inbounds (key, inbound_id, node_guid, node_name, node_host, port, protocol, name, tag, enabled, sub_sort_index, client_count, recently_active, synced_at)
+      SELECT 'local:99', 99, node_guid, node_name, node_host, port, protocol, '已删除入站', tag, enabled, sub_sort_index, client_count, recently_active, synced_at FROM xui_inbounds WHERE key='local:1'`);
+    const cachedInbounds = await request("/api/xui-inbounds", { cookie: adminCookie });
+    assert.ok(cachedInbounds.data.inbounds.some(inbound => inbound.key === "local:99"), "the plain read serves the cached table");
+    const liveInbounds = await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
+    assert.strictEqual(liveInbounds.response.status, 200, liveInbounds.text);
+    assert.deepStrictEqual([liveInbounds.data.inbounds.map(inbound => inbound.key).sort(), liveInbounds.data.refreshError], [["local:1", "local:2", "local:3"], ""], "?refresh=1 re-reads 3x-ui and hides deleted inbounds");
+    // Soft delete: an inbound 3x-ui stops returning is hidden but keeps its settings, and comes
+    // back with them when 3x-ui returns it again.
+    assert.strictEqual((await saveInboundSettings("local:2", { region: "保留地区", networkLevel: "optimized", inboundType: "custom" })).response.status, 200);
+    xuiInboundFilter = inbound => inbound.id !== 2;
+    const withoutSecond = await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
+    assert.deepStrictEqual(withoutSecond.data.inbounds.map(inbound => inbound.key).sort(), ["local:1", "local:3"]);
+    assert.deepStrictEqual((await database.query("SELECT region, network_level, inbound_type, missing_since IS NOT NULL AS missing FROM xui_inbounds WHERE key='local:2'")).rows, [{ region: "保留地区", network_level: "optimized", inbound_type: "custom", missing: true }]);
+    xuiInboundFilter = null;
+    const restored = (await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie })).data.inbounds.find(inbound => inbound.key === "local:2");
+    assert.deepStrictEqual([restored.region, restored.networkLevel, restored.inboundType], ["保留地区", "optimized", "custom"], "a returning inbound keeps its settings");
+    // An empty panel list is refused instead of hiding every inbound.
+    xuiInboundFilter = () => false;
+    const emptyPanel = await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
+    assert.deepStrictEqual([emptyPanel.response.status, emptyPanel.data.inbounds.length, Boolean(emptyPanel.data.refreshError)], [200, 3, true], "an empty 3x-ui list keeps the existing inbounds");
+    xuiInboundFilter = null;
+    // Rows missing for more than 30 days are deleted on the next refresh.
+    await database.query("UPDATE xui_inbounds SET missing_since = NOW() - INTERVAL '31 days' WHERE key='local:99'");
+    await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
+    assert.deepStrictEqual((await database.query("SELECT key FROM xui_inbounds WHERE key IN ('local:7', 'local:99') ORDER BY key")).rows.map(row => row.key), ["local:7"], "only rows missing for 30 days are purged");
+    assert.strictEqual((await saveInboundSettings("local:2", { region: "", inboundType: "package" })).response.status, 200);
 
     const saveV2Group = async inboundKeys => {
       xuiRequests.length = 0;
@@ -1150,7 +1195,7 @@ async function main() {
     xuiRequests.length = 0;
     await handler.probeXuiInbounds();
     assert.strictEqual(xuiRequests.length, 0, "the TCP probe must read targets from the inbound table only");
-    const probedRows = (await database.query("SELECT inbound_id, probe_status, probe_checked_at FROM xui_inbounds ORDER BY inbound_id")).rows;
+    const probedRows = (await database.query("SELECT inbound_id, probe_status, probe_checked_at FROM xui_inbounds WHERE missing_since IS NULL ORDER BY inbound_id")).rows;
     assert.deepStrictEqual(probedRows.map(row => [row.inbound_id, row.probe_status, Boolean(row.probe_checked_at)]), [[1, "unknown", true], [2, "unknown", true], [3, "disabled", true]], "probe results must be written back (the mock inbounds have no port)");
     const inboundView = await request("/api/xui-inbounds", { cookie: adminCookie });
     assert.strictEqual(inboundView.response.status, 200);

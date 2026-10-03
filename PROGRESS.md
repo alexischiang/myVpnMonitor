@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-10-03
-- Current Objective: 修复新套餐流量从0开始、LA节点重复计流量、管理员重置流量按钮无效
+- Current Objective: 入站设置合并进 xui_inbounds 并改为软删除 (xui-inbound-settings-in-table)
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -384,8 +384,12 @@
 
 - 2026-10-03: npm run verify exit 0；git diff --check 通过；三个问题修复前复现测试均失败、修复后通过
 
+- 2026-10-03: npm run check, npm test, test-payment, verify:harness 通过；浏览器在隔离服务器+mock 3x-ui 上验证进入页面和刷新按钮均移除已删除入站，无控制台错误
+
+- 2026-10-03: npm run verify 全部通过；verify:harness 通过；浏览器在隔离服务器+mock 3x-ui 验证保存设置、入站隐藏后恢复且设置保留，无控制台错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `test-payment.js`, `test-xui-traffic.js`, `xui-traffic.js`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/xui-inbounds.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 等待用户确认后提交并部署；部署后客服可用重置流量按钮处理 doriswangqi@outlook.com；再决定是否做受影响客户批量修正迁移
+- Recommended Next Step: 等待用户确认后提交/部署；上线后首次访问会自动把旧 inbound-groups 设置导入表中

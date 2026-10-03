@@ -405,15 +405,15 @@ export type CatalogV2Product = {
   updatedAt?: string
 }
 
-export type XuiInboundMetadata = Record<string, {
+export type XuiInboundSettings = {
   networkLevel: "premium" | "optimized" | "standard" | ""
   region: string
   inboundType: "package" | "custom"
-}>
+}
 
 export type XuiInboundManagement = {
   configured: boolean
-  metadata: XuiInboundMetadata
+  refreshError?: string
   inbounds: Array<{
     id: number
     key: string
