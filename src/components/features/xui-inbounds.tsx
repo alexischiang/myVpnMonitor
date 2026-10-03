@@ -21,7 +21,7 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import type { CatalogV2LineGroup, XuiInboundManagement, XuiInboundMetadata } from "@/types"
+import type { CatalogV2LineGroup, XuiInboundManagement, XuiInboundSettings } from "@/types"
 
 const networkLevels = [
   { value: "premium", label: "精品线路" },
@@ -49,7 +49,6 @@ export function XuiInboundsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [data, setData] = React.useState<XuiInboundManagement | null>(null)
   const [lineGroups, setLineGroups] = React.useState<CatalogV2LineGroup[]>([])
-  const [metadata, setMetadata] = React.useState<XuiInboundMetadata>({})
   const [editingKey, setEditingKey] = React.useState("")
   const [draft, setDraft] = React.useState<InboundDraft>({ enabled: true, networkLevel: "", region: "", inboundType: "package" })
   const [groupOpen, setGroupOpen] = React.useState(false)
@@ -78,17 +77,17 @@ export function XuiInboundsPage() {
     }, { replace: true })
   }
 
-  const refresh = React.useCallback(async () => {
+  // live: read the inbound list from 3x-ui first instead of the last synced table.
+  const refresh = React.useCallback(async (live = false) => {
     setLoading(true)
     try {
       const [result, groups] = await Promise.all([
-        fetchJson<XuiInboundManagement>("/api/xui-inbounds"),
+        fetchJson<XuiInboundManagement>(live ? "/api/xui-inbounds?refresh=1" : "/api/xui-inbounds"),
         fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups"),
       ])
       setData(result)
       setLineGroups(groups)
-      setMetadata(result.metadata || {})
-      setError("")
+      setError(result.refreshError ? `无法从 3x-ui 获取最新入站，当前显示上次同步的数据：${result.refreshError}` : "")
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "无法读取 3x-ui 入站")
     } finally {
@@ -99,7 +98,7 @@ export function XuiInboundsPage() {
   React.useEffect(() => {
     const refreshIfVisible = () => { if (!document.hidden) void refresh() }
     const onVisibilityChange = () => { if (!document.hidden) refreshIfVisible() }
-    refreshIfVisible()
+    void refresh(true)
     const timer = window.setInterval(refreshIfVisible, 120_000)
     document.addEventListener("visibilitychange", onVisibilityChange)
     return () => {
@@ -109,27 +108,19 @@ export function XuiInboundsPage() {
   }, [refresh])
 
   const openEditor = React.useCallback((inbound: XuiInbound) => {
-    const item = metadata[inbound.key]
-    setDraft({
-      enabled: inbound.enabled,
-      networkLevel: item?.networkLevel || "",
-      region: item?.region || "",
-      inboundType: item?.inboundType || inbound.inboundType || "package",
-    })
+    setDraft({ enabled: inbound.enabled, networkLevel: inbound.networkLevel, region: inbound.region, inboundType: inbound.inboundType })
     setEditingKey(inbound.key)
-  }, [metadata])
+  }, [])
 
   async function saveEditor() {
     const inbound = data?.inbounds.find(item => item.key === editingKey)
     if (!inbound) return
-    const nextMetadata = { ...metadata, [inbound.key]: { ...metadata[inbound.key], networkLevel: draft.networkLevel as XuiInboundMetadata[string]["networkLevel"], region: draft.region, inboundType: draft.inboundType } }
     const statusChanged = draft.enabled !== inbound.enabled
     setSaving(true)
     try {
-      const result = await putJson<{ metadata: XuiInboundMetadata }>("/api/xui-inbound-groups", { metadata: nextMetadata, syncGroups: false })
+      const settings = await putJson<XuiInboundSettings>(`/api/xui-inbounds/${encodeURIComponent(inbound.key)}/settings`, { networkLevel: draft.networkLevel, region: draft.region, inboundType: draft.inboundType })
       if (statusChanged) await postJson(`/api/xui-inbounds/${inbound.id}/set-enable`, { enable: draft.enabled })
-      setMetadata(result.metadata)
-      setData(current => current ? { ...current, metadata: result.metadata, inbounds: current.inbounds.map(item => item.key === inbound.key ? { ...item, enabled: draft.enabled, networkLevel: nextMetadata[inbound.key].networkLevel, region: nextMetadata[inbound.key].region, inboundType: draft.inboundType } : item) } : current)
+      setData(current => current ? { ...current, inbounds: current.inbounds.map(item => item.key === inbound.key ? { ...item, enabled: draft.enabled, networkLevel: settings.networkLevel, region: settings.region, inboundType: settings.inboundType } : item) } : current)
       if (draft.inboundType === "custom") {
         const affected = lineGroups.filter(group => group.inboundKeys.includes(inbound.key))
         const updated = await Promise.all(affected.map(group => putJson<CatalogV2LineGroup>(`/api/catalog-v2/line-groups/${encodeURIComponent(group.id)}`, { ...group, inboundKeys: group.inboundKeys.filter(key => key !== inbound.key) })))
@@ -151,12 +142,11 @@ export function XuiInboundsPage() {
 
   const editorChanged = React.useMemo(() => {
     if (!editingInbound) return false
-    const item = metadata[editingInbound.key]
     return draft.enabled !== editingInbound.enabled
-      || draft.networkLevel !== (item?.networkLevel || "")
-      || draft.region !== (item?.region || "")
-      || draft.inboundType !== (item?.inboundType || editingInbound.inboundType || "package")
-  }, [draft, editingInbound, metadata])
+      || draft.networkLevel !== editingInbound.networkLevel
+      || draft.region !== editingInbound.region
+      || draft.inboundType !== editingInbound.inboundType
+  }, [draft, editingInbound])
 
   function openGroupSettings(group?: CatalogV2LineGroup) {
     const next = group ? structuredClone(group) : { ...emptyLineGroup(), sortOrder: Math.max(-1, ...lineGroups.map(item => item.sortOrder)) + 1 }
@@ -267,7 +257,7 @@ export function XuiInboundsPage() {
         <Field><FieldLabel htmlFor="inbound-region-filter">地区</FieldLabel><Select value={regionFilter} onValueChange={value => updateSearchParam("region", value)}><SelectTrigger id="inbound-region-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部地区</SelectItem>{regionOptions.map(region => <SelectItem key={region} value={region}>{region}</SelectItem>)}<SelectItem value="unset">未设置</SelectItem></SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="inbound-plan-filter">V2 权限组</FieldLabel><Select value={planFilter} onValueChange={value => updateSearchParam("plan", value)}><SelectTrigger id="inbound-plan-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部权限组</SelectItem>{lineGroups.map(group => <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>)}<SelectItem value="unassigned">未分配</SelectItem></SelectContent></Select></Field>
         <Field><FieldLabel htmlFor="inbound-status-filter">状态</FieldLabel><Select value={statusFilter} onValueChange={value => updateSearchParam("status", value)}><SelectTrigger id="inbound-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="enabled">启用</SelectItem><SelectItem value="disabled">停用</SelectItem></SelectContent></Select></Field>
-      </>}><DataTable columns={columns} data={sortedInbounds} searchKey="inbound" initialSearchValue={searchQuery} onSearchChange={value => updateSearchParam("q", value, "")} searchPlaceholder="搜索节点、入站、地区或协议" emptyTitle="暂无入站" emptyDescription="没有符合当前筛选条件的入站" pageSize={30} frame="card" columnLayout="content" renderMobileItem={renderMobileInbound} toolbar={<Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading || saving}>{loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新</Button>} /></DataTableCard>
+      </>}><DataTable columns={columns} data={sortedInbounds} searchKey="inbound" initialSearchValue={searchQuery} onSearchChange={value => updateSearchParam("q", value, "")} searchPlaceholder="搜索节点、入站、地区或协议" emptyTitle="暂无入站" emptyDescription="没有符合当前筛选条件的入站" pageSize={30} frame="card" columnLayout="content" renderMobileItem={renderMobileInbound} toolbar={<Button variant="outline" size="sm" onClick={() => void refresh(true)}disabled={loading || saving}>{loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新</Button>} /></DataTableCard>
 
       <Dialog open={groupOpen} onOpenChange={open => { if (!saving) setGroupOpen(open) }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_auto_auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-6xl">

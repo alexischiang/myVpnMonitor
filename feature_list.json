@@ -2276,6 +2276,60 @@
       "verification": [
         "2026-10-03: reproduced first: new test-payment e2e step (reset after 2 GiB of usage, then syncXuiPanel) failed on the old route with 2147483648 used, expected 0; passes after the fix, and 1 GiB of later traffic is counted. The probe-job assertion flake was traced to syncJobsPayload ordering (original suite 5/5, changed suite 4/5 before the fix, 6/6 after). npm run verify exit 0 and git diff --check passed. No frontend code changed. Not deployed."
       ]
+    },
+    {
+      "id": "xui-inbounds-live-refresh",
+      "name": "Inbound management page reads the live 3x-ui inbound list on entry",
+      "description": "The 入站管理 page and its V2 权限组 dialog read the cached xui_inbounds table, so an inbound deleted in 3x-ui kept showing until the five-minute panel sync. GET /api/xui-inbounds?refresh=1 now runs refreshXuiInboundCatalog first (the upsert keeps probe results); if 3x-ui is unreachable it still returns the cached table with refreshError, shown as an Alert. The page uses ?refresh=1 on entry and on the 刷新 button; the two-minute and tab-visibility refreshes still read the table only.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Entering /xui-inbounds or clicking 刷新 drops inbounds deleted in 3x-ui without waiting for the panel sync.",
+        "If 3x-ui is unreachable the page still shows the last synced inbounds with an explanatory alert.",
+        "Background auto refresh does not call 3x-ui."
+      ],
+      "verification": [
+        "2026-10-03: new test-payment step inserts a stale cached inbound: plain GET still lists it, GET ?refresh=1 returns only the panel's inbounds with empty refreshError. npm run check, npm test and node test-payment.js passed. Browser check on an isolated server (test DB + mock 3x-ui): deleting an inbound in the mock and re-entering /xui-inbounds removed it; deleting another and clicking 刷新 removed it; requests used ?refresh=1; no console errors. The refreshError alert path was not exercised in the browser. Not deployed."
+      ],
+      "browser_verification": {
+        "routes": ["/xui-inbounds"],
+        "interactions": [
+          "Deleted mock inbound 3 in the mock panel, navigated to /dashboard and back to /xui-inbounds: 3 inbounds became 2 without a panel sync.",
+          "Deleted mock inbound 2, clicked 刷新: the table showed only Mock 洛杉矶 S01; network shows GET /api/xui-inbounds?refresh=1 → 200."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-03"
+      }
+    },
+    {
+      "id": "xui-inbound-settings-in-table",
+      "name": "Inbound settings stored on xui_inbounds rows with soft delete",
+      "description": "Region, network level and package/custom type move from the inbound-groups JSON state into xui_inbounds columns, saved per inbound. Inbounds missing from 3x-ui are marked missing_since instead of deleted, so their settings survive a partial panel read and come back when the inbound reappears; an empty panel list is rejected; rows missing for 30 days are purged. The legacy inbound-groups metadata is imported once automatically.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["xui-inbounds-live-refresh"],
+      "done_criteria": [
+        "Inbound settings are read from and written to xui_inbounds; PUT /api/xui-inbounds/:key/settings updates one inbound and /api/xui-inbound-groups is removed.",
+        "An inbound missing from 3x-ui is hidden everywhere but keeps its settings, and is restored with them when it reappears.",
+        "An empty 3x-ui inbound list does not hide existing inbounds; rows missing for 30 days are deleted.",
+        "Existing inbound-groups metadata is imported once on upgrade without manual steps.",
+        "Inbound management page edits still work in the browser; npm run verify passes."
+      ],
+      "verification": [
+        "2026-10-03: test-payment now seeds legacy inbound-groups metadata and asserts the one-time import (local:1 keeps 迁移地区/premium, unknown local:7 kept as a hidden missing row, state stamped importedToTableAt); per-inbound PUT normalizes input, makes no 3x-ui request, returns 404 for missing inbounds, and the old /api/xui-inbound-groups returns 404; an inbound dropped by the mock panel is hidden but keeps its settings and returns with them; an empty panel list keeps the 3 inbounds and sets refreshError; a row missing 31 days is purged while a recent one stays. test.js covers normalizeXuiInboundSettings. npm run verify (check, docs build, test, payment, wallet, catalog V2) exit 0. Not deployed."
+      ],
+      "browser_verification": {
+        "routes": ["/xui-inbounds"],
+        "interactions": [
+          "Isolated server on the test DB with a mock 3x-ui: edited Mock 香港 S01, set region 验证地区 and network level 精品线路, saved; the only write was PUT /api/xui-inbounds/local%3A2/settings → 200 and the table showed 精品线路 / 验证地区.",
+          "Hid inbound 2 in the mock panel and clicked 刷新 (GET /api/xui-inbounds?refresh=1): the row disappeared; restored it and clicked 刷新: it came back still showing 精品线路 / 验证地区."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-03"
+      }
     }
   ]
 }
