@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-03",
+  "updated_at": "2026-10-04",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -2329,6 +2329,168 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-03"
+      }
+    },
+    {
+      "id": "vip-growth-counts-all-money-in",
+      "name": "VIP growth counts every external payment",
+      "description": "VIP growth is the real money a customer paid in: recharges plus every external (gateway or admin manual) payment. Traffic packs and add-ons paid externally used to add 0, so recharging first and paying from balance earned more VIP than paying directly. Traffic-pack and standalone add-on settlement now book the order's external amount as the VIP delta (externalPaymentCents) and record vipSpendAmount/Before/After on the order (recordOrderVipSpend). Wallet balance spent still never counts, so recharged money is not counted twice.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "An add-on or traffic pack paid externally raises wallet VIP spend by the amount paid and records vipSpendAmount on the order.",
+        "Paying from wallet balance adds no VIP; plan and recharge VIP accounting is unchanged.",
+        "Order reversal still removes the VIP delta through the wallet reversal entry."
+      ],
+      "verification": [
+        "2026-10-04: new test-payment assertion (custom-node add-on paid ¥1 by admin manual payment) failed before the fix with vipSpendAmount 0 and wallet VIP unchanged, and passes after. npm run verify (check, build, docs, test, payment, wallet, catalog V2) exit 0. Not deployed."
+      ]
+    },
+    {
+      "id": "vip-initial-bill-order-amount",
+      "name": "First plan bill records only that order's VIP growth",
+      "description": "When a paid order creates a customer's first plan user, the initial bill stored vipSpendAmount as the account's cumulative VIP spend (including earlier recharges) instead of the VIP growth from that order. It now stores planGatewayAmount, matching renewal bills. initialBillsFromUsers keeps the cumulative value on purpose: that bootstrap bill stands for a legacy user's whole history.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "vip-growth-counts-all-money-in"
+      ],
+      "done_criteria": [
+        "An account that recharged before its first plan purchase gets an initial bill whose vipSpendAmount equals the plan's external payment.",
+        "Wallet VIP spend is unchanged by this fix."
+      ],
+      "verification": [
+        "2026-10-04: new test-payment case (register, recharge ¥2, buy plan without balance for ¥1.03) failed before the fix with bill vipSpendAmount 3.03 and passes after with 1.03; wallet VIP spend 3.03. npm run verify exit 0. Not deployed."
+      ]
+    },
+    {
+      "id": "vip-drop-write-only-fields",
+      "name": "Remove write-only VIP fields and duplicate VIP writes",
+      "description": "user.level (written in five places) and account.vipSpend (written by syncWalletVip) were never read: VIP level is always derived from spend. They are no longer written. renewUser no longer adds its own VIP delta to user.vipSpend, which the paid-plan path immediately overwrote with the wallet total; it still returns the per-order vipSpendAmount for the bill. user.vipSpend stays as the one copy of the wallet total (used by subscription info nodes and the admin user list) and is set from the wallet by syncWalletVip and the first-plan path. Old level/vipSpend keys already stored on records are left in place and ignored.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "vip-initial-bill-order-amount"
+      ],
+      "done_criteria": [
+        "No code writes user.level or account.vipSpend.",
+        "Paid plan purchase and renewal leave user.vipSpend equal to the wallet VIP total."
+      ],
+      "verification": [
+        "2026-10-04: repo-wide search finds no reader of user.level or the stored account.vipSpend (the /account page reads vipSpend from the overview API, which comes from the wallet). Existing test-payment assertions on user vipSpend after manual purchase and renewal (2.34, 5.55) and wallet VIP assertions still pass. npm run verify exit 0. Not deployed."
+      ]
+    },
+    {
+      "id": "vip-tiers-from-api",
+      "name": "Customer VIP UI reads the tier table from the server",
+      "description": "The ¥360/¥900 thresholds and 5%/10% discounts were hard-coded in the account overview progress ring, its discount tooltip, and the onboarding VIP step. The server now publishes VIP_TIERS as vipTiers on /api/account/overview and /api/public/sales-settings (publicVipTiers). The overview card computes next tier and progress from that table, the tooltip lists it, and the onboarding step renders its tier row, sample progress and description from it. Onboarding copy now states the 'real money in' rule (recharges and direct payments for plans, traffic packs and add-ons count; balance spent does not count twice). vip-badge.tsx gains shared VipTier, vipLevelLabel and nextVipTier, and checkout plus the delivery page use vipLevelLabel instead of their own string formatting.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "vip-growth-counts-all-money-in"
+      ],
+      "done_criteria": [
+        "No VIP threshold or discount number is hard-coded in the customer UI; changing VIP_TIERS changes every display.",
+        "Overview progress, remaining amount and tooltip match the server tiers.",
+        "Onboarding VIP step shows the tier table and the real-money-in rule at desktop and 375px without overflow."
+      ],
+      "verification": [
+        "2026-10-04: test-payment asserts the overview and public sales settings both return the vip1/vip2/vip3 table (0/360/900, 0/5/10); the existing full-response assertion on public sales settings now ignores vipTiers. npm run check and npm run verify exit 0. Browser check on an isolated server (test DB, no 3x-ui) with a test customer whose wallet VIP spend was set to ¥400. Not deployed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/onboarding?replay=1",
+          "/account/plans/checkout?option=v2:test-standard:30d"
+        ],
+        "interactions": [
+          "/account at 1024px and 375px: VIP card shows VIP 2, 累计消费 ¥400.00, 距离 VIP 3 还差 ¥500.00, ring label 距离 VIP 3 已完成 7%; hovering the help icon shows VIP 1：0% · VIP 2：5% · VIP 3：10%; no horizontal overflow.",
+          "Opened onboarding via in-app navigation (the server redirects a direct customer load of /onboarding to /account, unchanged behaviour) and clicked 下一步 three times: step 4 text lists ¥360.00/VIP 2/5% and ¥900.00/VIP 3/10% plus the real-money-in rule; tier row renders as three columns with arrows (135px each at desktop, 82px at 375px, nothing clipped); sample progress ¥540.00 / ¥900.00; no page overflow. A first version stacked the tiers vertically at 375px because ItemGroup is a grid; fixed with a generated gridTemplateColumns and rechecked.",
+          "Checkout for test-standard 30d at 375px and desktop shows 'VIP 2 专属折扣（5%）'; POST /api/orders/quote 200; no overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-04"
+      }
+    },
+    {
+      "id": "vip-legacy-actualpaid-fallback-kept",
+      "name": "Keep the legacy actualPaid fallback for VIP spend",
+      "description": "userVipSpend falls back to actualPaid when a user record has no vipSpend. The plan was to remove it, but the local dev copy has 172 of 420 users without vipSpend (171 with a paid amount); they are legacy manually created users whose actualPaid is entirely money they paid, so the fallback is correct for them and removing it would drop them to VIP 1. Every user created since then gets vipSpend written, so the overcount risk (actualPaid including wallet-paid cash) does not apply. Only a comment was added to say why the fallback exists.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "vip-drop-write-only-fields"
+      ],
+      "done_criteria": [
+        "The fallback stays, and the code explains why it exists."
+      ],
+      "verification": [
+        "2026-10-04: read-only query on LOCAL_DATABASE_URL: users total 420, missing vipSpend 172, missing with actualPaid > 0 171; wallet_accounts 352. Production was not queried. Comment only; npm run verify exit 0 in the same session."
+      ]
+    },
+    {
+      "id": "vip-admin-sale-joins-existing-wallet",
+      "name": "Admin-recorded spend joins an existing customer wallet",
+      "description": "An admin creating a self-hosted user records 本次消费金额 as the user's vipSpend. If a customer account with that email already had a wallet (e.g. it recharged first), the wallet ignored that amount: checkout discounts used the wallet total, the admin list showed the user value, and the next wallet change overwrote the admin amount. POST /api/users now books the amount into that account's wallet as a VIP-only 'offline' entry (new DataStore.creditWalletVipSpend, idempotency key offline-user:<userId>, initialVipCents 0 so a newly created wallet is not double counted) and syncs user.vipSpend from the wallet. VIP-only entries are not listed in the customer balance history, the same as external plan payments.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "vip-growth-counts-all-money-in"
+      ],
+      "done_criteria": [
+        "Registering, recharging ¥2, then an admin creating a user with the same email and ¥5 leaves both the wallet and the user at ¥7.",
+        "Admin-created users with no matching account are unchanged."
+      ],
+      "verification": [
+        "2026-10-04: new test-payment case failed before the fix with wallet 2 / user 5 and passes after with 7 / 7; the existing admin-v2 create (no account) still passes. npm run verify exit 0. On an isolated server a creditWalletVipSpend ¥5 entry raised the /account VIP card to 累计消费 ¥5.00 with no console errors and did not appear in /account/wallet history, as designed. Not deployed."
+      ]
+    },
+    {
+      "id": "vip-order-level-no-default",
+      "name": "Orders without a recorded VIP level no longer report VIP 1",
+      "description": "The public payment order serializer filled a missing vipLevel with \"vip1\", so older orders claimed VIP 1 whatever the buyer's level was. It now returns an empty string. No component renders an order's vipLevel today (checkout and delivery read quote/user levels, which go through vipLevelLabel and show '-' when empty).",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "vip-tiers-from-api"
+      ],
+      "done_criteria": [
+        "GET /api/payments/orders/:id returns vipLevel \"\" for an order whose stored record has no vipLevel."
+      ],
+      "verification": [
+        "2026-10-04: new test-payment step removes vipLevel from a stored order; it returned 'vip1' before the fix and '' after. Repo search finds no UI that renders an order's vipLevel. npm run verify exit 0, verify:harness and git diff --check pass. Not deployed."
+      ]
+    },
+    {
+      "id": "xui-remove-monthly-reset-anchor",
+      "name": "Remove the calendar-month traffic reset anchor",
+      "description": "Periodic plans reset traffic every 30 days from purchase (xuiTraffic.cycleStartMs / resetDueXuiTraffic), but the old calendar-month logic was still around. xuiMonthlyResetAt computed the first 'next reset' when a user was linked or migrated to 3x-ui, from a stored xuiTrafficResetAnchorDay. The value was wrong until the next sync overwrote it, and lifetime users got a date on link. The admin 切换到自研线路 dialog told admins '流量重置日 每月 X 日'. Removed: xuiMonthlyResetAt and its export/tests, the xuiTrafficResetAnchorDay field (writes, migration log detail, User type), and the unused resetDay in the /api/xui-clients import preview. Linking and migration now use nextXuiCycleResetAt. The dialog shows '流量重置：自购买起每 30 天' (or '不重置' for lifetime/unlimited), and its alert says traffic resets every 30 days from purchase. Old anchor values already stored on user records are left in place and ignored. The customer pricing copy '每月重置流量' is unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "No code computes or stores a calendar-month reset day.",
+        "Linking a periodic user sets xuiNextTrafficResetAt to the 30-day cycle boundary; a lifetime user gets an empty value.",
+        "The admin dialog describes the 30-day rule."
+      ],
+      "verification": [
+        "2026-10-04: new test.js assertions (purchase 2026-08-22, link 2026-09-22 → next reset 2026-10-21T00:00Z; no anchor day stored; lifetime → '') failed before the fix with 2026-10-21T16:00Z and pass after. test-payment now calls /api/xui-clients against the mock 3x-ui panel (200, linked client listed, no resetDay). npm run verify exit 0; git diff --check passes. Not deployed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/dialog-check-monthly",
+          "/users/detail/dialog-check-lifetime"
+        ],
+        "interactions": [
+          "Isolated server (test DB, no 3x-ui), admin session, two temporary upstream fixture users. Clicked 切换到自研线路 for the monthly user: import tab shows 流量重置 自购买起每 30 天 and the alert ends 并自购买起每 30 天重置; no overflow.",
+          "Same for the lifetime user: 流量重置 不重置.",
+          "In an earlier tab the 关联已有 Client tab returned 502 '3x-ui 尚未配置' because the isolated server has no panel configured. That path was verified in test-payment against the mock panel instead, and the clean-console pass above did not open that tab. Fixture users were deleted afterwards."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-04"
       }
     }
   ]

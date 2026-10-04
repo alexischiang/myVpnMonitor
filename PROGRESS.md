@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-03
-- Current Objective: 入站设置合并进 xui_inbounds 并改为软删除 (xui-inbound-settings-in-table)
+- Last Updated: 2026-10-04
+- Current Objective: 清理 xuiMonthlyResetAt 按月重置旧逻辑（并延续本会话 VIP 链路优化）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -388,8 +388,12 @@
 
 - 2026-10-03: npm run verify 全部通过；verify:harness 通过；浏览器在隔离服务器+mock 3x-ui 验证保存设置、入站隐藏后恢复且设置保留，无控制台错误
 
+- 2026-10-04: npm run verify exit 0；verify:harness、git diff --check 通过；/account、/onboarding、结账页在隔离服务器浏览器验证无 console/page errors
+
+- 2026-10-04: npm run verify exit 0；verify:harness、git diff --check 通过；后台切换自研线路弹窗浏览器验证无 console/page errors
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/xui-inbounds.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-onboarding.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/vip-badge.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 等待用户确认后提交/部署；上线后首次访问会自动把旧 inbound-groups 设置导入表中
+- Recommended Next Step: 等待用户确认后提交/部署

@@ -82,7 +82,6 @@ const {
   pendingXuiTrafficAlert,
   xuiClientCycleKey,
   xuiBillingPayload,
-  xuiMonthlyResetAt,
   initializeXuiTrafficSchedule,
   withXuiSyncLock,
   withXuiUserMigrationLock,
@@ -345,6 +344,11 @@ const linkedXuiUser = {
 };
 initializeXuiTrafficSchedule(linkedXuiUser, { totalGB: 900 * gib }, "link", Date.parse("2026-09-22T00:00:00.000Z"));
 assert.strictEqual(linkedXuiUser.xuiTrafficLimitBytes, 50 * gib, "an unexplained cached quota must not override product entitlements");
+assert.strictEqual(linkedXuiUser.xuiNextTrafficResetAt, "2026-10-21T00:00:00.000Z", "linking schedules the next reset on the 30-day cycle from purchase, not a calendar day");
+assert.strictEqual(linkedXuiUser.xuiTrafficResetAnchorDay, undefined, "no monthly anchor day is stored");
+const linkedLifetimeUser = { productCatalogVersion: 2, v2ProductSnapshot: { trafficBytes: 50 * gib }, duration: "lifetime", purchasedAt: "2026-08-22T00:00:00.000Z" };
+initializeXuiTrafficSchedule(linkedLifetimeUser, {}, "link", Date.parse("2026-09-22T00:00:00.000Z"));
+assert.strictEqual(linkedLifetimeUser.xuiNextTrafficResetAt, "", "lifetime plans never reset");
 
 const linkedXuiUserWithAdminGift = {
   productCatalogVersion: 2,
@@ -532,8 +536,6 @@ assert.deepStrictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedByt
 assert.strictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 79 }, 100, 80, { telegram: true }), null);
 const clientCreatedAt = Date.UTC(2026, 0, 1);
 assert.notStrictEqual(xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 29 * 864e5), xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 31 * 864e5));
-assert.strictEqual(xuiMonthlyResetAt(31, Date.parse("2026-01-01T00:00:00.000Z")), "2026-01-30T16:00:00.000Z");
-assert.strictEqual(xuiMonthlyResetAt(31, Date.parse("2026-02-28T00:00:00.000Z")), "2026-03-30T16:00:00.000Z");
 assert.strictEqual(xuiNodeBaseUrl({ scheme: "https", address: "node.example.com", port: 8443, basePath: "/secret/" }), "https://node.example.com:8443/secret");
 const sealedNodeToken = sealXuiNodeToken("node-secret");
 assert.notStrictEqual(sealedNodeToken.includes("node-secret"), true);

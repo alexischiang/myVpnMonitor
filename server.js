@@ -1392,7 +1392,7 @@ function publicPaymentOrder(order) {
     virtualCashAmount: money.virtualCash,
     originalAmount: order.originalAmount ?? order.amount,
     discountAmount: order.discountAmount || 0,
-    vipLevel: order.vipLevel || "vip1",
+    vipLevel: order.vipLevel || "",
     vipDiscountPercent: order.vipDiscountPercent || 0,
     vipDiscountAmount: order.vipDiscountAmount || 0,
     vipSpendAmount,
@@ -1789,6 +1789,7 @@ const VIP_TIERS = {
   vip3: { minSpend: 900, discountPercent: 10 }
 };
 
+// Legacy manually created users never stored vipSpend; their actualPaid is all money they paid, so it stands in.
 function userVipSpend(user = {}) {
   const record = user || {};
   const vipSpend = Number(record.vipSpend);
@@ -1802,6 +1803,11 @@ function vipLevelForSpend(value) {
 
 function vipDiscountPercent(level) {
   return VIP_TIERS[level]?.discountPercent || 0;
+}
+
+// The tier table the customer UI renders, so thresholds and discounts live only in VIP_TIERS.
+function publicVipTiers() {
+  return Object.entries(VIP_TIERS).map(([level, tier]) => ({ level, minSpend: tier.minSpend, discountPercent: tier.discountPercent }));
 }
 
 function userVipLevel(user = {}) {
@@ -1986,14 +1992,20 @@ function adminReferralDetails(account, accountRows = accounts, orders = paymentO
   };
 }
 
+// VIP growth is the real money a customer paid in: recharges and external payments, never wallet balance spent.
+function externalPaymentCents(order) {
+  return Math.max(Math.round((Number(order.amount) || 0) * 100), 0);
+}
+
+function recordOrderVipSpend(order, wallet, vipDeltaCents) {
+  order.vipSpendAmount = vipDeltaCents / 100;
+  order.vipSpendBefore = (wallet.vipSpendCents - vipDeltaCents) / 100;
+  order.vipSpendAfter = wallet.vipSpendCents / 100;
+}
+
 function syncWalletVip(account, wallet) {
-  const vipSpend = wallet.vipSpendCents / 100;
-  account.vipSpend = vipSpend;
   const user = userForAccount(account);
-  if (user) {
-    user.vipSpend = vipSpend;
-    user.level = vipLevelForSpend(vipSpend);
-  }
+  if (user) user.vipSpend = wallet.vipSpendCents / 100;
 }
 
 function quoteWithWallet(quote, wallet, useBalance = true) {
@@ -2258,7 +2270,7 @@ async function fulfillTrafficPackOrderOnce(order, req) {
     id: crypto.randomUUID(),
     accountId: account.id,
     orderId: order.id,
-    vipDeltaCents: 0,
+    vipDeltaCents: externalPaymentCents(order),
     description: "100 GB 流量包",
     initialVipCents: initialWalletVipCents(account)
   });
@@ -2277,9 +2289,7 @@ async function fulfillTrafficPackOrderOnce(order, req) {
     }));
   }
   order.userId = user.id;
-  order.vipSpendAmount = 0;
-  order.vipSpendBefore = wallet.vipSpendCents / 100;
-  order.vipSpendAfter = wallet.vipSpendCents / 100;
+  recordOrderVipSpend(order, wallet, externalPaymentCents(order));
   order.trafficPackBytes = trafficPackBytes;
   order.trafficCycleKey = user.xuiTrafficCycleKey || "";
   order.revenueExpiresAt = user.xuiNextTrafficResetAt || "";
@@ -2307,12 +2317,10 @@ async function fulfillStandaloneAddOnOrderOnce(order, req) {
   const v2 = order.catalogVersion === 2 ? order.productSnapshot?.v2 : null;
   const requiresPlan = v2 ? v2.purchaseRequirement === "requires_recurring_plan" || addonServices.addonHandler(v2.fulfillment?.handler).requiresRecurringPlan : true;
   const user = requiresPlan ? requireRecurringPlanUser(account) : userForAccount(account);
-  const wallet = await dataStore.settleWalletPurchase({ id: crypto.randomUUID(), accountId: account.id, orderId: order.id, vipDeltaCents: 0, description: `${order.planName} ${order.optionLabel}`, initialVipCents: initialWalletVipCents(account) });
+  const wallet = await dataStore.settleWalletPurchase({ id: crypto.randomUUID(), accountId: account.id, orderId: order.id, vipDeltaCents: externalPaymentCents(order), description: `${order.planName} ${order.optionLabel}`, initialVipCents: initialWalletVipCents(account) });
   syncWalletVip(account, wallet);
   order.userId = user?.id || "";
-  order.vipSpendAmount = 0;
-  order.vipSpendBefore = wallet.vipSpendCents / 100;
-  order.vipSpendAfter = wallet.vipSpendCents / 100;
+  recordOrderVipSpend(order, wallet, externalPaymentCents(order));
   order.fulfillmentStartedAt = new Date().toISOString();
   const handler = addonServices.addonHandler(v2?.fulfillment?.handler);
   if (v2 && handler.id === "traffic_credit") {
@@ -2558,7 +2566,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       type: "initial",
       paymentOrderId: order.id,
       amount: planCashValueAmount,
-      vipSpendAmount: userVipSpend(user),
+      vipSpendAmount: planGatewayAmount,
       occurredAt: user.purchasedAt,
       duration: user.duration,
       afterExpiresAt: user.expiresAt,
@@ -2598,7 +2606,6 @@ async function fulfillPaymentOrderOnce(order, req) {
   account.purchaseCount = (Number(order.purchaseCountBefore) || 0) + 1;
   order.vipSpendBefore = vipSpendBefore;
   user.vipSpend = wallet.vipSpendCents / 100;
-  user.level = vipLevelForSpend(user.vipSpend);
   order.vipSpendAfter = wallet.vipSpendCents / 100;
   if (account && account.linkedUserId !== user.id) {
     account.linkedUserId = user.id;
@@ -3325,40 +3332,21 @@ function chinaDateParts(value) {
   return { year: shifted.getUTCFullYear(), month: shifted.getUTCMonth(), day: shifted.getUTCDate() };
 }
 
-function xuiMonthlyResetAt(anchorDay, after = Date.now()) {
-  const day = Math.min(31, Math.max(1, Number(anchorDay) || 1));
-  const current = chinaDateParts(after);
-  if (!current) return "";
-  for (let offset = 0; offset < 2; offset += 1) {
-    const monthIndex = current.month + offset;
-    const year = current.year + Math.floor(monthIndex / 12);
-    const month = ((monthIndex % 12) + 12) % 12;
-    const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-    const timestamp = Date.UTC(year, month, Math.min(day, daysInMonth)) - CHINA_TIME_OFFSET_MS;
-    if (timestamp > Number(after)) return new Date(timestamp).toISOString();
-  }
-  return "";
-}
-
 function initializeXuiTrafficSchedule(user, _remote = {}, mode = "import", now = Date.now()) {
-  const purchased = chinaDateParts(user.purchasedAt || user.createdAt || now);
   user.xuiManagementMode = mode;
   // Application entitlements are authoritative. Linking an existing 3x-ui client
   // must never import the panel's quota into the local user record.
   user.xuiTrafficLimitBytes = xuiTrafficLimitBytes(user);
-  user.xuiTrafficResetAnchorDay = purchased?.day || chinaDateParts(now).day;
   user.xuiTrafficCycleKey = `linked:${new Date(now).toISOString()}`;
-  user.xuiNextTrafficResetAt = xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
+  user.xuiNextTrafficResetAt = nextXuiCycleResetAt(user, now);
   user.xuiLastTrafficResetAt = "";
 }
 
 function initializeLegacyXuiMigration(user, existing, now = Date.now()) {
-  const purchased = chinaDateParts(user.purchasedAt || user.createdAt || now);
   user.xuiManagementMode = existing ? "link" : "import";
   user.xuiTrafficLimitBytes = planTrafficBytes(user);
-  user.xuiTrafficResetAnchorDay ||= purchased?.day || chinaDateParts(now).day;
   user.xuiTrafficCycleKey ||= `migration:${new Date(now).toISOString()}`;
-  user.xuiNextTrafficResetAt ||= user.duration === "lifetime" ? "" : xuiMonthlyResetAt(user.xuiTrafficResetAnchorDay, now);
+  user.xuiNextTrafficResetAt ||= nextXuiCycleResetAt(user, now);
   user.xuiLastTrafficResetAt ||= "";
   user.xuiTrafficBaselinePending = Boolean(existing);
   user.xuiTrafficBaselineVersion = existing ? 0 : 2;
@@ -5357,7 +5345,7 @@ async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
         req,
         stage: "xui-migration",
         message: existing ? "旧套餐已关联现有3x-ui Client并完成迁移。" : "旧套餐已创建3x-ui Client并完成迁移。",
-        details: { source: user.xuiMigrationSource, email, group: accessGroupForUser(user), trafficLimitBytes: user.xuiTrafficLimitBytes, resetAnchorDay: user.xuiTrafficResetAnchorDay, nextResetAt: user.xuiNextTrafficResetAt, flow: XUI_VISION_FLOW, inboundIds: user.xuiInboundIds || [], inheritedUsedTrafficBytes: existing ? remote.usedTraffic : 0 }
+        details: { source: user.xuiMigrationSource, email, group: accessGroupForUser(user), trafficLimitBytes: user.xuiTrafficLimitBytes, nextResetAt: user.xuiNextTrafficResetAt, flow: XUI_VISION_FLOW, inboundIds: user.xuiInboundIds || [], inheritedUsedTrafficBytes: existing ? remote.usedTraffic : 0 }
       }));
       await saveUsers();
       return { status: "completed", inboundIds: user.xuiInboundIds || [] };
@@ -5801,7 +5789,6 @@ function normalizeUser(input, existing = {}) {
   const isFamilyFriend = input.isFamilyFriend !== undefined ? Boolean(input.isFamilyFriend) : Boolean(existing.isFamilyFriend);
   const isSuperAccount = input.isSuperAccount !== undefined ? Boolean(input.isSuperAccount) : Boolean(existing.isSuperAccount);
   const unlimited = input.unlimited !== undefined ? Boolean(input.unlimited) : Boolean(existing.unlimited);
-  const level = vipLevelForSpend(vipSpend);
 
   return {
     ...existing,
@@ -5821,7 +5808,6 @@ function normalizeUser(input, existing = {}) {
     unlimited,
     cashValue,
     cashValueAt: new Date(cashValueAt).toISOString(),
-    level,
     isBusiness,
     isFamilyFriend,
     isSuperAccount,
@@ -5910,7 +5896,6 @@ function reverseBill(bill) {
     const currentVipSpend = userVipSpend(user);
     user.actualPaid = Math.max(Math.round((currentPaid - (Number(bill.amount) || 0)) * 100) / 100, 0);
     user.vipSpend = Math.max(Math.round((currentVipSpend - (Number(bill.vipSpendAmount ?? bill.amount) || 0)) * 100) / 100, 0);
-    user.level = vipLevelForSpend(user.vipSpend);
     if (bill.type === "renewal" && bill.beforeExpiresAt && user.expiresAt === bill.afterExpiresAt) {
       user.expiresAt = bill.beforeExpiresAt;
     }
@@ -5936,7 +5921,6 @@ function renewUser(user, input) {
   const group = normalizeUserGroup(input.group, activeUserGroup(user));
   const currentExpiry = user.expiresAt ? new Date(user.expiresAt) : null;
   const previousPaid = Number(user.actualPaid) || 0;
-  const previousVipSpend = userVipSpend(user);
   const vipSpendAmount = normalizePaymentAmount(input.vipSpendAmount ?? actualPaid);
   const replace = input.replace === true;
   const currentCashValue = remainingPlanCashValue(user, renewedAt);
@@ -5963,13 +5947,11 @@ function renewUser(user, input) {
   if (!expiresAt) throw new Error("续费时间格式不正确。");
   if (!selfHosted && !subscription) throw new Error("请选择已添加的 URL。");
 
-  const vipSpend = Math.round((previousVipSpend + vipSpendAmount) * 100) / 100;
+  // The caller books VIP growth in the wallet and copies the wallet total onto the user.
   Object.assign(user, {
     purchasedAt: renewedAt.toISOString(),
     duration,
     actualPaid: Math.round((previousPaid + actualPaid) * 100) / 100,
-    vipSpend,
-    level: vipLevelForSpend(vipSpend),
     group,
     activeGroup: group,
     unlimited: input.unlimited !== undefined ? Boolean(input.unlimited) : Boolean(user.unlimited),
@@ -8808,6 +8790,7 @@ async function handleApi(req, res, pathname) {
       vipLevel: walletVipLevel,
       vipSpend: wallet.vipSpendCents / 100,
       vipDiscountPercent: vipDiscountPercent(walletVipLevel),
+      vipTiers: publicVipTiers(),
       wallet: publicWallet(wallet),
       referral: {
         code: account.referralCode,
@@ -9127,7 +9110,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/public/sales-settings" && req.method === "GET") {
     await loadLatestData();
     const settings = currentSalesSettings();
-    sendJson(res, 200, { registrationMode: settings.registrationMode, onboardingEnabled: settings.onboardingEnabled, faqs: settings.faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })), userAlerts: settings.userAlerts.filter(item => item.enabled !== false) });
+    sendJson(res, 200, { registrationMode: settings.registrationMode, onboardingEnabled: settings.onboardingEnabled, faqs: settings.faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })), userAlerts: settings.userAlerts.filter(item => item.enabled !== false), vipTiers: publicVipTiers() });
     return;
   }
 
@@ -9423,13 +9406,11 @@ async function handleApi(req, res, pathname) {
       if (!user) throw Object.assign(new Error("用户不存在。"), { statusCode: 404 });
       const clients = await xuiRequest("/panel/api/clients/list");
       const linkedByEmail = new Map(users.filter(item => item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
-      const resetDay = chinaDateParts(user.purchasedAt || user.createdAt || Date.now())?.day || 1;
       sendJson(res, 200, { importPreview: {
         email: nexoraUserEmail(user),
         totalBytes: xuiTrafficLimitBytes(user),
         limitIp: planDeviceLimit(user),
-        expiresAt: user.expiresAt || "",
-        resetDay
+        expiresAt: user.expiresAt || ""
       }, clients: (Array.isArray(clients) ? clients : []).map(value => {
         const client = normalizeXuiClientResult(value);
         const linked = linkedByEmail.get(client.email.toLowerCase());
@@ -10212,6 +10193,16 @@ async function handleApi(req, res, pathname) {
         afterExpiresAt: normalized.expiresAt,
         description: "用户初始购买"
       }));
+      // A customer account that already has this user's email keeps VIP in its wallet, so the offline sale is booked there.
+      const ownerAccount = accounts.find(entry => userForAccount(entry) === normalized);
+      const offlineVipCents = Math.round(userVipSpend(normalized) * 100);
+      if (ownerAccount && offlineVipCents > 0) {
+        const wallet = await dataStore.creditWalletVipSpend({
+          id: crypto.randomUUID(), accountId: ownerAccount.id, sourceId: normalized.id, amountCents: offlineVipCents,
+          description: "后台录入消费", idempotencyKey: `offline-user:${normalized.id}`, initialVipCents: 0
+        });
+        syncWalletVip(ownerAccount, wallet);
+      }
       appendUserLogToUser(normalized, createUserLog({
         event: "user-action",
         status: "recorded",
@@ -11810,7 +11801,6 @@ module.exports = Object.assign(requestHandler, {
   pendingXuiTrafficAlert,
   xuiClientCycleKey,
   xuiBillingPayload,
-  xuiMonthlyResetAt,
   initializeXuiTrafficSchedule,
   isXuiTimeoutError,
   provisionXuiClient,

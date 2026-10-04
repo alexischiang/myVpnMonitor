@@ -32,6 +32,7 @@ import { MarkdownContent } from "@/components/features/markdown-content"
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { ProgressRing } from "@/components/features/progress-ring"
 import { CopyButton, EmptyState } from "@/components/features/shared"
+import { nextVipTier, vipLevelLabel, type VipTier } from "@/components/features/vip-badge"
 import { cn } from "@/lib/utils"
 import { formatDate, formatDateTime, formatMoney, orderProductLabel, purchasedPlanParts } from "@/utils"
 
@@ -42,7 +43,7 @@ type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes:
 type IpInfo = { ip: string; asn?: number; asOrganization?: string; country?: string; countryCode?: string; region?: string; regionCode?: string; city?: string; timezone?: string; fraudScore?: number; isResidential?: boolean; isBroadcast?: boolean }
 type Announcement = { id: string; title: string; content: string; publishedAt: string }
 type AccountService = { id: string; orderId: string; name: string; regionName?: string; amount: number; durationDays?: number; startedAt: string; expiresAt?: string; status: "pending" | "processing" | "active" | "expired"; deliveryNote?: string }
-type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; wallet: Omit<WalletData, "entries">; referral: { rate: number; invitedCount: number }; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
+type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; vipTiers?: VipTier[]; wallet: Omit<WalletData, "entries">; referral: { rate: number; invitedCount: number }; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
 type WalletData = { balance: number; cashBalance: number; giftBalance: number; referralBalance: number; realCashBalance?: number; virtualCashBalance?: number; availableRealCashBalance?: number; availableVirtualCashBalance?: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
 // Local development cannot resolve a loopback address, so the overview shows this sample instead of an error.
@@ -114,9 +115,12 @@ function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }:
     { label: "IP", icon: Globe, value: ipValue(ipInfo?.ip || ""), title: ipInfo?.ip },
     { label: "位置", icon: MapPin, value: ipValue(location), title: location || undefined },
   ]
-  const vipTarget = account.vipSpend < 360 ? { level: "VIP 2", start: 0, amount: 360 } : account.vipSpend < 900 ? { level: "VIP 3", start: 360, amount: 900 } : null
+  const vipTiers = account.vipTiers || []
+  const nextTier = nextVipTier(vipTiers, account.vipSpend)
+  const tierStart = Math.max(0, ...vipTiers.filter(tier => tier.minSpend <= account.vipSpend).map(tier => tier.minSpend))
+  const vipTarget = nextTier ? { level: vipLevelLabel(nextTier.level), start: tierStart, amount: nextTier.minSpend } : null
   const vipProgress = vipTarget ? Math.min(100, Math.max(0, (account.vipSpend - vipTarget.start) / (vipTarget.amount - vipTarget.start) * 100)) : 100
-  const currentLevel = account.vipLevel.replace(/^vip\s*/i, "VIP ")
+  const currentLevel = vipLevelLabel(account.vipLevel)
 
   // Personal details on the left, VIP progress on the right; they stack with a horizontal divider on phones.
   return <BentoCard span={span} rowSpan={rowSpan} className={className} title="个人信息">
@@ -144,7 +148,7 @@ function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }:
         <div className="grid text-xs text-muted-foreground tabular-nums">
           <span>累计消费 <span className="font-medium text-foreground">{formatMoney(account.vipSpend)}</span></span>
           <span>{vipTarget ? `距离 ${vipTarget.level} 还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "已达到最高等级"}</span>
-          <span className="flex items-center justify-center gap-1">专属折扣 {account.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>VIP 1：0% · VIP 2：5% · VIP 3：10%</TooltipContent></Tooltip></span>
+          <span className="flex items-center justify-center gap-1">专属折扣 {account.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>{vipTiers.map(tier => `${vipLevelLabel(tier.level)}：${tier.discountPercent}%`).join(" · ")}</TooltipContent></Tooltip></span>
         </div>
       </section>
     </CardContent>

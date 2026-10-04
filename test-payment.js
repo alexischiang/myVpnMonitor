@@ -301,7 +301,8 @@ async function main() {
     assert.strictEqual(savedSettings.response.status, 200);
     assert.strictEqual(savedSettings.data.coupons[0].code, "SAVE20");
     const publicSettings = await request("/api/public/sales-settings");
-    assert.deepStrictEqual(publicSettings.data, { registrationMode: "open", onboardingEnabled: true, faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }], userAlerts: [] });
+    const { vipTiers: _publicVipTiers, ...publicSalesSettings } = publicSettings.data;
+    assert.deepStrictEqual(publicSalesSettings, { registrationMode: "open", onboardingEnabled: true, faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }], userAlerts: [] });
     const adminPricing = await request("/api/pricing", { cookie: adminCookie });
     const shopperPricing = await request("/api/public/pricing");
     assert.ok(adminPricing.data.some(item => item.group === "friends-lifetime-unlimited" && item.internal === true));
@@ -702,6 +703,9 @@ async function main() {
     });
     const inviterCookie = inviterRegistration.response.headers.get("set-cookie").split(";", 1)[0];
     const inviterOverview = await request("/api/account/overview", { cookie: inviterCookie });
+    const publishedVipTiers = [{ level: "vip1", minSpend: 0, discountPercent: 0 }, { level: "vip2", minSpend: 360, discountPercent: 5 }, { level: "vip3", minSpend: 900, discountPercent: 10 }];
+    assert.deepStrictEqual(inviterOverview.data.vipTiers, publishedVipTiers, "the overview publishes the VIP tier table");
+    assert.deepStrictEqual((await request("/api/public/sales-settings")).data.vipTiers, publishedVipTiers, "onboarding reads the same tier table");
     const inviteeRegistration = await request("/api/auth/register", {
       method: "POST",
       body: { email: "invitee@example.test", password: "payment-test-password", referralCode: inviterOverview.data.referral.code }
@@ -741,6 +745,18 @@ async function main() {
     assert.strictEqual(inviterWallet.data.balance, 0);
     assert.strictEqual(inviterWallet.data.referralBalance, 0);
     assert.strictEqual(inviterWallet.data.vipSpend, 0.93);
+
+    // A first plan bill records only that order's VIP growth, not VIP already earned from an earlier recharge.
+    const vipBillCookie = (await request("/api/auth/register", { method: "POST", body: { email: "vip-bill@example.test", password: "payment-test-password" } })).response.headers.get("set-cookie").split(";", 1)[0];
+    const vipBillRecharge = await request("/api/wallet/recharge", { method: "POST", cookie: vipBillCookie, body: { amount: 2 } });
+    await request(`/api/payments/orders/${vipBillRecharge.data.id}/start`, { method: "POST", cookie: vipBillCookie, body: { channelCode: "100" } });
+    await callback(vipBillRecharge.data, 1, "2.00", true);
+    const vipBillOrder = await purchase({ method: "POST", cookie: vipBillCookie, body: { optionId: paymentOptionId, channelCode: "100", useBalance: false } });
+    await callback(vipBillOrder.data, 1, String(vipBillOrder.data.amount), true);
+    const vipBill = (await database.query("SELECT data FROM app_records WHERE collection = 'bills' AND data->>'paymentOrderId' = $1", [vipBillOrder.data.id])).rows[0].data;
+    assert.deepStrictEqual([vipBill.type, vipBill.vipSpendAmount, (await request("/api/account/wallet", { cookie: vipBillCookie })).data.vipSpend], ["initial", vipBillOrder.data.amount, Math.round((2 + vipBillOrder.data.amount) * 100) / 100]);
+    await database.query("UPDATE app_records SET data = data - 'vipLevel' WHERE collection = 'paymentOrders' AND id = $1", [vipBillOrder.data.id]);
+    assert.strictEqual((await request(`/api/payments/orders/${vipBillOrder.data.id}`, { cookie: vipBillCookie })).data.vipLevel, "", "an order that never recorded a VIP level must not report VIP 1");
 
     const chainUsers = await request("/api/users", { cookie: adminCookie });
     const inviteeUser = chainUsers.data.find(item => item.email === "invitee@example.test");
@@ -1022,6 +1038,10 @@ async function main() {
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
     assert.strictEqual(xuiClients.get("v2-sync@example.test").group, catalogV2Ids.group);
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientPresent, true);
+    const xuiClientChoices = await request(`/api/xui-clients?userId=${v2User.id}`, { cookie: adminCookie });
+    assert.strictEqual(xuiClientChoices.response.status, 200, xuiClientChoices.text);
+    assert.ok(xuiClientChoices.data.clients.some(client => client.email === "v2-sync@example.test" && client.linkedUserId === v2User.id));
+    assert.strictEqual("resetDay" in xuiClientChoices.data.importPreview, false, "no calendar reset day is offered; traffic resets every 30 days from purchase");
     assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "3x-ui sync must not write panel state back to V2 catalog data");
 
     // Admin-created users are bound to a V2 plan spec (unlisted allowed); legacy tier payloads are rejected.
@@ -1035,6 +1055,20 @@ async function main() {
       [2, catalogV2Ids.product, catalogV2Ids.group, "admin_create", "2026-01-31T00:00:00.000Z", 50 * 1024 ** 3, 2]
     );
     assert.deepStrictEqual(xuiClients.get("admin-v2@example.test").inboundIds, [1]);
+
+    // Spend an admin records for a customer who already has a wallet joins that wallet instead of being overwritten.
+    const preWalletCookie = (await request("/api/auth/register", { method: "POST", body: { email: "admin-vip@example.test", password: "payment-test-password" } })).response.headers.get("set-cookie").split(";", 1)[0];
+    const preWalletRecharge = await request("/api/wallet/recharge", { method: "POST", cookie: preWalletCookie, body: { amount: 2 } });
+    await request(`/api/payments/orders/${preWalletRecharge.data.id}/start`, { method: "POST", cookie: preWalletCookie, body: { channelCode: "100" } });
+    await callback(preWalletRecharge.data, 1, "2.00", true);
+    const adminForWallet = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "admin-vip", email: "admin-vip@example.test", lineType: "self_hosted", optionId: hiddenOptionId, trafficTier: 1, purchasedAt: "2026-01-01", actualPaid: 5 } });
+    assert.strictEqual(adminForWallet.response.status, 201, adminForWallet.text);
+    assert.deepStrictEqual(
+      [(await request("/api/account/wallet", { cookie: preWalletCookie })).data.vipSpend, (await request(`/api/users/${adminForWallet.data.id}`, { cookie: adminCookie })).data.vipSpend],
+      [7, 7],
+      "the admin-recorded ¥5 is added to the ¥2 recharge"
+    );
+    assert.strictEqual((await request(`/api/users/${adminForWallet.data.id}`, { method: "DELETE", cookie: adminCookie })).response.status, 200);
     const adminCreatedBill = await database.query("SELECT data FROM app_records WHERE collection='bills' AND data->>'userId'=$1", [adminCreated.data.id]);
     assert.deepStrictEqual(adminCreatedBill.rows.map(row => [row.data.type, row.data.amount]), [["initial", 5]]);
     const adminIdentityEdit = await request(`/api/users/${adminCreated.data.id}`, { method: "PUT", cookie: adminCookie, body: { wechatName: "renamed", duration: "yearly", expiresAt: "2030-01-01", activeGroup: "ultra" } });
@@ -1061,8 +1095,10 @@ async function main() {
       assert.strictEqual((await saveInboundSettings(key, settings)).response.status, 200);
     }
 
+    const vipBeforeAddon = (await request("/api/account/wallet", { cookie: v2Cookie })).data.vipSpend;
     const nodeOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.customNode}`, amount: 1 } });
     assert.deepStrictEqual([nodeOrder.response.status, nodeOrder.data.fulfillmentStatus], [201, "manual_pending"]);
+    assert.deepStrictEqual([nodeOrder.data.vipSpendAmount, (await request("/api/account/wallet", { cookie: v2Cookie })).data.vipSpend], [1, Math.round((vipBeforeAddon + 1) * 100) / 100], "money paid in for an add-on counts toward VIP like a plan");
     assert.ok((await request("/api/admin/work-summary", { cookie: adminCookie })).data.pendingDeliveries >= 1);
     const queue = await request("/api/admin/deliveries", { cookie: adminCookie });
     assert.ok(queue.data.pending.some(order => order.id === nodeOrder.data.id && order.services[0].handler === "custom_node"));
