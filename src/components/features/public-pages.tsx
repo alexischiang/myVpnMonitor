@@ -23,6 +23,7 @@ import { CopyButton, EmptyState } from "@/components/features/shared"
 import { BentoButton } from "@/components/features/bento-button"
 import { PlanOfferCard } from "@/components/features/plan-offer-card"
 import { CategoryPills } from "@/components/features/category-pills"
+import { vipLevelLabel } from "@/components/features/vip-badge"
 import type { CatalogV2AddonCategory, CatalogV2Product, FaqSetting } from "@/types"
 import { formatDate, formatMoney, orderProductLabel } from "@/utils"
 
@@ -422,7 +423,7 @@ export function CheckoutPage() {
                 <p className="flex justify-between"><span className="text-muted-foreground">{(quote.trafficTier || 1) > 1 ? `套餐基础价（每月 ${quote.trafficBaseGb} GB）` : "商品原价"}</span><span>{formatMoney(quote.baseAmount ?? quote.originalAmount)}</span></p>
                 {(quote.trafficTier || 1) > 1 ? <p className="flex justify-between"><span className="text-muted-foreground">流量定制至每月 {quote.trafficGb} GB</span><span>+{formatMoney(quote.trafficCustomizationAmount)}</span></p> : null}
                 {quote.discountAmount ? <p className="flex justify-between"><span className="text-muted-foreground">优惠码 {quote.couponCode}（{quote.discountPercent}%）</span><span>-{formatMoney(quote.discountAmount)}</span></p> : null}
-                {isStandaloneAddOn ? null : <p className="flex justify-between gap-3"><span className="text-muted-foreground">{quote.vipLevel.replace(/^vip/i, "VIP ")} 专属折扣（{quote.vipDiscountPercent}%）</span><span>-{formatMoney(quote.vipDiscountAmount)}</span></p>}
+                {isStandaloneAddOn ? null : <p className="flex justify-between gap-3"><span className="text-muted-foreground">{vipLevelLabel(quote.vipLevel)} 专属折扣（{quote.vipDiscountPercent}%）</span><span>-{formatMoney(quote.vipDiscountAmount)}</span></p>}
                 <p className="flex justify-between"><span className="text-muted-foreground">{isStandaloneAddOn ? "小计" : "优惠后小计"}</span><span>{formatMoney(quote.subtotal)}</span></p>
                 {quote.addOnAmount && !isStandaloneAddOn ? <p className="flex justify-between gap-3"><span className="text-muted-foreground">附加服务：{quote.availableAddOns?.filter(addOn => quote.selectedAddOns?.includes(addOn.id)).map(addOn => addOn.name).join("、")}</span><span>+{formatMoney(quote.addOnAmount)}</span></p> : null}
                 <p className="flex justify-between"><span className="text-muted-foreground">{quote.taxRate ? `税费（${quote.taxRate}%）` : "税费（免税）"}</span><span>{formatMoney(quote.taxAmount)}</span></p>
@@ -475,7 +476,7 @@ export function DeliveryPage() {
           <CardContent className="grid gap-4 md:grid-cols-3">
             <Metric label="到期时间" value={formatDate(data.expiresAt)} />
             <Metric label="套餐等级" value={String(data.lineGroupId || "-").toUpperCase()} />
-            <Metric label="VIP 等级" value={String(data.vipLevel || "-").toUpperCase()} />
+            <Metric label="VIP 等级" value={vipLevelLabel(data.vipLevel)} />
           </CardContent>
         </Card>
         <Card>

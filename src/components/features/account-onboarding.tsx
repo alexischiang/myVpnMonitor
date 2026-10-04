@@ -12,7 +12,8 @@ import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/comp
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
-import { VipBadge } from "@/components/features/vip-badge"
+import { VipBadge, vipLevelLabel, type VipTier } from "@/components/features/vip-badge"
+import { formatMoney } from "@/utils"
 
 const steps = [
   {
@@ -29,7 +30,7 @@ const steps = [
   },
   {
     title: "消费累积，解锁 VIP 权益",
-    description: "购买套餐和充值余额都会累计 VIP 消费。累计 ¥360 升至 VIP 2，享 5% 专属折扣；累计 ¥900 升至 VIP 3，享 10% 专属折扣。",
+    description: "充值和直接付款（套餐、流量包、附加服务）都会累计 VIP 消费，使用余额付款的部分不重复累计。",
   },
   {
     title: "分享邀请，获得返利",
@@ -37,7 +38,42 @@ const steps = [
   },
 ]
 
-function StepPreview({ step }: { step: number }) {
+function vipTierSummary(tiers: VipTier[]) {
+  return tiers.filter(tier => tier.minSpend > 0).map(tier => `累计 ${formatMoney(tier.minSpend)} 升至 ${vipLevelLabel(tier.level)}，享 ${tier.discountPercent}% 专属折扣`).join("；")
+}
+
+function VipStepPreview({ tiers }: { tiers: VipTier[] }) {
+  const top = tiers[tiers.length - 1]
+  // Sample progress sits 60% of the way to the top tier.
+  const sampleSpend = top ? Math.round(top.minSpend * 0.6) : 0
+  return (
+    <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
+      <CardHeader className="flex-row items-start justify-between gap-4 px-4 sm:px-6">
+        <div className="grid gap-1.5"><CardDescription>VIP 成长</CardDescription><CardTitle>专属折扣随等级提升</CardTitle></div>
+        {tiers[1] ? <VipBadge level={tiers[1].level} /> : null}
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <ItemGroup className="items-center gap-2" style={{ gridTemplateColumns: tiers.map(() => "1fr").join(" auto ") }}>
+          {tiers.map((tier, index) => (
+            <React.Fragment key={tier.level}>
+              {index > 0 ? <ArrowRight className="size-4 text-muted-foreground" /> : null}
+              <Item variant={index === 1 ? "muted" : "outline"} size="sm" className="justify-center"><ItemContent className="items-center text-center"><VipBadge level={tier.level} /><ItemDescription>{tier.minSpend > 0 ? `累计 ${formatMoney(tier.minSpend)}` : "起始等级"}</ItemDescription><ItemTitle>{tier.discountPercent}% 折扣</ItemTitle></ItemContent></Item>
+            </React.Fragment>
+          ))}
+        </ItemGroup>
+        {top ? (
+          <section className="grid gap-2" aria-label="VIP 成长进度示例">
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground tabular-nums"><span>成长进度</span><span>{formatMoney(sampleSpend)} / {formatMoney(top.minSpend)}</span></div>
+            <Progress value={60} />
+            <p className="text-xs text-muted-foreground">当前等级和成长进度可在“总览”中查看。</p>
+          </section>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+function StepPreview({ step, vipTiers }: { step: number; vipTiers: VipTier[] }) {
   if (step === 0) return (
     <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
       <CardHeader className="px-4 sm:px-6">
@@ -59,28 +95,7 @@ function StepPreview({ step }: { step: number }) {
     </Card>
   )
 
-  if (step === 3) return (
-    <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
-      <CardHeader className="flex-row items-start justify-between gap-4 px-4 sm:px-6">
-        <div className="grid gap-1.5"><CardDescription>VIP 成长</CardDescription><CardTitle>专属折扣随等级提升</CardTitle></div>
-        <VipBadge level="vip2" />
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        <ItemGroup className="grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2">
-          <Item variant="outline" size="sm" className="justify-center"><ItemContent className="items-center text-center"><VipBadge level="vip1" /><ItemDescription>起始等级</ItemDescription><ItemTitle>0% 折扣</ItemTitle></ItemContent></Item>
-          <ArrowRight className="size-4 text-muted-foreground" />
-          <Item variant="muted" size="sm" className="justify-center"><ItemContent className="items-center text-center"><VipBadge level="vip2" /><ItemDescription>累计 ¥360</ItemDescription><ItemTitle>5% 折扣</ItemTitle></ItemContent></Item>
-          <ArrowRight className="size-4 text-muted-foreground" />
-          <Item variant="outline" size="sm" className="justify-center"><ItemContent className="items-center text-center"><VipBadge level="vip3" /><ItemDescription>累计 ¥900</ItemDescription><ItemTitle>10% 折扣</ItemTitle></ItemContent></Item>
-        </ItemGroup>
-        <section className="grid gap-2" aria-label="VIP 成长进度示例">
-          <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>成长进度</span><span>¥540 / ¥900</span></div>
-          <Progress value={60} />
-          <p className="text-xs text-muted-foreground">当前等级和成长进度可在“总览”中查看。</p>
-        </section>
-      </CardContent>
-    </Card>
-  )
+  if (step === 3) return <VipStepPreview tiers={vipTiers} />
 
   if (step === 4) return (
     <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
@@ -138,9 +153,11 @@ export function AccountOnboardingPage() {
   const [carouselApi, setCarouselApi] = React.useState<CarouselApi>()
   const [step, setStep] = React.useState(0)
   const [onboardingEnabled, setOnboardingEnabled] = React.useState<boolean | null>(null)
+  const [vipTiers, setVipTiers] = React.useState<VipTier[]>([])
 
   React.useEffect(() => {
-    fetchJson<{ onboardingEnabled: boolean }>("/api/public/sales-settings").then(settings => {
+    fetchJson<{ onboardingEnabled: boolean; vipTiers?: VipTier[] }>("/api/public/sales-settings").then(settings => {
+      setVipTiers(settings.vipTiers || [])
       setOnboardingEnabled(settings.onboardingEnabled)
       if (!settings.onboardingEnabled) navigate("/account", { replace: true })
     }).catch(() => setOnboardingEnabled(true))
@@ -184,6 +201,7 @@ export function AccountOnboardingPage() {
       <Carousel className="flex min-h-0 flex-1 flex-col overflow-hidden [&_[data-slot=carousel-content]]:h-full" setApi={setCarouselApi} opts={{ watchDrag: true }} aria-label="用户中心使用引导">
         <CarouselContent className="h-full items-center">
           {steps.map((item, index) => {
+            const description = index === 3 && vipTiers.length ? `${item.description}${vipTierSummary(vipTiers)}。` : item.description
             return (
               <CarouselItem className="h-full" key={item.title} aria-label={`${index + 1} / ${steps.length}`}>
                 <section className="mx-auto grid h-full w-full max-w-6xl content-center items-center gap-4 px-4 py-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] sm:px-6 md:gap-8 lg:gap-16 lg:px-10">
@@ -191,10 +209,10 @@ export function AccountOnboardingPage() {
                     <p className="text-4xl font-semibold tracking-tight text-muted-foreground md:text-6xl">Step {index + 1}</p>
                     <div className="grid gap-3">
                       <h1 className="max-w-xl text-2xl font-semibold tracking-tight md:text-4xl lg:text-5xl">{item.title}</h1>
-                      <p className="max-w-xl text-sm leading-6 text-muted-foreground md:text-lg md:leading-7">{item.description}</p>
+                      <p className="max-w-xl text-sm leading-6 text-muted-foreground md:text-lg md:leading-7">{description}</p>
                     </div>
                   </header>
-                  <StepPreview step={index} />
+                  <StepPreview step={index} vipTiers={vipTiers} />
                 </section>
               </CarouselItem>
             )

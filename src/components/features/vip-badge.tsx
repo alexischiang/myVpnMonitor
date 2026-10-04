@@ -6,6 +6,17 @@ const vipTiers = {
   vip3: { label: "VIP 3", start: "#7c3aed", end: "#db2777" },
 } as const
 
+// VIP tier rules as published by the server (VIP_TIERS), ordered from the lowest tier.
+export type VipTier = { level: string; minSpend: number; discountPercent: number }
+
+export function vipLevelLabel(level?: string) {
+  return level ? level.replace(/^vip\s*/i, "VIP ") : "-"
+}
+
+export function nextVipTier(tiers: VipTier[], spend: number) {
+  return tiers.find(tier => spend < tier.minSpend) || null
+}
+
 export function VipBadge({ level = "vip1" }: { level?: string }) {
   const tier = vipTiers[level.toLowerCase() as keyof typeof vipTiers] || vipTiers.vip1
   return (

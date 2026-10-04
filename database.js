@@ -473,6 +473,11 @@ class PostgresDataStore {
     return this.applyWalletEntry({ id, accountId, sourceId, idempotencyKey, type: "reward", giftDeltaCents: amountCents, description, initialVipCents });
   }
 
+  // VIP growth for money collected outside the wallet (an administrator's offline sale); balances are untouched.
+  async creditWalletVipSpend({ id, accountId, sourceId, amountCents, description, idempotencyKey, initialVipCents = 0 }) {
+    return this.applyWalletEntry({ id, accountId, sourceId, idempotencyKey, type: "offline", vipDeltaCents: amountCents, description, initialVipCents });
+  }
+
   async creditReferralReward({ id, accountId, sourceId, amountCents, description, idempotencyKey, initialVipCents = 0 }) {
     return this.applyWalletEntry({ id, accountId, sourceId, idempotencyKey, type: "referral", referralDeltaCents: amountCents, description, initialVipCents });
   }
