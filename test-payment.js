@@ -1154,6 +1154,15 @@ async function main() {
     assert.strictEqual(exemptSave.data.chargeTax, false);
     const exemptQuote = await request("/api/orders/quote", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, useBalance: false } });
     assert.deepStrictEqual([exemptQuote.data.taxRate, exemptQuote.data.taxAmount, exemptQuote.data.amount], [0, 0, 1]);
+    // VIP discount follows the product switch: add-ons default to off, and turning it on discounts them.
+    const vipSpendBeforeSwitch = (await database.query("SELECT vip_spend_cents FROM wallet_accounts WHERE account_id=$1", [v2Account.accountId])).rows[0].vip_spend_cents;
+    await database.query("UPDATE wallet_accounts SET vip_spend_cents=90000 WHERE account_id=$1", [v2Account.accountId]);
+    assert.deepStrictEqual([exemptSave.data.vipDiscount, (await request("/api/orders/quote", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, useBalance: false } })).data.vipDiscountPercent], [false, 0], "add-ons skip the VIP discount by default");
+    const vipAddonSave = await request(`/api/catalog-v2/products/${catalogV2Ids.topUp}`, { method: "PUT", cookie: adminCookie, body: addonProduct(catalogV2Ids.topUp, "AI 代充值", { mode: "manual", handler: "manual", config: {} }, { buyerInputLabel: "充值账号", chargeTax: false, vipDiscount: true }) });
+    assert.strictEqual(vipAddonSave.data.vipDiscount, true);
+    const vipAddonQuote = await request("/api/orders/quote", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, useBalance: false } });
+    assert.deepStrictEqual([vipAddonQuote.data.vipLevel, vipAddonQuote.data.vipDiscountPercent, vipAddonQuote.data.vipDiscountAmount, vipAddonQuote.data.amount], ["vip3", 10, 0.1, 0.9]);
+    await database.query("UPDATE wallet_accounts SET vip_spend_cents=$2 WHERE account_id=$1", [v2Account.accountId, vipSpendBeforeSwitch]);
     await request("/api/checkout-settings", { method: "PUT", cookie: adminCookie, body: { taxRate: 3 } });
     assert.strictEqual((await saveInboundSettings("local:2", { region: "", inboundType: "package" })).response.status, 200);
 

@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-04
-- Current Objective: 清理 xuiMonthlyResetAt 按月重置旧逻辑（并延续本会话 VIP 链路优化）
+- Last Updated: 2026-10-07
+- Current Objective: 个人信息卡片 VIP 专属折扣改为右上角 badge
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -392,8 +392,16 @@
 
 - 2026-10-04: npm run verify exit 0；verify:harness、git diff --check 通过；后台切换自研线路弹窗浏览器验证无 console/page errors
 
+- 2026-10-07: npm test、npm run check、git diff --check 通过；新回归测试修复前失败、修复后通过
+
+- 2026-10-07: npm run verify:catalog-v2、npm test、npm run check、git diff --check 通过
+
+- 2026-10-07: verify:catalog-v2、npm test、npm run check、verify:harness 通过；管理员浏览器桌面与 390px 验证无控制台错误
+
+- 2026-10-07: npm run check、verify:harness 通过；普通用户浏览器桌面与 390px 验证无控制台错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-onboarding.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/vip-badge.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
+- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/data-table-card.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/user-form-dialog.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 等待用户确认后提交/部署
+- Recommended Next Step: 无进行中功能；可按需提交

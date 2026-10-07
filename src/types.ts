@@ -394,6 +394,7 @@ export type CatalogV2Product = {
   fulfillment: { mode: "automatic" | "manual" | null; handler: AddonHandler | null; config: { trafficBytes?: number } }
   buyerInputLabel: string
   chargeTax: boolean
+  vipDiscount: boolean
   deliveryDescription: string
   serviceDurationDays: number | null
   allowQuantity: boolean

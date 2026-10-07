@@ -142,6 +142,10 @@ assert.strictEqual(normalizeCheckoutSettings({ taxRate: 0 }).taxRate, 0);
 for (const taxRate of [-1, 101, "", null, "abc", 3.125]) assert.throws(() => normalizeCheckoutSettings({ taxRate }), /税率/);
 assert.strictEqual(catalogV2ManualAddon.chargeTax, true, "products charge tax unless unchecked");
 const taxExemptAddon = normalizeCatalogV2Product({ ...catalogV2ManualAddon, chargeTax: false });
+// VIP discount defaults to plans only; the admin switch overrides it either way.
+assert.deepStrictEqual([catalogV2Product.vipDiscount, catalogV2ManualAddon.vipDiscount], [true, false]);
+assert.strictEqual(normalizeCatalogV2Product({ ...catalogV2ManualAddon, vipDiscount: true }).vipDiscount, true);
+assert.strictEqual(normalizeCatalogV2Product({ ...catalogV2Product, vipDiscount: false }).vipDiscount, false);
 assert.strictEqual(taxExemptAddon.chargeTax, false);
 {
   const { resolvePurchase } = require("./commerce/catalog-v2");
@@ -149,6 +153,12 @@ assert.strictEqual(taxExemptAddon.chargeTax, false);
   const exempt = resolvePurchase([taxExemptAddon], { productId: taxExemptAddon.id }, { taxRate: 3 });
   assert.deepStrictEqual([taxed.taxRate, taxed.taxAmount, taxed.amount], [3, 0.15, 5.15]);
   assert.deepStrictEqual([exempt.taxRate, exempt.taxAmount, exempt.amount, exempt.productSnapshotV2.chargeTax], [0, 0, 5, false]);
+  // Traffic customization is charged per 30 days: 90 days with 2 steps pays 3 x 2 x 20 = 120.
+  const quarterly = { ...catalogV2Product, stock: null, periods: [...catalogV2Product.periods, { ...catalogV2Product.periods[0], id: "90d", durationDays: 90, priceCents: 12900 }] };
+  const monthlyQuote = resolvePurchase([quarterly], { productId: quarterly.id, periodId: "30d", trafficSteps: 2 }, { allowUnlisted: true });
+  const quarterlyQuote = resolvePurchase([quarterly], { productId: quarterly.id, periodId: "90d", trafficSteps: 2 }, { allowUnlisted: true });
+  assert.deepStrictEqual([monthlyQuote.baseAmount, monthlyQuote.trafficCustomizationAmount, monthlyQuote.originalAmount], [49, 40, 89]);
+  assert.deepStrictEqual([quarterlyQuote.baseAmount, quarterlyQuote.trafficCustomizationAmount, quarterlyQuote.trafficCustomizationMonthlyAmount, quarterlyQuote.originalAmount], [129, 120, 40, 249]);
 }
 
 // Add-on handlers: product normalisation, checkout input, service windows, delivery and custom-node expiry.

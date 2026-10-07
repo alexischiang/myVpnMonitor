@@ -2492,6 +2492,103 @@
         "page_errors": [],
         "checked_at": "2026-10-04"
       }
+    },
+    {
+      "id": "traffic-customization-per-30-days",
+      "name": "Charge traffic customization per 30 days",
+      "description": "Traffic customization on V2 recurring plans added steps x stepPrice once, whatever the period length, so a 90-day plan paid the same extra as a 30-day plan. The extra is now charged once per 30 days of the period: round(steps x stepPrice x durationDays / 30) in commerce/catalog-v2.js (shared by checkout quotes, orders and renewal offers). The admin user form price preview (user-form-dialog.tsx) uses the same formula. Quotes also carry trafficCustomizationMonthlyAmount (steps x stepPrice), and for periods over 30 days the checkout 订单摘要 shows the line as '+monthly × months = total' (e.g. +¥10.00 × 3 = ¥30.00).",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "A 90-day period with 2 steps at 20 per step quotes +120 traffic customization (3 x 40); a 30-day period quotes +40.",
+        "The admin new-user form shows the same price as the checkout quote.",
+        "For periods over 30 days the checkout order summary shows '+monthly × months = total' on the traffic customization line; 30-day periods show the plain amount."
+      ],
+      "verification": [
+        "2026-10-07: reproduced with resolvePurchase: 90d + 2 steps at 2.00 returned trafficCustomizationAmount 4 (expected 12). New test.js assertions (30d -> 40, 90d -> 120) fail before the fix and pass after. npm test, npm run check and git diff --check pass. npm run test:payment / test:wallet / test:catalog-v2 not run: TEST_DATABASE_URL is not configured on this machine. Admin form browser check pending: requires an admin login. Not deployed.",
+        "2026-10-07: added trafficCustomizationMonthlyAmount to quotes and the '× months' breakdown in the checkout order summary. test.js asserts the 90d quote's monthly amount is 40; npm test, npm run check and git diff --check pass. Browser check of /account/plans/checkout pending: the page and /api/orders/quote require a customer login.",
+        "2026-10-07: user reported the checkout order summary verified in the browser and asked to mark this complete."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans/checkout"
+        ],
+        "interactions": [
+          "Verified by the user (not by the agent, which had no customer login): checkout order summary for a plan longer than 30 days with customized traffic shows '+monthly × months = total'. console_errors/page_errors are recorded empty on the user's confirmation; the agent did not read the logged-in console."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-07"
+      }
+    },
+    {
+      "id": "catalog-v2-admin-product-management-revamp",
+      "name": "Product management: VIP discount switch, tables with filters, detail page layout",
+      "description": "1) New per-product vipDiscount flag (catalog_v2_products.vip_discount). Existing rows and products saved without it default to the old isPlan rule: plans true, add-ons false. catalogV2Quote applies the VIP percent when product.vipDiscount is true; the checkout summary shows the VIP line for add-ons only when a discount applies. 2) Removed the 线路权限组 link from /catalog-v2. 3) /catalog-v2 lists products in two DataTableCard tables, 套餐 and 附加服务, each with search plus select filters (plans: type, line group, status, sales channel, VIP; add-ons: category, service type, status, sales channel, VIP). New reusable FilterSelect in data-table-card.tsx. 4) Product detail page: every checkbox is now a Switch (SwitchField), switches share one two-column grid, all field grids are top-aligned, header buttons use CardAction, and every label is tied to its input.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Products have a 享受 VIP 折扣 switch; new plans default on, new add-ons default off; existing rows keep the old behaviour; an add-on with the switch on is discounted at checkout.",
+        "/catalog-v2 has no 线路权限组 entry.",
+        "/catalog-v2 shows separate 套餐 and 附加服务 tables with working filters and search.",
+        "Product detail page uses switches only, with aligned field grids on desktop and mobile."
+      ],
+      "verification": [
+        "2026-10-07: test.js asserts vipDiscount defaults (plan true, add-on false) and overrides. New test-payment step: a VIP3 customer gets 0% on an add-on by default and 10% (amount 0.9) after the admin turns the switch on. npm run verify:catalog-v2 (payment, wallet, catalog V2 in an isolated schema) passed; npm test, npm run check and git diff --check pass. Browser check of /catalog-v2 and /catalog-v2/products/:id pending: needs an admin login. Not deployed.",
+        "2026-10-07: per user request, the tables no longer show the 线路权限组 or VIP 折扣 columns (the filters stay), the 周期 column lists durations without 天 (e.g. 30 / 90 / 180), and product names and IDs are never truncated. npm run check and git diff --check pass."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/catalog-v2",
+          "/catalog-v2/products/cycled-basic",
+          "/catalog-v2/products/traffic-package-100",
+          "/catalog-v2/products/new"
+        ],
+        "interactions": [
+          "Admin session in the built-in browser, local dev server (Vite + nodemon). Desktop 1366x900: /catalog-v2 has no 线路权限组 link; the 套餐 headers are 商品|类型|周期|价格|库存|状态|排序|操作 and the 附加服务 headers are 商品|分类|服务类型|价格|库存|状态|排序|操作; 周期 cells read '30 / 90 / 180 / 360' and '永久'; no product name is clipped and neither table overflows its card.",
+          "Plan filters: 类型=不限时套餐 → 9 rows, all 不限时套餐; adding 销售渠道=仅管理员授予 and search 'PRO' → 2 rows (亲友不限时套餐 matched by ID lifetime-pro-friends, PRO 不限时套餐(V1)), both 仅管理员授予.",
+          "Add-on filters: 服务类型=节点定制 → empty state '没有符合当前筛选条件的附加服务' (none of the 8 local add-ons use custom_node); 服务类型=流量包 → 1 row (100G 流量包). API shows all 8 add-ons backfilled to vipDiscount false.",
+          "Plan detail cycled-basic: 0 checkboxes, 10 switches, every label has a control, fields sharing a grid row share a top edge; 享受 VIP 折扣 on; clicking the 推荐商品 label toggled it on (not saved); 删除周期 1 sits in the card header's top-right (CardAction).",
+          "Add-on detail traffic-package-100: 4 switches, 享受 VIP 折扣 off, no 推荐商品, same alignment checks pass. New product: VIP on for 周期性套餐, switching 商品类型 to 附加服务 turns it off and shows the add-on card (not saved).",
+          "Mobile 390x844: /catalog-v2 renders 19 card items with no horizontal page scroll and no clipped names; cycled-basic detail has no control past the viewport edge.",
+          "Console errors and uncaught page errors were captured on each page with an in-page console.error/error/unhandledrejection collector installed after navigation; all were empty. After reload, every /api/catalog-v2/* request returned 200. Earlier console entries (pre-login 401/403s, Crisp chat websocket) came from before admin login and are unrelated."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-07"
+      }
+    },
+    {
+      "id": "account-profile-vip-discount-badge",
+      "name": "Show the VIP discount as a badge in the 个人信息 card header",
+      "description": "The customer overview 个人信息 card showed '专属折扣 X%' with a help icon under the VIP progress ring. It now sits in the card header's top-right as a green BentoCardBadge with a Percent icon, matching the 获取X%返利 badge on the 邀请好友 card. The badge is a focusable button whose tooltip lists every tier's discount, replacing the old help-icon tooltip.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The 个人信息 card header shows a green '专属折扣 X%' badge in the top-right, styled like the 邀请好友 badge.",
+        "The text under the VIP ring no longer shows the discount; hovering or focusing the badge shows all tiers."
+      ],
+      "verification": [
+        "2026-10-07: npm run check and git diff --check pass. Browser check of /account pending: admins are redirected to /dashboard, so it needs a customer session."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Customer session (logged in by the user) in the built-in browser. Desktop 1366x900: the 个人信息 header shows '专属折扣 0%' (VIP 1) and the 邀请好友 header shows '获取10%返利'; both badges are tone green, rgb(88, 224, 87), 28px tall, have an icon, sit 24px from the card's right edge and are vertically centred on the title.",
+          "The VIP section under the ring now reads only 'VIP 1 / 累计消费 ¥1.00 / 距离 VIP 2 还差 ¥359.00'.",
+          "Hovering the badge opens the tooltip 'VIP 1：0% · VIP 2：5% · VIP 3：10%'. The badge is a button named '专属折扣 0%，查看各级 VIP 折扣'. Keyboard Tab was not exercised because the site's announcement dialog was open and was left unread on the user's account.",
+          "Mobile 390x844: both badges stay on the title's line without wrapping, 24px from the right edge; no horizontal page scroll.",
+          "console.error, uncaught errors and unhandled rejections were collected in-page after each navigation; all empty."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-07"
+      }
     }
   ]
 }

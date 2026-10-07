@@ -82,7 +82,8 @@ export function UserFormDialog({
   const selectedOption = planOptions.find(option => option.value === values.optionId)
   const planConfig = selectedOption ? catalogPlanConfig(selectedOption) : null
   const trafficTier = catalogPlanHasTiers(planConfig) ? Number(values.trafficTier) || 1 : 1
-  const price = planConfig ? (planConfig.priceCents + (trafficTier - 1) * planConfig.stepPriceCents) / 100 : undefined
+  // Traffic customization is charged per 30 days of the period, matching commerce/catalog-v2.js.
+  const price = planConfig ? (planConfig.priceCents + Math.round((trafficTier - 1) * planConfig.stepPriceCents * (selectedOption?.period?.durationDays || 0) / 30)) / 100 : undefined
   const expiresAt = !planConfig ? "" : planConfig.lifetime ? "永久有效" : formatDate(expiryDate(values.purchasedAt, selectedOption?.period?.durationDays || 0))
 
   React.useEffect(() => {

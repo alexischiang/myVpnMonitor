@@ -123,7 +123,9 @@ function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }:
   const currentLevel = vipLevelLabel(account.vipLevel)
 
   // Personal details on the left, VIP progress on the right; they stack with a horizontal divider on phones.
-  return <BentoCard span={span} rowSpan={rowSpan} className={className} title="个人信息">
+  // VIP discount sits in the header like the referral badge on the invite card; hovering or focusing it lists every tier.
+  const vipDiscountBadge = <Tooltip><TooltipTrigger asChild><button type="button" className="rounded-full focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none" aria-label={`专属折扣 ${account.vipDiscountPercent}%，查看各级 VIP 折扣`}><BentoCardBadge tone="green" icon={Percent}>专属折扣 {account.vipDiscountPercent}%</BentoCardBadge></button></TooltipTrigger><TooltipContent>{vipTiers.map(tier => `${vipLevelLabel(tier.level)}：${tier.discountPercent}%`).join(" · ")}</TooltipContent></Tooltip>
+  return <BentoCard span={span} rowSpan={rowSpan} className={className} title="个人信息" action={vipDiscountBadge}>
     <CardContent className="flex flex-1 flex-col gap-4 sm:flex-row">
       <div className="grid min-w-0 flex-1 content-between gap-3 sm:flex-[3]">
         <div className="flex min-w-0 items-center gap-3">
@@ -148,7 +150,6 @@ function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }:
         <div className="grid text-xs text-muted-foreground tabular-nums">
           <span>累计消费 <span className="font-medium text-foreground">{formatMoney(account.vipSpend)}</span></span>
           <span>{vipTarget ? `距离 ${vipTarget.level} 还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "已达到最高等级"}</span>
-          <span className="flex items-center justify-center gap-1">专属折扣 {account.vipDiscountPercent}%<Tooltip><TooltipTrigger aria-label="查看各级 VIP 折扣"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>{vipTiers.map(tier => `${vipLevelLabel(tier.level)}：${tier.discountPercent}%`).join(" · ")}</TooltipContent></Tooltip></span>
         </div>
       </section>
     </CardContent>
