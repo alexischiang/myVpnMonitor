@@ -19,6 +19,11 @@ function money(cents) {
   return Math.round(Number(cents || 0)) / 100;
 }
 
+// Traffic customization is priced per 30 days, so longer periods pay the step price once per 30 days.
+function trafficCustomizationCents(trafficSteps, stepPriceCents, durationDays) {
+  return Math.round(trafficSteps * stepPriceCents * durationDays / 30);
+}
+
 function optionId(productId, periodId = "") {
   return periodId ? `v2:${productId}:${periodId}` : `v2:${productId}`;
 }
@@ -51,6 +56,7 @@ function resolvePurchase(products, input = {}, context = {}) {
   let periodId = "";
   let trafficSteps = 0;
   let trafficCustomizationAmountCents = 0;
+  let trafficCustomizationMonthlyCents = 0;
 
   if (product.type === "recurring_plan") {
     periodId = String(input.periodId || "").trim();
@@ -66,7 +72,8 @@ function resolvePurchase(products, input = {}, context = {}) {
       if (!product.trafficCustomization.enabled) throw new Error("该商品未启用流量定制。");
       if (trafficBytes === null) throw new Error("无限流量规格不能增加流量档位。");
       if (trafficSteps > product.trafficCustomization.maxSteps) throw new Error("流量档数超过商品上限。");
-      trafficCustomizationAmountCents = trafficSteps * product.trafficCustomization.stepPriceCents;
+      trafficCustomizationMonthlyCents = trafficSteps * product.trafficCustomization.stepPriceCents;
+      trafficCustomizationAmountCents = trafficCustomizationCents(trafficSteps, product.trafficCustomization.stepPriceCents, durationDays);
       priceCents += trafficCustomizationAmountCents;
       trafficBytes += trafficSteps * product.trafficCustomization.stepBytes;
     }
@@ -118,6 +125,7 @@ function resolvePurchase(products, input = {}, context = {}) {
     inventoryQuantity: quantity,
     baseAmount: money(unitPriceCents - trafficCustomizationAmountCents),
     trafficCustomizationAmount: money(trafficCustomizationAmountCents),
+    trafficCustomizationMonthlyAmount: money(trafficCustomizationMonthlyCents),
     originalAmount: money(subtotalCents),
     subtotal: money(subtotalCents),
     taxRate,
@@ -152,4 +160,4 @@ function resolvePurchase(products, input = {}, context = {}) {
   };
 }
 
-module.exports = { GB, DURATION_BY_DAYS, optionId, visibleProducts, resolvePurchase };
+module.exports = { GB, DURATION_BY_DAYS, trafficCustomizationCents, optionId, visibleProducts, resolvePurchase };

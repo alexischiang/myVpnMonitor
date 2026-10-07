@@ -205,6 +205,13 @@ export function PricingPage() {
   )
 }
 
+// Traffic customization is charged per 30 days; periods longer than 30 days show "monthly × months = total".
+function trafficCustomizationLabel(quote: CheckoutQuote) {
+  const months = (quote.durationDays || 0) / 30
+  if (months <= 1 || !quote.trafficCustomizationMonthlyAmount) return formatMoney(quote.trafficCustomizationAmount)
+  return `${formatMoney(quote.trafficCustomizationMonthlyAmount)} × ${Number(months.toFixed(2))} = ${formatMoney(quote.trafficCustomizationAmount)}`
+}
+
 type CheckoutQuote = {
   optionId: string
   planName: string
@@ -220,6 +227,8 @@ type CheckoutQuote = {
   originalAmount: number
   baseAmount?: number
   trafficCustomizationAmount: number
+  trafficCustomizationMonthlyAmount?: number
+  durationDays?: number | null
   trafficTier?: number
   trafficBaseGb?: number
   trafficStepGb?: number
@@ -421,9 +430,9 @@ export function CheckoutPage() {
             <CardContent className="grid gap-4">
               <div className="grid gap-3 text-sm">
                 <p className="flex justify-between"><span className="text-muted-foreground">{(quote.trafficTier || 1) > 1 ? `套餐基础价（每月 ${quote.trafficBaseGb} GB）` : "商品原价"}</span><span>{formatMoney(quote.baseAmount ?? quote.originalAmount)}</span></p>
-                {(quote.trafficTier || 1) > 1 ? <p className="flex justify-between"><span className="text-muted-foreground">流量定制至每月 {quote.trafficGb} GB</span><span>+{formatMoney(quote.trafficCustomizationAmount)}</span></p> : null}
+                {(quote.trafficTier || 1) > 1 ? <p className="flex justify-between"><span className="text-muted-foreground">流量定制至每月 {quote.trafficGb} GB</span><span>+{trafficCustomizationLabel(quote)}</span></p> : null}
                 {quote.discountAmount ? <p className="flex justify-between"><span className="text-muted-foreground">优惠码 {quote.couponCode}（{quote.discountPercent}%）</span><span>-{formatMoney(quote.discountAmount)}</span></p> : null}
-                {isStandaloneAddOn ? null : <p className="flex justify-between gap-3"><span className="text-muted-foreground">{vipLevelLabel(quote.vipLevel)} 专属折扣（{quote.vipDiscountPercent}%）</span><span>-{formatMoney(quote.vipDiscountAmount)}</span></p>}
+                {isStandaloneAddOn && !quote.vipDiscountAmount ? null : <p className="flex justify-between gap-3"><span className="text-muted-foreground">{vipLevelLabel(quote.vipLevel)} 专属折扣（{quote.vipDiscountPercent}%）</span><span>-{formatMoney(quote.vipDiscountAmount)}</span></p>}
                 <p className="flex justify-between"><span className="text-muted-foreground">{isStandaloneAddOn ? "小计" : "优惠后小计"}</span><span>{formatMoney(quote.subtotal)}</span></p>
                 {quote.addOnAmount && !isStandaloneAddOn ? <p className="flex justify-between gap-3"><span className="text-muted-foreground">附加服务：{quote.availableAddOns?.filter(addOn => quote.selectedAddOns?.includes(addOn.id)).map(addOn => addOn.name).join("、")}</span><span>+{formatMoney(quote.addOnAmount)}</span></p> : null}
                 <p className="flex justify-between"><span className="text-muted-foreground">{quote.taxRate ? `税费（${quote.taxRate}%）` : "税费（免税）"}</span><span>{formatMoney(quote.taxAmount)}</span></p>

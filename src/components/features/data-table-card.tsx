@@ -3,6 +3,8 @@ import { ChevronDown, SlidersHorizontal } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 
@@ -21,4 +23,11 @@ export function DataTableCard({ filters, children }: { filters?: React.ReactNode
       <CardContent className="p-0">{children}</CardContent>
     </Card>
   )
+}
+
+export type FilterOption = { value: string; label: string }
+
+// One labelled select for the DataTableCard filter grid.
+export function FilterSelect({ id, label, value, onValueChange, options }: { id: string; label: string; value: string; onValueChange: (value: string) => void; options: FilterOption[] }) {
+  return <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><Select value={value} onValueChange={onValueChange}><SelectTrigger id={id} className="w-full"><SelectValue /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></Field>
 }

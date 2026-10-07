@@ -215,6 +215,8 @@ function normalizeCatalogV2Product(input = {}) {
       : catalogV2Integer(input.serviceDurationDays, { nullable: true, min: 1, label: "服务有效天数" }),
     buyerInputLabel: isAddon ? String(input.buyerInputLabel || "").trim().slice(0, 30) : "",
     chargeTax: input.chargeTax !== false,
+    // Defaults to the old rule (plans yes, add-ons no) when the admin has not set it.
+    vipDiscount: typeof input.vipDiscount === "boolean" ? input.vipDiscount : !isAddon,
     allowQuantity: isAddon ? input.allowQuantity !== false : false, minQuantity, maxQuantity
   };
 }
@@ -271,7 +273,7 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) 
   const originalCents = Math.round(selected.originalAmount * 100);
   const discountCents = Math.round(originalCents * (Number(coupon?.percent) || 0) / 100);
   const vipLevel = vipLevelForSpend((await walletForAccount(account)).vipSpendCents / 100);
-  const vipPercent = isPlan ? vipDiscountPercent(vipLevel) : 0;
+  const vipPercent = (product.vipDiscount ?? isPlan) ? vipDiscountPercent(vipLevel) : 0;
   const afterCouponCents = originalCents - discountCents;
   const subtotalCents = Math.round(afterCouponCents * (100 - vipPercent) / 100);
   const taxRate = product.chargeTax === false ? 0 : checkoutTaxRate();
