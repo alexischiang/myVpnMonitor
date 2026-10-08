@@ -33,6 +33,7 @@ import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { ProgressRing } from "@/components/features/progress-ring"
 import { CopyButton, EmptyState } from "@/components/features/shared"
 import { nextVipTier, vipLevelLabel, type VipTier } from "@/components/features/vip-badge"
+import { DOCS_URL } from "@/lib/docs-site"
 import { cn } from "@/lib/utils"
 import { formatDate, formatDateTime, formatMoney, orderProductLabel, purchasedPlanParts } from "@/utils"
 
@@ -41,7 +42,8 @@ type Subscription = { status: string; activeGroup: string; lineGroupId?: string;
 type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; nodeUsage: AccountNodeUsage; stale?: boolean; error?: string }
 type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
 type IpInfo = { ip: string; asn?: number; asOrganization?: string; country?: string; countryCode?: string; region?: string; regionCode?: string; city?: string; timezone?: string; fraudScore?: number; isResidential?: boolean; isBroadcast?: boolean }
-type Announcement = { id: string; title: string; content: string; publishedAt: string }
+// Docs-site announcements carry `url`: `content` is then only their summary and the full text lives on the docs site.
+type Announcement = { id: string; title: string; content: string; publishedAt: string; url?: string }
 type AccountService = { id: string; orderId: string; name: string; regionName?: string; amount: number; durationDays?: number; startedAt: string; expiresAt?: string; status: "pending" | "processing" | "active" | "expired"; deliveryNote?: string }
 type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; vipTiers?: VipTier[]; wallet: Omit<WalletData, "entries">; referral: { rate: number; invitedCount: number }; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
@@ -291,7 +293,7 @@ function SubscriptionLinkCard({ subscriptionUrl, onImportClient, span, rowSpan }
         <span className="block rounded-4xl bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" aria-label="订阅地址" className="h-11 rounded-4xl border-0 bg-background px-4 font-semibold shadow-none dark:bg-background" readOnly value={subscriptionUrl} /></span>
         <div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto">
           <CopySubscription value={subscriptionUrl} />
-          <BentoButton asChild variant="outline"><Link to="/account/docs"><BookOpen />使用教程</Link></BentoButton>
+          <BentoButton asChild variant="outline"><a href={DOCS_URL} target="_blank" rel="noopener noreferrer"><BookOpen />使用教程</a></BentoButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild><BentoButton variant="outline"><ExternalLink />一键导入客户端<ChevronDown /></BentoButton></DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-56">
@@ -424,7 +426,7 @@ export function AccountOverviewPage() {
             <h2 id="account-greeting" className="grid gap-1 text-4xl font-semibold tracking-tight wrap-anywhere lg:text-5xl"><span>What's up,</span><span>{emailLocal}{emailDomain ? <><wbr />@{emailDomain}</> : null}{"\u00a0"}!</span></h2>
             <div className="flex flex-wrap gap-2">
               <BentoButton asChild size="lg"><Link to="/account/plans"><ArrowRight />前往商城</Link></BentoButton>
-              <BentoButton asChild size="lg" variant="outline"><Link to="/account/docs"><BookOpen />查看使用教程</Link></BentoButton>
+              <BentoButton asChild size="lg" variant="outline"><a href={DOCS_URL} target="_blank" rel="noopener noreferrer"><BookOpen />查看使用教程</a></BentoButton>
             </div>
           </section>
           {SHOW_PROMO_SLOT ? <PromoCard span={3} rowSpan={2} className="md:col-span-8" /> : null}
@@ -467,7 +469,8 @@ export function AccountOverviewPage() {
           {selectedAnnouncement ? <MarkdownContent content={selectedAnnouncement.content} /> : null}
           <DialogFooter>
             {reminderDialog ? <label className="flex items-center gap-2 text-sm sm:mr-auto"><Checkbox checked={muteToday} onCheckedChange={checked => setMuteToday(checked === true)} />今日不再提醒</label> : null}
-            <DialogClose asChild><Button variant={reminderDialog ? "default" : "outline"}>{reminderDialog ? "我知道了" : "关闭"}</Button></DialogClose>
+            <DialogClose asChild><Button variant={reminderDialog && !selectedAnnouncement?.url ? "default" : "outline"}>{reminderDialog ? "我知道了" : "关闭"}</Button></DialogClose>
+            {selectedAnnouncement?.url ? <Button asChild><a href={selectedAnnouncement.url} target="_blank" rel="noopener noreferrer">阅读全文<ExternalLink /></a></Button> : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -488,7 +491,8 @@ export function AccountOverviewPage() {
 }
 
 export function AccountDocsPage() {
-  React.useEffect(() => { window.location.replace("/docs/") }, [])
+  // Only reached by typing the URL or an old bookmark; the in-app entries open the docs site in a new tab.
+  React.useEffect(() => { window.location.replace(DOCS_URL) }, [])
   return <PageLoading />
 }
 

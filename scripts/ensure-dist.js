@@ -8,8 +8,7 @@ const sourcePaths = [
   path.join(rootDir, "index.html"),
   path.join(rootDir, "vite.config.js"),
   path.join(rootDir, "package-lock.json"),
-  path.join(rootDir, "src"),
-  path.join(rootDir, "docs-site")
+  path.join(rootDir, "src")
 ];
 
 function latestMtimeMs(target) {

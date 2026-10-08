@@ -2589,6 +2589,69 @@
         "page_errors": [],
         "checked_at": "2026-10-07"
       }
+    },
+    {
+      "id": "standalone-docs-site",
+      "name": "Move customer docs to a standalone Fumadocs site and show its announcements in the app",
+      "description": "Customer docs move from the Docusaurus docs-site/ workspace to the separate nexora-docs repo (Fumadocs, static export, docs.webprovider.top on its own VPS) with tutorials, MDX announcements and a downloads centre backed by files and a manifest on that VPS. The app no longer builds docs: /docs/* 301-redirects to DOCS_SITE_URL with the same path, and server.js reads DOCS_SITE_URL/api/announcements.json (stale-while-revalidate, 5 min, 3 s timeout) and merges it into the account overview announcements. Docs announcements show their summary in the carousel and dialog, and the dialog links to the full text on the docs site.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "docs-site/ and its workspace, scripts, build step and deploy check are gone; npm run build and npm run check no longer build docs.",
+        "GET /docs and /docs/<slug>/ return 301 to DOCS_SITE_URL/docs/<slug>/ keeping the query string.",
+        "Docs-site announcements appear in the /account 网站公告 card merged with app announcements (pinned first, then newest; not-yet-published and expired hidden), and their dialog has a 阅读全文 link to the docs site.",
+        "When the docs site is unreachable the overview still loads with only app announcements."
+      ],
+      "verification": [
+        "2026-10-08: npm run agent:init baseline passed before changes. After: node test.js (new normalizeDocsAnnouncements / mergePublicAnnouncements checks), npm run check, npm run verify:fast and git diff --check pass.",
+        "2026-10-08: nexora-docs (sibling repo): next build (static export, 14 routes), tsc --noEmit and eslint pass; out/api/announcements.json is {version:1, items:[]} while the only announcement is a draft.",
+        "2026-10-08: curl on an isolated server (test DB, port 3210, DOCS_SITE_URL=http://localhost:3100): /docs, /docs/ and /docs/tutorials/shadowrocket-tutorial/?from=app return 301 to the same path and query on the docs site."
+      ],
+      "browser_verification": {
+        "routes": ["/account","/account/docs","/docs/"],
+        "interactions": [
+          "Docs site served by nexora-docs scripts/preview.mjs on :3100, built with a temporary pinned announcement (e2e-check) and two dummy manifest downloads, both removed afterwards. App: isolated server.js on :3210 with the seeded expired-renew@xela.test customer.",
+          "/account: the 网站公告 card shows the docs announcement summary; the reminder dialog shows the summary with 我知道了 (outline) and 阅读全文 (link to http://localhost:3100/announcements/e2e-check/, target=_blank, rel=noopener noreferrer). Clicking it opened the docs page. Reopening from the carousel shows 关闭 + 阅读全文.",
+          "390x844: the dialog stacks 阅读全文 above 关闭, scrollWidth 390, no horizontal scroll.",
+          "Sidebar 使用文档 (/docs/) and /account/docs both end on http://localhost:3100/docs/ through the 301.",
+          "Docs site down + app restarted: server logs 'docs announcements fetch failed' as a warning, /account loads normally, overview announcements [] so the card is hidden, no dialog.",
+          "Docs site, fresh tab: /docs/, /docs/tutorials/, all four tutorials, /announcements/, the draft preview page, /downloads/ (manifest list with SHA-256) and Ctrl+K search for 订阅 returning Chinese results; downloads served with Content-Disposition attachment; 375px viewport has no horizontal scroll.",
+          "console errors read from fresh tabs after each navigation: none on the docs site or on /account (only Crisp font info messages)."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-08"
+      }
+    },
+    {
+      "id": "account-docs-links-new-tab",
+      "name": "Open the docs site in a new tab from every account docs entry",
+      "description": "The account sidebar 使用文档, the overview 使用教程 / 查看使用教程 buttons and the /account/docs route used to go to /docs/ in the same tab (the sidebar already used a new tab, through the server 301). They now link straight to the standalone docs site (VITE_DOCS_SITE_URL, default https://docs.webprovider.top/docs/) and the buttons open it in a new tab; /account/docs, reached by typing or an old bookmark, sends the browser to the docs site.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["standalone-docs-site"],
+      "done_criteria": [
+        "Sidebar 使用文档, overview 使用教程 and 查看使用教程 all point at https://docs.webprovider.top/docs/ with target=_blank and rel=noopener noreferrer; clicking keeps the account page open.",
+        "Visiting /account/docs directly goes to the docs site; GET /docs/* still 301s for old links."
+      ],
+      "verification": [
+        "2026-10-09: npm run check, npm run verify:fast and npm run verify (exit 0: core, 3x-ui, checkout, payment, wallet and catalog-v2 tests) pass; git diff --check clean.",
+        "2026-10-09: curl on the isolated server: /docs and /docs/tutorials/and-flclash-tutorial/ still 301 to the same path on https://docs.webprovider.top."
+      ],
+      "browser_verification": {
+        "routes": ["/account", "/account/docs"],
+        "interactions": [
+          "Isolated server.js on :3210 (test DB, no 3x-ui) with the seeded expired-renew@xela.test customer; its plan was moved into the future in the test DB so the 订阅链接 card renders, and the seed was reset afterwards.",
+          "/account desktop: sidebar 使用文档, greeting 查看使用教程 and the 订阅链接 card's 使用教程 are all <a href=\"https://docs.webprovider.top/docs/\" target=\"_blank\" rel=\"noopener noreferrer\">.",
+          "Clicking 使用教程 asked the browser for a new tab on docs.webprovider.top (the Browser pane blocks agent-opened tabs) while the current tab stayed on /account.",
+          "Navigating to /account/docs directly ended on https://docs.webprovider.top/docs/ (使用教程 | NEXORA 文档中心).",
+          "console errors read from a fresh /account tab after load and after the click: none."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-09"
+      }
     }
   ]
 }

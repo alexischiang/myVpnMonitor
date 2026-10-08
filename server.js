@@ -36,6 +36,9 @@ const PUBLIC_DIR = fsSync.existsSync(path.join(DIST_DIR, "index.html")) ? DIST_D
 const MARKDOWN_UPLOAD_DIR = path.resolve(process.env.MARKDOWN_UPLOAD_DIR || path.join(__dirname, "data", "markdown-uploads"));
 const MARKDOWN_IMAGE_MAX_BYTES = Number(process.env.MARKDOWN_IMAGE_MAX_BYTES || 8 * 1024 * 1024);
 const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "build-meta.json");
+// Standalone docs site (separate repo/VPS): /docs/* redirects there and its announcement feed is merged into the account overview.
+const DOCS_SITE_URL = (process.env.DOCS_SITE_URL || "https://docs.webprovider.top").replace(/\/+$/, "");
+const DOCS_ANNOUNCEMENTS_TTL_MS = 5 * 60 * 1000;
 const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 10 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
 const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 10);
@@ -1777,12 +1780,65 @@ function normalizeSalesSettings(payload) {
   return { id: "default", registrationMode, onboardingEnabled, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, userAlerts };
 }
 
+// Validates the docs site's /api/announcements.json. Bad entries are dropped instead of failing the feed, and links must
+// stay on the docs origin because they are rendered as hrefs in the account overview.
+function normalizeDocsAnnouncements(payload, docsOrigin) {
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return items.flatMap(item => {
+    const id = String(item?.id || "").trim();
+    const title = String(item?.title || "").trim().slice(0, 80);
+    const summary = String(item?.summary || "").trim().slice(0, 200);
+    const publishedAt = Date.parse(item?.publishedAt);
+    const expiresAt = item?.expiresAt ? Date.parse(item.expiresAt) : null;
+    let url = null;
+    try {
+      const parsed = new URL(String(item?.url || ""));
+      if (parsed.origin === docsOrigin) url = parsed.href;
+    } catch {}
+    if (!id || !title || !summary || !url || !Number.isFinite(publishedAt) || Number.isNaN(expiresAt)) return [];
+    return [{
+      id: `docs:${id}`,
+      title,
+      content: summary,
+      publishedAt: new Date(publishedAt).toISOString(),
+      expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString(),
+      pinned: item.pinned === true,
+      url
+    }];
+  }).slice(0, 50);
+}
+
+// App announcements plus docs-site ones that are live at `now`; pinned first, then newest first.
+function mergePublicAnnouncements(appAnnouncements, docsAnnouncements, now = Date.now()) {
+  const docsLive = docsAnnouncements.filter(item => Date.parse(item.publishedAt) <= now && (!item.expiresAt || Date.parse(item.expiresAt) > now));
+  return [...appAnnouncements.filter(item => item.enabled !== false), ...docsLive]
+    .sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true) || Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+    .map(({ id, title, content, publishedAt, url }) => (url ? { id, title, content, publishedAt, url } : { id, title, content, publishedAt }));
+}
+
+const docsAnnouncementsCache = { items: [], fetchedAt: 0, pending: null };
+
+function refreshDocsAnnouncements() {
+  if (docsAnnouncementsCache.pending) return docsAnnouncementsCache.pending;
+  const feedUrl = `${DOCS_SITE_URL}/api/announcements.json`;
+  docsAnnouncementsCache.pending = fetch(feedUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(3000) })
+    .then(async response => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      docsAnnouncementsCache.items = normalizeDocsAnnouncements(await response.json(), new URL(DOCS_SITE_URL).origin);
+    })
+    // Keep the last good list; the overview must not depend on the docs site being up.
+    .catch(error => logger.warn({ err: error, url: feedUrl }, "docs announcements fetch failed"))
+    .finally(() => {
+      docsAnnouncementsCache.fetchedAt = Date.now();
+      docsAnnouncementsCache.pending = null;
+    });
+  return docsAnnouncementsCache.pending;
+}
+
 function publicAnnouncements() {
-  return currentSalesSettings().announcements
-    .filter(item => item.enabled !== false)
-    .slice()
-    .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
-    .map(({ id, title, content, publishedAt }) => ({ id, title, content, publishedAt }));
+  // Stale-while-revalidate: never make the overview wait for the docs site.
+  if (Date.now() - docsAnnouncementsCache.fetchedAt > DOCS_ANNOUNCEMENTS_TTL_MS) refreshDocsAnnouncements();
+  return mergePublicAnnouncements(currentSalesSettings().announcements, docsAnnouncementsCache.items);
 }
 
 const VIP_TIERS = {
@@ -11491,19 +11547,20 @@ const COMPRESSIBLE_EXTS = new Set([".html", ".css", ".js", ".json", ".svg", ".xm
 
 async function serveStatic(req, res, pathname) {
   const requestedPath = pathname === "/" ? "/index.html" : pathname;
-  const isDocsRoute = requestedPath === "/docs" || requestedPath.startsWith("/docs/");
-  const isAppRoute = !isDocsRoute && !path.extname(requestedPath);
+  if (requestedPath === "/docs" || requestedPath.startsWith("/docs/")) {
+    // Docs moved to their own site with the same /docs/<slug>/ paths; keep old links and bookmarks working.
+    const search = String(req.url || "").includes("?") ? String(req.url).slice(String(req.url).indexOf("?")) : "";
+    res.writeHead(301, { "location": `${DOCS_SITE_URL}${requestedPath === "/docs" ? "/docs/" : requestedPath}${search}`, "cache-control": "public, max-age=86400" });
+    res.end();
+    return;
+  }
+  const isAppRoute = !path.extname(requestedPath);
   const isLoginRoute = /^\/(?:login|register|forgot-password|reset-password)\/?$/.test(requestedPath) || requestedPath === "/login.html";
   const isPublicAppRoute = /^\/delivery\/[^/]+\/?$/.test(requestedPath) || /^\/(?:pricing|buy)\/?$/.test(requestedPath) || isLoginRoute;
   // Customer pages: the account area plus the standalone order page, whose API checks ownership.
   const isCustomerAppRoute = requestedPath.startsWith("/account") || /^\/cashier\/[^/]+\/?$/.test(requestedPath);
   const session = currentSession(req);
   const markdownImageMatch = requestedPath.match(/^\/uploads\/markdown\/([0-9a-f-]+\.(?:png|jpg|webp|gif))$/);
-  if (requestedPath === "/docs") {
-    res.writeHead(302, { "location": "/docs/", "cache-control": "no-cache" });
-    res.end();
-    return;
-  }
   if (requestedPath === "/login.html") {
     res.writeHead(302, {
       "location": "/login",
@@ -11542,7 +11599,7 @@ async function serveStatic(req, res, pathname) {
     return;
   }
 
-  const staticPath = isAppRoute ? "/index.html" : isDocsRoute && !path.extname(requestedPath) ? `${requestedPath.replace(/\/$/, "")}/index.html` : requestedPath;
+  const staticPath = isAppRoute ? "/index.html" : requestedPath;
   const baseDir = markdownImageMatch ? MARKDOWN_UPLOAD_DIR : PUBLIC_DIR;
   const filePath = markdownImageMatch ? path.join(baseDir, markdownImageMatch[1]) : path.normalize(path.join(baseDir, staticPath));
 
@@ -11612,7 +11669,7 @@ async function serveStatic(req, res, pathname) {
     res.writeHead(200, responseHeaders);
     res.end(content);
   } catch {
-    if (!isDocsRoute && !path.extname(requestedPath)) {
+    if (!path.extname(requestedPath)) {
       try {
         const content = await fs.readFile(path.join(PUBLIC_DIR, "index.html"));
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -11674,6 +11731,8 @@ async function main() {
   await closeLegacyPendingPaymentOrders()
     .then(count => { if (count) console.log(`Closed ${count} legacy pending payment order(s).`); })
     .catch(error => console.error("Closing legacy payment orders failed:", error));
+  // Warm the cache so the first overview after a restart already includes docs-site announcements.
+  refreshDocsAnnouncements();
   // Scheduled runs go through the sync job monitor; trackSyncJobRun records failures itself.
   // A tick is skipped while the previous run of the same job is still going.
   const scheduleSyncJob = (jobId, trigger = "schedule") => {
@@ -11706,6 +11765,8 @@ if (require.main === module) {
 module.exports = Object.assign(requestHandler, {
   closeDataStore: () => dataStore.close(),
   planRenewalOffer,
+  normalizeDocsAnnouncements,
+  mergePublicAnnouncements,
   ensureDataFile,
   handleApi,
   sendJson,

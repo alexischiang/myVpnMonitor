@@ -1,13 +1,12 @@
 # XELA monitor
 
-## Docusaurus 文档中心
+## 文档中心
 
-文档源码位于 `docs-site/docs/`，生产环境随主应用构建并发布到 `/docs/`，无需独立服务。
+使用教程、公告与活动、客户端下载在独立仓库 `nexora-docs`（Fumadocs，部署到 `docs.webprovider.top` 的独立 VPS）维护，本仓库不再构建文档：
 
-```bash
-npm run dev:docs
-npm run build:docs
-```
+- `/docs` 和 `/docs/*` 会 301 跳转到 `${DOCS_SITE_URL}/docs/*`，路径不变。
+- 服务端最多每 5 分钟读取一次 `${DOCS_SITE_URL}/api/announcements.json`，合并进用户中心总览的「网站公告」，点击「阅读全文」打开文档站。文档站不可用时只显示本站公告，不影响总览。
+- `DOCS_SITE_URL` 默认 `https://docs.webprovider.top`。本地联调时可以在 nexora-docs 运行 `npm run build && npm run preview`，然后设置 `DOCS_SITE_URL=http://localhost:3100`。
 
 一个用于管理 VPN 订阅 URL、客户、购买账单和订阅监控的后台系统。
 ## 功能概览
