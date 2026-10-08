@@ -10,13 +10,14 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { AppLayout } from "@/components/features/app-layout"
 import { AppSidebar } from "@/components/features/app-sidebar"
 import { UserAlert } from "@/components/features/shared"
+import { DOCS_URL } from "@/lib/docs-site"
 import type { UserAlertSetting } from "@/types"
 
 const accountNav = [
   { title: "总览", url: "/account", icon: Gauge, exact: true },
   { title: "节点状态", url: "/account/nodes", icon: Activity, nodeAccess: true },
   { title: "购买服务", url: "/account/plans", icon: CreditCard },
-  { title: "使用文档", url: "/account/docs", icon: BookOpen },
+  { title: "使用文档", url: "/account/docs", href: DOCS_URL, external: true, icon: BookOpen },
   { title: "工单服务", url: "/account/tickets", icon: LifeBuoy },
   { title: "账户余额", url: "/account/wallet", icon: WalletCards },
   { title: "邀请返利", url: "/account/referrals", icon: Gift },
@@ -95,7 +96,7 @@ export function AccountShell() {
       dark={dark}
       onToggleTheme={() => setTheme(dark ? "light" : "dark")}
       onLogout={logout}
-      sidebar={<AppSidebar variant="inset" items={navItems.map(item => item.url === "/account/docs" ? { ...item, href: "/docs/", external: true } : item)} homeUrl="/account" accountName={email || "加载中"} accountDescription="User account" accountUrl="/account/settings" accountLabel="账户设置" onLogout={logout} />}
+      sidebar={<AppSidebar variant="inset" items={navItems} homeUrl="/account" accountName={email || "加载中"} accountDescription="User account" accountUrl="/account/settings" accountLabel="账户设置" onLogout={logout} />}
     >
             <div className="grid gap-3 pb-2">{userAlerts.filter(item => item.page === (location.pathname.includes("/plans/checkout") ? "checkout" : location.pathname === "/account" ? "account" : location.pathname === "/account/plans" ? "pricing" : "")).map(item => <UserAlert key={item.id} item={item} />)}{pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <Alert variant="warning"><AlertCircle /><AlertDescription className="flex w-full flex-wrap items-center justify-between gap-4"><span>你有一笔订单等待付款。</span><Button asChild variant="link" size="sm"><Link to={`/account/orders/${encodeURIComponent(pendingOrderId)}`}>去支付<ArrowRight /></Link></Button></AlertDescription></Alert> : null}</div>
             {email ? <Outlet context={{ email }} /> : <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-36" /><Skeleton className="h-72" /></div>}

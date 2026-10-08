@@ -30,15 +30,14 @@ jobs:
             sleep "$delay"
           done
 
-      - name: Build application and documentation
+      - name: Build application
         run: npm run build
 
       - name: Verify build output
         run: |
           test -f dist/index.html
-          test -f dist/docs/index.html
 
-      - name: Deploy application and documentation to VPS
+      - name: Deploy application to VPS
         uses: easingthemes/ssh-deploy@main
         with:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY }}

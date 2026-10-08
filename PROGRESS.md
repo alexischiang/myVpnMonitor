@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-07
-- Current Objective: 个人信息卡片 VIP 专属折扣改为右上角 badge
+- Last Updated: 2026-10-09
+- Current Objective: 文档站独立上线（nexora-docs）并让主站文档入口新标签页打开
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -400,8 +400,12 @@
 
 - 2026-10-07: npm run check、verify:harness 通过；普通用户浏览器桌面与 390px 验证无控制台错误
 
+- 2026-10-08: npm run verify:fast、npm run check、verify:harness、git diff --check 通过；nexora-docs build/tsc/eslint 通过；浏览器验证 /account 公告合并与阅读全文、/docs 301、文档站离线降级，console_errors/page_errors 为空
+
+- 2026-10-09: npm run verify exit 0、verify:harness、git diff --check 通过；/account 三个文档入口 target=_blank 指向 https://docs.webprovider.top/docs/，/account/docs 与 /docs/* 跳转正常，console_errors/page_errors 为空
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/data-table-card.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/user-form-dialog.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
+- Files: `.env.example`, `.github/workflows/deploy.yml`, `.gitignore`, `AGENTS.md`, `PROGRESS.md`, `README.md`, `docs-site/docs/intro.md`, `docs-site/docs/tutorials/_category_.json`, `docs-site/docs/tutorials/and-flclash-tutorial.md`, `docs-site/docs/tutorials/clash-verge-tutorial.md`, `docs-site/docs/tutorials/image-1.png`, `docs-site/docs/tutorials/image.png`, `docs-site/docs/tutorials/images/shadowrocket/01-download.svg`, `docs-site/docs/tutorials/images/shadowrocket/02-copy-subscription.svg`, `docs-site/docs/tutorials/images/shadowrocket/03-add-subscription.svg`, `docs-site/docs/tutorials/images/shadowrocket/04-connect.svg`, `docs-site/docs/tutorials/ios-nextin-tutorial.md`, `docs-site/docs/tutorials/shadowrocket-tutorial.md`, `docs-site/docusaurus.config.js`, `docs-site/package.json`, `docs-site/sidebars.js`, `docs-site/src/css/custom.css`, `feature_list.json`, `package-lock.json`, `package.json`, `scripts/dev-all.js`, `scripts/ensure-dist.js`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `vite.config.js`, `src/lib/docs-site.ts`
 - Known risks: none
-- Recommended Next Step: 无进行中功能；可按需提交
+- Recommended Next Step: 已部署；如需进一步优化下载速度，见 nexora-docs 讨论（dl 子域名直连）

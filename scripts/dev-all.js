@@ -48,4 +48,3 @@ run("backend", ["run", "dev:server"]);
 if (process.env.XUI_SERVICE_URL) run("xui", ["run", "dev:xui"]);
 else console.warn("XUI_SERVICE_URL is not configured; using the existing direct 3x-ui connection.");
 run("frontend", ["run", "dev"]);
-run("docs", ["run", "dev:docs"]);
