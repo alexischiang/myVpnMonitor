@@ -4,10 +4,11 @@ import { useSearchParams } from "react-router-dom"
 import { CircleMinus, CirclePlus, Loader2, Pencil, Plus, RefreshCw, Save, Server, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
-import { deleteJson, fetchJson, postJson, putJson } from "@/api"
+import { deleteJson, fetchJson, fetchJsonSteps, postJson, putJson } from "@/api"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
 import { DataTableCard } from "@/components/features/data-table-card"
 import { PageHeader } from "@/components/features/shared"
+import { StepProgress, type ProgressStep, type StepStatus } from "@/components/features/step-progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -38,6 +39,13 @@ type InboundDraft = {
 
 type XuiInbound = XuiInboundManagement["inbounds"][number]
 const emptyLineGroup = (): CatalogV2LineGroup => ({ id: "", name: "", isEnabled: true, sortOrder: 0, inboundKeys: [] })
+// Steps the server reports while it saves a line group.
+const lineGroupSaveSteps = [
+  { id: "validate", label: "校验入站" },
+  { id: "save", label: "保存权限组" },
+  { id: "sync", label: "同步到 3x-ui" },
+]
+type LineGroupSaveResult = CatalogV2LineGroup & { xuiSync?: { updated?: number; skipped?: number; failed?: number; error?: string } }
 
 function InboundProbeBadge({ inbound }: { inbound: XuiInbound }) {
   const online = inbound.probeStatus === "online"
@@ -56,6 +64,7 @@ export function XuiInboundsPage() {
   const [groupOriginal, setGroupOriginal] = React.useState<CatalogV2LineGroup | null>(null)
   const [groupSearch, setGroupSearch] = React.useState("")
   const [groupNodeFilter, setGroupNodeFilter] = React.useState("all")
+  const [groupSaveSteps, setGroupSaveSteps] = React.useState<ProgressStep[] | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState("")
@@ -78,12 +87,12 @@ export function XuiInboundsPage() {
   }
 
   // live: read the inbound list from 3x-ui first instead of the last synced table.
-  const refresh = React.useCallback(async (live = false) => {
+  const refresh = React.useCallback(async (live = false, background = false) => {
     setLoading(true)
     try {
       const [result, groups] = await Promise.all([
-        fetchJson<XuiInboundManagement>(live ? "/api/xui-inbounds?refresh=1" : "/api/xui-inbounds"),
-        fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups"),
+        fetchJson<XuiInboundManagement>(live ? "/api/xui-inbounds?refresh=1" : "/api/xui-inbounds", { background }),
+        fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups", { background }),
       ])
       setData(result)
       setLineGroups(groups)
@@ -96,10 +105,10 @@ export function XuiInboundsPage() {
   }, [])
 
   React.useEffect(() => {
-    const refreshIfVisible = () => { if (!document.hidden) void refresh() }
+    const refreshIfVisible = (background = false) => { if (!document.hidden) void refresh(false, background) }
     const onVisibilityChange = () => { if (!document.hidden) refreshIfVisible() }
     void refresh(true)
-    const timer = window.setInterval(refreshIfVisible, 120_000)
+    const timer = window.setInterval(() => refreshIfVisible(true), 120_000)
     document.addEventListener("visibilitychange", onVisibilityChange)
     return () => {
       window.clearInterval(timer)
@@ -163,18 +172,32 @@ export function XuiInboundsPage() {
 
   async function saveGroupSettings() {
     setSaving(true)
+    setGroupSaveSteps(lineGroupSaveSteps.map(step => ({ ...step, status: "pending" })))
+    let runningStep = ""
     try {
-      const result = groupOriginal
-        ? await putJson<CatalogV2LineGroup>(`/api/catalog-v2/line-groups/${encodeURIComponent(groupOriginal.id)}`, groupDraft)
-        : await postJson<CatalogV2LineGroup>("/api/catalog-v2/line-groups", groupDraft)
+      const { xuiSync, ...result } = await fetchJsonSteps<LineGroupSaveResult, { step: string; status: StepStatus }>(
+        groupOriginal ? `/api/catalog-v2/line-groups/${encodeURIComponent(groupOriginal.id)}` : "/api/catalog-v2/line-groups",
+        { method: groupOriginal ? "PUT" : "POST", body: JSON.stringify(groupDraft), background: true },
+        event => {
+          runningStep = event.status === "running" ? event.step : ""
+          setGroupSaveSteps(current => current && current.map(step => step.id === event.step ? { ...step, status: event.status } : step))
+        },
+      )
       setLineGroups(current => groupOriginal
         ? current.map(group => group.id === result.id ? { ...result, productCount: group.productCount } : group).toSorted((left, right) => left.sortOrder - right.sortOrder)
         : [...current, { ...result, productCount: 0 }].toSorted((left, right) => left.sortOrder - right.sortOrder))
       setGroupOpen(false)
-      toast.success("V2 权限组已保存")
+      // The group is saved even when the push fails; the five-minute sync retries it.
+      if (xuiSync?.error) toast.warning(`权限组已保存，但同步到 3x-ui 失败：${xuiSync.error}。系统会在下次定时同步时重试。`)
+      else if (xuiSync?.failed) toast.warning(`权限组已保存，但有 ${xuiSync.failed} 个用户未能同步到 3x-ui。系统会在下次定时同步时重试。`)
+      else toast.success(xuiSync?.updated ? `V2 权限组已保存，已同步 ${xuiSync.updated} 个用户` : "V2 权限组已保存")
     } catch (saveError) {
-      toast.error(saveError instanceof Error ? saveError.message : "保存失败")
+      // The step that was running is the one that failed; a request rejected before any step has none.
+      const failedStep = lineGroupSaveSteps.find(step => step.id === runningStep)?.label
+      const message = saveError instanceof Error ? saveError.message : "保存失败"
+      toast.error(failedStep ? `${failedStep}失败：${message}` : message)
     } finally {
+      setGroupSaveSteps(null)
       setSaving(false)
     }
   }
@@ -288,7 +311,10 @@ export function XuiInboundsPage() {
                 </Table>
             </div>
           </div>
-          <DialogFooter>{groupOriginal ? <Button variant="destructive" onClick={() => void removeGroup()} disabled={saving}><Trash2 />删除权限组</Button> : null}<Button variant="outline" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><Button onClick={() => void saveGroupSettings()} disabled={saving || !groupSettingsChanged}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存权限组</Button></DialogFooter>
+          <div className="grid gap-4">
+            {groupSaveSteps ? <StepProgress steps={groupSaveSteps} label="保存权限组进度" /> : null}
+            <DialogFooter>{groupOriginal ? <Button variant="destructive" onClick={() => void removeGroup()} disabled={saving}><Trash2 />删除权限组</Button> : null}<Button variant="outline" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><Button onClick={() => void saveGroupSettings()} disabled={saving || !groupSettingsChanged}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存权限组</Button></DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 

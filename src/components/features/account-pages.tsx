@@ -371,11 +371,11 @@ export function AccountOverviewPage() {
   React.useEffect(() => {
     if (!canViewNodes) return
     let active = true
-    const refresh = () => fetchJson<NodeStatusSummary>("/api/account/node-status")
+    const refresh = (background = false) => fetchJson<NodeStatusSummary>("/api/account/node-status", { background })
       .then(value => { if (active) { setNodeStatus(value); setNodeStatusError("") } })
       .catch(error => { if (active) setNodeStatusError(error instanceof Error ? error.message : "节点状态获取失败") })
     void refresh()
-    const timer = window.setInterval(refresh, 30000)
+    const timer = window.setInterval(() => void refresh(true), 30000)
     return () => { active = false; window.clearInterval(timer) }
   }, [canViewNodes])
 

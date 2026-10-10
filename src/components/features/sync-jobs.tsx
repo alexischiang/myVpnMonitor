@@ -181,10 +181,10 @@ export function SyncJobsPage() {
   const [startingIds, setStartingIds] = React.useState<string[]>([])
   const [historyJobId, setHistoryJobId] = React.useState("")
 
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (background = false) => {
     setLoading(true)
     try {
-      setData(await fetchJson<SyncJobsResponse>("/api/sync-jobs"))
+      setData(await fetchJson<SyncJobsResponse>("/api/sync-jobs", { background }))
       setError("")
     } catch (error) {
       setError(error instanceof Error ? error.message : "无法读取同步任务状态")
@@ -204,7 +204,7 @@ export function SyncJobsPage() {
   }, [refresh])
 
   React.useEffect(() => {
-    const timer = window.setInterval(() => { if (!document.hidden) void refresh() }, anyRunning ? RUNNING_POLL_MS : IDLE_POLL_MS)
+    const timer = window.setInterval(() => { if (!document.hidden) void refresh(true) }, anyRunning ? RUNNING_POLL_MS : IDLE_POLL_MS)
     return () => window.clearInterval(timer)
   }, [refresh, anyRunning])
 

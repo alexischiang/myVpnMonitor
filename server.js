@@ -830,6 +830,27 @@ function ensureSubscriptionServiceProviders() {
   return changed;
 }
 
+// Step progress for a save that may wait on 3x-ui. Asked for NDJSON (Accept: application/x-ndjson),
+// each step change is written as a line as it happens and the last line carries the status and
+// body a plain request would have got. Otherwise, and for a reply sent before the first step,
+// steps are dropped and the reply is ordinary JSON.
+function createStepProgress(req, res) {
+  const streaming = /\bapplication\/x-ndjson\b/.test(String(req.headers.accept || ""));
+  const write = payload => {
+    // no-transform and x-accel-buffering keep proxies from holding lines back until the end.
+    if (!res.headersSent) res.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store, no-transform", "x-accel-buffering": "no" });
+    res.write(`${JSON.stringify(payload)}\n`);
+  };
+  return {
+    step(step, status) { if (streaming) write({ step, status }); },
+    end(status, body) {
+      if (!res.headersSent) { sendJson(res, status, body); return; }
+      write({ status, body });
+      res.end();
+    }
+  };
+}
+
 function sendJson(res, status, payload, headers = {}) {
   let body = Buffer.from(JSON.stringify(payload));
   if (body.length >= 1024 && /\bgzip\b/.test(String(res.req?.headers?.["accept-encoding"] || ""))) {
@@ -10483,15 +10504,28 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/catalog-v2/line-groups" && req.method === "POST") {
+    const progress = createStepProgress(req, res);
     try {
       let group = normalizeCatalogV2LineGroup(await readJson(req));
-      await refreshXuiInboundCatalog();
-      const management = await xuiInboundManagementView();
-      group = validateCatalogV2LineGroupInbounds(group, management.inbounds);
+      // Only chosen inbounds need validating against a fresh panel list; a group created without
+      // any saves without contacting 3x-ui.
+      if (group.inboundKeys.length) {
+        progress.step("validate", "running");
+        await refreshXuiInboundCatalog();
+        const management = await xuiInboundManagementView();
+        group = validateCatalogV2LineGroupInbounds(group, management.inbounds);
+        progress.step("validate", "done");
+      } else {
+        progress.step("validate", "skipped");
+      }
+      progress.step("save", "running");
       await dataStore.upsertCatalogV2LineGroup(group, { create: true });
-      sendJson(res, 201, group);
+      progress.step("save", "done");
+      // No product, and so no user, refers to a group that has just been created.
+      progress.step("sync", "skipped");
+      progress.end(201, group);
     } catch (error) {
-      sendJson(res, error.code === "23505" ? 409 : 400, { error: error.code === "23505" ? "权限组标识已存在。" : error.message });
+      progress.end(error.code === "23505" ? 409 : 400, { error: error.code === "23505" ? "权限组标识已存在。" : error.message });
     }
     return;
   }
@@ -10500,6 +10534,7 @@ async function handleApi(req, res, pathname) {
   if (catalogV2LineGroupMatch) {
     const id = decodeURIComponent(catalogV2LineGroupMatch[1]);
     if (req.method === "PUT") {
+      const progress = createStepProgress(req, res);
       try {
         const payload = await readJson(req);
         if (String(payload.id || id) !== id) throw new Error("权限组标识创建后不可修改。");
@@ -10510,24 +10545,40 @@ async function handleApi(req, res, pathname) {
           const activeProductIds = new Set((await dataStore.listCatalogV2Products()).filter(product => product.isEnabled && product.lineGroupId === id).map(product => product.id));
           if (users.some(user => activeProductIds.has(user.currentProductId))) throw new Error("仍有用户正在使用关联该权限组的生效套餐，暂时不能停用。");
         }
-        await refreshXuiInboundCatalog();
-        const management = await xuiInboundManagementView();
-        group = validateCatalogV2LineGroupInbounds(group, management.inbounds, existing);
+        // Only a changed inbound set involves 3x-ui: it is validated against a fresh panel list and
+        // pushed below. Name, order and enabled-state edits keep the stored inbounds and save
+        // without contacting the panel.
+        const sameKeys = (left, right) => [...left].sort().join("\n") === [...right].sort().join("\n");
+        const inboundKeysChanged = !sameKeys(existing.inboundKeys || [], group.inboundKeys);
+        if (inboundKeysChanged) {
+          progress.step("validate", "running");
+          await refreshXuiInboundCatalog();
+          const management = await xuiInboundManagementView();
+          group = validateCatalogV2LineGroupInbounds(group, management.inbounds, existing);
+          progress.step("validate", "done");
+        } else {
+          progress.step("validate", "skipped");
+        }
+        progress.step("save", "running");
         await dataStore.upsertCatalogV2LineGroup(group);
+        progress.step("save", "done");
         // Push changed inbounds to 3x-ui now instead of waiting for the five-minute sync. The group
         // is already saved, so a failed push is reported and left to the next scheduled run.
-        const sameKeys = (left, right) => [...left].sort().join("\n") === [...right].sort().join("\n");
         let xuiSync = null;
-        if (!sameKeys(existing.inboundKeys || [], group.inboundKeys || [])) {
+        if (inboundKeysChanged) {
+          progress.step("sync", "running");
           try {
             const report = await syncCatalogV2ToXui({ forceReload: true });
             xuiSync = { updated: report.updated, skipped: report.skipped, failed: report.failed.length + report.conflicts.length };
           } catch (error) {
             xuiSync = { error: error.message };
           }
+          progress.step("sync", xuiSync.error || xuiSync.failed ? "failed" : "done");
+        } else {
+          progress.step("sync", "skipped");
         }
-        sendJson(res, 200, xuiSync ? { ...group, xuiSync } : group);
-      } catch (error) { sendJson(res, 400, { error: error.message }); }
+        progress.end(200, xuiSync ? { ...group, xuiSync } : group);
+      } catch (error) { progress.end(400, { error: error.message }); }
       return;
     }
     if (req.method === "DELETE") {

@@ -51,7 +51,7 @@ export function LoginPage() {
   const [error, setError] = React.useState("")
 
   React.useEffect(() => {
-    void apiFetch("/api/health").catch(() => undefined)
+    void apiFetch("/api/health", { background: true }).catch(() => undefined)
   }, [])
 
   async function submit(event: React.FormEvent) {

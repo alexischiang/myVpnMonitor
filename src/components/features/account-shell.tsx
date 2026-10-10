@@ -63,14 +63,14 @@ export function AccountShell() {
 
   React.useEffect(() => {
     if (!email) return
-    const refreshOrders = () => fetchJson<Array<{ id: string; status: string }>>("/api/account/orders")
+    const refreshOrders = (background = false) => fetchJson<Array<{ id: string; status: string }>>("/api/account/orders", { background })
       .then(orders => {
         setCachedJson("/api/account/orders", orders)
         setPendingOrderId(orders.find(order => order.status === "pending")?.id || "")
       })
       .catch(() => undefined)
     void refreshOrders()
-    const timer = window.setInterval(refreshOrders, 180_000)
+    const timer = window.setInterval(() => void refreshOrders(true), 180_000)
     const handleOrderUpdate = (event: Event) => {
       const detail = (event as CustomEvent<{ id?: string; status?: string }>).detail
       if (detail?.id && detail.status === "pending") setPendingOrderId(detail.id)

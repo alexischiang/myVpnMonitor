@@ -9,6 +9,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DataProvider } from "@/components/features/data-provider"
 import { AppShell } from "@/components/features/app-shell"
+import { RequestProgress } from "@/components/features/request-progress"
 import { isWechatBrowser, OPEN_IN_BROWSER_PATH } from "@/utils"
 
 window.addEventListener("vite:preloadError", event => {
@@ -113,6 +114,7 @@ function App() {
   return (
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} storageKey="themeMode">
       <CrispChat />
+      <RequestProgress />
       <TooltipProvider>
         <BrowserRouter>
           <ScrollToTop />

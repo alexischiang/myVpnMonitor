@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-04",
+  "updated_at": "2026-10-10",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -2651,6 +2651,98 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-09"
+      }
+    },
+    {
+      "id": "line-group-save-skips-panel",
+      "name": "Line group saves contact 3x-ui only when the inbound set changes",
+      "description": "POST and PUT /api/catalog-v2/line-groups used to refresh the inbound table from 3x-ui (server/status, nodes/list, inbounds/list, clients/activeInbounds) on every save, so a rename also waited on the panel and failed when it was unreachable. The refresh and inbound validation now run only when the saved inbound set differs from the stored one (PUT) or is not empty (POST); name, order and enabled-state edits keep the stored inbounds and save without any panel request. A changed set is still validated against a fresh panel list and pushed right away.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "A PUT that keeps the same inboundKeys (same set, changed name or sort order) and a POST with no inboundKeys make zero 3x-ui requests.",
+        "A PUT or POST that changes the inbound set still reads inbounds/list first, rejects unknown inbounds with 400, and a PUT then runs the Catalog V2 sync."
+      ],
+      "verification": [
+        "2026-10-10: new test-payment.js assertions failed before the change (the unchanged save made the four panel reads) and pass after it: unchanged save, rename with a new sort order, and create/delete of a group without inbounds make no 3x-ui request; an unknown inbound returns 400 after an inbounds/list read.",
+        "2026-10-10: npm run agent:init baseline passed before changes; npm run verify (check, core, 3x-ui, checkout, payment, wallet, catalog-v2 tests) exits 0 after; git diff --check clean.",
+        "2026-10-10: browser run on an isolated server (test DB, mock panel logging every request with a 700 ms delay): renaming a group logged no panel request; adding an inbound logged the four refresh reads followed by the sync's inbounds/list and clients/list."
+      ]
+    },
+    {
+      "id": "request-progress-bar",
+      "name": "Page progress bar for requests the user is waiting on",
+      "description": "Every request goes through src/api.ts, which now counts the ones in flight. RequestProgress (mounted once in main.tsx, built on the shadcn Progress) shows a 2px bar fixed to the top of the page, above dialogs and sheets, once a request has been pending for 150 ms: it advances with the share of the current burst that has finished, creeps toward 90% in between, and completes when the last request ends. Timer-driven refreshes (dashboard, users, node status, sync jobs, 3x-ui monitor, inbound list, account orders, cashier order polling, the login health pre-warm) pass background: true and never show it, and so does the permission group save, which shows its own step progress (line-group-save-steps). Retries of one fetchJson call count as a single request.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Any request made through fetchJson/postJson/putJson/deleteJson/apiFetch that takes longer than 150 ms shows the bar; it reaches 100% and disappears when all pending requests finish.",
+        "The bar sits above open dialogs and sheets and is visible in both themes.",
+        "Interval polls do not show the bar; the same request started by the user does."
+      ],
+      "verification": [
+        "2026-10-10: npm run check and npm run verify exit 0; npm run verify:harness passes; git diff --check clean. The project has no TypeScript compiler installed, so types were not checked beyond the Vite build."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/login",
+          "/xui-inbounds",
+          "/dashboard"
+        ],
+        "interactions": [
+          "Isolated server.js on :3210 (test DB, admin test login) with a mock 3x-ui panel that answers after 700 ms; a page-side recorder sampled the bar's indicator transform and timed each fetch.",
+          "/login: loaded and signed in as the test admin on the build before the first-frame fix to the bar (the later checks ran on the final build); no console errors.",
+          "/xui-inbounds load and 刷新: the bar appeared about 150 ms after the request started, showed 45% once one of the two requests had finished, went to 100% and unmounted about 300 ms later.",
+          "Before the save moved to step progress (line-group-save-steps): 新建权限组 with one inbound (POST 744 ms) and editing it to add a second inbound (PUT 1510 ms): the bar ran above the open dialog (position fixed, top 0, height 2px, z-index 60 against the overlay's 50, pointer-events none) while 保存权限组 was disabled, then the dialog closed and the card updated. Renaming only (PUT, no panel request) also completed and closed the dialog.",
+          "/dashboard with fetch delayed by 600 ms in the page: two 30 s /api/xui-presence polls (978 ms and 662 ms, tab visible) mounted no bar (MutationObserver), while clicking 服务监控 刷新 (/api/health, 616 ms) mounted it after 167 ms.",
+          "Dark theme: indicator oklch(0.922 0 0) on rgb(10, 10, 10). 390x844: bar 390px wide, scrollWidth 390, no horizontal scroll. Screenshot at 800x450 shows the bar at the top edge during a slow refresh.",
+          "Final build, with the save on step progress: an inbound list refresh delayed by 1200 ms while the 新建 V2 权限组 dialog was open mounted the bar at top 0, 2px high, z-index 60 against the overlay's 50; the permission group saves themselves mounted no page bar.",
+          "The test group created for the check was deleted afterwards; console errors read after each navigation and interaction: none."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-10"
+      }
+    },
+    {
+      "id": "line-group-save-steps",
+      "name": "Step progress while saving a permission group",
+      "description": "Saving a V2 line group shows its three steps in the dialog: 校验入站 → 保存权限组 → 同步到 3x-ui. POST and PUT /api/catalog-v2/line-groups, when asked for application/x-ndjson, write a {step, status} line as each step starts, finishes, is skipped (inbound set unchanged, or a new group) or fails, and end with a {status, body} line holding the reply a plain JSON request gets; a request rejected before the first step, and any request that does not ask for NDJSON, still gets ordinary JSON. The dialog reads the stream (fetchJsonSteps) into a reusable StepProgress (bar plus ordered steps with their state), shown above the footer only while the save runs. A failed step is named in the error toast and the dialog stays open; a save whose 3x-ui push failed closes with a warning that the scheduled sync will retry.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "line-group-save-skips-panel",
+        "request-progress-bar"
+      ],
+      "done_criteria": [
+        "Changing a group's inbounds shows 校验入站, 保存权限组 and 同步到 3x-ui moving through 等待中 / 进行中 / 已完成 as the server reaches each one, not all at the end.",
+        "A save that leaves the inbounds alone reports 校验入站 and 同步到 3x-ui as skipped and makes no 3x-ui request.",
+        "A validation failure names the step in the error toast and keeps the dialog open with the draft; a failed 3x-ui push saves the group and warns instead of reporting success.",
+        "Requests without Accept: application/x-ndjson get the same JSON replies and status codes as before."
+      ],
+      "verification": [
+        "2026-10-10: test-payment.js asserts the NDJSON lines for a changed inbound set (validate/save/sync running and done, final 200 with xuiSync), an unchanged set (validate and sync skipped), an unknown inbound (validate running, final 400), a create with one inbound (final 201, sync skipped) and a missing group (plain JSON 404); the existing plain-JSON assertions still pass.",
+        "2026-10-10: npm run verify (check, core, 3x-ui, checkout, payment, wallet, catalog-v2 tests) exits 0; npm run verify:harness passes; git diff --check clean. The project has no TypeScript compiler installed, so types were not checked beyond the Vite build."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/xui-inbounds"
+        ],
+        "interactions": [
+          "Isolated server.js on :3210 (test DB, admin test login) with a mock 3x-ui panel answering after 1500 ms and switchable to fail the validation read or the sync read; a MutationObserver recorded every change of the step list and bar with timestamps.",
+          "新建权限组 with one inbound: 校验入站 进行中 for 1.5 s, then 已完成 and 保存权限组 进行中, dialog closed, toast V2 权限组已保存.",
+          "Editing the group to add or remove an inbound: 校验入站 进行中 (bar 17%) for 1.5 s → 保存权限组 → 同步到 3x-ui 进行中 (bar 83%) for 1.5 s → all 已完成 (100%), dialog closed, card shows the new inbound count. Sampled per frame, the bar's fill followed each step within its 150 ms transition.",
+          "Renaming only: saved in about 70 ms, dialog closed, success toast, and the mock panel logged no request.",
+          "Panel failing the validation read: toast 校验入站失败：simulated panel outage, step list removed, dialog still open with the draft and 保存权限组 enabled; saving again after the panel recovered succeeded.",
+          "Panel failing the sync read: steps reached 同步到 3x-ui 进行中, the dialog closed with the warning toast 权限组已保存，但同步到 3x-ui 失败：simulated panel outage。系统会在下次定时同步时重试。 and the card showed the saved inbound count.",
+          "390x844: the three steps stack inside the dialog (left 41 to right 205 of a 356px dialog), no horizontal scroll (scrollWidth 390). Dark theme: step text oklch(0.985 0 0) / muted oklch(0.708 0 0) on rgb(10, 10, 10), bar oklch(0.922 0 0).",
+          "The test group was deleted afterwards and the theme set back to light; console errors read after each save: none."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-10"
       }
     }
   ]

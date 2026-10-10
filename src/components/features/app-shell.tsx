@@ -39,10 +39,10 @@ export function AppShell() {
   const [healthLoading, setHealthLoading] = React.useState(false)
   const [healthError, setHealthError] = React.useState("")
 
-  const refreshHealth = React.useCallback(async () => {
+  const loadHealth = React.useCallback(async (background: boolean) => {
     setHealthLoading(true)
     try {
-      const health = await fetchJson<HealthResponse>("/api/health")
+      const health = await fetchJson<HealthResponse>("/api/health", { background })
       setServices(health.services)
       setCheckedAt(new Date().toISOString())
       setHealthError("")
@@ -52,13 +52,14 @@ export function AppShell() {
       setHealthLoading(false)
     }
   }, [])
+  const refreshHealth = React.useCallback(() => loadHealth(false), [loadHealth])
 
   React.useEffect(() => {
     if (location.pathname !== "/dashboard") return
-    void refreshHealth()
-    const timer = window.setInterval(refreshHealth, 180_000)
+    void loadHealth(false)
+    const timer = window.setInterval(() => void loadHealth(true), 180_000)
     return () => window.clearInterval(timer)
-  }, [location.pathname, refreshHealth])
+  }, [location.pathname, loadHealth])
 
   const failedServices = services ? ([
     ["数据库", services.database],
