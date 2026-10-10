@@ -1236,6 +1236,42 @@ async function main() {
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
     const unchangedGroup = await saveV2Group(["local:1"]);
     assert.deepStrictEqual([unchangedGroup.bulk, unchangedGroup.result.data.xuiSync], [[], undefined], "a save that keeps the same inbounds must not run the 3x-ui sync");
+    assert.deepStrictEqual(xuiRequests.map(entry => entry.url), [], "a save that keeps the same inbounds must not request 3x-ui");
+    // Name, order and enabled-state edits never contact the panel; neither does a group created without inbounds.
+    xuiRequests.length = 0;
+    const renamedGroup = await request(`/api/catalog-v2/line-groups/${catalogV2Ids.group}`, { method: "PUT", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2 renamed", isEnabled: true, sortOrder: 3, inboundKeys: ["local:1"] } });
+    assert.deepStrictEqual([renamedGroup.response.status, renamedGroup.data.name, renamedGroup.data.sortOrder, renamedGroup.data.inboundKeys], [200, "Payment V2 renamed", 3, ["local:1"]], renamedGroup.text);
+    const emptyGroupId = `${catalogV2Ids.group}-empty`;
+    assert.strictEqual((await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: emptyGroupId, name: "Payment V2 empty", isEnabled: true, sortOrder: 9, inboundKeys: [] } })).response.status, 201);
+    assert.strictEqual((await request(`/api/catalog-v2/line-groups/${emptyGroupId}`, { method: "DELETE", cookie: adminCookie })).response.status, 200);
+    assert.deepStrictEqual(xuiRequests.map(entry => entry.url), [], "line group saves that leave the inbound set alone must not request 3x-ui");
+    await saveV2Group(["local:1"]);
+    // A changed inbound set is still validated against a fresh panel list.
+    const unknownInbound = await request(`/api/catalog-v2/line-groups/${catalogV2Ids.group}`, { method: "PUT", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys: ["local:1", "local:404"] } });
+    assert.strictEqual(unknownInbound.response.status, 400, unknownInbound.text);
+    assert.ok(xuiRequests.some(entry => entry.url === "/panel/api/inbounds/list"), "a changed inbound set must be validated against a fresh 3x-ui inbound list");
+    // Asked for NDJSON, a save reports each step as a line and ends with the plain reply's status and body.
+    const saveV2GroupSteps = async (inboundKeys, pathname = `/api/catalog-v2/line-groups/${catalogV2Ids.group}`, method = "PUT", id = catalogV2Ids.group) => {
+      const result = await request(pathname, { method, cookie: adminCookie, headers: { accept: "application/x-ndjson" }, body: { id, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys } });
+      const lines = result.text.trim().split("\n").map(line => JSON.parse(line));
+      return { contentType: result.response.headers.get("content-type"), steps: lines.slice(0, -1).map(line => `${line.step}:${line.status}`), final: lines.at(-1) };
+    };
+    const steppedWiden = await saveV2GroupSteps(["local:1", "local:2"]);
+    assert.match(steppedWiden.contentType, /^application\/x-ndjson/);
+    assert.deepStrictEqual(steppedWiden.steps, ["validate:running", "validate:done", "save:running", "save:done", "sync:running", "sync:done"]);
+    assert.deepStrictEqual([steppedWiden.final.status, steppedWiden.final.body.inboundKeys, steppedWiden.final.body.xuiSync], [200, ["local:1", "local:2"], { updated: 1, skipped: 0, failed: 0 }]);
+    const steppedSame = await saveV2GroupSteps(["local:1", "local:2"]);
+    assert.deepStrictEqual([steppedSame.steps, steppedSame.final.status, steppedSame.final.body.xuiSync], [["validate:skipped", "save:running", "save:done", "sync:skipped"], 200, undefined]);
+    const steppedUnknown = await saveV2GroupSteps(["local:1", "local:404"]);
+    assert.deepStrictEqual([steppedUnknown.steps, steppedUnknown.final.status], [["validate:running"], 400]);
+    assert.match(steppedUnknown.final.body.error, /不存在或不可用于套餐的入站/);
+    const steppedCreate = await saveV2GroupSteps(["local:1"], "/api/catalog-v2/line-groups", "POST", emptyGroupId);
+    assert.deepStrictEqual([steppedCreate.steps, steppedCreate.final.status, steppedCreate.final.body.id], [["validate:running", "validate:done", "save:running", "save:done", "sync:skipped"], 201, emptyGroupId]);
+    assert.strictEqual((await request(`/api/catalog-v2/line-groups/${emptyGroupId}`, { method: "DELETE", cookie: adminCookie })).response.status, 200);
+    // An error before the first step is an ordinary JSON reply with its real status.
+    const steppedMissing = await request("/api/catalog-v2/line-groups/no-such-group", { method: "PUT", cookie: adminCookie, headers: { accept: "application/x-ndjson" }, body: { id: "no-such-group", name: "Missing", inboundKeys: [] } });
+    assert.deepStrictEqual([steppedMissing.response.status, steppedMissing.response.headers.get("content-type"), steppedMissing.data.error], [404, "application/json; charset=utf-8", "权限组不存在。"]);
+    await saveV2Group(["local:1"]);
 
     xuiRequests.length = 0;
     await handler.probeXuiInbounds();

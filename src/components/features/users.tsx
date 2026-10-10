@@ -112,9 +112,9 @@ export function UsersPage() {
   const addedToday = users.filter(item => item.createdAt && new Date(item.createdAt).toDateString() === new Date().toDateString()).length
   const expiringUsers = users.filter(item => userStatus(item) === "warning").length
 
-  const refreshPresence = React.useCallback(async () => {
+  const refreshPresence = React.useCallback(async (background = false) => {
     try {
-      setPresence(await fetchJson<XuiPresence>("/api/xui-presence"))
+      setPresence(await fetchJson<XuiPresence>("/api/xui-presence", { background }))
     } catch {
       // Keep the last successful snapshot during a transient 3x-ui failure.
     }
@@ -122,7 +122,7 @@ export function UsersPage() {
 
   React.useEffect(() => {
     void refreshPresence()
-    const timer = window.setInterval(refreshPresence, 30_000)
+    const timer = window.setInterval(() => void refreshPresence(true), 30_000)
     return () => window.clearInterval(timer)
   }, [refreshPresence])
 

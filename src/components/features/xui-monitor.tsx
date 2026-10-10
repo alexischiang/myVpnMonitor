@@ -76,10 +76,10 @@ export function XuiMonitorPage() {
   const [savingGuid, setSavingGuid] = React.useState("")
   const [settingsGuid, setSettingsGuid] = React.useState("")
 
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (background = false) => {
     setLoading(true)
     try {
-      const result = await fetchJson<MonitorData>("/api/xui-monitor")
+      const result = await fetchJson<MonitorData>("/api/xui-monitor", { background })
       setData(result)
       setError("")
     } catch (error) {
@@ -90,10 +90,10 @@ export function XuiMonitorPage() {
   }, [])
 
   React.useEffect(() => {
-    const refreshIfVisible = () => { if (!document.hidden) void refresh() }
+    const refreshIfVisible = (background = false) => { if (!document.hidden) void refresh(background) }
     const onVisibilityChange = () => { if (!document.hidden) refreshIfVisible() }
     refreshIfVisible()
-    const timer = window.setInterval(refreshIfVisible, 120_000)
+    const timer = window.setInterval(() => refreshIfVisible(true), 120_000)
     document.addEventListener("visibilitychange", onVisibilityChange)
     return () => {
       window.clearInterval(timer)

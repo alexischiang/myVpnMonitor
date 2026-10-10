@@ -103,8 +103,8 @@ function XuiUsageMonitor({ users }: { users: ReturnType<typeof useData>["users"]
 
   const [refreshing, setRefreshing] = React.useState(false)
 
-  const refresh = React.useCallback(() => {
-    void fetchJson<XuiDashboardData>("/api/xui-presence").then(setData).catch(() => undefined)
+  const refresh = React.useCallback((background = false) => {
+    void fetchJson<XuiDashboardData>("/api/xui-presence", { background }).then(setData).catch(() => undefined)
   }, [])
 
   const forceRefresh = React.useCallback(() => {
@@ -117,7 +117,7 @@ function XuiUsageMonitor({ users }: { users: ReturnType<typeof useData>["users"]
 
   React.useEffect(() => {
     refresh()
-    const timer = window.setInterval(refresh, 30_000)
+    const timer = window.setInterval(() => refresh(true), 30_000)
     return () => window.clearInterval(timer)
   }, [refresh])
 

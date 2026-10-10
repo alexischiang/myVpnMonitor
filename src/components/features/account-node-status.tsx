@@ -38,10 +38,10 @@ export function AccountNodeStatusPage() {
   const [error, setError] = React.useState("")
   const [loading, setLoading] = React.useState(true)
 
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (background = false) => {
     setLoading(true)
     try {
-      setData(await fetchJson<AccountNodeStatus>("/api/account/node-status"))
+      setData(await fetchJson<AccountNodeStatus>("/api/account/node-status", { background }))
       setError("")
     } catch (error) {
       setError(error instanceof Error ? error.message : "节点状态获取失败")
@@ -52,7 +52,7 @@ export function AccountNodeStatusPage() {
 
   React.useEffect(() => {
     void refresh()
-    const timer = window.setInterval(refresh, 120_000)
+    const timer = window.setInterval(() => void refresh(true), 120_000)
     return () => window.clearInterval(timer)
   }, [refresh])
 

@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-09
-- Current Objective: 文档站独立上线（nexora-docs）并让主站文档入口新标签页打开
+- Last Updated: 2026-10-10
+- Current Objective: 保存权限组时显示分步进度（校验入站 → 保存 → 同步）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -404,8 +404,12 @@
 
 - 2026-10-09: npm run verify exit 0、verify:harness、git diff --check 通过；/account 三个文档入口 target=_blank 指向 https://docs.webprovider.top/docs/，/account/docs 与 /docs/* 跳转正常，console_errors/page_errors 为空
 
+- 2026-10-10: npm run verify、npm run verify:harness、git diff --check 通过；test-payment 新增断言先失败后通过；浏览器在 /xui-inbounds、/dashboard 验证进度条与面板请求数，console_errors/page_errors 为空
+
+- 2026-10-10: npm run verify、npm run verify:harness、git diff --check 通过；test-payment 覆盖 NDJSON 步骤流；浏览器在 /xui-inbounds 用慢速模拟面板验证成功、只改名、校验失败、同步失败、390px 与暗色，console_errors/page_errors 为空
+
 ## Next Session
 
-- Files: `.env.example`, `.github/workflows/deploy.yml`, `.gitignore`, `AGENTS.md`, `PROGRESS.md`, `README.md`, `docs-site/docs/intro.md`, `docs-site/docs/tutorials/_category_.json`, `docs-site/docs/tutorials/and-flclash-tutorial.md`, `docs-site/docs/tutorials/clash-verge-tutorial.md`, `docs-site/docs/tutorials/image-1.png`, `docs-site/docs/tutorials/image.png`, `docs-site/docs/tutorials/images/shadowrocket/01-download.svg`, `docs-site/docs/tutorials/images/shadowrocket/02-copy-subscription.svg`, `docs-site/docs/tutorials/images/shadowrocket/03-add-subscription.svg`, `docs-site/docs/tutorials/images/shadowrocket/04-connect.svg`, `docs-site/docs/tutorials/ios-nextin-tutorial.md`, `docs-site/docs/tutorials/shadowrocket-tutorial.md`, `docs-site/docusaurus.config.js`, `docs-site/package.json`, `docs-site/sidebars.js`, `docs-site/src/css/custom.css`, `feature_list.json`, `package-lock.json`, `package.json`, `scripts/dev-all.js`, `scripts/ensure-dist.js`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `vite.config.js`, `src/lib/docs-site.ts`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/api.ts`, `src/components/features/account-node-status.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/app-shell.tsx`, `src/components/features/auth-pages.tsx`, `src/components/features/cashier.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/sync-jobs.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `test-payment.js`, `src/components/features/request-progress.tsx`, `src/components/features/step-progress.tsx`
 - Known risks: none
-- Recommended Next Step: 已部署；如需进一步优化下载速度，见 nexora-docs 讨论（dl 子域名直连）
+- Recommended Next Step: 无待办；本次三项改动已提交并合并 production 部署

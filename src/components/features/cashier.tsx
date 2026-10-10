@@ -72,7 +72,7 @@ export function Cashier({ initialOrder }: { initialOrder: PaymentOrder }) {
     const poll = window.setInterval(async () => {
       if (polling || operationRef.current || paymentBusy) return
       polling = true
-      try { const next = await fetchJson<PaymentOrder>(`/api/orders/${encodeURIComponent(order.id)}`); if (!stopped) update(next) }
+      try { const next = await fetchJson<PaymentOrder>(`/api/orders/${encodeURIComponent(order.id)}`, { background: true }); if (!stopped) update(next) }
       catch { if (!stopped) setError("暂时无法更新订单状态，请检查网络后重试。") }
       finally { polling = false }
     }, 5000)
