@@ -509,7 +509,8 @@ export type SalesSettings = {
   alertSettings: {
     payment: { telegram: boolean; mail: boolean }
     ticket: { telegram: boolean; mail: boolean }
-    traffic: { telegram: boolean; mail: boolean; userMail: boolean }
+    delivery: { telegram: boolean; mail: boolean }
+    traffic: { telegram: boolean; mail: boolean; userMail: boolean; userDepletedMail: boolean }
     trafficThresholdPercent: number
   }
   coupons: CouponSetting[]

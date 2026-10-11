@@ -80,6 +80,8 @@ const {
   nodeCostConfigForDate,
   salesProfitabilityReport,
   pendingXuiTrafficAlert,
+  pendingXuiDepletedUserMail,
+  xuiUserDepletedText,
   xuiClientCycleKey,
   xuiBillingPayload,
   initializeXuiTrafficSchedule,
@@ -544,6 +546,22 @@ assert.deepStrictEqual(xuiBillingPayload({ users: { user: {} }, nodeTokens: { hk
 assert.deepStrictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 80, trafficAlerts: {} }, 100, 80, { telegram: true, mail: true, userMail: true }), { key: "cycle-1:80", channels: ["telegram", "mail", "userMail"] });
 assert.deepStrictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 90, trafficAlerts: { "cycle-1:80": ["telegram"] } }, 100, 80, { telegram: true, mail: true }), { key: "cycle-1:80", channels: ["mail"] });
 assert.strictEqual(pendingXuiTrafficAlert({ cycleKey: "cycle-1", weightedBytes: 79 }, 100, 80, { telegram: true }), null);
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 100, trafficAlerts: {} }, 100, { userDepletedMail: true }, { weightedBytes: 90, totalBytes: 100 }), "cycle-1:depleted", "reaching the quota this round owes the mail");
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 99, trafficAlerts: {} }, 100, { userDepletedMail: true }, { weightedBytes: 90, totalBytes: 100 }), "", "below the quota owes no mail");
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 100, trafficAlerts: {} }, 100, { userDepletedMail: false }, { weightedBytes: 90, totalBytes: 100 }), "", "switch off owes no mail");
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 500 }, 0, { userDepletedMail: true }, { weightedBytes: 400, totalBytes: 0 }), "", "unlimited quota never runs out");
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 120, trafficAlerts: {} }, 100, { userDepletedMail: true }, { weightedBytes: 110, totalBytes: 100 }), "", "a user already over the quota last round is not mailed");
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 160, trafficAlerts: {} }, 150, { userDepletedMail: true }, { weightedBytes: 160, totalBytes: 100 }), "", "a raised quota that is still used up is not a new depletion");
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 150, trafficAlerts: { "cycle-1:depleted": ["userMail"] } }, 150, { userDepletedMail: true }, { weightedBytes: 120, totalBytes: 150 }), "cycle-1:depleted", "running out again after a top-up mails again");
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 120, trafficAlerts: { "cycle-1:depleted": ["pending"] } }, 100, { userDepletedMail: true }, { weightedBytes: 110, totalBytes: 100 }), "cycle-1:depleted", "a failed send is retried");
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 100, trafficAlerts: {} }, 100, { userDepletedMail: true }), "", "no earlier ledger to compare with owes no mail");
+assert.strictEqual(pendingXuiDepletedUserMail({ cycleKey: "cycle-1", weightedBytes: 100, trafficAlerts: {} }, 100, { userDepletedMail: true }, { weightedBytes: 90 }), "", "an earlier ledger without a quota owes no mail");
+assert.strictEqual(
+  xuiUserDepletedText({ xuiNextTrafficResetAt: "2026-08-01T04:00:00.000Z", expiresAt: "2026-09-01T00:00:00.000Z" }, { weightedBytes: 1024 ** 3 }, 1024 ** 3),
+  "你的流量已用完，服务已暂停。\n\n已使用：1.00 GB\n总流量：1.00 GB\n下次流量重置：2026/8/1\n\n购买流量包或更新套餐后，服务会自动恢复。"
+);
+assert.doesNotMatch(xuiUserDepletedText({ xuiNextTrafficResetAt: "2026-08-01T04:00:00.000Z", expiresAt: "2026-07-20T00:00:00.000Z" }, { weightedBytes: 1 }, 1), /下次流量重置/, "no reset date when the plan ends first");
+assert.doesNotMatch(xuiUserDepletedText({}, { weightedBytes: 1 }, 1), /下次流量重置/);
 const clientCreatedAt = Date.UTC(2026, 0, 1);
 assert.notStrictEqual(xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 29 * 864e5), xuiClientCycleKey({ createdAt: clientCreatedAt, reset: 30 }, clientCreatedAt + 31 * 864e5));
 assert.strictEqual(xuiNodeBaseUrl({ scheme: "https", address: "node.example.com", port: 8443, basePath: "/secret/" }), "https://node.example.com:8443/secret");
@@ -620,7 +638,8 @@ const announcementSettings = normalizeSalesSettings({ announcements: [{ title: "
 assert.deepStrictEqual(announcementSettings.announcements[0], { id: announcementSettings.announcements[0].id, title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true });
 assert.strictEqual(normalizeSalesSettings({ onboardingEnabled: false }).onboardingEnabled, false);
 const alertSettings = normalizeSalesSettings({ alertSettings: { payment: { telegram: false, mail: true }, traffic: { telegram: true, mail: true, userMail: true }, trafficThresholdPercent: 85 } }).alertSettings;
-assert.deepStrictEqual(alertSettings, { payment: { telegram: false, mail: true }, ticket: { telegram: true, mail: false }, traffic: { telegram: true, mail: true, userMail: true }, trafficThresholdPercent: 85 });
+assert.deepStrictEqual(alertSettings, { payment: { telegram: false, mail: true }, ticket: { telegram: true, mail: false }, delivery: { telegram: true, mail: false }, traffic: { telegram: true, mail: true, userMail: true, userDepletedMail: true }, trafficThresholdPercent: 85 });
+assert.strictEqual(normalizeSalesSettings({ alertSettings: { traffic: { userDepletedMail: false } } }).alertSettings.traffic.userDepletedMail, false);
 assert.throws(() => normalizeSalesSettings({ alertSettings: { trafficThresholdPercent: 0 } }), /1-100/);
 assert.throws(() => normalizeSalesSettings({ announcements: [{ title: "", content: "内容" }] }), /不能为空/);
 const normalizedPaymentSettings = normalizePaymentSettings({

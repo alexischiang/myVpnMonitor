@@ -1617,7 +1617,8 @@ function defaultAlertSettings() {
   return {
     payment: { telegram: true, mail: false },
     ticket: { telegram: true, mail: false },
-    traffic: { telegram: false, mail: false, userMail: false },
+    delivery: { telegram: true, mail: false },
+    traffic: { telegram: false, mail: false, userMail: false, userDepletedMail: true },
     trafficThresholdPercent: 80
   };
 }
@@ -1633,9 +1634,11 @@ function normalizeAlertSettings(value, strict = false) {
   return {
     payment: channelScope("payment"),
     ticket: channelScope("ticket"),
+    delivery: channelScope("delivery"),
     traffic: {
       ...channelScope("traffic"),
-      userMail: typeof value?.traffic?.userMail === "boolean" ? value.traffic.userMail : defaults.traffic.userMail
+      userMail: typeof value?.traffic?.userMail === "boolean" ? value.traffic.userMail : defaults.traffic.userMail,
+      userDepletedMail: typeof value?.traffic?.userDepletedMail === "boolean" ? value.traffic.userDepletedMail : defaults.traffic.userDepletedMail
     },
     trafficThresholdPercent: Number.isInteger(threshold) && threshold >= 1 && threshold <= 100 ? threshold : defaults.trafficThresholdPercent
   };
@@ -2420,6 +2423,7 @@ async function fulfillStandaloneAddOnOrderOnce(order, req) {
   await saveAccounts();
   await savePaymentOrders();
   await notifyPaymentOrder(order);
+  await notifyPendingDelivery(order, req);
   return order;
 }
 
@@ -2702,6 +2706,7 @@ async function fulfillPaymentOrderOnce(order, req) {
   order.fulfillmentError = "";
   await savePaymentOrders();
   await notifyPaymentOrder(order);
+  await notifyPendingDelivery(order, req);
   return order;
 }
 
@@ -2824,6 +2829,17 @@ async function notifyPaymentOrder(order) {
   await sendAdminAlert("payment", {
     subject: `用户支付提醒：${order.email || order.merOrderTid || order.id}`,
     text: notifier.buildPaymentAlert(order)
+  });
+}
+
+// Sent after the payment alert when a paid order is left waiting for manual delivery.
+async function notifyPendingDelivery(order, req) {
+  if (!addonServices.isPendingDelivery(order)) return;
+  const url = `${String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "")}/deliveries`;
+  await sendAdminAlert("delivery", {
+    subject: `服务待交付：${order.email || order.merOrderTid || order.id}`,
+    text: notifier.buildPendingDeliveryAlert(order, url),
+    parseMode: ""
   });
 }
 
@@ -4095,6 +4111,33 @@ function xuiUserTrafficAlertText(ledger, totalBytes, threshold) {
   ].join("\n");
 }
 
+// The key of the "traffic used up" mail owed to a user this round, or "". Only users who reach
+// the quota now are mailed: `previous`, last round's ledger, was still under it. Users already
+// over the quota when the switch is turned on are skipped. A failed send is kept as "pending"
+// under the key and retried in the following rounds.
+function pendingXuiDepletedUserMail(ledger, totalBytes, scope = {}, previous = null) {
+  if (!scope.userDepletedMail || !(totalBytes > 0) || !(ledger?.weightedBytes >= totalBytes)) return "";
+  const key = `${ledger.cycleKey}:depleted`;
+  const wasUnderQuota = Number.isFinite(previous?.weightedBytes) && Number.isFinite(previous?.totalBytes) && !(previous.totalBytes > 0 && previous.weightedBytes >= previous.totalBytes);
+  const retry = Array.isArray(ledger.trafficAlerts?.[key]) && ledger.trafficAlerts[key].includes("pending");
+  return wasUnderQuota || retry ? key : "";
+}
+
+function xuiUserDepletedText(user, ledger, totalBytes) {
+  const resetMs = Date.parse(user.xuiNextTrafficResetAt || "");
+  const expiresMs = Date.parse(user.expiresAt || "");
+  const resetsWhileActive = Number.isFinite(resetMs) && !(expiresMs <= resetMs);
+  return [
+    "你的流量已用完，服务已暂停。",
+    "",
+    `已使用：${notifier.formatBytes(ledger.weightedBytes)}`,
+    `总流量：${notifier.formatBytes(totalBytes)}`,
+    ...(resetsWhileActive ? [`下次流量重置：${new Date(resetMs).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })}`] : []),
+    "",
+    "购买流量包或更新套餐后，服务会自动恢复。"
+  ].join("\n");
+}
+
 function xuiClientCycleKey(client = {}, now = Date.now()) {
   const createdAt = Number(client.createdAt) || now;
   const createdMs = createdAt < 1e12 ? createdAt * 1000 : createdAt;
@@ -4392,6 +4435,7 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   const enableEmails = [];
   const changedUsers = [];
   const trafficAlerts = [];
+  const depletedMails = [];
   const alertSettings = currentSalesSettings().alertSettings;
   const remoteEmails = new Set();
 
@@ -4417,6 +4461,8 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
     state.users[email] = ledger;
     const trafficAlert = user ? pendingXuiTrafficAlert(ledger, totalBytes, alertSettings.trafficThresholdPercent, alertSettings.traffic) : null;
     if (trafficAlert) trafficAlerts.push({ user, ledger, totalBytes, ...trafficAlert });
+    const depletedMailKey = user && !expired && !isUserAccountDisabled(user) ? pendingXuiDepletedUserMail(ledger, totalBytes, alertSettings.traffic, previous) : "";
+    if (depletedMailKey) depletedMails.push({ user, ledger, totalBytes, key: depletedMailKey });
     const weightedTraffic = {
       rawUsedBytes: ledger.rawBytes,
       usedBytes: ledger.weightedBytes,
@@ -4494,6 +4540,17 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
     }
     if (!sent.length) continue;
     alert.ledger.trafficAlerts[alert.key] = [...new Set([...(alert.ledger.trafficAlerts[alert.key] || []), ...sent])];
+  }
+  // Read-only mode leaves the client enabled, so the mail's "service paused" would be untrue.
+  for (const alert of XUI_READ_ONLY || !notifier.isMailConfigured() ? [] : depletedMails) {
+    const to = alert.user.email || alert.user.xuiClientEmail;
+    try {
+      await notifier.sendMail({ to, subject: "流量已用完，服务已暂停", text: xuiUserDepletedText(alert.user, alert.ledger, alert.totalBytes) });
+      alert.ledger.trafficAlerts[alert.key] = ["userMail"];
+    } catch (error) {
+      alert.ledger.trafficAlerts[alert.key] = ["pending"];
+      console.error(`[alerts] traffic depleted user mail failed for ${to}:`, error.message);
+    }
   }
   state.nodeResults = nodeResults;
   state.nodeNames = nodeNames;
@@ -11913,6 +11970,8 @@ module.exports = Object.assign(requestHandler, {
   nodeCostConfigForDate,
   salesProfitabilityReport,
   pendingXuiTrafficAlert,
+  pendingXuiDepletedUserMail,
+  xuiUserDepletedText,
   xuiClientCycleKey,
   xuiBillingPayload,
   initializeXuiTrafficSchedule,
