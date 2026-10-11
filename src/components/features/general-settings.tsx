@@ -21,6 +21,7 @@ import type { SalesSettings } from "@/types"
 const alertRows = [
   { key: "payment", label: "用户支付提醒", description: "用户完成套餐、流量包或余额支付时提醒。" },
   { key: "ticket", label: "工单待处理提醒", description: "用户创建工单或追加回复时提醒。" },
+  { key: "delivery", label: "待交付提醒", description: "用户付款后有服务等待人工交付时提醒。" },
   { key: "traffic", label: "用户流量提醒", description: "用户流量达到设定阈值时提醒。" },
 ] as const
 
@@ -141,7 +142,7 @@ export function GeneralSettingsPage() {
                   </FieldContent>
                   <Switch id="traffic-user-mail" checked={draft.alertSettings.traffic.userMail} disabled={saving} onCheckedChange={checked => setDraft({ ...draft, alertSettings: { ...draft.alertSettings, traffic: { ...draft.alertSettings.traffic, userMail: checked } } })} />
                 </Field>
-                <Field orientation="responsive" className="justify-between pt-6">
+                <Field orientation="responsive" className="justify-between border-b py-6">
                   <FieldContent>
                     <FieldLabel htmlFor="traffic-alert-threshold">流量提醒阈值</FieldLabel>
                     <FieldDescription>每个用户在每个流量周期内仅提醒一次；修改阈值后会按新阈值重新判断。</FieldDescription>
@@ -150,6 +151,13 @@ export function GeneralSettingsPage() {
                     <Input id="traffic-alert-threshold" type="number" min={1} max={100} step={1} value={draft.alertSettings.trafficThresholdPercent} disabled={saving} onChange={event => setDraft({ ...draft, alertSettings: { ...draft.alertSettings, trafficThresholdPercent: Number(event.target.value) } })} />
                     <span className="text-sm text-muted-foreground">%</span>
                   </div>
+                </Field>
+                <Field orientation="responsive" className="justify-between pt-6">
+                  <FieldContent>
+                    <FieldLabel htmlFor="traffic-user-depleted-mail">流量用尽邮件提醒</FieldLabel>
+                    <FieldDescription>用户流量达到 100%、服务暂停时，向该用户绑定的邮箱发送一次提醒。</FieldDescription>
+                  </FieldContent>
+                  <Switch id="traffic-user-depleted-mail" checked={draft.alertSettings.traffic.userDepletedMail} disabled={saving} onCheckedChange={checked => setDraft({ ...draft, alertSettings: { ...draft.alertSettings, traffic: { ...draft.alertSettings.traffic, userDepletedMail: checked } } })} />
                 </Field>
               </FieldSet>
               <div className="flex justify-end gap-2">

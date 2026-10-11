@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-10
-- Current Objective: 保存权限组时显示分步进度（校验入站 → 保存 → 同步）
+- Last Updated: 2026-10-11
+- Current Objective: 提醒设置新增：待交付提醒管理员（Telegram/邮件）与流量用尽邮件提醒用户（默认开，只对新用尽的用户发）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -408,8 +408,12 @@
 
 - 2026-10-10: npm run verify、npm run verify:harness、git diff --check 通过；test-payment 覆盖 NDJSON 步骤流；浏览器在 /xui-inbounds 用慢速模拟面板验证成功、只改名、校验失败、同步失败、390px 与暗色，console_errors/page_errors 为空
 
+- 2026-10-11: npm run verify、npm run verify:harness、node test-notifier.js、git diff --check 通过；隔离服务验证待交付提醒经模拟 Telegram 送达且开关生效；/general-settings 桌面与 375px 浏览器验证 console_errors/page_errors 为空
+
+- 2026-10-11: 流量用尽邮件改为只在用户本轮新达到额度时发送，上线或开启开关时已用尽的用户不补发；npm run verify、npm run verify:harness、git diff --check 通过
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/api.ts`, `src/components/features/account-node-status.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/app-shell.tsx`, `src/components/features/auth-pages.tsx`, `src/components/features/cashier.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/sync-jobs.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `test-payment.js`, `src/components/features/request-progress.tsx`, `src/components/features/step-progress.tsx`
+- Files: `PROGRESS.md`, `feature_list.json`, `notifier.js`, `server.js`, `src/components/features/general-settings.tsx`, `src/types.ts`, `test-notifier.js`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 无待办；本次三项改动已提交并合并 production 部署
+- Recommended Next Step: 保存提示遮挡保存按钮的问题待单独处理

@@ -1528,6 +1528,49 @@ async function main() {
     const newPasswordLogin = await request("/api/auth/login", { method: "POST", body: { account: "buyer@example.test", password: "payment-test-password-new" } });
     assert.strictEqual(newPasswordLogin.response.status, 200);
 
+    // Reaching the quota mails the user once, a failed send is retried, and using the quota up again
+    // after a top-up mails again. Users already out of traffic when the switch is turned on are skipped.
+    const notifier = require("./notifier");
+    const realMailer = { isMailConfigured: notifier.isMailConfigured, sendMail: notifier.sendMail };
+    const depletedMails = [];
+    let failNextMail = true;
+    Object.assign(notifier, { isMailConfigured: () => true, sendMail: async mail => {
+      if (failNextMail) { failNextMail = false; throw new Error("simulated mail outage"); }
+      depletedMails.push(mail);
+    } });
+    try {
+      const clientEnabled = () => xuiClients.get("v2-sync@example.test").enable;
+      const useTraffic = async bytes => {
+        await database.query("INSERT INTO xui_daily_traffic (date, email, node_guid, up_bytes, down_bytes) VALUES ($1, 'v2-sync@example.test', 'local', $2, 0) ON CONFLICT (date, email, node_guid) DO UPDATE SET up_bytes = xui_daily_traffic.up_bytes + EXCLUDED.up_bytes", [purchaseDayKey, bytes]);
+        await handler.syncXuiPanel();
+      };
+      await useTraffic(1);
+      assert.deepStrictEqual(depletedMails, [], "no mail below the quota");
+      await useTraffic((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.remainingBytes);
+      assert.deepStrictEqual([clientEnabled(), depletedMails.length], [false, 0], "a client over its app quota is disabled even when the mail fails");
+      await handler.syncXuiPanel();
+      assert.deepStrictEqual(depletedMails.map(mail => [mail.to, mail.subject]), [["v2-sync@example.test", "流量已用完，服务已暂停"]]);
+      assert.match(depletedMails[0].text, /你的流量已用完，服务已暂停。/);
+      await handler.syncXuiPanel();
+      assert.strictEqual(depletedMails.length, 1, "a failed send is retried once and the mail is not repeated");
+      assert.strictEqual((await request(`/api/users/${v2User.id}/traffic-gift`, { method: "POST", cookie: adminCookie, body: { trafficGb: 1, note: "depleted mail top-up" } })).response.status, 200);
+      await handler.syncXuiPanel();
+      assert.deepStrictEqual([clientEnabled(), depletedMails.length], [true, 1], "a top-up re-enables the client without another mail");
+      await useTraffic(2 * 1024 ** 3);
+      assert.deepStrictEqual([clientEnabled(), depletedMails.length], [false, 2], "using up the raised quota mails again");
+      const savedSettings = (await request("/api/sales-settings", { cookie: adminCookie })).data;
+      assert.strictEqual((await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...savedSettings, alertSettings: { ...savedSettings.alertSettings, traffic: { ...savedSettings.alertSettings.traffic, userDepletedMail: false } } } })).response.status, 200);
+      assert.strictEqual((await request(`/api/users/${v2User.id}/traffic-gift`, { method: "POST", cookie: adminCookie, body: { trafficGb: 1, note: "depleted mail switch off" } })).response.status, 200);
+      await useTraffic(2 * 1024 ** 3);
+      assert.deepStrictEqual([clientEnabled(), depletedMails.length], [false, 2], "no mail while the switch is off");
+      assert.strictEqual((await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: savedSettings })).response.status, 200);
+      await handler.syncXuiPanel();
+      assert.strictEqual(depletedMails.length, 2, "a user already out of traffic when the switch is turned on is not mailed");
+    } finally {
+      Object.assign(notifier, realMailer);
+      await database.query("DELETE FROM xui_daily_traffic WHERE email='v2-sync@example.test'");
+    }
+
     // Runs last: the cron subscription refresh fetches the test pools' upstream URLs, which
     // fail and mark the pools with lastError.
     delete process.env.CRON_SECRET;

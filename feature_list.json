@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-10",
+  "updated_at": "2026-10-11",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -2743,6 +2743,76 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-10"
+      }
+    },
+    {
+      "id": "pending-delivery-admin-alert",
+      "name": "Alert the admin when an order is waiting for delivery",
+      "description": "When a paid order is left waiting for manual delivery (fulfillmentStatus manual_pending: a standalone manual add-on, or a plan order that carries add-ons), the admin gets a 待交付提醒 after the payment alert, with the customer email, the services, the order number, the payment time and a link to /deliveries. It goes through sendAdminAlert under the new alertSettings.delivery scope (Telegram on, mail off by default; stored settings without the scope get the defaults), switched from the 待交付提醒 row of 通用设置 → 提醒设置.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "admin-service-delivery-page"
+      ],
+      "done_criteria": [
+        "A paid order that ends in manual_pending sends one 待交付提醒 to each enabled and configured channel; orders delivered automatically send none.",
+        "通用设置 → 提醒设置 has a 待交付提醒 row whose Telegram and 邮件 checkboxes save to alertSettings.delivery and take effect on the next order.",
+        "Settings saved before this feature read back as Telegram on, mail off."
+      ],
+      "verification": [
+        "2026-10-11: test-notifier.js asserts the 待交付提醒 text (services with region and quantity, order number, China-time payment time, link) and the planName / order id fallbacks; test.js asserts normalizeSalesSettings fills alertSettings.delivery with the defaults.",
+        "2026-10-11: isolated server.js on :3211 (test DB, mock Telegram API on :3212, mail unconfigured): a manual-payment order for a manual add-on returned manual_pending and the mock received 用户消费提醒 then 待交付提醒 with 前往交付：http://localhost:3211/deliveries; with the Telegram box unchecked and saved, the next such order produced only 用户消费提醒.",
+        "2026-10-11: npm run verify (check, core, 3x-ui, checkout, payment, wallet, catalog-v2 tests) exits 0; node test-notifier.js passes; git diff --check clean."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/general-settings?section=alerts"
+        ],
+        "interactions": [
+          "Opened 提醒设置 on the isolated server: the table lists 用户支付提醒, 工单待处理提醒, 待交付提醒 (Telegram checked, 邮件 unchecked) and 用户流量提醒.",
+          "Unchecked 待交付提醒 Telegram: 放弃更改 and 保存设置 became enabled; 保存设置 showed the toast 通用设置已保存 and GET /api/sales-settings returned delivery {telegram: false, mail: false}.",
+          "Checked it again and saved: the server returned delivery {telegram: true, mail: false}.",
+          "Console errors read after the page load and after each save: none. The Browser pane was hidden (0x0 viewport), so layout was read from the DOM, not from a screenshot."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-11"
+      }
+    },
+    {
+      "id": "traffic-depleted-user-mail",
+      "name": "Mail the user when traffic reaches 100%",
+      "description": "When the five-minute panel sync finds an active self-hosted user at or over the quota (the round that disables the client), the user is mailed 流量已用完，服务已暂停 with used and total traffic, the next reset date when it falls before the plan ends, and how to resume. It is switched by alertSettings.traffic.userDepletedMail (on by default; stored settings without the field read as on) from 流量用尽邮件提醒 in 通用设置 → 提醒设置, separately from the threshold mail. Only users who reach the quota in the current round are mailed: the previous round's ledger (weightedBytes against totalBytes) must have been under the quota, so users already used up when the feature ships or when the switch is turned on get nothing, and a raised quota that is still used up is not a new depletion. A failed send is kept as pending under cycleKey:depleted in the ledger and retried in the following rounds; a user who tops up, is seen under the quota, and uses it up again is mailed again. Expired or disabled users are skipped, and nothing is sent in XUI_READ_ONLY mode because the client is not actually paused.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "pending-delivery-admin-alert"
+      ],
+      "done_criteria": [
+        "A user who reaches 100% gets exactly one mail; later sync rounds send no more, and a failed send is retried until it goes out.",
+        "Users already at 100% before the feature shipped, or while the switch was off, are not mailed when it comes on.",
+        "After a top-up re-enables the client, using up the raised quota sends another mail.",
+        "With 流量用尽邮件提醒 off no mail is sent; the switch saves to alertSettings.traffic.userDepletedMail and defaults to on."
+      ],
+      "verification": [
+        "2026-10-11: test.js asserts pendingXuiDepletedUserMail (reaching the quota this round, below quota, switch off, unlimited quota, already over the quota last round, raised quota still used up, used up again after a top-up, pending retry, no earlier ledger) and the mail text with and without a reset date, and that normalizeSalesSettings defaults userDepletedMail to true and keeps an explicit false.",
+        "2026-10-11: test-payment.js drives syncXuiPanel against the mock panel with notifier.sendMail captured: no mail below the quota; reaching it disables the client while the first send fails, the next round delivers the one mail to v2-sync@example.test and the round after sends none; a 1 GB gift re-enables without a mail; using 2 GB more disables again and sends the second mail; with the switch saved off a further gift and depletion send none, and turning the switch back on for that already used-up user sends none.",
+        "2026-10-11: npm run verify (check, core, 3x-ui, checkout, payment, wallet, catalog-v2 tests) exits 0; git diff --check clean. No real mail was sent: delivery through Resend/SMTP itself is the existing notifier.sendMail path and was not exercised."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/general-settings?section=alerts"
+        ],
+        "interactions": [
+          "Isolated server.js on :3211 (test DB, mail unconfigured). A PUT of settings without delivery and userDepletedMail returned delivery {telegram: true, mail: false} and userDepletedMail true; the page then showed 流量用尽邮件提醒 below 流量提醒阈值 with the switch on and its label bound to the switch.",
+          "Turned the switch off and saved: toast 通用设置已保存, GET /api/sales-settings returned userDepletedMail false.",
+          "375x812: no horizontal scroll (scrollWidth 375), the alert table fits its container (323 of 323), the new field stacks label, description and switch like the two above it; turned the switch on and saved, the server returned userDepletedMail true.",
+          "A save clicked while the previous 通用设置已保存 toast was still shown did not go through: the toast covers the 保存设置 button (elementFromPoint at the button centre returns the toast). This predates the change and is reported separately.",
+          "Console errors read after each page load and each save: none."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-11"
       }
     }
   ]

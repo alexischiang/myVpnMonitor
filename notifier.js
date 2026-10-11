@@ -210,6 +210,20 @@ function buildPaymentAlert(order) {
   ]).join("\n");
 }
 
+function buildPendingDeliveryAlert(order, url) {
+  const services = (order.addOnSnapshots || []).map(item => `${item.name}${item.regionName ? `（${item.regionName}）` : ""}${Number(item.quantity) > 1 ? ` ×${item.quantity}` : ""}`).join("、") || order.planName || "-";
+  const paidAt = new Date(order.paidAt || Date.now()).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+  return [
+    "📦 待交付提醒",
+    `📧 用户邮箱：${order.email || "-"}`,
+    `🛍️ 待交付服务：${services}`,
+    `🧾 订单编号：${order.merOrderTid || order.id || "-"}`,
+    `🕒 付款时间：${paidAt}`,
+    "",
+    `前往交付：${url}`
+  ].join("\n");
+}
+
 module.exports = {
   isConfigured,
   isMailConfigured,
@@ -221,5 +235,6 @@ module.exports = {
   sendTelegram,
   renderEmailHtml,
   buildPaymentAlert,
+  buildPendingDeliveryAlert,
   formatBytes
 };
