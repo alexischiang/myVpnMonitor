@@ -1,0 +1,23 @@
+{
+  "id": "tutorials/and-flclash-tutorial",
+  "title": "安卓Android 教程",
+  "description": "1.下载软件",
+  "source": "@site/docs/tutorials/and-flclash-tutorial.md",
+  "sourceDirName": "tutorials",
+  "slug": "/tutorials/and-flclash-tutorial",
+  "permalink": "/docs/tutorials/and-flclash-tutorial",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 3,
+  "frontMatter": {
+    "title": "安卓Android 教程",
+    "sidebar_position": 3
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Shadowrocket 使用教程",
+    "permalink": "/docs/tutorials/shadowrocket-tutorial"
+  }
+}

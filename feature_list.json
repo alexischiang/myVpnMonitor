@@ -2892,6 +2892,322 @@
         "page_errors": [],
         "checked_at": "2026-10-12"
       }
+    },
+    {
+      "id": "account-shell-width-align",
+      "name": "Align the user centre body width with its header",
+      "description": "AccountShell main content uses the same 1200px max width and the same 760px side-padding breakpoint as the Arc site-header, so the header and the page content share left and right edges.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "arc-ui-migration"
+      ],
+      "done_criteria": [
+        "At 1280, 1440 and 1920px and at phone width, the header inner content and the main content have equal left and right edges on /account.",
+        "Affected user centre routes open with no console or page errors."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. On /account the header inner content and main content edges matched at 1920 (384-1536), 1440 (144-1296), 1280 (64-1216), 1024 (24-1000), 764 (24-740), 755 (16-739) and 375 (16-359) px, with no horizontal scroll at 375px."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/plans",
+          "/account/wallet",
+          "/account/orders",
+          "/account/referrals",
+          "/account/tickets",
+          "/account/settings"
+        ],
+        "interactions": [
+          "Signed in as a seeded local test customer and measured header and main content edges on /account at 1920, 1440, 1280, 1024, 764, 755 and 375px.",
+          "Opened every other user centre route listed above after sign-in; all API requests returned 200."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-site-footer",
+      "name": "Minimal site footer on user centre pages",
+      "description": "AccountShell ends every user centre page with the Arc site-footer in its minimal variant (brand, 购买服务 / 工单服务 / 使用文档 links, refund note, copyright, a static 服务运行正常 status and a 文档站 link). The footer gains an opt-in contained prop so its content lines up with the site-header column, and in-app links go through the router when onNavigate is given.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-shell-width-align"
+      ],
+      "done_criteria": [
+        "Every /account route shows the minimal footer, pinned to the bottom of the window on short pages.",
+        "The footer content shares left and right edges with the header at desktop and phone widths, and its top border spans the page.",
+        "Footer links to 购买服务 and 工单服务 navigate without a full page reload; 使用文档 opens in a new tab.",
+        "The public pricing page footer is unchanged.",
+        "Affected routes open with no console or page errors."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. Footer content edges matched the header at 1440 (144-1296), 764 (24-740), 755 (16-739) and 375 (16-359) px with a full-width top border and no horizontal scroll; on the short /account/settings page the footer bottom sat at the window bottom (900 of 900). The public /pricing footer kept its original classes, 24px padding and links.",
+        "2026-10-12: Added the footer's bottom row: a static 服务运行正常 status (span with a green dot, not a button) and one 文档站 link (new tab). npm run check passed; checked at 1440px and 375px with no horizontal scroll; /pricing footer unchanged; no new console errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/plans",
+          "/account/plans/checkout?option=v2:cycled-basic:30d",
+          "/account/wallet",
+          "/account/orders",
+          "/account/referrals",
+          "/account/tickets",
+          "/account/tickets/new",
+          "/account/settings",
+          "/pricing"
+        ],
+        "interactions": [
+          "Clicked the footer 工单服务 and 购买服务 links: the path changed with no page reload; 使用文档 has target=_blank.",
+          "Checked the bottom row: 服务运行正常 renders as plain text with the success dot, 文档站 opens the docs site in a new tab.",
+          "Measured footer and header content edges at 1440, 764, 755 and 375px, and checked the footer in light and dark themes.",
+          "Reached checkout through 选择套餐 on /account/plans (quote request 200).",
+          "Opening /account/nodes or a bare /account/plans/checkout URL directly logs a 403 (node-status, the expired test account has no node access) and a 400 (quote without an option); both are existing page behaviour unrelated to the footer, so those direct URLs are not listed as verified routes."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-overview-ticket-cta",
+      "name": "Ticket reminder on the account overview as a CTA banner",
+      "description": "The 发送工单 reminder at the top of /account changes from a warning Alert to the Arc cta-section block in its banner variant (遇到问题？ / 发送工单联系客服吧！ / 发送工单). The block is installed from the uiarc registry and gains bare and onNavigate so it sits in the page column and routes in-app.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-shell-width-align"
+      ],
+      "done_criteria": [
+        "The overview shows the banner where the Alert was, with the same edges as the cards below it.",
+        "发送工单 opens /account/tickets/new without a full page reload.",
+        "The banner reads well in light and dark themes and stacks on phone widths without horizontal scroll.",
+        "No console or page errors on /account."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed; tsc (local 4.3) shows no new errors beyond the existing inline type-import parse limitation. On /account at 1440px the banner spans 144-1296, the same edges as the grid below it; at 375px it stacks (16-359) with no horizontal scroll; dark theme uses the surface colour on the page background."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/tickets/new"
+        ],
+        "interactions": [
+          "Closed the announcement dialog, measured the banner against the overview grid at 1440px and 375px, and checked light and dark themes.",
+          "Clicked 发送工单: the path changed to /account/tickets/new with no page reload and no page errors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-overview-cta-warning-and-nav-split",
+      "name": "Top-level 购买服务 / 节点状态 in the user centre header (ticket banner warning tone later removed)",
+      "description": "The /account ticket CTA banner uses a new opt-in tone=\"warning\" on the Arc cta-section (warning-tinted background and border from the theme token). The header's 服务 group is removed: 购买服务 and 节点状态 (only for users with node access) become top-level links, and the current item follows /account/plans and /account/nodes.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-overview-ticket-cta"
+      ],
+      "done_criteria": [
+        "The ticket banner shows a warning tint in light and dark themes with readable text.",
+        "The header shows 总览, 购买服务, (节点状态), 账务, 帮助; 购买服务 and 节点状态 navigate directly and are marked current on their routes, including /account/plans/checkout.",
+        "The mobile menu lists the same items.",
+        "No console or page errors on the affected routes."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. The banner computes a warning-tinted background and border in light (pale amber) and dark (amber-brown, gold border) themes. Header items read 总览, 购买服务, 账务, 帮助 for the expired test account; with /api/auth/me mocked in the page to hasActiveNodeAccess=true, 节点状态 appears between 购买服务 and 账务 and is aria-current on /account/nodes."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/plans",
+          "/account/plans/checkout?option=v2:cycled-basic:30d",
+          "/account/nodes"
+        ],
+        "interactions": [
+          "Clicked 购买服务 in the header: /account/plans with no page reload, marked current; continued to checkout through 选择套餐 and 购买服务 stayed current.",
+          "Opened the mobile menu at 375px: 总览, 购买服务, 账务, 帮助, with 总览 current.",
+          "Mocked hasActiveNodeAccess in the page to check the 节点状态 item and its current state on /account/nodes (the node-status API still answers 403 for this account; the mock was cleared by reloading).",
+          "Checked the warning banner in light and dark themes at 1440px and 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-overview-cta-compact",
+      "name": "Ticket banner: no warning tone, single-line icon action on small screens",
+      "description": "The /account ticket banner drops the warning tone (the cta-section tone option is removed again) and uses a new opt-in compactAction: below the block's 560px container breakpoint the banner stays on one line and 发送工单 shows only its arrow icon, with the label kept for screen readers.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-overview-cta-warning-and-nav-split"
+      ],
+      "done_criteria": [
+        "The banner uses the neutral surface colour in light and dark themes.",
+        "At phone width the banner is one row and the action is a square icon link with an accessible name of 发送工单.",
+        "At desktop width the action still shows its label and arrow.",
+        "No console or page errors on /account."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. At 375px (touch) the banner is one row (66px tall, flex-direction row) and 发送工单 is a 44x44 arrow link whose label is clipped for screen readers only; at 1440px the link shows 发送工单 with the arrow. The banner background is the neutral surface in light (oklch(1 0 0)) and dark (oklch(0.215 0 0)) themes."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/tickets/new"
+        ],
+        "interactions": [
+          "Measured the banner and its action at 375px and 1440px, and checked light and dark themes.",
+          "Tapped the compact arrow at 375px: /account/tickets/new opened with no page reload and no page errors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-surface-and-header-shadow",
+      "name": "User centre card surface and header shadow",
+      "description": "Matching the reference: the user centre page stays white, plain Arc cards and default bento cards use #f6f6f6 (oklch(0.973 0 0)) in the light theme through a scoped --card-surface / --bento-surface on [data-account-shell], and the header carries a soft shadow into the page with no bottom border. Cards with their own colour, the admin side and the dark theme keep their surfaces.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-overview-cta-compact"
+      ],
+      "done_criteria": [
+        "In the light theme the user centre page background is white and plain cards and default bento cards are #f6f6f6; inputs inside them stay white.",
+        "Coloured cards such as the yellow plan card are unchanged.",
+        "The header shows a soft shadow onto the page before and after scrolling, with no hairline border.",
+        "The admin dashboard cards keep their previous surface; the dark theme is unchanged.",
+        "No console or page errors on the affected routes."
+      ],
+      "verification": [
+        "2026-10-12: Reference colours sampled from the screenshot: page #ffffff, card panel #f6f6f6, header shadow fading from about #f1f1f1 to white over ~55px. npm run check passed. Light theme: body oklch(1 0 0); plain and default bento cards oklch(0.973 0 0) on /account, /account/settings and /account/tickets; the yellow plan card (rgb(254,210,48)) and the 个人信息 inner panel (explicit --background) unchanged. Header: white, transparent bottom border, shadow 0 6px 32px rgb(0 0 0/.06) both before and after scrolling. /pricing (outside the shell) keeps its white and oklch(0.958) cards; the dark theme card stays on --surface (oklch(0.215))."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/settings",
+          "/account/plans",
+          "/account/wallet",
+          "/account/orders",
+          "/account/referrals",
+          "/account/tickets",
+          "/pricing"
+        ],
+        "interactions": [
+          "Measured card, page and header colours in light theme, scrolled /account past the header threshold and rechecked the header shadow and border.",
+          "Switched to the dark theme and checked the card surface, then restored the default theme.",
+          "Opened /pricing to confirm cards outside the user centre keep their surfaces."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "sales-user-alerts-master-switch",
+      "name": "User alert master switch and alert drawer layout",
+      "description": "销售设置 → Alert 管理 adds a one-click switch (userAlertsEnabled, default on) that hides every configured top alert on the user side while keeping each alert's own settings; /api/public/sales-settings returns no userAlerts when it is off. The alert list shows page/type in Chinese and a 显示中/已隐藏/已停用 badge. The editor drawer is sized per form (md for Alert/FAQ, lg for coupons, xl for Markdown), drops the extra inner padding so fields and actions align, uses tighter field spacing, puts page and type side by side, adds a live preview, uses a switch for the alert status, and separates 删除 from 取消/保存. The Tabs root gets min-w-0 so the tab strip no longer widens the page on phones.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Turning the Alert master switch off saves immediately and the public sales settings return an empty userAlerts list; turning it on restores enabled alerts.",
+        "Individual alerts keep their enabled state while the master switch is off.",
+        "The alert editor drawer has aligned fields and actions, a live preview and no oversized empty width.",
+        "The sales settings page has no horizontal scroll at phone width.",
+        "No console or page errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-12: node test.js passed with new normalizeSalesSettings userAlertsEnabled assertions; npm run verify:fast and npm run check passed. test-payment.js gained public-endpoint assertions for the switch but could not run locally because TEST_DATABASE_URL is not configured. Browser: master switch toggled off and on with the PUT stubbed in-page (the local server points at a remote database) — payloads userAlertsEnabled false then true, badges switched to 已隐藏 and back; alert drawer type change updated the preview and the status switch toggled; coupon drawer checked with the shared layout; at 375px the main container scrollWidth equals clientWidth."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/sales-settings"
+        ],
+        "interactions": [
+          "Opened the Alert 管理 tab and toggled the master switch off and on (save request stubbed in-page), checking switch state, description and badges.",
+          "Opened an existing alert's drawer, changed the type to 错误 and checked the preview, toggled the status switch, then cancelled without saving.",
+          "Opened the 添加 Alert drawer at 375px and the 添加优惠码 drawer at desktop width.",
+          "Reloaded at 375px and confirmed no horizontal overflow in the main container."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "pending-payment-alert-inline",
+      "name": "Pending payment alert on one line with warning tint",
+      "description": "The user centre's pending-payment reminder (not controlled by the Alert master switch) shows 请注意, the message and the 去支付 link on one line with a warning-tinted background. Arc alert gains opt-in inline, tinted and action props; other alerts keep the default layout.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "sales-user-alerts-master-switch"
+      ],
+      "done_criteria": [
+        "The pending-payment alert renders title, message and 去支付 on one line at desktop and 375px widths.",
+        "The alert uses a warning-tinted background and border in light and dark themes.",
+        "Alerts that do not pass the new props are unchanged.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. Browser: with /api/auth/me and /api/account/* stubbed in-page (admin cannot open the user centre and the local server uses a remote database), /account/design-system/buttons showed the alert at 50px high on desktop and 54px at 375px with the message not truncated; light background oklab(0.958 0.005 0.017) with a warning border, dark background oklab(0.277 0.003 0.017). The only console entries were 401s from an admin-session request to a customer endpoint during setup, not from the component."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/design-system/buttons"
+        ],
+        "interactions": [
+          "Stubbed the customer session and a pending order in-page, routed into the user centre and measured the alert's height, background, border and text overflow.",
+          "Repeated at 375px in the dark theme."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "pending-payment-cta-banner",
+      "name": "Pending payment reminder as a warning CTA banner",
+      "description": "The user centre's pending-payment reminder moves from the Arc alert to the cta-section banner (bare, compactAction) used by the 发送工单 CTA, with a new opt-in tone=\"warning\" on the banner. 请注意 / 你有一笔订单等待付款。 / 去支付 stay on one line; 去支付 is the banner's primary pill and routes in-app; below the block's container breakpoint it shows only its arrow.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "pending-payment-alert-inline",
+        "account-overview-cta-compact"
+      ],
+      "done_criteria": [
+        "The pending-payment reminder renders as a warning-tinted cta-section banner on one line at desktop and 375px widths.",
+        "去支付 navigates to the order without a full page reload.",
+        "The 发送工单 banner keeps its neutral surface.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. Browser (customer session and a pending order stubbed in-page; the local server uses a remote database): /account/design-system/buttons showed the banner 54px high on desktop with background oklab(0.958 0.005 0.017) and a warning border, and 66px at 375px in one row with the arrow-only action. Clicking 去支付 routed client-side (no reload) to /account/orders/preview-order, which forwarded to /cashier/preview-order as it does for pending orders. The only console entry was a 404 for /api/orders/preview-order, the made-up order id requested by the cashier page."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/design-system/buttons",
+          "/cashier/preview-order"
+        ],
+        "interactions": [
+          "Stubbed the customer session and a pending order in-page, measured the banner on desktop and at 375px.",
+          "Clicked 去支付 and confirmed in-app navigation without a page reload."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
     }
   ]
 }

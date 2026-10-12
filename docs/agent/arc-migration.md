@@ -166,18 +166,18 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | 范围 | 方案 |
 |---|---|
 | 管理端（`/` 下各路由） | 保留本地 `Sidebar` 和 `AppSidebar` |
-| 用户端（`/account` 下各路由） | 用 `site-header` 改写，分组见 3.2 |
+| 用户端（`/account` 下各路由） | 用 `site-header` 改写，分组见 3.2；底部为 `site-footer` 的 `minimal` 样式（`contained`） |
 | 公开页面（`/pricing`、`/buy`） | `site-header` 加 `site-footer` |
 
 ### 3.2 用户端导航分组
 
-使用 `site-header` 的 `mega` 变体：顶层 4 项，带子链接的展开为面板。
+使用 `site-header` 的 `mega` 变体：顶层 5 项（无节点权限的用户 4 项），带子链接的展开为面板。
 
 | 顶层 | 子链接 | 路由 |
 |---|---|---|
 | 总览 | 无 | `/account` |
-| 服务 | 购买服务 | `/account/plans` |
-| | 节点状态（仅有节点权限的用户显示） | `/account/nodes` |
+| 购买服务 | 无 | `/account/plans` |
+| 节点状态（仅有节点权限的用户显示） | 无 | `/account/nodes` |
 | 账务 | 账户余额 | `/account/wallet` |
 | | 订单记录 | `/account/orders` |
 | | 邀请返利 | `/account/referrals` |
@@ -267,10 +267,15 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `calendar`、`date-range-picker`、`carousel`、`stepper`、`chat-thread`、`bar-chart`、`line-chart`、`donut-chart`、`number-field`、`money-input`、`usage-meter` | 内置文案改中文，日期类默认 `locale` 改为 `zh-CN` |
 | `blocks/page-header` | 去掉演示用的滚动容器、标签页、议题面板和模拟操作，改为可传参的头部：`breadcrumbs`、`title`、`status`、`description`、`meta`、`actions` |
 | `blocks/faq-section`、`blocks/site-footer` | 默认文案改中文 |
+| `card`（补充） | 背景先读 `--card-surface`（缺省回落到 `--surface`），用户端外壳借此把普通卡片设为浅灰，不影响共用的 `--surface` |
+| `blocks/cta-section` | 新安装（只取 block 本身，`lib/media.ts` 沿用项目已有版本）；`bare`：banner 去掉自带的居中列和留白，放进页面已有的内容列；`onNavigate`：`/` 开头的 `href` 动作走前端路由；`compactAction`：banner 在窄宽度下保持一行，链接动作只显示箭头图标（文案保留给读屏）；关闭按钮读屏文案改中文 |
+| `blocks/site-footer`（补充） | `contained`：内容收进与 `site-header` 相同的 1200px 列和左右留白（窄于 760px 时 16px），上边框仍通栏；传了 `onNavigate` 时站内链接（`/` 开头）走前端路由，不再整页刷新；`status.static` 把状态显示为纯文本（不渲染成无动作的按钮）；社交链接列表的读屏标签改中文 |
 | `button`、`badge`、`tabs`、`segmented-control`、`card` | 没有写尺寸类的图标按控件给定尺寸（按钮和标签页 16px，小号按钮 14px，徽标 12px，卡片标题 18px）；带 `size-*` 类的图标不受影响 |
 | 控件尺寸（`src/styles.css`） | 鼠标设备下 `--control-height-sm/md/lg` 为 32/36/40px、`--radius-control` 为 14px；触屏保持 Arc 的 36/44/50px 和 18px |
 | `card`（补充） | `fill`：卡片被网格行拉伸时内容区撑满高度，正文可以贴底 |
 | `metric-card`（补充） | `style`（用于指定底色）；紧凑密度下数字用 `--text-2xl` |
+| `blocks/cta-section`（补充） | `tone="warning"`（仅 banner）：按 warning token 铺浅色底和描边，用于用户中心待付款提醒；发送工单 banner 不传，保持中性 |
+| `alert` | `inline`：标题和正文同一行，放不下时正文截断；`tinted`：按 tone 铺浅色底和描边；`action`：行尾操作（如“去支付”链接） |
 
 ## 7. 进度
 

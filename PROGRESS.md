@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-10-12
-- Current Objective: 把 shadcn 组件层替换为 Arc UI（已完成，未提交）
+- Current Objective: 待付款提醒改用 cta-section banner（tone=warning）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -416,8 +416,30 @@
 
 - 2026-10-12: npm run verify 通过；类型检查相对迁移前基线无新增错误；隔离环境下 45 个路由在浅色和深色各打开一遍，无控制台错误
 
+- 2026-10-12: npm run check 与 verify:harness 通过；/account 在 375–1920px 下顶栏与主体左右边缘一致，用户中心各路由无控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；footer 与顶栏在 375–1440px 下左右对齐，短页面贴底，站内链接无整页刷新，浅色/深色均正常
+
+- 2026-10-12: npm run check、verify:harness 通过；footer 底行在 1440/375px 正常显示，无新的控制台错误
+
+- 2026-10-12: npm run check 通过；/account/settings 与 /account/orders 在 1440px 下页面内容与顶栏对齐（144–1296），main 上内边距 24px，无新的控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；banner 与下方网格对齐，发送工单走前端路由，浅色/深色与手机宽度正常，无新控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；banner 浅色/深色警告色正常；顶栏与移动端菜单项正确，购买服务与节点状态 current 状态正确，无新控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；375px 下 banner 单行、箭头按钮 44x44；1440px 保留文字；浅色/深色为中性底色；无新控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；浅色主题页面白底、普通卡片 #f6f6f6、顶栏柔和阴影无边线；/pricing 与深色主题未受影响；无新控制台错误
+
+- 2026-10-12: node test.js、npm run verify:fast、npm run check、npm run verify:harness 通过；/sales-settings 浏览器验证无新控制台错误
+
+- 2026-10-12: npm run check、verify:fast 通过；用户中心桌面/375px/深色主题下单行显示
+
+- 2026-10-12: npm run check、verify:fast 通过；桌面/375px 单行显示，去支付站内跳转
+
 ## Next Session
 
-- Files: `AGENTS.md`, `PROGRESS.md`, `components.json`, `docs/agent/ui-rules.md`, `feature_list.json`, `package-lock.json`, `package.json`, `src/components/features/account-node-status.tsx`, `src/components/features/account-onboarding.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/account-traffic-chart.tsx`, `src/components/features/account-verification-icon.tsx`, `src/components/features/app-shell.tsx`, `src/components/features/app-sidebar.tsx`, `src/components/features/auth-pages.tsx`, `src/components/features/back-button.tsx`, `src/components/features/bento-button.tsx`, `src/components/features/bento-card.tsx`, `src/components/features/bills.tsx`, `src/components/features/cashier-card.tsx`, `src/components/features/cashier-page.tsx`, `src/components/features/cashier.tsx`, `src/components/features/catalog-plan-fields.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/category-pills.tsx`, `src/components/features/chart-area-interactive.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/data-table-card.tsx`, `src/components/features/data-table.tsx`, `src/components/features/date-picker.tsx`, `src/components/features/details.tsx`, `src/components/features/emby.tsx`, `src/components/features/general-settings.tsx`, `src/components/features/markdown-editor.tsx`, `src/components/features/notice-badge.tsx`, `src/components/features/online-payment.tsx`, `src/components/features/open-in-browser.tsx`, `src/components/features/orange-button-showcase.tsx`, `src/components/features/order-mobile-item.tsx`, `src/components/features/payment-settings.tsx`, `src/components/features/plan-offer-card.tsx`, `src/components/features/pricing-settings.tsx`, `src/components/features/provider-badge.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/purchased-services.tsx`, `src/components/features/request-progress.tsx`, `src/components/features/sales-analytics.tsx`, `src/components/features/sales-settings.tsx`, `src/components/features/section-cards.tsx`, `src/components/features/service-delivery.tsx`, `src/components/features/shared.tsx`, `src/components/features/simple-form.tsx`, `src/components/features/site-header.tsx`, `src/components/features/status-page.tsx`, `src/components/features/step-progress.tsx`, `src/components/features/subconverter.tsx`, `src/components/features/subscription-pool-select.tsx`, `src/components/features/summary-card.tsx`, `src/components/features/sync-jobs.tsx`, `src/components/features/ticket-pages.tsx`, `src/components/features/user-bills-card.tsx`, `src/components/features/user-form-dialog.tsx`, `src/components/features/users-summary-card.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-logs.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `src/styles.css`, `docs/agent/arc-migration.md`, `src/components/arc/`, `src/components/features/arc-data-table.tsx`, `src/components/features/new-password-field.tsx`, `src/components/features/simple-table.tsx`, `src/components/features/toast.tsx`
+- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/components/arc/alert/alert.module.css`, `src/components/arc/alert/alert.tsx`, `src/components/arc/blocks/site-footer/site-footer.module.css`, `src/components/arc/blocks/site-footer/site-footer.tsx`, `src/components/arc/card/card.module.css`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/sales-settings.tsx`, `src/styles.css`, `src/types.ts`, `test-payment.js`, `test.js`, `docs-site/`, `src/components/arc/blocks/cta-section/`
 - Known risks: none
-- Recommended Next Step: 由用户决定是否提交；保留项和没有套用的 block 见 docs/agent/arc-migration.md 第 7 节
+- Recommended Next Step: 用户确认采用 CTA 后，移除 Arc alert 的 inline/tinted/action 扩展及其文档登记

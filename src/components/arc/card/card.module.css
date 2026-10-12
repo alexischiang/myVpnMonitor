@@ -1,4 +1,5 @@
-.card { position: relative; min-width: 0; overflow: hidden; isolation: isolate; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); color: var(--foreground); transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-standard) var(--ease-standard); }
+/* XELA extension: the card background reads --card-surface first, so a shell can tint its cards without changing --surface (see docs/agent/arc-migration.md). */
+.card { position: relative; min-width: 0; overflow: hidden; isolation: isolate; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--card-surface, var(--surface)); color: var(--foreground); transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-standard) var(--ease-standard); }
 /* A pointed-at card floats a little, so the shadow arrives with the lift. Touch and pen never lift. */
 .card[data-hover] { border-color: var(--border-strong); box-shadow: var(--shadow-raised); }
 .card:has(.trigger:focus-visible) { border-color: var(--border-strong); }

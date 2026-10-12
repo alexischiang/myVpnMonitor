@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useId, useLayoutEffect, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, MouseEvent, ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check } from "lucide-react";
 import { Button } from "../../button/button";
@@ -45,12 +45,15 @@ export interface SiteFooterProps {
   socials?: SiteFooterLink[];
   /** Newsletter signup. Pass null to hide it. */
   newsletter?: SiteFooterNewsletter | null;
-  /** A system status link. Pass null to hide it. */
-  status?: { label: string; tone?: "success" | "warning" | "danger"; href?: string } | null;
+  /** A system status link. Pass null to hide it. `static` shows it as plain text instead of a link or button. */
+  status?: { label: string; tone?: "success" | "warning" | "danger"; href?: string; static?: boolean } | null;
   /** Year in the copyright line. */
   year?: number;
-  /** Called for every link that is pressed. Links without an href render as buttons and only call this. */
+  /** Called for every link that is pressed. Links without an href render as buttons and only call this.
+   * When given, internal links (href starting with "/") are handed to it instead of reloading the page. */
   onNavigate?: (link: SiteFooterLink) => void;
+  /** Keeps the content in the same 1200px column and side padding as the site-header, while the top border spans the page. */
+  contained?: boolean;
   className?: string;
 }
 
@@ -68,9 +71,10 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function FooterLink({ link, onNavigate, className }: { link: SiteFooterLink; onNavigate?: (link: SiteFooterLink) => void; className?: string }) {
   const content = <>{link.label}{link.external && <ArrowUpRight className={styles.external} size={13} strokeWidth={2} aria-hidden="true" />}</>;
-  const onClick = () => onNavigate?.(link);
+  const internal = Boolean(onNavigate) && !link.external && Boolean(link.href?.startsWith("/"));
+  const onClick = (event: MouseEvent) => { if (internal && !event.metaKey && !event.ctrlKey && !event.shiftKey && event.button === 0) event.preventDefault(); onNavigate?.(link); };
   if (link.href) return <a className={className ?? styles.link} href={link.href} onClick={onClick} {...(link.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}>{content}</a>;
-  return <button type="button" className={className ?? styles.link} onClick={onClick}>{content}</button>;
+  return <button type="button" className={className ?? styles.link} onClick={() => onNavigate?.(link)}>{content}</button>;
 }
 
 function ArcMark({ className }: { className?: string }) {
@@ -162,16 +166,19 @@ export const SiteFooter = forwardRef<HTMLElement, SiteFooterProps>(function Site
   status = { label: "All systems normal", tone: "success" },
   year = new Date().getFullYear(),
   onNavigate,
+  contained = false,
   className,
 }, ref) {
   const reduced = !!useReducedMotion();
   const gradientId = useId().replace(/:/g, "");
   const brandNode = <FooterLink link={{ label: brand.name, href: brand.href }} onNavigate={onNavigate} className={styles.brand} />;
   const brandWithMark = <span className={styles.brandRow}>{brand.mark ?? <ArcMark className={styles.brandMark} />}{brandNode}</span>;
-  const statusNode = status && (status.href
+  const statusNode = status && (status.static
+    ? <span className={styles.status} data-tone={status.tone ?? "success"} data-static=""><span className={styles.statusDot} aria-hidden="true" />{status.label}</span>
+    : status.href
     ? <a className={styles.status} href={status.href} data-tone={status.tone ?? "success"} onClick={() => onNavigate?.({ label: status.label, href: status.href })}><span className={styles.statusDot} aria-hidden="true" />{status.label}</a>
     : <button type="button" className={styles.status} data-tone={status.tone ?? "success"} onClick={() => onNavigate?.({ label: status.label })}><span className={styles.statusDot} aria-hidden="true" />{status.label}</button>);
-  const socialNode = socials.length > 0 && <ul className={styles.inline} aria-label="Social">{socials.map(link => <li key={link.label}><FooterLink link={link} onNavigate={onNavigate} /></li>)}</ul>;
+  const socialNode = socials.length > 0 && <ul className={styles.inline} aria-label="社交链接">{socials.map(link => <li key={link.label}><FooterLink link={link} onNavigate={onNavigate} /></li>)}</ul>;
   const legalRow = <div className={styles.bottom}>
     <div className={styles.bottomStart}>
       <span className={styles.copyright}>© {year} {brand.name}</span>
@@ -188,7 +195,8 @@ export const SiteFooter = forwardRef<HTMLElement, SiteFooterProps>(function Site
 
   if (variant === "minimal") {
     const rowLinks = links ?? columns.map(column => column.links[0]).filter((link): link is SiteFooterLink => Boolean(link)).concat(legal.slice(0, 2));
-    return <footer ref={ref} className={[styles.footer, styles.minimal, className].filter(Boolean).join(" ")}>
+    return <footer ref={ref} className={[styles.footer, styles.minimal, contained ? styles.contained : "", className].filter(Boolean).join(" ")}>
+      <div className={styles.inner}>
       <div className={styles.minimalRow}>
         {brandWithMark}
         <nav aria-label="页脚"><ul className={styles.inline}>{rowLinks.map(link => <li key={link.label}><FooterLink link={link} onNavigate={onNavigate} /></li>)}</ul></nav>
@@ -197,10 +205,12 @@ export const SiteFooter = forwardRef<HTMLElement, SiteFooterProps>(function Site
         <span className={styles.copyright}>© {year} {brand.name}. {tagline}</span>
         <div className={styles.bottomEnd}>{statusNode}{socialNode}</div>
       </div>
+      </div>
     </footer>;
   }
 
-  return <footer ref={ref} className={[styles.footer, variant === "logo" ? styles.logo : "", className].filter(Boolean).join(" ")}>
+  return <footer ref={ref} className={[styles.footer, variant === "logo" ? styles.logo : "", contained ? styles.contained : "", className].filter(Boolean).join(" ")}>
+    <div className={styles.inner}>
     <div className={styles.top}>
       <div className={styles.intro}>
         {brandWithMark}
@@ -210,6 +220,7 @@ export const SiteFooter = forwardRef<HTMLElement, SiteFooterProps>(function Site
       {columnNav}
     </div>
     {legalRow}
+    </div>
     {variant === "logo" && <motion.div className={styles.markStage} aria-hidden="true"
       initial={reduced ? false : { opacity: 0, y: 40 }}
       whileInView={{ opacity: 1, y: 0 }}

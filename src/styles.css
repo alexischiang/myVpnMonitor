@@ -162,6 +162,17 @@
   }
 }
 
+/* User centre: plain cards and default bento cards sit on a light grey panel (#f6f6f6) against the white page.
+   Dark theme keeps the shared surfaces. */
+[data-account-shell] {
+  --card-surface: oklch(0.973 0 0);
+  --bento-surface: oklch(0.973 0 0);
+}
+.dark [data-account-shell] {
+  --card-surface: var(--surface);
+  --bento-surface: var(--surface-muted);
+}
+
 .dark {
   /* One step lighter than the content panel, since bento cards have no border. */
   --bento-surface: var(--surface-muted);

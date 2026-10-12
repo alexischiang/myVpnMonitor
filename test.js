@@ -637,6 +637,8 @@ assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T0
 const announcementSettings = normalizeSalesSettings({ announcements: [{ title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true }] });
 assert.deepStrictEqual(announcementSettings.announcements[0], { id: announcementSettings.announcements[0].id, title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true });
 assert.strictEqual(normalizeSalesSettings({ onboardingEnabled: false }).onboardingEnabled, false);
+assert.strictEqual(normalizeSalesSettings({}).userAlertsEnabled, true);
+assert.strictEqual(normalizeSalesSettings({ userAlertsEnabled: false }).userAlertsEnabled, false);
 const alertSettings = normalizeSalesSettings({ alertSettings: { payment: { telegram: false, mail: true }, traffic: { telegram: true, mail: true, userMail: true }, trafficThresholdPercent: 85 } }).alertSettings;
 assert.deepStrictEqual(alertSettings, { payment: { telegram: false, mail: true }, ticket: { telegram: true, mail: false }, delivery: { telegram: true, mail: false }, traffic: { telegram: true, mail: true, userMail: true, userDepletedMail: true }, trafficThresholdPercent: 85 });
 assert.strictEqual(normalizeSalesSettings({ alertSettings: { traffic: { userDepletedMail: false } } }).alertSettings.traffic.userDepletedMail, false);

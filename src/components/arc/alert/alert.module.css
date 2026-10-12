@@ -12,4 +12,17 @@
 .dismiss { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; margin: -5px -6px -5px 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-muted); cursor: pointer; transition: transform var(--duration-spring) var(--ease-spring), background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
 .dismiss:active { transform: scale(.96); transition-duration: var(--duration-instant); transition-timing-function: var(--ease-standard); }
 @media (hover: hover) and (pointer: fine) { .dismiss:hover { background: var(--surface-muted); color: var(--foreground); } }
+/* XELA extension: inline puts title and text on one line; tinted washes the alert in its tone; action is a trailing control. */
+.inline { align-items: center; padding-block: var(--space-3); }
+.inline .icon { margin-top: 0; }
+.inline .content { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.inline .title { flex: 0 0 auto; white-space: nowrap; }
+.inline .description { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; font-size: var(--text-sm); text-overflow: ellipsis; white-space: nowrap; }
+.inline .description .line { overflow: hidden; text-overflow: ellipsis; }
+.tinted { box-shadow: none; }
+.tinted.info { border-color: color-mix(in oklab, var(--accent) 30%, var(--border)); background: color-mix(in oklab, var(--accent) 8%, var(--surface)); }
+.tinted.success { border-color: color-mix(in oklab, var(--success) 30%, var(--border)); background: color-mix(in oklab, var(--success) 8%, var(--surface)); }
+.tinted.warning { border-color: color-mix(in oklab, var(--warning) 35%, var(--border)); background: color-mix(in oklab, var(--warning) 10%, var(--surface)); }
+.tinted.danger { border-color: color-mix(in oklab, var(--danger) 30%, var(--border)); background: color-mix(in oklab, var(--danger) 8%, var(--surface)); }
+.action { display: flex; flex: 0 0 auto; align-items: center; margin-block: calc(var(--space-1) * -1); }
 @media (prefers-reduced-motion: reduce) { .dismiss { transition: none; } .dismiss:active { transform: none; } }

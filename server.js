@@ -1645,7 +1645,7 @@ function normalizeAlertSettings(value, strict = false) {
 }
 
 function initialSalesSettings() {
-  return { id: "default", registrationMode: "open", onboardingEnabled: true, alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [], userAlerts: [] };
+  return { id: "default", registrationMode: "open", onboardingEnabled: true, alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [], userAlertsEnabled: true, userAlerts: [] };
 }
 
 function readBuffer(req, limit) {
@@ -1701,7 +1701,7 @@ function normalizeCheckoutSettings(payload = {}) {
 
 function currentSalesSettings() {
   const settings = salesSettings[0];
-  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], userAlerts: settings.userAlerts || [] } : initialSalesSettings();
+  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], userAlertsEnabled: settings.userAlertsEnabled !== false, userAlerts: settings.userAlerts || [] } : initialSalesSettings();
 }
 
 function paymentCoupons(value) {
@@ -1793,6 +1793,7 @@ function normalizeSalesSettings(payload) {
     if (category.length > 40 || title.length > 80 || description.length > 200 || content.length > 20000) throw new Error("广告分类最多 40 字，标题最多 80 字，简介最多 200 字，正文最多 20000 字。");
     return { id: String(item.id || crypto.randomUUID()), category, title, description, content, enabled: item.enabled !== false };
   });
+  const userAlertsEnabled = payload?.userAlertsEnabled !== false;
   const userAlerts = (Array.isArray(payload?.userAlerts) ? payload.userAlerts : []).slice(0, 50).map(item => {
     const page = ["pricing", "checkout", "account"].includes(item.page) ? item.page : "pricing";
     const variant = ["default", "success", "warning", "error"].includes(item.variant) ? item.variant : "default";
@@ -1801,7 +1802,7 @@ function normalizeSalesSettings(payload) {
     if (!title && !message) throw new Error("Alert 标题和内容不能同时为空。");
     return { id: String(item.id || crypto.randomUUID()), page, variant, title, message, enabled: item.enabled !== false };
   });
-  return { id: "default", registrationMode, onboardingEnabled, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, userAlerts };
+  return { id: "default", registrationMode, onboardingEnabled, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, userAlertsEnabled, userAlerts };
 }
 
 // Validates the docs site's /api/announcements.json. Bad entries are dropped instead of failing the feed, and links must
@@ -9246,7 +9247,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/public/sales-settings" && req.method === "GET") {
     await loadLatestData();
     const settings = currentSalesSettings();
-    sendJson(res, 200, { registrationMode: settings.registrationMode, onboardingEnabled: settings.onboardingEnabled, faqs: settings.faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })), userAlerts: settings.userAlerts.filter(item => item.enabled !== false), vipTiers: publicVipTiers() });
+    sendJson(res, 200, { registrationMode: settings.registrationMode, onboardingEnabled: settings.onboardingEnabled, faqs: settings.faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })), userAlerts: settings.userAlertsEnabled ? settings.userAlerts.filter(item => item.enabled !== false) : [], vipTiers: publicVipTiers() });
     return;
   }
 

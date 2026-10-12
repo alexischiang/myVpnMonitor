@@ -517,6 +517,8 @@ export type SalesSettings = {
   faqs: FaqSetting[]
   announcements: AnnouncementSetting[]
   advertisements: MarkdownDocumentSetting[]
+  /** Master switch: when off, no configured alert is shown at the top of any user page. */
+  userAlertsEnabled: boolean
   userAlerts: UserAlertSetting[]
 }
 

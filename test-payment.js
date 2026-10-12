@@ -303,6 +303,14 @@ async function main() {
     const publicSettings = await request("/api/public/sales-settings");
     const { vipTiers: _publicVipTiers, ...publicSalesSettings } = publicSettings.data;
     assert.deepStrictEqual(publicSalesSettings, { registrationMode: "open", onboardingEnabled: true, faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }], userAlerts: [] });
+    const savedAlerts = await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...savedSettings.data, userAlerts: [{ id: "pricing-alert", page: "pricing", variant: "warning", title: "提醒", message: "", enabled: true }] } });
+    assert.strictEqual(savedAlerts.data.userAlertsEnabled, true);
+    assert.deepStrictEqual((await request("/api/public/sales-settings")).data.userAlerts.map(item => item.id), ["pricing-alert"]);
+    const hiddenAlerts = await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...savedAlerts.data, userAlertsEnabled: false } });
+    assert.strictEqual(hiddenAlerts.data.userAlertsEnabled, false);
+    assert.strictEqual(hiddenAlerts.data.userAlerts.length, 1);
+    assert.deepStrictEqual((await request("/api/public/sales-settings")).data.userAlerts, []);
+    await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...hiddenAlerts.data, userAlertsEnabled: true, userAlerts: [] } });
     const adminPricing = await request("/api/pricing", { cookie: adminCookie });
     const shopperPricing = await request("/api/public/pricing");
     assert.ok(adminPricing.data.some(item => item.group === "friends-lifetime-unlimited" && item.internal === true));

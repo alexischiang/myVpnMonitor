@@ -29,7 +29,7 @@ import { formatDate, formatDateTime, formatMoney, orderProductLabel, purchasedPl
 
 import type { PaymentOrder } from "@/components/features/cashier-types"
 import { ActionButton } from "@/components/arc/action-button/action-button"
-import { Alert } from "@/components/arc/alert/alert"
+import { CtaSection } from "@/components/arc/blocks/cta-section/cta-section"
 import { Badge } from "@/components/arc/badge/badge"
 import { Button } from "@/components/arc/button/button"
 import { Card } from "@/components/arc/card/card"
@@ -297,6 +297,7 @@ function SubscriptionLinkCard({ subscriptionUrl, onImportClient, span, rowSpan }
 }
 
 export function AccountOverviewPage() {
+  const navigate = useNavigate()
   const { data, error } = useOverview()
   const [importClient, setImportClient] = React.useState<ImportClient | null>(null)
   const [announcementOpen, setAnnouncementOpen] = React.useState(false)
@@ -400,7 +401,7 @@ export function AccountOverviewPage() {
   return (
     <>
       <div className="grid gap-4">
-        <Alert tone="warning" title="请注意"><span>遇到问题？发送工单联系客服吧！</span><Button asChild variant="link" size="sm" className="h-auto shrink-0 p-0 underline underline-offset-4"><Link to="/account/tickets/new">发送工单</Link></Button></Alert>
+        <CtaSection variant="banner" bare compactAction title="遇到问题？" description="发送工单联系客服吧！" primaryAction={{ label: "发送工单", href: "/account/tickets/new" }} onNavigate={action => { if (action.href) navigate(action.href) }} />
         <BentoGrid>
           <section className={cn(bentoSpanClass(SHOW_PROMO_SLOT ? 5 : 8, 2), "flex min-w-0 flex-col justify-center gap-6 py-4")} aria-labelledby="account-greeting">
             <h2 id="account-greeting" className="grid gap-1 text-3xl font-semibold tracking-tight wrap-anywhere lg:text-4xl"><span>What's up,</span><span>{emailLocal}{emailDomain ? <><wbr />@{emailDomain}</> : null}{"\u00a0"}!</span></h2>

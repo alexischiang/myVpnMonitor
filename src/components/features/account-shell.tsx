@@ -1,32 +1,27 @@
 import * as React from "react"
-import { Link, Outlet, useLocation, useNavigate } from "react-router-dom"
-import { Activity, ArrowRight, BookOpen, CreditCard, Gift, LifeBuoy, ReceiptText, UserRound, WalletCards } from "lucide-react"
+import { Outlet, useLocation, useNavigate } from "react-router-dom"
+import { BookOpen, Gift, LifeBuoy, ReceiptText, UserRound, WalletCards } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { apiFetch, clearJsonCache, fetchJson, setCachedJson } from "@/api"
 import { UserAlert } from "@/components/features/shared"
 import { DOCS_URL } from "@/lib/docs-site"
 import type { UserAlertSetting } from "@/types"
-import { Alert } from "@/components/arc/alert/alert"
+import { CtaSection } from "@/components/arc/blocks/cta-section/cta-section"
+import { SiteFooter, type SiteFooterLink } from "@/components/arc/blocks/site-footer/site-footer"
 import { SiteHeader, type SiteHeaderItem } from "@/components/arc/blocks/site-header/site-header"
-import { Button } from "@/components/arc/button/button"
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
 import { UserMenu } from "@/components/arc/user-menu/user-menu"
 
 const ICON = { size: 16, strokeWidth: 1.75, "aria-hidden": true } as const
 
-// The user centre's destinations, grouped for the top bar. A group opens a panel; 总览 is a plain link.
+// The user centre's destinations, grouped for the top bar. A group opens a panel; 总览, 购买服务 and 节点状态 are plain links.
 // Account settings, the theme and signing out live in the account menu at the end of the bar.
 function accountNav(hasActiveNodeAccess: boolean): SiteHeaderItem[] {
   return [
     { value: "overview", label: "总览", href: "/account" },
-    {
-      value: "service", label: "服务",
-      links: [
-        { label: "购买服务", description: "选择或续费套餐", href: "/account/plans", icon: <CreditCard {...ICON} /> },
-        ...(hasActiveNodeAccess ? [{ label: "节点状态", description: "查看套餐内节点的探测结果", href: "/account/nodes", icon: <Activity {...ICON} /> }] : []),
-      ],
-    },
+    { value: "plans", label: "购买服务", href: "/account/plans" },
+    ...(hasActiveNodeAccess ? [{ value: "nodes", label: "节点状态", href: "/account/nodes" }] : []),
     {
       value: "billing", label: "账务",
       links: [
@@ -45,10 +40,18 @@ function accountNav(hasActiveNodeAccess: boolean): SiteHeaderItem[] {
   ]
 }
 
+// One quiet row of the most common help destinations under every user centre page.
+const footerLinks: SiteFooterLink[] = [
+  { label: "购买服务", href: "/account/plans" },
+  { label: "工单服务", href: "/account/tickets" },
+  { label: "使用文档", href: DOCS_URL, external: true },
+]
+
 /** The group a path belongs to, so sub-pages such as an order's detail keep their group marked. */
 function currentGroup(pathname: string) {
   if (pathname === "/account") return "overview"
-  if (/^\/account\/(plans|nodes|subscription)(\/|$)/.test(pathname)) return "service"
+  if (/^\/account\/plans(\/|$)/.test(pathname)) return "plans"
+  if (/^\/account\/nodes(\/|$)/.test(pathname)) return "nodes"
   if (/^\/account\/(wallet|orders|referrals|payment)(\/|$)/.test(pathname)) return "billing"
   if (/^\/account\/(tickets|docs)(\/|$)/.test(pathname)) return "help"
   return ""
@@ -119,7 +122,7 @@ export function AccountShell() {
   }
 
   return (
-    <div className="min-h-svh bg-background">
+    <div data-account-shell className="flex min-h-svh flex-col bg-background [&>header]:!border-b-transparent [&>header]:!bg-background [&>header]:!shadow-[0_6px_32px_rgb(0_0_0/0.06)]">
       <SiteHeader
         variant="mega"
         label="用户中心导航"
@@ -136,10 +139,21 @@ export function AccountShell() {
           align="end"
         />}
       />
-      <main className="@container/main mx-auto w-full max-w-[1440px] p-4 md:p-6 [&>div]:!px-0 [&>div]:lg:!px-0">
-            <div className="grid gap-3 pb-2">{userAlerts.filter(item => item.page === (location.pathname.includes("/plans/checkout") ? "checkout" : location.pathname === "/account" ? "account" : location.pathname === "/account/plans" ? "pricing" : "")).map(item => <UserAlert key={item.id} item={item} />)}{pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <Alert tone="warning" title="请注意"><span>你有一笔订单等待付款。</span><Button asChild variant="link" size="sm"><Link to={`/account/orders/${encodeURIComponent(pendingOrderId)}`}>去支付<ArrowRight /></Link></Button></Alert> : null}</div>
+      <main className="@container/main mx-auto w-full flex-1 max-w-[1200px] p-4 min-[760px]:px-6 md:py-6 [&>div]:!px-0 [&>div]:lg:!px-0">
+            <div className="grid gap-3 pb-2">{userAlerts.filter(item => item.page === (location.pathname.includes("/plans/checkout") ? "checkout" : location.pathname === "/account" ? "account" : location.pathname === "/account/plans" ? "pricing" : "")).map(item => <UserAlert key={item.id} item={item} />)}{pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <CtaSection variant="banner" bare compactAction tone="warning" title="请注意" description="你有一笔订单等待付款。" primaryAction={{ label: "去支付", href: `/account/orders/${encodeURIComponent(pendingOrderId)}` }} onNavigate={action => { if (action.href) navigate(action.href) }} /> : null}</div>
             {email ? <Outlet context={{ email }} /> : <div className="grid gap-4 px-4 lg:px-6"><Skeleton lines={4} /><Skeleton lines={6} /></div>}
       </main>
+      <SiteFooter
+        variant="minimal"
+        contained
+        brand={{ name: "NEXORA", href: "/account", mark: <></> }}
+        tagline="所有套餐一经支付不支持退款"
+        links={footerLinks}
+        newsletter={null}
+        status={{ label: "服务运行正常", tone: "success", static: true }}
+        socials={[{ label: "文档站", href: DOCS_URL, external: true }]}
+        onNavigate={link => { if (link.href?.startsWith("/")) navigate(link.href) }}
+      />
     </div>
   )
 }

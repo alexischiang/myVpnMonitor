@@ -43,7 +43,15 @@
 .statusDot { --tone: var(--success); width: 7px; height: 7px; border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 3px color-mix(in oklab, var(--tone) 18%, transparent); }
 .status[data-tone="warning"] .statusDot { --tone: var(--warning); }
 .status[data-tone="danger"] .statusDot { --tone: var(--danger); }
-@media (hover: hover) and (pointer: fine) { .status:hover { color: var(--foreground); } }
+.status[data-static] { cursor: default; }
+@media (hover: hover) and (pointer: fine) { .status:not([data-static]):hover { color: var(--foreground); } }
+
+/* Contained: the content sits in the site-header's column; the footer itself keeps the full-width border. */
+.contained { --footer-pad: 0px; }
+.contained .inner { max-width: 1200px; margin: 0 auto; padding-inline: var(--space-6); }
+@container site-footer (max-width: 759px) {
+  .contained .inner { padding-inline: var(--space-4); }
+}
 
 /* Minimal: two quiet rows. */
 .minimal { padding-block: var(--space-8) var(--space-6); }

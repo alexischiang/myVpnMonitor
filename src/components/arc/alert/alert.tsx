@@ -16,6 +16,12 @@ export interface AlertProps extends HTMLAttributes<HTMLDivElement> {
   open?: boolean;
   /** Shows a dismiss button. An uncontrolled alert collapses first, then calls this. */
   onDismiss?: () => void;
+  /** XELA extension: title and text share one line; text that does not fit is truncated. */
+  inline?: boolean;
+  /** XELA extension: fills the alert with a light wash of its tone instead of the neutral surface. */
+  tinted?: boolean;
+  /** XELA extension: a trailing control, such as a link to act on the alert. */
+  action?: ReactNode;
 }
 type AlertBoxProps = Omit<AlertProps, "open"> & { reduce: boolean | null; animateIcon?: boolean };
 
@@ -66,13 +72,13 @@ function HeightFrame({ className, reduce, morphKey, children }: { className?: st
   </motion.div>;
 }
 
-function AlertBox({ tone = "info", title, children, className, reduce, onDismiss, animateIcon = false, ...props }: AlertBoxProps) {
+function AlertBox({ tone = "info", title, children, className, reduce, onDismiss, inline = false, tinted = false, action, animateIcon = false, ...props }: AlertBoxProps) {
   const Icon = icons[tone];
   const text = typeof children === "string" || typeof children === "number" ? String(children) : null;
   const hasDetails = children !== undefined && children !== null && children !== false && children !== "";
   const enter: Transition = reduce ? { duration: motionTokens.duration.instant } : { duration: motionTokens.duration.standard, ease: [...motionTokens.ease.enter] };
   const swap: MotionProps = { initial: reduce ? { opacity: 0 } : textIn, animate: shown, exit: reduce ? fadeOut : textOut, transition: enter };
-  return <div {...props} className={[styles.alert, styles[tone], className].filter(Boolean).join(" ")} role={tone === "danger" ? "alert" : "status"}>
+  return <div {...props} className={[styles.alert, styles[tone], inline ? styles.inline : "", tinted ? styles.tinted : "", className].filter(Boolean).join(" ")} role={tone === "danger" ? "alert" : "status"}>
     {/* A new tone morphs its icon in place; a newly shown alert gives the icon a small settle. */}
     <motion.span className={styles.icon} initial={animateIcon && !reduce ? iconIn : false} animate={shown} transition={motionTokens.spring.snappy}>
       <AnimatePresence mode="popLayout" initial={false}><Swap key={tone} className={styles.glyph} initial={reduce ? { opacity: 0 } : iconIn} animate={shown} exit={reduce ? fadeOut : { ...iconIn, transition: exitFast }} transition={reduce ? enter : motionTokens.spring.snappy}><Icon width={18} height={18} aria-hidden="true"/></Swap></AnimatePresence>
@@ -84,6 +90,7 @@ function AlertBox({ tone = "info", title, children, className, reduce, onDismiss
         {text === null ? children : <AnimatePresence mode="popLayout" initial={false}><Swap key={text} className={styles.line} {...swap}>{text}</Swap></AnimatePresence>}
       </motion.p>}</AnimatePresence>
     </HeightFrame>
+    {action ? <div className={styles.action}>{action}</div> : null}
     {onDismiss && <button type="button" className={styles.dismiss} aria-label={`关闭：${title}`} onClick={onDismiss}><X width={16} height={16} strokeWidth={1.75} aria-hidden="true"/></button>}
   </div>;
 }
