@@ -3,10 +3,11 @@ import { createRoot } from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { ThemeProvider } from "next-themes"
 
+import "@/components/arc/foundation.css"
 import "./styles.css"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { Toaster } from "@/components/ui/sonner"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
+import { AppToasts } from "@/components/features/toast"
 import { DataProvider } from "@/components/features/data-provider"
 import { AppShell } from "@/components/features/app-shell"
 import { RequestProgress } from "@/components/features/request-progress"
@@ -112,13 +113,14 @@ function CrispChat() {
 
 function App() {
   return (
-    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} storageKey="themeMode">
+    <ThemeProvider attribute={["class", "data-theme"]} defaultTheme="light" enableSystem={false} storageKey="themeMode">
       <CrispChat />
       <RequestProgress />
       <TooltipProvider>
+        <AppToasts>
         <BrowserRouter>
           <ScrollToTop />
-          <Suspense fallback={<Skeleton className="m-6 min-h-24" />}>
+          <Suspense fallback={<Skeleton lines={3} className="m-6" />}>
           <WechatGuard>
           <Routes>
             <Route path={OPEN_IN_BROWSER_PATH} element={<OpenInBrowserPage />} />
@@ -186,7 +188,7 @@ function App() {
           </WechatGuard>
           </Suspense>
         </BrowserRouter>
-        <Toaster position="bottom-right" richColors />
+        </AppToasts>
       </TooltipProvider>
     </ThemeProvider>
   )

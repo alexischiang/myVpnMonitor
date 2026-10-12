@@ -1,42 +1,38 @@
 import * as React from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
-import { Loader2, Users } from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 import { apiFetch, fetchJson, postJson } from "@/api"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { FieldError } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Alert } from "@/components/arc/alert/alert"
+import { LoginCentered } from "@/components/arc/blocks/login-centered/login-centered"
+import { Button } from "@/components/arc/button/button"
+import { Checkbox } from "@/components/arc/checkbox/checkbox"
+import { Input } from "@/components/arc/input/input"
+import { PasswordField } from "@/components/arc/password-field/password-field"
+import { NewPasswordField, PASSWORD_MIN_LENGTH } from "@/components/features/new-password-field"
 import { NexoraLogo } from "@/components/features/nexora-logo"
 import { StatusPage } from "@/components/features/status-page"
 
 type AuthResponse = { role?: "admin" | "user" }
 type PublicSettings = { registrationMode: "open" | "invite_only" | "disabled"; onboardingEnabled: boolean }
 
-function AuthLayout({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+/** Shared frame of the sign-in, registration and password pages: Arc's centered login block with the page's own form inside. */
+function AuthLayout({ view, title, description, switchPrompt, switchTo, switchLabel, children }: { view: string; title: string; description: string; switchPrompt?: string; switchTo?: string; switchLabel?: string; children: React.ReactNode }) {
   return (
-    <main className="grid min-h-svh lg:grid-cols-2">
-      <section className="flex flex-col gap-4 p-6 md:p-10">
-        <NexoraLogo to="/pricing" />
-        <div className="flex flex-1 items-center justify-center">
-          <div className="grid w-full max-w-sm gap-6">
-            <header className="grid gap-2 text-center">
-              <h1 className="text-2xl font-semibold">{title}</h1>
-              <p className="text-sm text-muted-foreground">{description}</p>
-            </header>
-            {children}
-          </div>
-        </div>
-      </section>
-      <section className="relative hidden bg-muted lg:block">
-        <img
-          src="https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1600&q=85"
-          alt="全球网络连接"
-          className="absolute inset-0 h-full w-full object-cover dark:brightness-50"
-        />
-      </section>
+    <main>
+      <LoginCentered
+        fullScreen
+        label={title}
+        view={view}
+        brand={<NexoraLogo to="/pricing" />}
+        switchPrompt={switchPrompt}
+        switchAction={switchTo ? <Link to={switchTo}>{switchLabel}</Link> : undefined}
+        title={title}
+        description={description}
+      >
+        {children}
+      </LoginCentered>
     </main>
   )
 }
@@ -71,17 +67,16 @@ export function LoginPage() {
   }
 
   return (
-    <AuthLayout title="登录账户" description="使用邮箱和密码进入账户中心">
+    <AuthLayout view="login" title="登录账户" description="使用邮箱和密码进入账户中心" switchPrompt="还没有账户？" switchTo="/register" switchLabel="立即注册">
       <form className="grid gap-4" onSubmit={submit} noValidate>
-        <div className="grid gap-2"><Label htmlFor="account">邮箱</Label><Input id="account" autoFocus autoComplete="username" value={account} onChange={event => setAccount(event.target.value)} required /></div>
-        <div className="grid gap-2">
-          <div className="flex items-center"><Label htmlFor="password">密码</Label><Link to="/forgot-password" className="ml-auto text-sm underline-offset-4 hover:underline">忘记密码？</Link></div>
-          <Input id="password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required />
+        <Input label="邮箱" name="account" autoFocus autoComplete="username" value={account} onChange={event => setAccount(event.target.value)} required />
+        <PasswordField label="密码" name="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Checkbox label="记住我，30 天内免登录" checked={remember} onCheckedChange={checked => setRemember(checked === true)} />
+          <Button asChild variant="link" size="sm"><Link to="/forgot-password">忘记密码？</Link></Button>
         </div>
-        <div className="flex items-center gap-2"><Checkbox id="remember" checked={remember} onCheckedChange={checked => setRemember(checked === true)} /><Label htmlFor="remember">记住我，30 天内免登录</Label></div>
-        <FieldError>{error}</FieldError>
-        <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />登录中</> : "登录"}</Button>
-        <p className="text-center text-sm">还没有账户？ <Link to="/register" className="underline underline-offset-4">立即注册</Link></p>
+        <Alert tone="danger" title={error} open={Boolean(error)} />
+        <ActionButton type="submit" className="w-full" label="登录" pendingLabel="登录中" pending={loading} />
       </form>
     </AuthLayout>
   )
@@ -102,9 +97,8 @@ export function RegisterPage() {
   const [referralError, setReferralError] = React.useState("")
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
   const emailInvalid = email.trim().length > 0 && !emailValid
-  const passwordTooShort = password.length > 0 && password.length < 8
   const passwordMismatch = confirmPassword.length > 0 && password !== confirmPassword
-  const canSubmit = registrationMode !== "disabled" && emailValid && password.length >= 8 && confirmPassword.length >= 8 && !passwordMismatch && (registrationMode !== "invite_only" || referralCode.length > 0) && !loading
+  const canSubmit = registrationMode !== "disabled" && emailValid && password.length >= PASSWORD_MIN_LENGTH && confirmPassword.length >= PASSWORD_MIN_LENGTH && !passwordMismatch && (registrationMode !== "invite_only" || referralCode.length > 0) && !loading
 
   React.useEffect(() => {
     void fetchJson<PublicSettings>("/api/public/sales-settings")
@@ -144,18 +138,17 @@ export function RegisterPage() {
   }
 
   return (
-    <AuthLayout title="创建账户" description={registrationMode === "invite_only" ? "本站仅接受邀请制注册，请向推荐你的好友询问邀请码。" : registrationMode === "disabled" ? "当前暂时不开放注册" : "请输入有效的邮箱"}>
-      {registrationMode === "disabled" ? <FieldError>当前暂时不开放注册</FieldError> : null}
-      {inviterLabel ? <Alert variant="success"><Users aria-hidden="true" /><AlertDescription><span className="whitespace-nowrap">您正在接受来自 <strong>{inviterLabel}</strong> 的邀请</span></AlertDescription></Alert> : null}
-      {referralError ? <Alert variant="error"><AlertDescription>{referralError}</AlertDescription></Alert> : null}
+    <AuthLayout view="register" title="创建账户" description={registrationMode === "invite_only" ? "本站仅接受邀请制注册，请向推荐你的好友询问邀请码。" : registrationMode === "disabled" ? "当前暂时不开放注册" : "请输入有效的邮箱"} switchPrompt="已有账户？" switchTo="/login" switchLabel="返回登录">
       <form className="grid gap-4" onSubmit={submit} noValidate>
-        <div className="grid gap-2"><Label htmlFor="email">邮箱</Label><Input id="email" type="email" autoComplete="email" value={email} onChange={event => { setEmail(event.target.value); setError("") }} aria-invalid={emailInvalid} required /><FieldError>{emailInvalid ? "请输入有效邮箱。" : null}</FieldError></div>
-        <div className="grid gap-2"><Label htmlFor="new-password">密码</Label><Input id="new-password" type="password" minLength={8} autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} aria-invalid={passwordTooShort} required /><FieldError>{passwordTooShort ? "密码至少需要 8 位。" : null}</FieldError></div>
-        <div className="grid gap-2"><Label htmlFor="confirm-password">确认密码</Label><Input id="confirm-password" type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} aria-invalid={passwordMismatch} required /><FieldError>{passwordMismatch ? "两次输入的密码不一致。" : null}</FieldError></div>
-        <div className="grid gap-2"><Label htmlFor="referral-code">邀请码{registrationMode === "invite_only" ? "" : "（可选）"}</Label><Input id="referral-code" inputMode="numeric" placeholder={registrationMode === "invite_only" ? "必填邀请码" : undefined} required={registrationMode === "invite_only"} maxLength={6} value={referralCode} onChange={event => setReferralCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /></div>
-        <FieldError>{error}</FieldError>
-        <Button type="submit" disabled={!canSubmit}>{loading ? <><Loader2 className="animate-spin" />注册中</> : "注册"}</Button>
-        <p className="text-center text-sm">已有账户？ <Link to="/login" className="underline underline-offset-4">返回登录</Link></p>
+        <Alert tone="danger" title="当前暂时不开放注册" open={registrationMode === "disabled"} />
+        <Alert tone="success" title={`您正在接受来自 ${inviterLabel} 的邀请`} open={Boolean(inviterLabel)} />
+        <Alert tone="danger" title={referralError} open={Boolean(referralError)} />
+        <Input label="邮箱" name="email" type="email" autoComplete="email" value={email} onChange={event => { setEmail(event.target.value); setError("") }} error={emailInvalid ? "请输入有效邮箱。" : undefined} required />
+        <NewPasswordField label="密码" value={password} onValueChange={setPassword} />
+        <PasswordField label="确认密码" name="confirm-password" minLength={PASSWORD_MIN_LENGTH} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} error={passwordMismatch ? "两次输入的密码不一致。" : undefined} required />
+        <Input label={`邀请码${registrationMode === "invite_only" ? "" : "（可选）"}`} name="referral-code" inputMode="numeric" placeholder={registrationMode === "invite_only" ? "必填邀请码" : undefined} required={registrationMode === "invite_only"} maxLength={6} value={referralCode} onChange={event => setReferralCode(event.target.value.replace(/\D/g, "").slice(0, 6))} />
+        <Alert tone="danger" title={error} open={Boolean(error)} />
+        <ActionButton type="submit" className="w-full" label="注册" pendingLabel="注册中" pending={loading} disabled={!canSubmit} />
       </form>
     </AuthLayout>
   )
@@ -182,13 +175,13 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <AuthLayout title="忘记密码" description="我们会向账户邮箱发送重置链接">
-      {message ? <div className="grid gap-4 text-center"><p className="text-sm text-muted-foreground">{message}</p><Button asChild><Link to="/login">返回登录</Link></Button></div> : (
+    <AuthLayout view={message ? "forgot-sent" : "forgot"} title="忘记密码" description={message || "我们会向账户邮箱发送重置链接"}>
+      {message ? <Button asChild className="w-full"><Link to="/login">返回登录</Link></Button> : (
         <form className="grid gap-4" onSubmit={submit} noValidate>
-          <div className="grid gap-2"><Label htmlFor="email">邮箱</Label><Input id="email" type="email" autoFocus value={email} onChange={event => setEmail(event.target.value)} required /></div>
-          <FieldError>{error}</FieldError>
-          <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />发送中</> : "发送重置链接"}</Button>
-          <Button asChild variant="ghost"><Link to="/login">返回登录</Link></Button>
+          <Input label="邮箱" name="email" type="email" autoFocus value={email} onChange={event => setEmail(event.target.value)} required />
+          <Alert tone="danger" title={error} open={Boolean(error)} />
+          <ActionButton type="submit" className="w-full" label="发送重置链接" pendingLabel="发送中" pending={loading} />
+          <Button asChild variant="ghost" className="w-full"><Link to="/login">返回登录</Link></Button>
         </form>
       )}
     </AuthLayout>
@@ -227,12 +220,12 @@ export function ResetPasswordPage() {
   if (tokenStatus === "invalid") return <StatusPage code="410" title="链接已过期" description="该认领链接已失效或已被使用，请联系管理员重新发送。" />
   if (tokenStatus === "checking") return <main className="grid min-h-svh place-items-center"><Loader2 className="animate-spin" aria-label="正在验证链接" /></main>
   return (
-    <AuthLayout title="设置新密码" description="链接有效期为 30 分钟，使用后立即失效">
+    <AuthLayout view="reset" title="设置新密码" description="链接有效期为 30 分钟，使用后立即失效">
       <form className="grid gap-4" onSubmit={submit} noValidate>
-        <div className="grid gap-2"><Label htmlFor="password">新密码</Label><Input id="password" type="password" minLength={8} value={password} onChange={event => setPassword(event.target.value)} required /></div>
-        <div className="grid gap-2"><Label htmlFor="confirm-password">确认密码</Label><Input id="confirm-password" type="password" minLength={8} value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required /></div>
-        <FieldError>{error}</FieldError>
-        <Button type="submit" disabled={loading}>{loading ? <><Loader2 className="animate-spin" />提交中</> : "保存新密码"}</Button>
+        <NewPasswordField label="新密码" value={password} onValueChange={setPassword} />
+        <PasswordField label="确认密码" name="confirm-password" minLength={PASSWORD_MIN_LENGTH} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required />
+        <Alert tone="danger" title={error} open={Boolean(error)} />
+        <ActionButton type="submit" className="w-full" label="保存新密码" pendingLabel="提交中" pending={loading} />
       </form>
     </AuthLayout>
   )

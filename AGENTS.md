@@ -56,7 +56,8 @@ XELA monitor 是一个基于 Node.js、PostgreSQL、React 和 Vite 的应用，�
 ## UI 规则
 
 - 编辑 JSX、组件、布局或样式前，先阅读 `docs/agent/ui-rules.md`。
-- 优先使用 `src/components/ui/` 中已有的组件，并遵循其官方 API。
+- 基础组件以 Arc UI 为准：使用 `src/components/arc/` 中的组件并按 `docs/agent/arc-migration.md` 传参；Arc 没有的属性在其源码上扩展并登记到该文档。
+- `src/components/ui/` 是迁移前的 shadcn 组件，仅作为回退路径保留，新代码不要再引用（`docs/agent/arc-migration.md` 第 7 节列出的保留项除外）。
 - 每次修改 UI 后，都要打开受影响的页面并检查浏览器控制台是否存在未捕获错误；仅构建成功并不足够。
 - UI 功能在 `feature_list.json` 中必须标记 `"ui": true`；完成前按 `docs/agent/ui-rules.md` 记录 `browser_verification`，并运行 `npm run verify:harness`。
 
@@ -95,5 +96,6 @@ XELA monitor 是一个基于 Node.js、PostgreSQL、React 和 Vite 的应用，�
 ## Agent 文档
 
 - `docs/agent/ui-rules.md` — 前端和 UI 工作的必读规则
+- `docs/agent/arc-migration.md` — Arc UI 组件映射、源码扩展清单和迁移进度
 - `PROGRESS.md` — 当前已验证状态和跨会话交接信息
 - `feature_list.json` — 机器可读的工作状态和验证证据

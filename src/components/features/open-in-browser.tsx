@@ -2,11 +2,11 @@ import * as React from "react"
 import { Compass, Ellipsis } from "lucide-react"
 import { Navigate, useSearchParams } from "react-router-dom"
 
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { NexoraLogo } from "@/components/features/nexora-logo"
-import { CopyButton } from "@/components/features/shared"
+import { CopyButton } from "@/components/arc/copy-button/copy-button"
 import { TypingText } from "@/components/features/typing-text"
 import { isWechatBrowser, OPEN_IN_BROWSER_PATH } from "@/utils"
+import { Card } from "@/components/arc/card/card"
 
 // 浅色背景上均满足 WCAG AA 普通文字对比度（≥4.5:1），深色模式使用对应的浅色阶
 const ACCENT_COLORS = [
@@ -54,19 +54,12 @@ export function OpenInBrowserPage() {
           <p className="text-lg font-medium text-foreground sm:text-xl">只需一键，全球互联。</p>
         </header>
       </div>
-      <Card className="mx-auto w-full max-w-md">
-        <CardHeader>
-          <CardTitle><h1 className="flex items-center gap-2 text-xl"><Compass className="size-5 shrink-0" aria-hidden />请在浏览器中打开</h1></CardTitle>
-          <CardDescription>微信内置浏览器无法正常使用本站功能。请复制下方链接，粘贴到系统浏览器中打开。</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3">
+      <Card className="mx-auto w-full max-w-md" title={<h1 className="flex items-center gap-2 text-xl"><Compass className="size-5 shrink-0" aria-hidden />请在浏览器中打开</h1>} description="微信内置浏览器无法正常使用本站功能。请复制下方链接，粘贴到系统浏览器中打开。"><div className="grid gap-3">
           <code className="select-all break-all rounded-md bg-muted px-3 py-2 text-sm">{url}</code>
-          <CopyButton value={url} label="复制网页链接" variant="default" size="lg" className="h-11 w-full" feedback="inline" />
-        </CardContent>
-        <CardFooter>
+          <CopyButton value={url} label="复制网页链接" className="w-full" />
+        </div><div className="mt-4 flex items-center gap-2">
           <p className="text-sm text-muted-foreground">也可以点击右上角 <Ellipsis className="inline size-4 align-middle" aria-label="更多" /> 菜单，选择“在默认浏览器中打开”。</p>
-        </CardFooter>
-      </Card>
+        </div></Card>
     </main>
   )
 }

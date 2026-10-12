@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-11",
+  "updated_at": "2026-10-12",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -2813,6 +2813,84 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-11"
+      }
+    },
+    {
+      "id": "arc-ui-migration",
+      "name": "Replace the shadcn component layer with Arc UI",
+      "description": "The base components move from src/components/ui (shadcn) to the free Arc UI components in src/components/arc, following docs/agent/arc-migration.md: Arc tokens become the only colour source, auth pages use the login-centered block, the user centre uses the site-header block with a user menu, list tables use Arc's sortable data table through arc-data-table.tsx, and the old components and data-table.tsx stay in place as the rollback path. Business logic, API calls and copy are unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "No feature file imports a shadcn component except the ones docs/agent/arc-migration.md section 7 lists as kept (field, label, separator, the admin sidebar, the stacked traffic chart, and the legacy data-table.tsx).",
+        "Every route opens in light and dark themes with no console or page errors.",
+        "Payment, wallet, billing and delivery flows pass npm run verify.",
+        "docs/agent/arc-migration.md lists every Arc source extension and the decisions taken where the mapping was ambiguous."
+      ],
+      "verification": [
+        "2026-10-12: npm run verify passed (build, core, payment, wallet and catalog suites); type check against the pre-migration baseline shows no new errors; the isolated browser tour below found no console or page errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/dashboard",
+          "/sales-analytics",
+          "/sales-analytics/profitability",
+          "/xui-monitor",
+          "/xui-logs",
+          "/sync-jobs",
+          "/xui-inbounds",
+          "/users",
+          "/users/detail/:id",
+          "/orders",
+          "/orders/:id",
+          "/tickets",
+          "/tickets/:id",
+          "/deliveries",
+          "/bills",
+          "/pricing-settings",
+          "/pricing-settings/new",
+          "/pricing-settings/:group/:serviceType",
+          "/catalog-v2",
+          "/catalog-v2/products/:id",
+          "/catalog-v2/products/new",
+          "/sales-settings",
+          "/general-settings",
+          "/payment-settings",
+          "/emby",
+          "/subconverter",
+          "/account",
+          "/account/nodes",
+          "/account/plans",
+          "/account/plans/checkout",
+          "/account/orders",
+          "/account/orders/:id",
+          "/account/wallet",
+          "/account/referrals",
+          "/account/tickets",
+          "/account/tickets/new",
+          "/account/tickets/:id",
+          "/account/settings",
+          "/account/design-system/buttons",
+          "/onboarding",
+          "/pricing",
+          "/login",
+          "/register",
+          "/forgot-password",
+          "/reset-password"
+        ],
+        "interactions": [
+          "Opened every route in the light theme and again in the dark theme, as administrator and as a customer, against an isolated copy of the local database.",
+          "Signed in through the login form; triggered the registration form's email, password-length, mismatch and referral-code messages.",
+          "Changed the billing cycle on the checkout page and saw the order summary follow.",
+          "Sorted the user list by email (URL state updated) and opened a row's action menu.",
+          "Toggled the onboarding switch in general settings, saved, and saw the success toast and the public setting change.",
+          "Opened a coupon editor, switched off 长期有效 and opened the date range picker with its presets.",
+          "Stepped forward and back through the onboarding stepper; opened a ticket and saw the conversation thread; followed a detail page breadcrumb back to its list."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
       }
     }
   ]

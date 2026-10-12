@@ -1,19 +1,19 @@
 import * as React from "react"
 import { Activity, ArrowRight, Loader2, Mail, RefreshCw, Users } from "lucide-react"
 import { Link } from "react-router-dom"
-import { toast } from "sonner"
+import { toast } from "@/components/features/toast"
 
 import { fetchJson, postJson } from "@/api"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Progress } from "@/components/ui/progress"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Progress } from "@/components/arc/progress/progress"
 import { useServiceHealth } from "@/components/features/app-shell"
 import { useData } from "@/components/features/data-provider"
 import { SectionCards } from "@/components/features/section-cards"
-import { SummaryCard } from "@/components/features/summary-card"
+import { MetricCard } from "@/components/arc/metric-card/metric-card"
 import { EmptyState, StatusBadge } from "@/components/features/shared"
 import { formatBytes, formatDate, formatDateTime, userStatus } from "@/utils"
+import { Button } from "@/components/arc/button/button"
+import { Card } from "@/components/arc/card/card"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
 
 const ChartAreaInteractive = React.lazy(() => import("@/components/features/chart-area-interactive").then(module => ({ default: module.ChartAreaInteractive })))
 const DailyIncomeChart = React.lazy(() => import("@/components/features/chart-area-interactive").then(module => ({ default: module.DailyIncomeChart })))
@@ -61,10 +61,10 @@ function PendingWorkCards() {
     { label: "待处理工单", value: summary?.pendingTickets, detail: "等待客服回复的工单", to: "/tickets", action: "去处理" },
   ]
   return <div className="grid grid-cols-1 gap-4 px-4 md:grid-cols-2 lg:px-6">
-    {cards.map(card => <SummaryCard key={card.to} label={card.label}
-      value={summary ? card.value : error ? "—" : <Skeleton className="h-8 w-12" />}
-      detail={error ? "暂时无法加载，请刷新页面重试" : card.detail}
-      action={<Button asChild variant={summary && card.value ? "default" : "outline"} size="sm"><Link to={card.to}>{card.action}<ArrowRight /></Link></Button>} />)}
+    {cards.map(card => <MetricCard key={card.to} label={card.label}
+      value={summary ? card.value ?? 0 : null}
+      context={error ? "暂时无法加载，请刷新页面重试" : card.detail}
+      action={<Button asChild variant={summary && card.value ? "primary" : "secondary"} size="sm"><Link to={card.to}>{card.action}<ArrowRight /></Link></Button>} />)}
   </div>
 }
 
@@ -76,15 +76,15 @@ function ServiceMonitor() {
     setSendingMail(true)
     try {
       const result = await postJson<{ to: string }>("/api/alerts/test-mail")
-      toast.success(`测试邮件已发送至 ${result.to}`)
+      toast({ type: "success", title: `测试邮件已发送至 ${result.to}` })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "测试邮件发送失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "测试邮件发送失败" })
     } finally {
       setSendingMail(false)
     }
   }
 
-  return <Card><CardHeader><div className="flex items-center justify-between gap-4"><CardTitle>服务监控</CardTitle><Button variant="outline" size="sm" onClick={refresh} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button></div><CardDescription>{checkedAt ? `最后检测：${formatDateTime(checkedAt)}` : "尚未检测"}</CardDescription></CardHeader><CardContent className="grid auto-rows-fr">{services ? ([{ key: "database", name: "数据库" }, { key: "subconverter", name: "Subconverter" }, { key: "telegram", name: "Telegram API" }, { key: "resend", name: "Resend" }] as const).filter(({ key }) => key !== "database" || services.database.kind !== "json").map(({ key, name }) => { const service = services[key]; return <div key={key} className="flex items-center justify-between gap-3 border-b py-3 last:border-b-0"><div className="flex items-center gap-1"><span className="text-sm font-medium">{name}</span>{key === "resend" ? <Button variant="ghost" size="icon-sm" onClick={sendTestMail} disabled={sendingMail} aria-label="发送测试邮件" title="发送测试邮件">{sendingMail ? <Loader2 className="animate-spin" /> : <Mail />}</Button> : null}</div><span className="text-sm font-medium">{service.latency === undefined ? "-" : `${service.latency} ms`}</span></div> }) : <p className="text-sm text-muted-foreground">{error || "正在检测服务..."}</p>}</CardContent></Card>
+  return <Card description={checkedAt ? `最后检测：${formatDateTime(checkedAt)}` : "尚未检测"}><div className="flex items-center justify-between gap-4"><h3 className="text-lg font-medium">服务监控</h3><Button variant="secondary" size="sm" onClick={refresh} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button></div><div className="grid auto-rows-fr">{services ? ([{ key: "database", name: "数据库" }, { key: "subconverter", name: "Subconverter" }, { key: "telegram", name: "Telegram API" }, { key: "resend", name: "Resend" }] as const).filter(({ key }) => key !== "database" || services.database.kind !== "json").map(({ key, name }) => { const service = services[key]; return <div key={key} className="flex items-center justify-between gap-3 border-b py-3 last:border-b-0"><div className="flex items-center gap-1"><span className="text-sm font-medium">{name}</span>{key === "resend" ? <Button variant="ghost" size="icon-sm" onClick={sendTestMail} aria-label="发送测试邮件" title="发送测试邮件" loading={sendingMail}><Mail /></Button> : null}</div><span className="text-sm font-medium">{service.latency === undefined ? "-" : `${service.latency} ms`}</span></div> }) : <p className="text-sm text-muted-foreground">{error || "正在检测服务..."}</p>}</div></Card>
 }
 
 type XuiDashboardData = {
@@ -110,8 +110,8 @@ function XuiUsageMonitor({ users }: { users: ReturnType<typeof useData>["users"]
   const forceRefresh = React.useCallback(() => {
     setRefreshing(true)
     void postJson<XuiDashboardData>("/api/xui-presence/refresh", {})
-      .then(result => { setData(result); toast.success("已立即刷新流量数据") })
-      .catch(() => toast.error("刷新失败，请稍后重试"))
+      .then(result => { setData(result); toast({ type: "success", title: "已立即刷新流量数据" }) })
+      .catch(() => toast({ type: "error", title: "刷新失败，请稍后重试" }))
       .finally(() => setRefreshing(false))
   }, [])
 
@@ -132,26 +132,15 @@ function XuiUsageMonitor({ users }: { users: ReturnType<typeof useData>["users"]
   const maxUserBytes = userRanking[0]?.[1].usedBytes || 1
 
   return <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-    <Card>
-      <CardHeader><CardDescription>当前在线人数</CardDescription><CardTitle className="flex items-center gap-2 text-3xl tabular-nums"><Activity className="size-6 text-emerald-500" />{data?.configured ? data.onlineEmails?.length ?? 0 : "-"}</CardTitle><CardDescription>按当前 3x-ui 在线客户端去重</CardDescription></CardHeader>
-    </Card>
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle>今日节点使用流量</CardTitle>
-          <Button variant="outline" size="sm" onClick={forceRefresh} disabled={refreshing} title="立即执行一次流量同步并获取最新数据">
-            {refreshing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+    <Card description="当前在线人数" title={<><Activity className="size-6 text-emerald-500" />{data?.configured ? data.onlineEmails?.length ?? 0 : "-"}</>}><p className="text-sm text-muted-foreground">按当前 3x-ui 在线客户端去重</p></Card>
+    <Card description={data?.dailyTraffic?.date ? `${data.dailyTraffic.date}（北京时间）` : "等待流量采集"}><div className="flex items-center justify-between gap-2">
+          <h3 className="text-lg font-medium">今日节点使用流量</h3>
+          <Button variant="secondary" size="sm" onClick={forceRefresh} title="立即执行一次流量同步并获取最新数据" loading={refreshing}>
+            <RefreshCw className="size-4" />
             <span className="ml-1">立即刷新</span>
           </Button>
-        </div>
-        <CardDescription>{data?.dailyTraffic?.date ? `${data.dailyTraffic.date}（北京时间）` : "等待流量采集"}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3">{ranking.length ? ranking.map(([guid, item], index) => <div key={guid} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-sm"><span className="truncate"><span className="mr-2 text-muted-foreground">{index + 1}</span>{data?.nodeNames?.[guid] || guid}</span><span className="tabular-nums text-muted-foreground">{formatBytes(item.usedBytes)}</span></div><Progress value={Math.max(3, item.usedBytes / maxBytes * 100)} /></div>) : <p className="text-sm text-muted-foreground">暂无今日流量数据</p>}</CardContent>
-    </Card>
-    <Card>
-      <CardHeader><CardTitle>今日用户流量 Top 5</CardTitle><CardDescription>{data?.dailyTraffic?.date ? `${data.dailyTraffic.date}（北京时间）` : "等待流量采集"}</CardDescription></CardHeader>
-      <CardContent className="grid gap-3">{userRanking.length ? userRanking.map(([email, item], index) => { const user = usersByEmail.get(email); return <div key={email} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-sm"><span className="truncate"><span className="mr-2 text-muted-foreground">{index + 1}</span>{user?.userId || user?.wechatName || user?.email || email}</span><span className="tabular-nums text-muted-foreground">{formatBytes(item.usedBytes)}</span></div><Progress value={Math.max(3, item.usedBytes / maxUserBytes * 100)} /></div> }) : <p className="text-sm text-muted-foreground">暂无今日用户流量数据</p>}</CardContent>
-    </Card>
+        </div><div className="grid gap-3">{ranking.length ? ranking.map(([guid, item], index) => <div key={guid} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-sm"><span className="truncate"><span className="mr-2 text-muted-foreground">{index + 1}</span>{data?.nodeNames?.[guid] || guid}</span><span className="tabular-nums text-muted-foreground">{formatBytes(item.usedBytes)}</span></div><Progress value={Math.max(3, item.usedBytes / maxBytes * 100)} /></div>) : <p className="text-sm text-muted-foreground">暂无今日流量数据</p>}</div></Card>
+    <Card title="今日用户流量 Top 5" description={data?.dailyTraffic?.date ? `${data.dailyTraffic.date}（北京时间）` : "等待流量采集"}><div className="grid gap-3">{userRanking.length ? userRanking.map(([email, item], index) => { const user = usersByEmail.get(email); return <div key={email} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-sm"><span className="truncate"><span className="mr-2 text-muted-foreground">{index + 1}</span>{user?.userId || user?.wechatName || user?.email || email}</span><span className="tabular-nums text-muted-foreground">{formatBytes(item.usedBytes)}</span></div><Progress value={Math.max(3, item.usedBytes / maxUserBytes * 100)} /></div> }) : <p className="text-sm text-muted-foreground">暂无今日用户流量数据</p>}</div></Card>
   </div>
 }
 
@@ -187,7 +176,7 @@ export function DashboardPage() {
 
       <div className="grid gap-4 px-4 lg:grid-cols-4 lg:px-6">
         <div className="min-w-0 lg:col-span-3">
-          <React.Suspense fallback={<Skeleton className="h-80" />}>
+          <React.Suspense fallback={<Skeleton lines={6} />}>
             <ChartAreaInteractive bills={activeBills} />
           </React.Suspense>
         </div>
@@ -197,21 +186,15 @@ export function DashboardPage() {
       <div className="px-4 lg:px-6"><XuiUsageMonitor users={users} /></div>
 
       <div className="grid gap-4 px-4 lg:grid-cols-2 lg:px-6">
-        <React.Suspense fallback={<><Skeleton className="h-80" /><Skeleton className="h-80" /></>}>
+        <React.Suspense fallback={<><Skeleton lines={6} /><Skeleton lines={6} /></>}>
           <DailyIncomeChart bills={activeBills} />
           <UserGrowthChart users={users} />
         </React.Suspense>
       </div>
 
       <div className="grid gap-4 px-4 lg:px-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users />
-              到期提醒
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+        <Card title={<><Users />
+              到期提醒</>}><>
             {expiring.slice(0, 5).map(user => (
               <div key={user.id} className="flex items-center justify-between gap-3 border-b py-3 last:border-b-0">
                 <div>
@@ -222,8 +205,7 @@ export function DashboardPage() {
               </div>
             ))}
             {!expiring.length && <EmptyState title="暂无临期客户" />}
-          </CardContent>
-        </Card>
+          </></Card>
       </div>
     </>
   )

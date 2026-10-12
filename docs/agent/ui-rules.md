@@ -16,7 +16,9 @@
 
 ## 组件复用优先
 
-- 编写 UI 前，先检查 `src/components/ui/` 中是否已有合适的 shadcn 组件。
+- 基础组件以 Arc UI 为准。编写 UI 前，先检查 `src/components/arc/` 中是否已有合适的组件，并按 `docs/agent/arc-migration.md` 的映射和传参方式使用；页面大框架优先套用 Arc block。
+- Arc 没有的属性，在 `src/components/arc/` 的源码上扩展，并登记到 `docs/agent/arc-migration.md` 的源码扩展清单。
+- `src/components/ui/` 是迁移前的 shadcn 组件，作为回退路径保留，见本文末尾的「回退路径」。
 - 如没有可直接使用的组件或需要通过拼装已有组件实现的组件，创建新的业务组件并做到最大化的抽象，确保该组件在后面的项目中可以通过传参复用。
 - 已有基础组件时，必须通过其正式 API 和 variant 使用，不能用带样式的 `div` 重新实现。
 - 不得为了处理单个页面的特殊情况而修改基础组件的全局默认行为。
@@ -25,15 +27,15 @@
 
 设计系统分为以下四层。需要调整设计时，应修改能够覆盖需求的最高层级，不要在下层重复覆盖。
 
-1. `src/styles.css`：全局 Design Token，包括颜色、圆角、字体、主题和通用动效。
-2. `src/components/ui/`：shadcn 基础组件，包括 variant、尺寸、交互状态和无障碍行为。
+1. `src/components/arc/foundation.css` 和 `src/styles.css`：全局 Design Token。颜色以 Arc 变量为唯一来源，`src/styles.css` 把旧的 shadcn 变量名定义为它们的别名。
+2. `src/components/arc/`：Arc 基础组件，包括 variant、尺寸、交互状态和无障碍行为。
 3. `src/components/features/app-layout.tsx` 及现有页面 Shell：负责视口、导航、内容宽度、滚动区域和页面骨架。
 4. `src/components/features/`：负责业务组件组合和具体任务流程。
 
 修改位置按以下规则判断：
 
 - 所有页面都应变化：修改 `src/styles.css` 中的全局 Token。
-- 某类组件的所有实例都应变化：修改对应 shadcn 基础组件或共享 variant。
+- 某类组件的所有实例都应变化：修改对应的 Arc 基础组件或共享 variant。
 - 所有登录后页面都应变化：修改 `AppLayout` 或对应的现有 Shell。
 - 只有当前页面存在特殊需求：才允许使用页面级样式。
 
@@ -81,8 +83,8 @@
 
 ## 页面布局体系
 
-- 登录后的管理后台和用户中心路由必须使用现有 `AppLayout`，页面内部不得重新实现侧边栏、顶部栏、视口或内容滚动容器。
-- 登录、注册和密码相关页面必须复用现有 `AuthLayout` 模式。
+- 管理后台路由必须使用现有 `AppLayout`（侧边栏外壳）；用户中心路由使用 `AccountShell`（Arc `site-header` 顶栏加 `user-menu`）。页面内部不得重新实现侧边栏、顶部栏、视口或内容滚动容器。
+- 登录、注册和密码相关页面必须复用现有 `AuthLayout` 模式（Arc `login-centered` 框架）。
 - 禁止嵌套多个页面 Shell。
 - 页面只负责当前任务内容，不负责全局视口行为。
 
@@ -119,7 +121,7 @@
 ## 无障碍
 
 - 满足 WCAG AA：普通文字对比度至少为 4.5:1，大号文字和有实际含义的界面图形至少为 3:1。
-- 必须保留清晰可见的键盘焦点。除非提供等效方案，否则禁止移除 Focus Ring。
+- 必须保留清晰可见的键盘焦点。焦点样式采用 Arc 的规则：键盘聚焦显示轮廓，鼠标聚焦不显示。
 - 优先使用语义化 HTML，只有原生语义不足时才补充 ARIA。
 - 只有图标的按钮必须提供无障碍名称，通常还应提供 Tooltip。
 - 有信息含义的图片必须提供准确的 alt；纯装饰图片使用空 alt。
@@ -135,3 +137,9 @@
 - 同一个业务对象始终使用同一个名称，不为追求措辞变化而混用近义词。
 - 日期、货币、流量和时长必须使用现有共享格式化函数，不在页面中临时拼接。
 - 错误信息应说明失败原因和用户可以采取的下一步，同时避免暴露密钥或内部实现细节。
+
+## 回退路径
+
+- `src/components/ui/` 下的 shadcn 组件和被取代的共享业务组件（如 `data-table.tsx`、`summary-card.tsx`）在迁移期间不删除、不改行为。
+- `src/styles.css` 保留了全部旧变量名，旧组件在 Arc 的 Token 下仍可使用。
+- 某个页面需要回退时，把它的导入改回旧组件即可；整页回退用 git 还原该页面的改动。

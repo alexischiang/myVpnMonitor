@@ -1,8 +1,8 @@
 import type { LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
-import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/arc/badge/badge"
 
 const noticeBadgeStyles = {
   info: "bg-sky-500/10 text-sky-700 dark:bg-sky-400/10 dark:text-sky-300",
@@ -19,10 +19,7 @@ type NoticeBadgeProps = {
 
 export function NoticeBadge({ icon: Icon, label, variant = "info" }: NoticeBadgeProps) {
   return (
-    <Badge
-      variant="secondary"
-      className={cn("min-h-7 rounded-full border-0 px-2.5 py-1", noticeBadgeStyles[variant])}
-    >
+    <Badge className={cn("min-h-7 rounded-full border-0 px-2.5 py-1", noticeBadgeStyles[variant])}>
       <Icon aria-hidden="true" />
       {label}
     </Badge>

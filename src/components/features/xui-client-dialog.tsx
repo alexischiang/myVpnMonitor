@@ -1,18 +1,19 @@
 import * as React from "react"
 import { Database, Link2, Loader2, Network } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/features/toast"
 
 import { fetchJson, postJson } from "@/api"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { User } from "@/types"
 import { formatBytes, formatDate } from "@/utils"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Alert } from "@/components/arc/alert/alert"
+import { Button } from "@/components/arc/button/button"
+import { Tabs, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs"
+import { Input } from "@/components/arc/input/input"
+import { Select } from "@/components/arc/select/select"
+import { Dialog, DialogClose, DialogContent } from "@/components/arc/dialog/dialog"
+import { Card } from "@/components/arc/card/card"
 
 type XuiClientOption = {
   email: string
@@ -82,23 +83,18 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
       await postJson(`/api/users/${user.id}/xui`, { mode, clientEmail })
       await onComplete()
       onOpenChange(false)
-      toast.success(mode === "link" ? "已关联3x-ui Client并切换线路" : "已导入3x-ui并切换线路")
+      toast({ type: "success", title: mode === "link" ? "已关联3x-ui Client并切换线路" : "已导入3x-ui并切换线路" })
     } catch (error) {
       const message = error instanceof Error ? error.message : "3x-ui操作失败"
       setError(message)
-      toast.error(message)
+      toast({ type: "error", title: message })
     } finally {
       setSaving(false)
     }
   }
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent>
-      <form className="grid gap-5" onSubmit={submit}>
-        <DialogHeader>
-          <DialogTitle>切换到自研线路</DialogTitle>
-          <DialogDescription>选择创建新 Client 或关联已有 Client；节点自动跟随 V2 套餐的线路权限组。</DialogDescription>
-        </DialogHeader>
+    <DialogContent title="切换到自研线路" description="选择创建新 Client 或关联已有 Client；节点自动跟随 V2 套餐的线路权限组。"><form className="grid gap-5" onSubmit={submit}>
         <Tabs value={mode} onValueChange={value => { setMode(value); setClientEmail(""); setError("") }}>
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="import"><Database />导入到3x-ui</TabsTrigger>
@@ -106,29 +102,17 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
           </TabsList>
         </Tabs>
         <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="xui-line-group">线路权限组</FieldLabel>
-            <Input id="xui-line-group" value={user.v2LineGroupId || "未绑定 V2 套餐"} readOnly />
-            <FieldDescription>使用该权限组在 V2 商品库中配置的所有入站；如需更换请先更改套餐。</FieldDescription>
-          </Field>
+          <Input label="线路权限组" description="使用该权限组在 V2 商品库中配置的所有入站；如需更换请先更改套餐。" id="xui-line-group" value={user.v2LineGroupId || "未绑定 V2 套餐"} readOnly />
           {mode === "link" ? <Field>
             <FieldLabel htmlFor="xui-client">3x-ui Client</FieldLabel>
-            <Select value={clientEmail} onValueChange={setClientEmail} disabled={loading || saving}>
-              <SelectTrigger id="xui-client" className="w-full"><SelectValue placeholder={loading ? "正在读取 Client..." : "选择未关联的 Client"} /></SelectTrigger>
-              <SelectContent>{availableClients.map(client => <SelectItem key={client.email} value={client.email}>{client.email}</SelectItem>)}</SelectContent>
-            </Select>
+            <Select label={loading ? "正在读取 Client..." : "选择未关联的 Client"} hideLabel value={clientEmail} onValueChange={setClientEmail} disabled={loading || saving} id="xui-client" className="w-full" placeholder={loading ? "正在读取 Client..." : "选择未关联的 Client"} options={[...availableClients.map(client => ({ value: client.email, label: client.email }))]} />
             {!loading && !availableClients.length ? <FieldDescription>没有可关联的 Client。</FieldDescription> : null}
           </Field> : null}
         </FieldGroup>
-        {mode === "import" ? <Item variant="outline">
-          <ItemContent><ItemTitle>{preview.email}</ItemTitle><ItemGroup className="mt-2 grid-cols-2"><Item variant="muted" size="sm"><ItemContent><ItemDescription>流量限额</ItemDescription><ItemTitle>{formatBytes(preview.totalBytes)}</ItemTitle></ItemContent></Item><Item variant="muted" size="sm"><ItemContent><ItemDescription>在线IP数量</ItemDescription><ItemTitle>{preview.limitIp || "不限"}</ItemTitle></ItemContent></Item><Item variant="muted" size="sm"><ItemContent><ItemDescription>到期日</ItemDescription><ItemTitle>{preview.expiresAt ? formatDate(preview.expiresAt) : "不限"}</ItemTitle></ItemContent></Item><Item variant="muted" size="sm"><ItemContent><ItemDescription>流量重置</ItemDescription><ItemTitle>{preview.resetsTraffic ? "自购买起每 30 天" : "不重置"}</ItemTitle></ItemContent></Item></ItemGroup></ItemContent>
-        </Item> : selectedClient ? <Item variant="outline">
-          <ItemContent><ItemTitle>{selectedClient.email}</ItemTitle><ItemDescription>关联后邮箱设为 {user.email} · 3x-ui 原额度 {selectedClient.totalBytes ? formatBytes(selectedClient.totalBytes) : "不限"}，将按 App 当前套餐额度 {preview.totalBytes ? formatBytes(preview.totalBytes) : "不限流量"} 覆盖 · 在线IP数量 {selectedClient.limitIp || "不限"} · {selectedClient.expiryTime ? formatDate(new Date(selectedClient.expiryTime).toISOString()) : "永不过期"}</ItemDescription></ItemContent>
-        </Item> : null}
-        <Alert><Network /><AlertDescription>确认后旧订阅池停止交付；3x-ui 原生额度改为不限，由后台按节点倍率计费、停用，并自购买起每 30 天重置。</AlertDescription></Alert>
-        {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
-        <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={saving}>取消</Button></DialogClose><Button type="submit" disabled={saving || !user.v2LineGroupId || (mode === "link" && !selectedClient)}>{saving ? <Loader2 className="animate-spin" /> : <Network />}{saving ? "处理中..." : "确认切换"}</Button></DialogFooter>
-      </form>
-    </DialogContent>
+        {mode === "import" ? <Card title={preview.email}><div className="grid gap-3 mt-2 grid-cols-2"><Card title={formatBytes(preview.totalBytes)} description="流量限额" /><Card title={preview.limitIp || "不限"} description="在线IP数量" /><Card title={preview.expiresAt ? formatDate(preview.expiresAt) : "不限"} description="到期日" /><Card title={preview.resetsTraffic ? "自购买起每 30 天" : "不重置"} description="流量重置" /></div></Card> : selectedClient ? <Card title={selectedClient.email} description={`关联后邮箱设为 ${user.email} · 3x-ui 原额度 ${selectedClient.totalBytes ? formatBytes(selectedClient.totalBytes) : "不限"}，将按 App 当前套餐额度 ${preview.totalBytes ? formatBytes(preview.totalBytes) : "不限流量"} 覆盖 · 在线IP数量 ${selectedClient.limitIp || "不限"} · ${selectedClient.expiryTime ? formatDate(new Date(selectedClient.expiryTime).toISOString()) : "永不过期"}`} /> : null}
+        <Alert title="确认后旧订阅池停止交付；3x-ui 原生额度改为不限，由后台按节点倍率计费、停用，并自购买起每 30 天重置。" />
+        {error ? <Alert tone="danger" title={error} /> : null}
+        <div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={saving}>取消</Button></DialogClose><ActionButton type="submit" disabled={saving || !user.v2LineGroupId || (mode === "link" && !selectedClient)} label="确认切换" pendingLabel="处理中..." pending={saving} /></div>
+      </form></DialogContent>
   </Dialog>
 }

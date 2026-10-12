@@ -1,7 +1,7 @@
 import * as React from "react"
 
 import { getRequestActivity, subscribeRequestActivity } from "@/api"
-import { Progress } from "@/components/ui/progress"
+import { Progress } from "@/components/arc/progress/progress"
 
 // Requests that finish sooner than this never show the bar.
 const SHOW_DELAY_MS = 150

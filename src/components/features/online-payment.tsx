@@ -2,15 +2,15 @@ import * as React from "react"
 import { ExternalLink, Info, Loader2 } from "lucide-react"
 import { IconBrandAlipay, IconBrandWechat } from "@tabler/icons-react"
 import { fetchJson, postJson } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Field, FieldLabel } from "@/components/ui/field"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
+import { RadioCards } from "@/components/arc/radio-cards/radio-cards"
 import { formatMoney } from "@/utils"
 import { NoticeBadge } from "./notice-badge"
 import type { PaymentOrder, PaymentPlatform } from "./cashier-types"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Alert } from "@/components/arc/alert/alert"
+import { Button } from "@/components/arc/button/button"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
+import { Select } from "@/components/arc/select/select"
 
 export function OnlinePayment({ invoice, disabled, onUpdated, onBusy }: {
   invoice: Pick<PaymentOrder, "id" | "amount" | "payUrl" | "paymentError" | "paymentProvider">;
@@ -58,18 +58,25 @@ export function OnlinePayment({ invoice, disabled, onUpdated, onBusy }: {
     finally { busyRef.current = false; setBusy(false); onBusy(false) }
   }
 
-  if (loading) return <Skeleton className="h-32 w-full" />
+  if (loading) return <Skeleton lines={4} className="w-full" />
   return <section aria-label="付款方式" className="grid gap-3">
-    {error || invoice.paymentError ? <Alert variant="warning"><AlertTitle>付款暂未完成</AlertTitle><AlertDescription>{error || invoice.paymentError}</AlertDescription></Alert> : null}
-    {!platforms.length ? <><p className="text-sm text-muted-foreground">当前没有可用的线上付款渠道。订单已提交，你可以联系客服完成付款。</p><Button variant="outline" className="min-h-11" onClick={() => void loadPlatforms()}>重新加载付款方式</Button></> : <>
-      {platforms.length > 1 ? <Field><FieldLabel>支付平台</FieldLabel><Select value={platformId} disabled={disabled || busy} onValueChange={id => { setPlatformId(id); setMethod(platforms.find(item => item.id === id)?.methods.alipay ? "100" : "200") }}><SelectTrigger className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent>{platforms.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></Field> : null}
+    {error || invoice.paymentError ? <Alert tone="warning" title="付款暂未完成">{error || invoice.paymentError}</Alert> : null}
+    {!platforms.length ? <><p className="text-sm text-muted-foreground">当前没有可用的线上付款渠道。订单已提交，你可以联系客服完成付款。</p><Button variant="secondary" className="min-h-11" onClick={() => void loadPlatforms()}>重新加载付款方式</Button></> : <>
+      {platforms.length > 1 ? <Select label="支付平台" value={platformId} disabled={disabled || busy} onValueChange={id => { setPlatformId(id); setMethod(platforms.find(item => item.id === id)?.methods.alipay ? "100" : "200") }} className="min-h-11 w-full" options={[...platforms.map(item => ({ value: item.id, label: item.name }))]} /> : null}
       <NoticeBadge icon={Info} label="如无法支付请联系右下角客服" variant="info" />
-      <RadioGroup aria-label="付款方式" value={method} onValueChange={setMethod} disabled={disabled || busy} className="grid grid-cols-[repeat(auto-fit,minmax(8rem,1fr))] gap-3">
-        {platform?.methods.alipay ? <FieldLabel htmlFor="cashier-alipay" className="min-h-11 w-full cursor-pointer gap-2 rounded-md border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-accent"><RadioGroupItem id="cashier-alipay" value="100" /><IconBrandAlipay className="size-5 text-[#1677ff]" />支付宝</FieldLabel> : null}
-        {platform?.methods.wechat ? <FieldLabel htmlFor="cashier-wechat" className="min-h-11 w-full cursor-pointer gap-2 rounded-md border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-accent"><RadioGroupItem id="cashier-wechat" value="200" /><IconBrandWechat className="size-5 text-[#07c160]" />微信</FieldLabel> : null}
-      </RadioGroup>
-      <Button className={`min-h-11 w-full ${paymentButtonClass}`} disabled={disabled || busy || !platform} onClick={() => void start()}>{busy ? <Loader2 className="animate-spin" /> : null}{busy ? "正在准备支付…" : `${method === "100" ? "支付宝" : "微信"}付款 ${formatMoney(invoice.amount)}`}</Button>
+      <RadioCards
+        aria-label="付款方式"
+        value={method}
+        onValueChange={setMethod}
+        disabled={disabled || busy}
+        layout="grid"
+        options={[
+          ...(platform?.methods.alipay ? [{ value: "100", label: "支付宝", icon: <IconBrandAlipay className="size-5 text-[#1677ff]" /> }] : []),
+          ...(platform?.methods.wechat ? [{ value: "200", label: "微信", icon: <IconBrandWechat className="size-5 text-[#07c160]" /> }] : []),
+        ]}
+      />
+      <ActionButton className={`min-h-11 w-full ${paymentButtonClass}`} disabled={disabled || busy || !platform} onClick={() => void start()} label={`${method === "100" ? "支付宝" : "微信"}付款 ${formatMoney(invoice.amount)}`} pendingLabel="正在准备支付…" pending={busy} />
     </>}
-    {invoice.payUrl ? <><Button asChild variant="outline" className="min-h-11 w-full"><a href={invoice.payUrl} target="_blank" rel="noreferrer"><ExternalLink />重新打开支付页面</a></Button><p className="text-xs text-muted-foreground">付款后返回本页，系统会继续确认收款状态。请勿重复付款。</p></> : null}
+    {invoice.payUrl ? <><Button asChild variant="secondary" className="min-h-11 w-full"><a href={invoice.payUrl} target="_blank" rel="noreferrer"><ExternalLink />重新打开支付页面</a></Button><p className="text-xs text-muted-foreground">付款后返回本页，系统会继续确认收款状态。请勿重复付款。</p></> : null}
   </section>
 }

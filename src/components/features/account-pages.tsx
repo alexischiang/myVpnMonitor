@@ -1,43 +1,46 @@
 import * as React from "react"
 import { Link, Navigate, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom"
 import { ArrowRight, ArrowUpRight, BadgeCheck, Banknote, BookOpen, CalendarDays, Check, ChevronDown, CircleHelp, Clock3, Coins, Copy, ExternalLink, Eye, Gift, Globe, Loader2, MapPin, PackagePlus, Percent, RefreshCw, type LucideIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/features/toast"
 
 import { clearJsonCache, fetchCachedJson, fetchJson, getCachedJson, postJson, putJson } from "@/api"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { type CarouselApi, Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel"
-import { Checkbox } from "@/components/ui/checkbox"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Avatar } from "@/components/arc/avatar/avatar"
+import { Carousel } from "@/components/arc/carousel/carousel"
+import { DropdownMenu } from "@/components/arc/dropdown-menu/dropdown-menu"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Item, ItemGroup } from "@/components/ui/item"
-import { Label } from "@/components/ui/label"
-import { Progress } from "@/components/ui/progress"
+import { MetricCard } from "@/components/arc/metric-card/metric-card"
+import { Progress } from "@/components/arc/progress/progress"
+import { UsageMeter } from "@/components/arc/usage-meter/usage-meter"
 import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
 import type { AccountNodeUsage } from "@/components/features/account-traffic-chart"
 import { BentoButton, BentoIconLink } from "@/components/features/bento-button"
-import { BentoCard, BentoCardBadge, BentoGrid, bentoSpanClass, type BentoRowSpan, type BentoSpan } from "@/components/features/bento-card"
-import { DataTableRowActions } from "@/components/features/data-table"
+import { BentoCard, BentoCardBadge, BentoGrid, bentoSpanClass, bentoSurfaceStyle, type BentoRowSpan, type BentoSpan } from "@/components/features/bento-card"
+import { DataTableRowActions } from "@/components/features/arc-data-table"
 import { MarkdownContent } from "@/components/features/markdown-content"
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { ProgressRing } from "@/components/features/progress-ring"
-import { CopyButton, EmptyState } from "@/components/features/shared"
+import { EmptyState } from "@/components/features/shared"
+import { CopyButton } from "@/components/arc/copy-button/copy-button"
 import { nextVipTier, vipLevelLabel, type VipTier } from "@/components/features/vip-badge"
 import { DOCS_URL } from "@/lib/docs-site"
 import { cn } from "@/lib/utils"
 import { formatDate, formatDateTime, formatMoney, orderProductLabel, purchasedPlanParts } from "@/utils"
 
 import type { PaymentOrder } from "@/components/features/cashier-types"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Alert } from "@/components/arc/alert/alert"
+import { Badge } from "@/components/arc/badge/badge"
+import { Button } from "@/components/arc/button/button"
+import { Card } from "@/components/arc/card/card"
+import { Dialog, DialogClose, DialogContent } from "@/components/arc/dialog/dialog"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
+import { Tooltip } from "@/components/arc/tooltip/tooltip"
+import { Checkbox } from "@/components/arc/checkbox/checkbox"
+import { Input } from "@/components/arc/input/input"
+import { PasswordField } from "@/components/arc/password-field/password-field"
+import { Card as ArcCard } from "@/components/arc/card/card"
+import { SimpleTable } from "@/components/features/simple-table"
 type Subscription = { status: string; activeGroup: string; lineGroupId?: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; unlimited?: boolean; trafficTier?: number; purchasedTrafficGb?: number; currentProductSnapshot?: Record<string, unknown>; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number } | null }
 type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; nodeUsage: AccountNodeUsage; stale?: boolean; error?: string }
 type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
@@ -84,7 +87,7 @@ function useOverview() {
 }
 
 function PageLoading() {
-  return <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-36" /><Skeleton className="h-72" /></div>
+  return <div className="grid gap-4 px-4 lg:px-6"><Skeleton lines={4} /><Skeleton lines={6} /></div>
 }
 
 function CopySubscription({ value }: { value: string }) {
@@ -99,18 +102,18 @@ function CopySubscription({ value }: { value: string }) {
       setCopied(true)
       window.clearTimeout(resetTimer.current)
       resetTimer.current = window.setTimeout(() => setCopied(false), 2000)
-      toast.success("订阅链接已复制")
+      toast({ type: "success", title: "订阅链接已复制" })
     } catch {
-      toast.error("复制失败，请手动复制")
+      toast({ type: "error", title: "复制失败，请手动复制" })
     }
   }
 
-  return <BentoButton variant={copied ? "success" : "default"} aria-label={copied ? "订阅链接已复制" : "复制订阅链接"} onClick={copySubscription}><span className={copied ? "motion-safe:animate-[copy-success_180ms_ease-out]" : ""}>{copied ? <Check /> : <Copy />}</span>{copied ? "复制订阅成功" : "复制订阅链接"}</BentoButton>
+  return <BentoButton variant={copied ? "success" : "primary"} aria-label={copied ? "订阅链接已复制" : "复制订阅链接"} onClick={copySubscription}><span className={copied ? "motion-safe:animate-[copy-success_180ms_ease-out]" : ""}>{copied ? <Check /> : <Copy />}</span>{copied ? "复制订阅成功" : "复制订阅链接"}</BentoButton>
 }
 
 function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }: { account: Overview; ipInfo: IpInfo | null; ipInfoError: string; span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
   const accountType = account.isSuperAccount ? "super" : account.isBusiness ? "business" : account.isFamilyFriend ? "family" : "regular"
-  const ipValue = (value: string) => ipInfo ? value : ipInfoError ? <span className="text-muted-foreground" title={ipInfoError}>暂不可用</span> : <Skeleton className="ml-auto h-5 w-24" />
+  const ipValue = (value: string) => ipInfo ? value : ipInfoError ? <span className="text-muted-foreground" title={ipInfoError}>暂不可用</span> : <Skeleton lines={1} className="ml-auto w-24" />
   const location = ipInfo ? ipLocation(ipInfo) : ""
   const details: Array<{ label: string; icon: LucideIcon; value: React.ReactNode; title?: string }> = [
     { label: "注册时间", icon: CalendarDays, value: formatDate(account.createdAt) },
@@ -126,35 +129,33 @@ function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }:
 
   // Personal details on the left, VIP progress on the right; they stack with a horizontal divider on phones.
   // VIP discount sits in the header like the referral badge on the invite card; hovering or focusing it lists every tier.
-  const vipDiscountBadge = <Tooltip><TooltipTrigger asChild><button type="button" className="rounded-full focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none" aria-label={`专属折扣 ${account.vipDiscountPercent}%，查看各级 VIP 折扣`}><BentoCardBadge tone="green" icon={Percent}>专属折扣 {account.vipDiscountPercent}%</BentoCardBadge></button></TooltipTrigger><TooltipContent>{vipTiers.map(tier => `${vipLevelLabel(tier.level)}：${tier.discountPercent}%`).join(" · ")}</TooltipContent></Tooltip>
+  const vipDiscountBadge = <Tooltip content={vipTiers.map(tier => `${vipLevelLabel(tier.level)}：${tier.discountPercent}%`).join(" · ")}><button type="button" className="rounded-full focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none" aria-label={`专属折扣 ${account.vipDiscountPercent}%，查看各级 VIP 折扣`}><BentoCardBadge tone="green" icon={Percent}>专属折扣 {account.vipDiscountPercent}%</BentoCardBadge></button></Tooltip>
   return <BentoCard span={span} rowSpan={rowSpan} className={className} title="个人信息" action={vipDiscountBadge}>
-    <CardContent className="flex flex-1 flex-col gap-4 sm:flex-row">
+    <div className="flex flex-1 flex-col gap-4 sm:flex-row">
       <div className="grid min-w-0 flex-1 content-between gap-3 sm:flex-[3]">
         <div className="flex min-w-0 items-center gap-3">
-          <Avatar size="lg" className="data-[size=lg]:size-12"><AvatarFallback className="bg-slate-600 text-base font-semibold text-white dark:bg-slate-500">{account.email.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
+          <Avatar name={account.email} size="lg" />
           <div className="grid min-w-0 flex-1 gap-0.5">
             <p className="flex min-w-0 items-center gap-1.5 font-semibold"><span className="truncate" title={account.email}>{account.email}</span><AccountVerificationIcon type={accountType} /></p>
             <p className="text-sm text-muted-foreground tabular-nums">ID #{account.customerID}</p>
           </div>
         </div>
-        <Item className="rounded-2xl bg-background px-3 py-2">
-          <dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+        <ArcCard style={{ background: "var(--background)", borderColor: "transparent" }}><dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
             {details.map(({ label, icon: Icon, value, title }) => <React.Fragment key={label}><dt className="flex items-center gap-1.5 text-muted-foreground"><Icon className="size-4" aria-hidden />{label}</dt><dd className="truncate text-right font-medium tabular-nums" title={title}>{value}</dd></React.Fragment>)}
-          </dl>
-        </Item>
+          </dl></ArcCard>
       </div>
       <Separator className="sm:hidden" />
       <Separator orientation="vertical" className="hidden sm:block data-[orientation=vertical]:h-auto" />
       <section aria-label="VIP 等级" className="grid min-w-0 content-between justify-items-center gap-1 text-center sm:flex-[2]">
         <ProgressRing value={vipProgress} size={100} sweep={270} className="text-bento-green-strong" label={vipTarget ? `距离 ${vipTarget.level} 已完成 ${Math.round(vipProgress)}%` : "已达到最高 VIP 等级"}>
-          <strong className="text-2xl font-semibold">{currentLevel}</strong>
+          <strong className="text-xl font-semibold">{currentLevel}</strong>
         </ProgressRing>
         <div className="grid text-xs text-muted-foreground tabular-nums">
           <span>累计消费 <span className="font-medium text-foreground">{formatMoney(account.vipSpend)}</span></span>
           <span>{vipTarget ? `距离 ${vipTarget.level} 还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "已达到最高等级"}</span>
         </div>
       </section>
-    </CardContent>
+    </div>
   </BentoCard>
 }
 
@@ -162,11 +163,11 @@ function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }:
 // Hidden for now (SHOW_PROMO_SLOT); the greeting spans the full row while it is off.
 const SHOW_PROMO_SLOT = false
 function PromoCard({ span, rowSpan, className }: { span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
-  return <BentoCard tone="green" span={span} rowSpan={rowSpan} className={className} title="邀请好友，一起加速" action={<Badge variant="outline" className="border-transparent bg-white/60">推荐</Badge>}>
-    <CardContent className="flex flex-1 flex-col justify-between gap-4">
+  return <BentoCard tone="green" span={span} rowSpan={rowSpan} className={className} title="邀请好友，一起加速" action={<Badge className="border-transparent bg-white/60">推荐</Badge>}>
+    <div className="flex flex-1 flex-col justify-between gap-4">
       <p className="text-sm">好友通过你的邀请码购买套餐后，返利会直接计入你的钱包，购买时可抵扣。</p>
       <BentoButton asChild className="w-fit"><Link to="/account/referrals"><Gift />获取邀请码</Link></BentoButton>
-    </CardContent>
+    </div>
   </BentoCard>
 }
 
@@ -174,19 +175,19 @@ function NodeStatusCard({ status, error, inactive, span, rowSpan }: { status: No
   const available = !inactive && Boolean(status?.configured && status.checkedAt)
   const note = inactive ? "当前线路暂不支持" : error ? "状态暂不可用" : !status ? "" : !status.configured ? "节点监控未配置" : "等待首次检测"
   return <BentoCard span={span} rowSpan={rowSpan} title="节点状态">
-    <CardContent className="flex flex-1 items-end justify-between gap-3">
-      {available ? <p className="flex flex-wrap items-baseline gap-x-1.5" title={status?.checkedAt ? `最近检测 ${formatDateTime(status.checkedAt)}` : undefined}><strong className="text-3xl font-semibold tabular-nums">{status?.onlineNodes}</strong><span className="text-sm text-muted-foreground tabular-nums">/ {status?.totalNodes} 在线</span></p> : !inactive && !status && !error ? <Skeleton className="h-9 w-24" /> : <p className="flex min-w-0 items-baseline gap-1.5"><strong className="text-3xl font-semibold">-</strong><span className="truncate text-sm text-muted-foreground">{note}</span></p>}
+    <div className="flex flex-1 items-end justify-between gap-3">
+      {available ? <p className="flex flex-wrap items-baseline gap-x-1.5" title={status?.checkedAt ? `最近检测 ${formatDateTime(status.checkedAt)}` : undefined}><strong className="text-2xl font-semibold tabular-nums">{status?.onlineNodes}</strong><span className="text-sm text-muted-foreground tabular-nums">/ {status?.totalNodes} 在线</span></p> : !inactive && !status && !error ? <Skeleton lines={2} className="w-24" /> : <p className="flex min-w-0 items-baseline gap-1.5"><strong className="text-2xl font-semibold">-</strong><span className="truncate text-sm text-muted-foreground">{note}</span></p>}
       {inactive ? null : <BentoIconLink to="/account/nodes" label="查看节点状态" icon={Eye} />}
-    </CardContent>
+    </div>
   </BentoCard>
 }
 
 function DeviceLimitCard({ subscription, traffic, span, rowSpan }: { subscription: Subscription; traffic: SelfHostedTraffic | null; span: BentoSpan; rowSpan: BentoRowSpan }) {
   return <BentoCard span={span} rowSpan={rowSpan} title="在线IP数量">
-    <CardContent className="grid flex-1 content-end">
-      {traffic ? <p className="flex flex-wrap items-baseline gap-x-1.5"><strong className="text-3xl font-semibold tabular-nums">{traffic.connectedIpCount ?? "-"}</strong><span className="text-sm text-muted-foreground tabular-nums">/ {traffic.ipLimit || "不限"} 在线</span></p>
-        : <p className="flex items-baseline gap-1.5"><strong className="text-3xl font-semibold tabular-nums">{subscription.devices}</strong><span className="text-sm text-muted-foreground">上限</span></p>}
-    </CardContent>
+    <div className="grid flex-1 content-end">
+      {traffic ? <p className="flex flex-wrap items-baseline gap-x-1.5"><strong className="text-2xl font-semibold tabular-nums">{traffic.connectedIpCount ?? "-"}</strong><span className="text-sm text-muted-foreground tabular-nums">/ {traffic.ipLimit || "不限"} 在线</span></p>
+        : <p className="flex items-baseline gap-1.5"><strong className="text-2xl font-semibold tabular-nums">{subscription.devices}</strong><span className="text-sm text-muted-foreground">上限</span></p>}
+    </div>
   </BentoCard>
 }
 
@@ -202,14 +203,14 @@ function ipLocation(info: IpInfo) {
 }
 
 function WalletBalanceCard({ account, span, rowSpan }: { account: Overview; span: BentoSpan; rowSpan: BentoRowSpan }) {
-  return <BentoStatCard span={span} rowSpan={rowSpan} title="钱包余额" value={formatMoney(account.wallet.balance)} trailing={<BentoIconLink to="/account/wallet" label="查看钱包余额" icon={ArrowRight} />} />
+  return <BentoStatCard span={span} rowSpan={rowSpan} title="钱包余额" money value={Number(account.wallet.balance) || 0} trailing={<BentoIconLink to="/account/wallet" label="查看钱包余额" icon={ArrowRight} />} />
 }
 
 function InviteFriendsCard({ account, span, rowSpan }: { account: Overview; span: BentoSpan; rowSpan: BentoRowSpan }) {
-  return <BentoStatCard span={span} rowSpan={rowSpan} title="邀请好友" action={<BentoCardBadge tone="green" icon={Banknote}>获取{account.referral.rate}%返利</BentoCardBadge>} value={account.referral.invitedCount} unit="位好友已邀请" trailing={<BentoIconLink to="/account/referrals" label="查看邀请返利" icon={ArrowRight} />} />
+  return <BentoStatCard span={span} rowSpan={rowSpan} title="邀请好友" action={<BentoCardBadge tone="green" icon={Banknote}>获取{account.referral.rate}%返利</BentoCardBadge>} value={Number(account.referral.invitedCount) || 0} unit="位好友已邀请" trailing={<BentoIconLink to="/account/referrals" label="查看邀请返利" icon={ArrowRight} />} />
 }
 
-type PlanView = { subscription: Subscription | null; status: "active" | "expired" | "depleted" | "inactive"; trafficTotal: string; trafficUsed: string; usagePercent: number | null; remainingPercent: number | null }
+type PlanView = { subscription: Subscription | null; status: "active" | "expired" | "depleted" | "inactive"; trafficTotal: string; trafficUsed: string; usedGb: number | null; totalGb: number | null; usagePercent: number | null; remainingPercent: number | null }
 
 function planView(subscription: Subscription | null, traffic: SelfHostedTraffic | null): PlanView {
   const usagePercent = subscription?.lineType === "self_hosted" ? traffic?.usagePercent ?? null : null
@@ -219,6 +220,8 @@ function planView(subscription: Subscription | null, traffic: SelfHostedTraffic 
     status,
     trafficTotal: traffic ? `${(traffic.totalBytes / 1024 ** 3).toFixed(0)} GB` : subscription?.traffic || "-",
     trafficUsed: traffic ? `${(traffic.usedBytes / 1024 ** 3).toFixed(2)} GB` : "-",
+    usedGb: traffic ? traffic.usedBytes / 1024 ** 3 : null,
+    totalGb: traffic && traffic.totalBytes > 0 ? traffic.totalBytes / 1024 ** 3 : null,
     usagePercent,
     remainingPercent: usagePercent == null ? null : Math.max(0, 100 - usagePercent),
   }
@@ -244,66 +247,52 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
   const planDetail = nameParts ? `${nameParts.duration}-${nameParts.traffic}${nameParts.perMonth ? "/月" : ""}` : ""
   // No card title: plan name and grey facts share the top row; the headline figure sits bottom-left, the action bottom-right.
   return <BentoCard id="subscription" tone="yellow" span={span} rowSpan={rowSpan} className="scroll-mt-16">
-    <CardContent className="flex flex-1 flex-col justify-between gap-4">
+    <div className="flex flex-1 flex-col justify-between gap-4">
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-        <h2 className="min-w-0 text-3xl font-bold wrap-anywhere xl:text-4xl" title={nameParts ? `${nameParts.name} (${planDetail})` : undefined}>{nameParts ? <><span className="text-extrude font-black">{nameParts.name}</span><span className="mt-4 block whitespace-nowrap text-xl xl:text-2xl">({planDetail})</span></> : "暂无套餐"}</h2>
+        <h2 className="min-w-0 text-2xl font-bold wrap-anywhere xl:text-3xl" title={nameParts ? `${nameParts.name} (${planDetail})` : undefined}>{nameParts ? <><span className="text-extrude font-black">{nameParts.name}</span><span className="mt-3 block whitespace-nowrap text-lg xl:text-xl">({planDetail})</span></> : "暂无套餐"}</h2>
         {subscription ? <div className="grid text-sm text-muted-foreground tabular-nums sm:text-right">
           <p>到期日期 {formatDate(subscription.expiresAt)}{subscription.giftedDays ? `（已赠送 ${subscription.giftedDays} 天）` : ""}</p>
           <p>流量配额 {planQuota}</p>
         </div> : null}
       </div>
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
-        {subscription ? subscription.duration === "lifetime" ? <p className="text-4xl font-semibold">永久有效</p> : <p className="flex items-baseline gap-2"><strong className="text-4xl font-semibold tabular-nums">{remainingDays ?? "-"}</strong><span className="text-sm">天后到期</span></p>
+        {subscription ? subscription.duration === "lifetime" ? <p className="text-3xl font-semibold">永久有效</p> : <p className="flex items-baseline gap-2"><strong className="text-3xl font-semibold tabular-nums">{remainingDays ?? "-"}</strong><span className="text-sm">天后到期</span></p>
           : <p className="max-w-80 text-sm">{renewalUrl ? `套餐已于 ${formatDate(account.subscription?.expiresAt)} 到期，续费后恢复使用。` : "开通套餐后，这里会显示到期时间、流量配额和在线IP数量。"}</p>}
         {subscription ? canBuyHomeIp ? <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans/checkout?product=home-ip"><span className="sm:hidden">定制家宽IP</span><span className="hidden sm:inline">AI被降智？定制纯净家宽 IP{Number.isFinite(homeIpStartingPrice) ? ` · ${formatMoney(homeIpStartingPrice)} 起` : ""}</span><ArrowUpRight className="size-5 text-white" strokeWidth={2.5} aria-hidden /></Link></BentoButton> : null
           : renewalUrl ? <BentoButton asChild size="lg" className="ml-auto"><Link to={renewalUrl}><RefreshCw />续费</Link></BentoButton>
           : <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans"><PackagePlus />购买服务</Link></BentoButton>}
       </div>
-    </CardContent>
+    </div>
   </BentoCard>
 }
 
-// Bar color per usage band (up to 50%, up to 99%, then above 99% of the quota): a solid indicator on a light track of the same color.
-const usageBarBands = [
-  [50, "bg-usage-20/20 *:data-[slot=progress-indicator]:bg-usage-20"],
-  [99, "bg-usage-60/20 *:data-[slot=progress-indicator]:bg-usage-60"],
-  [Infinity, "bg-usage-100/20 *:data-[slot=progress-indicator]:bg-usage-100"],
-] as const
+// An unlimited plan has no allowance to measure against, so its meter is drawn against this nominal cap.
+const UNLIMITED_TRAFFIC_DISPLAY_GB = 9999
 
-function usageBarClass(percent: number) {
-  return usageBarBands.find(([limit]) => percent <= limit)?.[1] ?? usageBarBands[2][1]
-}
-
-function TrafficUsageCard({ plan, trafficLoading, trafficError, nextResetAt, span, rowSpan }: { plan: PlanView; trafficLoading: boolean; trafficError: string; nextResetAt?: string; span: BentoSpan; rowSpan: BentoRowSpan }) {
-  const { subscription, usagePercent, remainingPercent, trafficTotal, trafficUsed } = plan
-  const remaining = <p className="flex items-baseline gap-1.5"><strong className="text-3xl font-semibold tabular-nums">{remainingPercent == null ? subscription?.unlimited ? "不限" : trafficLoading ? "同步中" : "-" : `${Math.round(remainingPercent)}%`}</strong>{remainingPercent == null || subscription?.unlimited ? null : <span className="text-sm text-muted-foreground">剩余</span>}</p>
-  return <BentoCard span={span} rowSpan={rowSpan} title="流量使用" action={remaining}>
-    <CardContent className="grid flex-1 content-end gap-2">
-      <Progress value={usagePercent ?? 0} className={cn("h-4 rounded-sm", usageBarClass(usagePercent ?? 0))} aria-label={usagePercent == null ? "流量用量暂不可用" : `已使用流量 ${Math.round(usagePercent)}%`} />
+function TrafficUsageCard({ plan, trafficError, nextResetAt, span, rowSpan }: { plan: PlanView; trafficLoading: boolean; trafficError: string; nextResetAt?: string; span: BentoSpan; rowSpan: BentoRowSpan }) {
+  const { subscription, usedGb, totalGb, trafficTotal, trafficUsed } = plan
+  const limitGb = subscription?.unlimited ? UNLIMITED_TRAFFIC_DISPLAY_GB : totalGb
+  // The meter carries its own heading and remaining amount, so the card has no title row.
+  return <BentoCard span={span} rowSpan={rowSpan}>
+    <div className="grid flex-1 content-end gap-2">
+      {usedGb == null || !limitGb ? null : <UsageMeter label="流量使用" unit="GB" decimals={1} limit={limitGb} segments={[{ id: "used", label: "已用", value: usedGb }]} />}
       {trafficError ? <p className="truncate text-xs text-muted-foreground" title={trafficError}>流量同步暂不可用：{trafficError}</p>
-        : <p className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground"><span className="tabular-nums">已用 {trafficUsed} / {subscription?.unlimited ? "不限" : trafficTotal}</span>{nextResetAt ? <span>{formatDate(nextResetAt)} 重置</span> : null}</p>}
-    </CardContent>
+        : <p className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground"><span className="tabular-nums">已用 {trafficUsed} / {subscription?.unlimited ? `${UNLIMITED_TRAFFIC_DISPLAY_GB} GB` : trafficTotal}</span>{nextResetAt ? <span>{formatDate(nextResetAt)} 重置</span> : null}</p>}
+    </div>
   </BentoCard>
 }
 
 function SubscriptionLinkCard({ subscriptionUrl, onImportClient, span, rowSpan }: { subscriptionUrl: string; onImportClient: (client: ImportClient) => void; span: BentoSpan; rowSpan: BentoRowSpan }) {
   return <BentoCard span={span} rowSpan={rowSpan} title="订阅链接">
-    <CardContent>
-      <Field>
-        <span className="block rounded-4xl bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input id="subscription-url" aria-label="订阅地址" className="h-11 rounded-4xl border-0 bg-background px-4 font-semibold shadow-none dark:bg-background" readOnly value={subscriptionUrl} /></span>
+    <Field>
+        <span className="block rounded-4xl bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input label="订阅地址" hideLabel id="subscription-url" className="h-11 rounded-4xl border-0 bg-background px-4 font-semibold shadow-none dark:bg-background" readOnly value={subscriptionUrl} /></span>
         <div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto">
           <CopySubscription value={subscriptionUrl} />
-          <BentoButton asChild variant="outline"><a href={DOCS_URL} target="_blank" rel="noopener noreferrer"><BookOpen />使用教程</a></BentoButton>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild><BentoButton variant="outline"><ExternalLink />一键导入客户端<ChevronDown /></BentoButton></DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="min-w-56">
-              {(Object.keys(importClients) as ImportClient[]).map(client => <DropdownMenuItem key={client} className="min-h-11 justify-between gap-4 md:min-h-0" onSelect={() => onImportClient(client)}>{importClients[client].label}<span className="text-xs text-muted-foreground">{importClients[client].platform}</span></DropdownMenuItem>)}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <BentoButton asChild variant="secondary"><a href={DOCS_URL} target="_blank" rel="noopener noreferrer"><BookOpen />使用教程</a></BentoButton>
+          <DropdownMenu label="一键导入客户端" icon={<ExternalLink size={16} />} align="start" items={(Object.keys(importClients) as ImportClient[]).map(client => ({ label: `${importClients[client].label}（${importClients[client].platform}）`, onSelect: () => onImportClient(client) }))} />
         </div>
         <FieldDescription>请勿将订阅链接分享给其他人。</FieldDescription>
       </Field>
-    </CardContent>
   </BentoCard>
 }
 
@@ -314,7 +303,6 @@ export function AccountOverviewPage() {
   const [selectedAnnouncement, setSelectedAnnouncement] = React.useState<Announcement | null>(null)
   const [reminderDialog, setReminderDialog] = React.useState(false)
   const [muteToday, setMuteToday] = React.useState(false)
-  const [carouselApi, setCarouselApi] = React.useState<CarouselApi>()
   const [carouselIndex, setCarouselIndex] = React.useState(0)
   const [selfHostedTraffic, setSelfHostedTraffic] = React.useState<SelfHostedTraffic | null>(null)
   const [trafficLoading, setTrafficLoading] = React.useState(false)
@@ -334,14 +322,6 @@ export function AccountOverviewPage() {
     setMuteToday(false)
     setAnnouncementOpen(shouldRemind)
   }, [data?.email, latestAnnouncement?.id])
-
-  React.useEffect(() => {
-    if (!carouselApi) return
-    const select = () => setCarouselIndex(carouselApi.selectedScrollSnap())
-    select()
-    carouselApi.on("select", select)
-    return () => { carouselApi.off("select", select) }
-  }, [carouselApi])
 
   React.useEffect(() => {
     if (data && window.location.hash === "#subscription") document.getElementById("subscription")?.scrollIntoView()
@@ -420,13 +400,13 @@ export function AccountOverviewPage() {
   return (
     <>
       <div className="grid gap-4">
-        <Alert variant="warning"><CircleHelp /><AlertDescription className="flex w-full flex-row flex-wrap items-center justify-between gap-3"><span>遇到问题？发送工单联系客服吧！</span><Button asChild variant="link" size="sm" className="h-auto shrink-0 p-0 underline underline-offset-4"><Link to="/account/tickets/new">发送工单</Link></Button></AlertDescription></Alert>
+        <Alert tone="warning" title="请注意"><span>遇到问题？发送工单联系客服吧！</span><Button asChild variant="link" size="sm" className="h-auto shrink-0 p-0 underline underline-offset-4"><Link to="/account/tickets/new">发送工单</Link></Button></Alert>
         <BentoGrid>
           <section className={cn(bentoSpanClass(SHOW_PROMO_SLOT ? 5 : 8, 2), "flex min-w-0 flex-col justify-center gap-6 py-4")} aria-labelledby="account-greeting">
-            <h2 id="account-greeting" className="grid gap-1 text-4xl font-semibold tracking-tight wrap-anywhere lg:text-5xl"><span>What's up,</span><span>{emailLocal}{emailDomain ? <><wbr />@{emailDomain}</> : null}{"\u00a0"}!</span></h2>
+            <h2 id="account-greeting" className="grid gap-1 text-3xl font-semibold tracking-tight wrap-anywhere lg:text-4xl"><span>What's up,</span><span>{emailLocal}{emailDomain ? <><wbr />@{emailDomain}</> : null}{"\u00a0"}!</span></h2>
             <div className="flex flex-wrap gap-2">
               <BentoButton asChild size="lg"><Link to="/account/plans"><ArrowRight />前往商城</Link></BentoButton>
-              <BentoButton asChild size="lg" variant="outline"><a href={DOCS_URL} target="_blank" rel="noopener noreferrer"><BookOpen />查看使用教程</a></BentoButton>
+              <BentoButton asChild size="lg" variant="secondary"><a href={DOCS_URL} target="_blank" rel="noopener noreferrer"><BookOpen />查看使用教程</a></BentoButton>
             </div>
           </section>
           {SHOW_PROMO_SLOT ? <PromoCard span={3} rowSpan={2} className="md:col-span-8" /> : null}
@@ -441,51 +421,40 @@ export function AccountOverviewPage() {
           <WalletBalanceCard account={data} span={3} rowSpan={1} />
           <InviteFriendsCard account={data} span={3} rowSpan={1} />
           {plan.subscription ? profileCard : null}
-          {hasAnnouncements ? <BentoCard span={announcementSpan} rowSpan={2} className="md:col-span-8" title="网站公告" action={data.announcements.length > 1 ? <Badge variant="outline" className="bg-background tabular-nums">{carouselIndex + 1} / {data.announcements.length}</Badge> : null}>
-            <CardContent className="grid flex-1">
-              <Carousel opts={{ loop: data.announcements.length > 1 }} setApi={setCarouselApi} aria-label="网站公告" className="grid content-between gap-3">
-                <CarouselContent>
-                  {data.announcements.map((announcement, index) => <CarouselItem key={announcement.id}><Item asChild className="grid cursor-pointer gap-2 rounded-2xl bg-background p-3 hover:bg-background/70 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"><article role="button" tabIndex={0} aria-label={`查看公告：${announcement.title}`} onClick={() => viewAnnouncement(announcement)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); viewAnnouncement(announcement) } }}>
+          {hasAnnouncements ? <BentoCard span={announcementSpan} rowSpan={2} className="md:col-span-8" title="网站公告" action={data.announcements.length > 1 ? <Badge className="bg-background tabular-nums">{carouselIndex + 1} / {data.announcements.length}</Badge> : null}>
+            <div className="grid flex-1">
+              <div className="grid content-between gap-3">
+                <Carousel label="网站公告" index={carouselIndex} onIndexChange={setCarouselIndex} slideLabel={(index, count) => `第 ${index + 1} 条，共 ${count} 条`}>
+                  {data.announcements.map((announcement, index) => <article key={announcement.id} className="grid cursor-pointer gap-2 rounded-2xl bg-background p-3 hover:bg-background/70" role="button" tabIndex={0} aria-label={`查看公告：${announcement.title}`} onClick={() => viewAnnouncement(announcement)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); viewAnnouncement(announcement) } }}>
                     <header className="grid gap-1">
                       <div className="flex min-w-0 items-center gap-2">{index === 0 ? <Badge className="shrink-0">最新</Badge> : null}<h3 className="truncate font-semibold">{announcement.title}</h3></div>
                       <time className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums" dateTime={announcement.publishedAt}><Clock3 className="size-3.5" />{formatDateTime(announcement.publishedAt)}</time>
                     </header>
                     <MarkdownContent content={announcement.content} className="line-clamp-3 max-h-20 overflow-hidden text-sm text-muted-foreground xl:line-clamp-1 xl:max-h-5" />
-                  </article></Item></CarouselItem>)}
-                </CarouselContent>
+                  </article>)}
+                </Carousel>
                 <div className="flex items-center justify-between gap-2">
-                  <BentoButton variant="outline" onClick={() => { if (currentAnnouncement) viewAnnouncement(currentAnnouncement) }}><Eye />查看全文</BentoButton>
-                  {data.announcements.length > 1 ? <div className="flex gap-2"><CarouselPrevious className="static size-11 translate-y-0 md:size-9" /><CarouselNext className="static size-11 translate-y-0 md:size-9" /></div> : null}
+                  <BentoButton variant="secondary" onClick={() => { if (currentAnnouncement) viewAnnouncement(currentAnnouncement) }}><Eye />查看全文</BentoButton>
                 </div>
-              </Carousel>
-            </CardContent>
+              </div>
+            </div>
           </BentoCard> : null}
-          {hasTrafficDetails ? selfHostedTraffic ? <React.Suspense fallback={<Skeleton className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} />}><AccountTrafficChart span={8} rowSpan={3} usage={selfHostedTraffic.nodeUsage} /></React.Suspense> : <Skeleton className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} /> : null}
+          {hasTrafficDetails ? selfHostedTraffic ? <React.Suspense fallback={<Skeleton lines={1} className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} />}><AccountTrafficChart span={8} rowSpan={3} usage={selfHostedTraffic.nodeUsage} /></React.Suspense> : <Skeleton lines={1} className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} /> : null}
         </BentoGrid>
       </div>
       <Dialog open={announcementOpen} onOpenChange={changeAnnouncementOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{selectedAnnouncement?.title}</DialogTitle><DialogDescription>{formatDateTime(selectedAnnouncement?.publishedAt)}</DialogDescription></DialogHeader>
-          {selectedAnnouncement ? <MarkdownContent content={selectedAnnouncement.content} /> : null}
-          <DialogFooter>
+        <DialogContent title={selectedAnnouncement?.title || "公告"} description={formatDateTime(selectedAnnouncement?.publishedAt)}>{selectedAnnouncement ? <MarkdownContent content={selectedAnnouncement.content} /> : null}<div className="mt-6 flex flex-wrap justify-end gap-2">
             {reminderDialog ? <label className="flex items-center gap-2 text-sm sm:mr-auto"><Checkbox checked={muteToday} onCheckedChange={checked => setMuteToday(checked === true)} />今日不再提醒</label> : null}
-            <DialogClose asChild><Button variant={reminderDialog && !selectedAnnouncement?.url ? "default" : "outline"}>{reminderDialog ? "我知道了" : "关闭"}</Button></DialogClose>
+            <DialogClose asChild><Button variant={reminderDialog && !selectedAnnouncement?.url ? "primary" : "secondary"}>{reminderDialog ? "我知道了" : "关闭"}</Button></DialogClose>
             {selectedAnnouncement?.url ? <Button asChild><a href={selectedAnnouncement.url} target="_blank" rel="noopener noreferrer">阅读全文<ExternalLink /></a></Button> : null}
-          </DialogFooter>
-        </DialogContent>
+          </div></DialogContent>
       </Dialog>
-      <AlertDialog open={importClient !== null} onOpenChange={open => { if (!open) setImportClient(null) }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>导入 {importConfig?.name}</AlertDialogTitle>
-            <AlertDialogDescription>{`⚠️请先关闭${importConfig?.app || "客户端"}的连接开关。`}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { window.location.href = importUrl }}>导入 {importConfig?.name}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <Dialog open={importClient !== null} onOpenChange={open => { if (!open) setImportClient(null) }}>
+        <DialogContent title={`导入 ${importConfig?.name}`} description={`⚠️请先关闭${importConfig?.app || "客户端"}的连接开关。`}><div className="mt-6 flex flex-wrap justify-end gap-2">
+            <DialogClose asChild><Button variant="secondary">取消</Button></DialogClose>
+            <DialogClose asChild><Button onClick={() => { window.location.href = importUrl }}>导入 {importConfig?.name}</Button></DialogClose>
+          </div></DialogContent>
+      </Dialog>
     </>
   )
 }
@@ -500,22 +469,18 @@ export function AccountDocsPage() {
 const bentoInputClass = "h-11 min-w-0 rounded-4xl border-0 bg-background px-4 shadow-none dark:bg-background"
 
 // Figure card for one headline number, with an optional trailing control (usually a BentoIconLink).
-function BentoStatCard({ title, value, unit, action, trailing, span, rowSpan }: { title: React.ReactNode; value: React.ReactNode; unit?: React.ReactNode; action?: React.ReactNode; trailing?: React.ReactNode; span: BentoSpan; rowSpan: BentoRowSpan }) {
-  return <BentoCard span={span} rowSpan={rowSpan} title={title} action={action}>
-    <CardContent className="flex flex-1 items-end justify-between gap-3">
-      <p className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"><strong className="truncate text-3xl font-semibold tabular-nums">{value}</strong>{unit ? <span className="text-sm text-muted-foreground">{unit}</span> : null}</p>
-      {trailing}
-    </CardContent>
-  </BentoCard>
+/** One figure of the overview grid on Arc's metric card: a count, or an amount in yuan when `money` is set. */
+function BentoStatCard({ title, value, money = false, unit, action, trailing, span, rowSpan }: { title: string; value: number; money?: boolean; unit?: string; action?: React.ReactNode; trailing?: React.ReactNode; span: BentoSpan; rowSpan: BentoRowSpan }) {
+  return <MetricCard className={bentoSpanClass(span, rowSpan)} label={title} value={value} prefix={money ? "¥" : undefined} decimals={money ? 2 : 0} context={unit} density="compact" style={bentoSurfaceStyle()} action={action || trailing ? <>{action}{trailing}</> : undefined} />
 }
 
 // Titled bento card for full-width record lists; sits outside BentoGrid so its height follows the content.
 function BentoListCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return <BentoCard span={null} rowSpan={null} title={title}>
-    <CardContent className="grid gap-3">
+    <div className="grid gap-3">
       <p className="-mt-2 text-sm text-muted-foreground">{description}</p>
       <div className="rounded-2xl bg-background px-3 py-1">{children}</div>
-    </CardContent>
+    </div>
   </BentoCard>
 }
 
@@ -536,7 +501,7 @@ export function AccountWalletPage() {
   async function recharge() {
     const value = Number(amount)
     if (!/^\d+(\.\d{1,2})?$/.test(amount.trim()) || value <= 0 || value > 10000) {
-      toast.error("请输入 0.01 至 10,000.00 元，最多两位小数")
+      toast({ type: "error", title: "请输入 0.01 至 10,000.00 元，最多两位小数" })
       return
     }
     setPaying(true)
@@ -546,7 +511,7 @@ export function AccountWalletPage() {
       window.dispatchEvent(new CustomEvent("payment-order-updated", { detail: { id: order.id, status: order.status } }))
       navigate(`/cashier/${encodeURIComponent(order.id)}`)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "创建充值订单失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "创建充值订单失败" })
       setPaying(false)
     }
   }
@@ -557,33 +522,35 @@ export function AccountWalletPage() {
     <div className="grid gap-4">
       <BentoGrid>
         <BentoCard tone="yellow" span={4} rowSpan={2} title="账户余额" action={data.heldBalance ? <BentoCardBadge icon={Clock3} className="tabular-nums">冻结中 {formatMoney(data.heldBalance)}</BentoCardBadge> : null}>
-          <CardContent className="flex flex-1 flex-col justify-between gap-3">
+          <div className="flex flex-1 flex-col justify-between gap-3">
             <p className="-mt-4 flex flex-wrap items-baseline gap-x-2"><strong className="text-4xl font-semibold tabular-nums">{formatMoney(data.balance)}</strong>{data.heldBalance ? <span className="text-sm tabular-nums">可用 {formatMoney(data.availableBalance)}</span> : null}</p>
-            <Item className="rounded-2xl p-3">
-              <dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
+            <ArcCard className="rounded-2xl p-3"><dl className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
                 {walletBalanceKinds.map(kind => <React.Fragment key={kind.key}>
-                  <dt className="flex items-center gap-1.5 text-muted-foreground"><kind.icon className="size-4" aria-hidden />{kind.label}<Tooltip><TooltipTrigger aria-label={`${kind.label}说明`}><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent className="max-w-64">{kind.help}</TooltipContent></Tooltip></dt>
+                  <dt className="flex items-center gap-1.5 text-muted-foreground"><kind.icon className="size-4" aria-hidden />{kind.label}<Tooltip content={kind.help}><button type="button" aria-label={`${kind.label}说明`}><CircleHelp className="size-3.5" /></button></Tooltip></dt>
                   <dd className="truncate text-right font-medium tabular-nums">{formatMoney(data[kind.key])}</dd>
                 </React.Fragment>)}
-              </dl>
-            </Item>
-          </CardContent>
+              </dl></ArcCard>
+          </div>
         </BentoCard>
         <BentoCard span={4} rowSpan={2} title="在线充值" action={<BentoCardBadge icon={BadgeCheck}>累计 VIP 成长值</BentoCardBadge>}>
-          <CardContent className="flex flex-1 flex-col justify-end">
+          <div className="flex flex-1 flex-col justify-end">
             <Field>
               <FieldLabel htmlFor="recharge-amount">充值金额</FieldLabel>
               <form className="flex gap-2" onSubmit={event => { event.preventDefault(); void recharge() }}>
-                <Input id="recharge-amount" inputMode="decimal" placeholder="0.00" className={cn(bentoInputClass, "tabular-nums")} value={amount} onChange={event => setAmount(event.target.value)} disabled={paying || !canRecharge} />
+                <Input label="0.00" hideLabel id="recharge-amount" inputMode="decimal" placeholder="0.00" className={cn(bentoInputClass, "tabular-nums")} value={amount} onChange={event => setAmount(event.target.value)} disabled={paying || !canRecharge} />
                 <BentoButton type="submit" className="shrink-0" disabled={paying || !canRecharge}>{paying ? <Loader2 className="animate-spin" /> : null}{canRecharge ? "去付款" : "在线充值维护中"}</BentoButton>
               </form>
               <FieldDescription>单次 ¥0.01–¥10,000.00，下一步在收银台选择支付宝或微信付款。</FieldDescription>
             </Field>
-          </CardContent>
+          </div>
         </BentoCard>
       </BentoGrid>
       <BentoListCard title="余额流水" description="充值、赠送、消费和返利都会保留不可删除的记录。">
-        {data.entries.length ? <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>类型</TableHead><TableHead>说明</TableHead><TableHead className="text-right">余额变动</TableHead><TableHead className="text-right">余额</TableHead></TableRow></TableHeader><TableBody>{data.entries.map(entry => { const delta = entry.cashDelta + entry.giftDelta + entry.referralDelta; return <TableRow key={entry.id}><TableCell className="tabular-nums">{formatDateTime(entry.createdAt)}</TableCell><TableCell><Badge variant="outline">{walletEntryLabels[entry.type] || "其他"}</Badge></TableCell><TableCell>{entry.description || "-"}</TableCell><TableCell className={cn("text-right font-medium tabular-nums", delta >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-foreground")}>{delta >= 0 ? "+" : ""}{formatMoney(delta)}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(entry.balance)}</TableCell></TableRow> })}</TableBody></Table>
+        {data.entries.length ? <SimpleTable caption="时间列表" columns={["时间", "类型", "说明", "余额变动", "余额"]} rows={data.entries} rowKey={(entry) => {
+const delta = entry.cashDelta + entry.giftDelta + entry.referralDelta;
+return entry.id }} cells={(entry) => {
+const delta = entry.cashDelta + entry.giftDelta + entry.referralDelta;
+return [<span className="tabular-nums">{formatDateTime(entry.createdAt)}</span>, <Badge>{walletEntryLabels[entry.type] || "其他"}</Badge>, <>{entry.description || "-"}</>, <span className={cn("text-right font-medium tabular-nums", delta >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-foreground")}>{delta >= 0 ? "+" : ""}{formatMoney(delta)}</span>, <span className="text-right tabular-nums">{formatMoney(entry.balance)}</span>] }} />
           : <EmptyState title="暂无余额流水" description="充值、购买套餐或获得返利后，余额变动会显示在这里。" />}
       </BentoListCard>
     </div>
@@ -595,9 +562,9 @@ type ReferralData = { code: string; invitedCount: number; referralBalance: numbe
 
 function InviteCopyField({ id, label, value }: { id: string; label: string; value: string }) {
   return <div className="flex items-center gap-2">
-    <Label htmlFor={id} className="w-16 shrink-0">{label}</Label>
-    <Input id={id} readOnly value={value} className={cn(bentoInputClass, "font-medium")} onFocus={event => event.currentTarget.select()} />
-    <CopyButton value={value} aria-label={`复制${label}`} feedback="inline" variant="default" size="default" className="min-h-11 shrink-0 rounded-4xl px-5" />
+    <label htmlFor={id} className="w-16 shrink-0 text-sm font-medium">{label}</label>
+    <Input label="输入" hideLabel id={id} readOnly value={value} className={cn(bentoInputClass, "font-medium")} onFocus={event => event.currentTarget.select()} />
+    <CopyButton value={value} label={`复制${label}`} className="shrink-0" />
   </div>
 }
 
@@ -616,21 +583,21 @@ export function AccountReferralPage() {
   return <div className="grid gap-4">
     <BentoGrid>
       <BentoCard tone="green" span={5} rowSpan={2} className="md:col-span-8" title="邀请好友，一起加速" action={<BentoCardBadge icon={Banknote}>获取{data.referralRate}%返利</BentoCardBadge>}>
-        <CardContent className="flex flex-1 flex-col justify-between gap-3">
+        <div className="flex flex-1 flex-col justify-between gap-3">
           <p className="text-sm">好友通过你的链接注册并购买套餐后，你将获得实付金额 {data.referralRate}% 的返利{data.recurringReferral ? "，好友每次购买都返" : "（仅限首次购买）"}，到账后可直接抵扣。</p>
           <div className="grid gap-2">
             <InviteCopyField id="invite-code" label="邀请码" value={data.code} />
             <InviteCopyField id="invite-url" label="邀请链接" value={inviteUrl} />
           </div>
-        </CardContent>
+        </div>
       </BentoCard>
-      <BentoStatCard span={3} rowSpan={1} title="已邀请好友" value={data.invitedCount} unit="位" />
-      <BentoStatCard span={3} rowSpan={1} title="返利余额" value={formatMoney(data.referralBalance)} trailing={<BentoIconLink to="/account/wallet" label="查看账户余额" icon={ArrowRight} />} />
-      <BentoStatCard span={4} rowSpan={1} title="确认中的返利" value={formatMoney(data.pendingAmount)} unit="确认后自动到账" />
-      <BentoStatCard span={4} rowSpan={1} title="累计获得返利" value={formatMoney(data.earnedAmount)} />
+      <BentoStatCard span={3} rowSpan={1} title="已邀请好友" value={Number(data.invitedCount) || 0} unit="位" />
+      <BentoStatCard span={3} rowSpan={1} title="返利余额" money value={Number(data.referralBalance) || 0} trailing={<BentoIconLink to="/account/wallet" label="查看账户余额" icon={ArrowRight} />} />
+      <BentoStatCard span={4} rowSpan={1} title="确认中的返利" money value={Number(data.pendingAmount) || 0} unit="确认后自动到账" />
+      <BentoStatCard span={4} rowSpan={1} title="累计获得返利" money value={Number(data.earnedAmount) || 0} />
     </BentoGrid>
     <BentoListCard title="返利明细" description="好友订单确认后，返利自动计入返利余额。">
-      {data.rewards.length ? <Table><TableHeader><TableRow><TableHead>来源订单</TableHead><TableHead className="text-right">实际投入</TableHead><TableHead className="text-right">返利金额</TableHead><TableHead>状态</TableHead><TableHead>到账时间</TableHead></TableRow></TableHeader><TableBody>{data.rewards.map(item => <TableRow key={item.id}><TableCell className="font-mono text-xs">{item.sourceOrderId}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(item.baseAmount)}</TableCell><TableCell className="text-right font-medium tabular-nums">{formatMoney(item.rewardAmount)}</TableCell><TableCell><Badge variant={item.status === "available" ? "success" : "secondary"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "确认中" : item.status}</Badge></TableCell><TableCell className="tabular-nums">{formatDateTime(item.availableAt)}</TableCell></TableRow>)}</TableBody></Table>
+      {data.rewards.length ? <SimpleTable caption="来源订单列表" columns={["来源订单", "实际投入", "返利金额", "状态", "到账时间"]} rows={data.rewards} rowKey={(item) => item.id} cells={(item) => [<span className="font-mono text-xs">{item.sourceOrderId}</span>, <span className="text-right tabular-nums">{formatMoney(item.baseAmount)}</span>, <span className="text-right font-medium tabular-nums">{formatMoney(item.rewardAmount)}</span>, <Badge tone={item.status === "available" ? "success" : "neutral"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "确认中" : item.status}</Badge>, <span className="tabular-nums">{formatDateTime(item.availableAt)}</span>]} />
         : <EmptyState title="暂无返利记录" description="好友通过你的邀请链接注册并购买套餐后，返利会显示在这里。" />}
     </BentoListCard>
   </div>
@@ -639,7 +606,7 @@ export function AccountReferralPage() {
 export function AccountOrdersPage() {
   const { data: orders, error } = useCachedAccountData<PaymentOrder[]>("/api/account/orders")
   if (!orders) return error ? <p className="px-4 text-sm text-destructive lg:px-6">{error}</p> : <PageLoading />
-  return <div className="px-4 lg:px-6"><Card className="contents md:flex"><CardHeader className="hidden md:grid"><CardTitle>订单记录</CardTitle><CardDescription>所有商品订单</CardDescription></CardHeader><CardContent className="px-0 md:px-6">{orders.length ? <OrdersTable orders={orders} /> : <p className="text-sm text-muted-foreground">仅展示2026年7月15日后的订单</p>}</CardContent></Card></div>
+  return <div className="px-4 lg:px-6"><Card className="contents md:flex" title="订单记录" description="所有商品订单"><>{orders.length ? <OrdersTable orders={orders} /> : <p className="text-sm text-muted-foreground">仅展示2026年7月15日后的订单</p>}</></Card></div>
 }
 
 // Every order is paid and tracked in the cashier; these routes keep old links working.
@@ -658,18 +625,18 @@ export function AccountSettingsPage() {
   const [loading, setLoading] = React.useState(false)
   async function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (password !== confirmPassword) return toast.error("两次输入的密码不一致")
+    if (password !== confirmPassword) return toast({ type: "error", title: "两次输入的密码不一致" })
     setLoading(true)
     try {
       await putJson("/api/auth/password", { currentPassword, password })
       clearJsonCache()
-      toast.success("密码已修改，请重新登录")
+      toast({ type: "success", title: "密码已修改，请重新登录" })
       navigate("/login", { replace: true })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "修改失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "修改失败" })
     } finally { setLoading(false) }
   }
-  return <div className="grid gap-4 px-4 lg:grid-cols-2 lg:px-6"><Card><CardHeader><CardTitle>账户资料</CardTitle><CardDescription>邮箱是你的唯一登录账号。</CardDescription></CardHeader><CardContent className="grid gap-4"><div className="grid gap-2"><Label htmlFor="profile-email">邮箱</Label><Input id="profile-email" value={email} disabled /></div><Metric label="注册时间" value={data ? formatDate(data.createdAt) : "-"} /></CardContent></Card><Card><CardHeader><CardTitle>修改密码</CardTitle><CardDescription>修改成功后当前设备需要重新登录，其他设备保持登录。</CardDescription></CardHeader><CardContent><form className="grid gap-4" onSubmit={submit} noValidate><div className="grid gap-2"><Label htmlFor="current-password">当前密码</Label><Input id="current-password" type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} required /></div><div className="grid gap-2"><Label htmlFor="new-password">新密码</Label><Input id="new-password" type="password" minLength={8} value={password} onChange={event => setPassword(event.target.value)} required /></div><div className="grid gap-2"><Label htmlFor="confirm-password">确认新密码</Label><Input id="confirm-password" type="password" minLength={8} value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required /></div><Button disabled={loading}>{loading ? <Loader2 className="animate-spin" /> : null}保存密码</Button></form></CardContent></Card></div>
+  return <div className="grid gap-4 px-4 lg:grid-cols-2 lg:px-6"><Card title="账户资料" description="邮箱是你的唯一登录账号。"><div className="grid gap-4"><Input label="邮箱" id="profile-email" value={email} disabled /><Metric label="注册时间" value={data ? formatDate(data.createdAt) : "-"} /></div></Card><Card title="修改密码" description="修改成功后当前设备需要重新登录，其他设备保持登录。"><form className="grid gap-4" onSubmit={submit} noValidate><PasswordField label="当前密码" id="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} required /><PasswordField label="新密码" id="new-password" minLength={8} value={password} onChange={event => setPassword(event.target.value)} required /><PasswordField label="确认新密码" id="confirm-password" minLength={8} value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} required /><ActionButton label="保存密码" pending={loading} /></form></Card></div>
 }
 
 export function PaymentResultPage() {
@@ -679,9 +646,9 @@ export function PaymentResultPage() {
 }
 
 function Metric({ label, value, description }: { label: string; value: React.ReactNode; description?: string }) {
-  return <div className="grid gap-1"><span className="flex items-center gap-1 text-sm text-muted-foreground">{label}{description ? <Tooltip><TooltipTrigger aria-label={`${label}说明`}><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent>{description}</TooltipContent></Tooltip> : null}</span><strong className="text-sm font-medium">{value}</strong></div>
+  return <div className="grid gap-1"><span className="flex items-center gap-1 text-sm text-muted-foreground">{label}{description ? <Tooltip content={description}><button type="button" aria-label={`${label}说明`}><CircleHelp className="size-3.5" /></button></Tooltip> : null}</span><strong className="text-sm font-medium">{value}</strong></div>
 }
 
 function OrdersTable({ orders }: { orders: PaymentOrder[] }) {
-  return <><ItemGroup className="md:hidden">{orders.map(order => <OrderMobileItem key={order.id} amount={formatMoney(order.totalAmount ?? order.amount)} createdAt={order.createdAt} detailUrl={`/account/orders/${encodeURIComponent(order.id)}`} orderNumber={order.merOrderTid} product={orderProductLabel(order)} status={order.statusText} statusVariant={order.status === "paid" ? "success" : order.status === "pending" ? "warning" : order.status === "failed" ? "destructive" : "secondary"} />)}</ItemGroup><div className="hidden md:block"><Table><TableHeader><TableRow><TableHead>订单</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{orders.map(order => <TableRow key={order.id}><TableCell className="font-mono text-xs">{order.merOrderTid}</TableCell><TableCell>{orderProductLabel(order)}</TableCell><TableCell>{formatMoney(order.totalAmount ?? order.amount)}</TableCell><TableCell><Badge variant={order.status === "paid" ? "default" : "secondary"}>{order.statusText}</Badge></TableCell><TableCell>{formatDate(order.createdAt)}</TableCell><TableCell><div className="flex justify-end"><DataTableRowActions detail={<Button asChild variant="ghost" size="icon"><Link to={`/account/orders/${encodeURIComponent(order.id)}`} aria-label="查看订单详情"><Eye /></Link></Button>} /></div></TableCell></TableRow>)}</TableBody></Table></div></>
+  return <><div className="grid gap-3 md:hidden">{orders.map(order => <OrderMobileItem key={order.id} amount={formatMoney(order.totalAmount ?? order.amount)} createdAt={order.createdAt} detailUrl={`/account/orders/${encodeURIComponent(order.id)}`} orderNumber={order.merOrderTid} product={orderProductLabel(order)} status={order.statusText} statusVariant={order.status === "paid" ? "success" : order.status === "pending" ? "warning" : order.status === "failed" ? "danger" : "neutral"} />)}</div><div className="hidden md:block"><SimpleTable caption="订单列表" columns={["订单", "套餐", "金额", "状态", "创建时间", "操作"]} rows={orders} rowKey={(order) => order.id} cells={(order) => [<span className="font-mono text-xs">{order.merOrderTid}</span>, <>{orderProductLabel(order)}</>, <>{formatMoney(order.totalAmount ?? order.amount)}</>, <Badge tone={order.status === "paid" ? "neutral" : "neutral"}>{order.statusText}</Badge>, <>{formatDate(order.createdAt)}</>, <div className="flex justify-end"><DataTableRowActions detail={<Button asChild variant="ghost" size="icon"><Link to={`/account/orders/${encodeURIComponent(order.id)}`} aria-label="查看订单详情"><Eye /></Link></Button>} /></div>]} /></div></>
 }

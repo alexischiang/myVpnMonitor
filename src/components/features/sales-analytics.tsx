@@ -1,24 +1,25 @@
 import * as React from "react"
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Label, LabelList, Pie, PieChart, XAxis, YAxis } from "recharts"
 import type { DateRange } from "react-day-picker"
 import { Link, useLocation } from "react-router-dom"
 import { IconArrowDownRight, IconArrowUpRight, IconCalendar, IconCash, IconDiscount, IconInfoCircle, IconReceipt, IconUsers } from "@tabler/icons-react"
 
 import { fetchJson } from "@/api"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { DateRangePicker } from "@/components/arc/date-range-picker/date-range-picker"
+import { BarChart } from "@/components/arc/bar-chart/bar-chart"
+import { DonutChart } from "@/components/arc/donut-chart/donut-chart"
+import { LineChart } from "@/components/arc/line-chart/line-chart"
 import { useData } from "@/components/features/data-provider"
 import { salesAmount, salesDateKey, salesDateRange, salesMonthRange, unlinkedSalesBills, type SalesPeriod } from "@/components/features/sales-analytics-logic"
 import { formatBytes, formatMoney, userStatus } from "@/utils"
+import { Alert } from "@/components/arc/alert/alert"
+import { Badge } from "@/components/arc/badge/badge"
+import { Button } from "@/components/arc/button/button"
+import { Card } from "@/components/arc/card/card"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/arc/popover/popover"
+import { Tabs, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs"
+import { Tooltip } from "@/components/arc/tooltip/tooltip"
+import { Select } from "@/components/arc/select/select"
+import { SimpleTable } from "@/components/features/simple-table"
 
 type SalesOrder = {
   id: string
@@ -50,20 +51,6 @@ type ProfitabilityReport = {
   nodes: Array<{ guid: string; name: string; billingBytes: number; costBytes: number; trafficCost: number; fixedCost: number | null }>
   missingConfigNodes: Array<{ guid: string; name: string }>
 }
-
-const salesChartConfig = {
-  newCustomer: { label: "新客销售", color: "var(--chart-2)" },
-  returningCustomer: { label: "老客复购", color: "var(--chart-1)" },
-} satisfies ChartConfig
-
-const productChartConfig = {
-  sales: { label: "销售额", color: "var(--chart-1)" },
-} satisfies ChartConfig
-
-const customerChartConfig = {
-  active: { label: "活跃客户", color: "var(--chart-1)" },
-  expired: { label: "已过期", color: "var(--muted)" },
-} satisfies ChartConfig
 
 const months = Array.from({ length: 12 }, (_, index) => index + 1)
 
@@ -112,21 +99,14 @@ function delta(current: number, previous: number) {
 
 function MetricCard({ title, value, detail, change, tooltip, icon: Icon }: { title: string; value: string; detail: string; change?: number; tooltip?: string; icon: typeof IconCash }) {
   const positive = (change || 0) >= 0
-  return <Card>
-    <CardHeader>
-      <CardDescription className="flex items-center gap-1.5">{title}{tooltip ? <TooltipProvider><Tooltip><TooltipTrigger asChild><button type="button" aria-label={`说明${title}`}><IconInfoCircle className="size-4" /></button></TooltipTrigger><TooltipContent className="max-w-72">{tooltip}</TooltipContent></Tooltip></TooltipProvider> : null}</CardDescription>
-      <CardAction><Icon className="size-5 text-muted-foreground" /></CardAction>
-      <CardTitle className="text-2xl tabular-nums sm:text-3xl">{value}</CardTitle>
-    </CardHeader>
-    <CardContent className="flex items-center justify-between gap-3 text-sm">
+  return <Card description={<>{title}{tooltip ? <Tooltip content={tooltip}><button type="button" aria-label={`说明${title}`}><IconInfoCircle className="size-4" /></button></Tooltip> : null}</>} headerAction={<Icon className="size-5 text-muted-foreground" />} title={value}><div className="flex items-center justify-between gap-3 text-sm">
       <span className="text-muted-foreground">{detail}</span>
-      {change === undefined ? null : <Badge variant={positive ? "success" : "destructive"}>{positive ? <IconArrowUpRight /> : <IconArrowDownRight />}{percent(Math.abs(change))}</Badge>}
-    </CardContent>
-  </Card>
+      {change === undefined ? null : <Badge tone={positive ? "success" : "danger"}>{positive ? <IconArrowUpRight /> : <IconArrowDownRight />}{percent(Math.abs(change))}</Badge>}
+    </div></Card>
 }
 
 function ExplainedLabel({ label, description }: { label: string; description: string }) {
-  return <span className="inline-flex items-center gap-1">{label}<TooltipProvider><Tooltip><TooltipTrigger asChild><button type="button" aria-label={`说明${label}`}><IconInfoCircle className="size-4" /></button></TooltipTrigger><TooltipContent className="max-w-72">{description}</TooltipContent></Tooltip></TooltipProvider></span>
+  return <span className="inline-flex items-center gap-1">{label}<Tooltip content={description}><button type="button" aria-label={`说明${label}`}><IconInfoCircle className="size-4" /></button></Tooltip></span>
 }
 
 export function SalesAnalyticsPage({ profitabilityView = false }: { profitabilityView?: boolean }) {
@@ -137,7 +117,6 @@ export function SalesAnalyticsPage({ profitabilityView = false }: { profitabilit
   const currentMonth = new Date().getMonth() + 1
   const [period, setPeriod] = React.useState<SalesPeriod>(savedFilters?.period || "custom")
   const [dateRange, setDateRange] = React.useState<DateRange>(savedFilters?.dateRange || salesMonthRange(currentMonth))
-  const [calendarOpen, setCalendarOpen] = React.useState(false)
   const [selectedMonth, setSelectedMonth] = React.useState(savedFilters?.selectedMonth ?? `${currentMonth}`)
   const [plan, setPlan] = React.useState("all")
   const [profitability, setProfitability] = React.useState<ProfitabilityReport | null>(null)
@@ -284,8 +263,8 @@ export function SalesAnalyticsPage({ profitabilityView = false }: { profitabilit
           <p className="text-sm text-muted-foreground">{profitabilityView ? "收入摊销、节点成本与用户利润率" : "套餐销售、客户复购与优惠表现"}</p>
         </section>
         <nav className="flex items-center gap-1 rounded-lg bg-muted p-1" aria-label="销售统计子页面">
-          <Button asChild size="sm" variant={profitabilityView ? "ghost" : "outline"} className="h-11 border-0 sm:h-8"><Link to="/sales-analytics" state={{ salesFilters: { period, dateRange, selectedMonth } }}>销售概览</Link></Button>
-          <Button asChild size="sm" variant={profitabilityView ? "outline" : "ghost"} className="h-11 border-0 sm:h-8"><Link to="/sales-analytics/profitability" state={{ salesFilters: { period, dateRange, selectedMonth } }}>成本与利润</Link></Button>
+          <Button asChild size="sm" variant={profitabilityView ? "ghost" : "secondary"} className="h-11 border-0 sm:h-8"><Link to="/sales-analytics" state={{ salesFilters: { period, dateRange, selectedMonth } }}>销售概览</Link></Button>
+          <Button asChild size="sm" variant={profitabilityView ? "secondary" : "ghost"} className="h-11 border-0 sm:h-8"><Link to="/sales-analytics/profitability" state={{ salesFilters: { period, dateRange, selectedMonth } }}>成本与利润</Link></Button>
         </nav>
       </div>
       <section className="flex flex-wrap items-center gap-2 sm:justify-end" aria-label="统计筛选">
@@ -297,46 +276,23 @@ export function SalesAnalyticsPage({ profitabilityView = false }: { profitabilit
             <TabsTrigger value="all">全部</TabsTrigger>
           </TabsList>
         </Tabs>
-        <Select value={selectedMonth} onValueChange={value => {
+        <Select label={`按 ${new Date().getFullYear()} 年月份筛选`} hideLabel value={selectedMonth} onValueChange={value => {
           setSelectedMonth(value)
           setDateRange(salesMonthRange(Number(value)))
           setPeriod("custom")
-        }}>
-          <SelectTrigger className="min-w-20 data-[size=default]:h-11 sm:data-[size=default]:h-9" aria-label={`按 ${new Date().getFullYear()} 年月份筛选`}><SelectValue placeholder="月份" /></SelectTrigger>
-          <SelectContent>{months.map(month => <SelectItem key={month} value={`${month}`} disabled={month > new Date().getMonth() + 1}>{month}月</SelectItem>)}</SelectContent>
-        </Select>
-        <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-          <PopoverTrigger asChild>
-            <Button className="h-11 sm:h-9" variant="outline" aria-label="选择统计日期范围"><IconCalendar />{period === "custom" ? rangeLabel : "日期范围"}</Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0" align="end">
-            <Calendar
-              mode="range"
-              selected={dateRange}
-              disabled={{ after: new Date() }}
-              onSelect={setDateRange}
-            />
-            <footer className="flex justify-end border-t p-3">
-              <Button
-                disabled={!dateRange?.from || !dateRange.to}
-                onClick={() => {
-                  setSelectedMonth("")
-                  setPeriod("custom")
-                  setCalendarOpen(false)
-                }}
-              >应用日期</Button>
-            </footer>
-          </PopoverContent>
-        </Popover>
-        <Select value={plan} onValueChange={setPlan}>
-          <SelectTrigger className="min-w-28 data-[size=default]:h-11 sm:data-[size=default]:h-9" aria-label="筛选套餐"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">全部套餐</SelectItem>
-            <SelectItem value="basic">BASIC</SelectItem>
-            <SelectItem value="pro">PRO</SelectItem>
-            <SelectItem value="ultra">ULTRA</SelectItem>
-          </SelectContent>
-        </Select>
+        }} className="min-w-20 data-[size=default]:h-11 sm:data-[size=default]:h-9" placeholder="月份" options={[...months.map(month => ({ value: `${month}`, label: `${month}月`, disabled: month > new Date().getMonth() + 1 }))]} />
+        <DateRangePicker
+          label="选择统计日期范围"
+          placeholder="日期范围"
+          value={period === "custom" && dateRange?.from && dateRange.to ? { start: dateRange.from, end: dateRange.to } : null}
+          maxDate={new Date()}
+          onChange={range => {
+            setDateRange({ from: range.start, to: range.end })
+            setSelectedMonth("")
+            setPeriod("custom")
+          }}
+        />
+        <Select label="筛选套餐" hideLabel value={plan} onValueChange={setPlan} className="min-w-28 data-[size=default]:h-11 sm:data-[size=default]:h-9" options={[{ value: "all", label: "全部套餐" }, { value: "basic", label: "BASIC" }, { value: "pro", label: "PRO" }, { value: "ultra", label: "ULTRA" }]} />
       </section>
     </header>
 
@@ -349,8 +305,8 @@ export function SalesAnalyticsPage({ profitabilityView = false }: { profitabilit
 
     {profitabilityView ? <section className="grid gap-4" aria-label="成本与利润">
       <p className="text-sm text-muted-foreground">收入按套餐有效天数摊销；流量成本数据从功能开始采集后计算{profitability?.dataSince ? `，当前最早为 ${profitability.dataSince}` : ""}。</p>
-      {profitabilityError ? <Alert variant="destructive"><AlertDescription>{profitabilityError}</AlertDescription></Alert> : null}
-      {profitability?.missingConfigNodes.length ? <Alert variant="warning"><AlertDescription>以下节点在所选日期尚未设置 VPS 成本，相关流量未计入成本：{profitability.missingConfigNodes.map(node => node.name).join("、")}</AlertDescription></Alert> : null}
+      {profitabilityError ? <Alert tone="danger" title={profitabilityError} /> : null}
+      {profitability?.missingConfigNodes.length ? <Alert tone="warning" title={`以下节点在所选日期尚未设置 VPS 成本，相关流量未计入成本：${profitability.missingConfigNodes.map(node => node.name).join("、")}`} /> : null}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <MetricCard title="摊销收入" value={profitability ? formatMoney(profitability.summary.revenue) : "-"} detail="按有效天数确认" tooltip="套餐实收现金价值按 30、90、180 或 360 天直线摊销；赠送与返利余额不计入收入。" icon={IconCash} />
         <MetricCard title="用户流量成本" value={profitability ? formatMoney(profitability.summary.trafficCost) : "-"} detail="按节点成本规则分摊" tooltip="用户扣量始终是 in + out；VPS 成本计量根据节点配置采用 in + out 或 out only。" icon={IconDiscount} />
@@ -360,93 +316,76 @@ export function SalesAnalyticsPage({ profitabilityView = false }: { profitabilit
         <MetricCard title="基础设施利润" value={profitability?.summary.infrastructureProfit == null ? "-" : formatMoney(profitability.summary.infrastructureProfit)} detail={profitability?.summary.infrastructureMargin == null ? (plan === "all" ? "利润率暂无" : "仅支持全部套餐") : `基础设施利润率 ${percent(profitability.summary.infrastructureMargin)}`} tooltip="摊销收入减去全部 VPS 固定成本，比用户流量贡献利润更适合观察整体节点经营结果。" icon={IconCash} />
       </div>
       {profitability ? <section className="grid gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle>用户利润明细</CardTitle><CardDescription>按流量成本降序，展示前 20 位</CardDescription></CardHeader>
-          <CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>用户</TableHead><TableHead className="text-right"><ExplainedLabel label="用户扣量" description="无论 VPS 如何计费，用户套餐始终按 in + out 扣除流量。" /></TableHead><TableHead className="text-right"><ExplainedLabel label="成本计量" description="in + out 节点计算双向流量；out only 节点只计算发往用户的 out 流量。" /></TableHead><TableHead className="text-right">摊销收入</TableHead><TableHead className="text-right">流量成本</TableHead><TableHead className="text-right">毛利率</TableHead></TableRow></TableHeader><TableBody>{profitability.users.slice(0, 20).map(row => <TableRow key={row.userId}><TableCell className="font-medium">{row.label}</TableCell><TableCell className="text-right tabular-nums">{formatBytes(row.billingBytes)}</TableCell><TableCell className="text-right tabular-nums">{formatBytes(row.costBytes)}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(row.revenue)}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(row.trafficCost)}</TableCell><TableCell className="text-right tabular-nums">{row.contributionMargin == null ? "-" : percent(row.contributionMargin)}</TableCell></TableRow>)}</TableBody></Table></CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle>节点成本明细</CardTitle><CardDescription>对比用户扣量、VPS 成本计量与固定费用</CardDescription></CardHeader>
-          <CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>节点</TableHead><TableHead className="text-right">用户扣量</TableHead><TableHead className="text-right">成本计量</TableHead><TableHead className="text-right">分摊成本</TableHead><TableHead className="text-right">固定成本</TableHead></TableRow></TableHeader><TableBody>{profitability.nodes.map(row => <TableRow key={row.guid}><TableCell className="font-medium">{row.name}</TableCell><TableCell className="text-right tabular-nums">{formatBytes(row.billingBytes)}</TableCell><TableCell className="text-right tabular-nums">{formatBytes(row.costBytes)}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(row.trafficCost)}</TableCell><TableCell className="text-right tabular-nums">{row.fixedCost == null ? "-" : formatMoney(row.fixedCost)}</TableCell></TableRow>)}</TableBody></Table></CardContent>
-        </Card>
+        <Card title="用户利润明细" description="按流量成本降序，展示前 20 位"><div className="overflow-x-auto"><SimpleTable
+          caption="用户利润明细"
+          columns={["用户", { label: "用户扣量", header: <ExplainedLabel label="用户扣量" description="无论 VPS 如何计费，用户套餐始终按 in + out 扣除流量。" /> }, { label: "成本计量", header: <ExplainedLabel label="成本计量" description="in + out 节点计算双向流量；out only 节点只计算发往用户的 out 流量。" /> }, "摊销收入", "流量成本", "毛利率"]}
+          rows={profitability.users.slice(0, 20)}
+          rowKey={row => row.userId}
+          cells={row => [
+            <span className="font-medium">{row.label}</span>,
+            <span className="tabular-nums">{formatBytes(row.billingBytes)}</span>,
+            <span className="tabular-nums">{formatBytes(row.costBytes)}</span>,
+            <span className="tabular-nums">{formatMoney(row.revenue)}</span>,
+            <span className="tabular-nums">{formatMoney(row.trafficCost)}</span>,
+            <span className="tabular-nums">{row.contributionMargin == null ? "-" : percent(row.contributionMargin)}</span>,
+          ]}
+        /></div></Card>
+        <Card title="节点成本明细" description="对比用户扣量、VPS 成本计量与固定费用"><div className="overflow-x-auto"><SimpleTable caption="节点列表" columns={["节点", "用户扣量", "成本计量", "分摊成本", "固定成本"]} rows={profitability.nodes} rowKey={(row) => row.guid} cells={(row) => [<span className="font-medium">{row.name}</span>, <span className="text-right tabular-nums">{formatBytes(row.billingBytes)}</span>, <span className="text-right tabular-nums">{formatBytes(row.costBytes)}</span>, <span className="text-right tabular-nums">{formatMoney(row.trafficCost)}</span>, <span className="text-right tabular-nums">{row.fixedCost == null ? "-" : formatMoney(row.fixedCost)}</span>]} /></div></Card>
       </section> : null}
     </section> : null}
 
     {!profitabilityView ? <section className="grid gap-4 xl:grid-cols-3">
-      <Card className="xl:col-span-2">
-        <CardHeader><CardTitle>销售趋势</CardTitle><CardDescription>新客成交与老客复购分布</CardDescription></CardHeader>
-        <CardContent>
-          <ChartContainer config={salesChartConfig} className="h-72 w-full">
-            <AreaChart data={report.trend}>
-              <CartesianGrid vertical={false} />
-              <XAxis dataKey="period" tickLine={false} axisLine={false} tickMargin={8} minTickGap={24} tickFormatter={shortPeriodLabel} />
-              <YAxis tickLine={false} axisLine={false} tickFormatter={value => `¥${Math.round(value)}`} width={64} />
-              <ChartTooltip content={<ChartTooltipContent indicator="dot" labelFormatter={value => fullPeriodLabel(String(value))} formatter={(value, name, item) => {
-                const key = String(item.dataKey)
-                return <><span className="text-muted-foreground">{salesChartConfig[key as keyof typeof salesChartConfig]?.label ?? name}</span><span className="ml-auto font-mono font-medium tabular-nums">{formatMoney(Number(item.payload?.[key] ?? value))}</span></>
-              }} />} />
-              <ChartLegend content={<ChartLegendContent />} />
-              <Area dataKey="newCustomer" type="monotone" stackId="sales" fill="var(--color-newCustomer)" fillOpacity={0.25} stroke="var(--color-newCustomer)" />
-              <Area dataKey="returningCustomer" type="monotone" stackId="sales" fill="var(--color-returningCustomer)" fillOpacity={0.5} stroke="var(--color-returningCustomer)" />
-            </AreaChart>
-          </ChartContainer>
-        </CardContent>
-      </Card>
+      <Card className="xl:col-span-2" title="销售趋势" description="新客成交与老客复购分布"><LineChart
+            label="销售趋势"
+            height={288}
+            data={report.trend.map(item => ({ key: item.period, label: fullPeriodLabel(item.period), axisLabel: shortPeriodLabel(item.period), values: { newCustomer: item.newCustomer, returningCustomer: item.returningCustomer } }))}
+            series={[{ key: "returningCustomer", label: "老客复购" }, { key: "newCustomer", label: "新客销售" }]}
+            formatValue={value => formatMoney(value)}
+            formatTick={value => `¥${Math.round(value)}`}
+          /></Card>
 
-      <Card>
-        <CardHeader><CardTitle>客户贡献</CardTitle><CardDescription>老客户是私域销售基本盘</CardDescription></CardHeader>
-        <CardContent className="grid gap-6">
+      <Card title="客户贡献" description="老客户是私域销售基本盘"><div className="grid gap-6">
           <section><p className="text-3xl font-semibold tabular-nums">{formatMoney(report.returningSales)}</p><p className="text-sm text-muted-foreground">老客复购销售额 · 占比 {percent(report.returningShare)}</p></section>
           <section className="grid grid-cols-2 gap-4 border-t pt-5">
             <article><p className="text-sm text-muted-foreground">新客销售</p><p className="text-xl font-semibold tabular-nums">{formatMoney(report.newSales)}</p></article>
             <article><p className="text-sm text-muted-foreground">30天内到期</p><p className="text-xl font-semibold tabular-nums">{report.expiring30} 人</p></article>
           </section>
-          <Badge variant="secondary">仅统计付费套餐，不含附加产品</Badge>
-        </CardContent>
-      </Card>
+          <Badge>仅统计付费套餐，不含附加产品</Badge>
+        </div></Card>
     </section> : null}
 
     {!profitabilityView ? <section className="grid gap-4 lg:grid-cols-3">
-      <Card className="lg:col-span-2">
-        <CardHeader><CardTitle>套餐表现</CardTitle><CardDescription>按实际成交金额排序</CardDescription></CardHeader>
-        <CardContent>
-          <ChartContainer config={productChartConfig} className="h-64 w-full">
-            <BarChart data={report.products} layout="vertical" margin={{ left: 8, right: 96 }}>
-              <CartesianGrid horizontal={false} />
-              <XAxis type="number" tickLine={false} axisLine={false} tickFormatter={value => `¥${Math.round(value)}`} />
-              <YAxis type="category" dataKey="name" tickLine={false} axisLine={false} width={88} />
-              <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-              <Bar dataKey="sales" fill="var(--color-sales)" radius={4}>
-                <LabelList dataKey="sales" position="right" formatter={value => formatMoney(Number(value))} className="fill-foreground text-xs tabular-nums" />
-              </Bar>
-            </BarChart>
-          </ChartContainer>
-        </CardContent>
-      </Card>
+      <Card className="lg:col-span-2" title="套餐表现" description="按实际成交金额排序"><BarChart
+            label="套餐销售额"
+            period="按实际成交金额排序"
+            averageLabel="平均销售额"
+            valueLabel="销售额"
+            categoryLabel="套餐"
+            height={224}
+            data={report.products.map(item => ({ key: item.name, label: item.name, axisLabel: item.name, value: item.sales }))}
+            formatValue={value => formatMoney(value)}
+          /></Card>
 
-      <Card>
-        <CardHeader><CardTitle>客户状态</CardTitle><CardDescription>当前全部套餐客户</CardDescription></CardHeader>
-        <CardContent className="grid place-items-center gap-4">
-          <ChartContainer config={customerChartConfig} className="h-44 w-full">
-            <PieChart><Pie data={[{ name: "active", value: report.activeUsers }, { name: "expired", value: report.expiredUsers }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={70} strokeWidth={4}>{["var(--color-active)", "var(--color-expired)"].map(color => <Cell key={color} fill={color} />)}<Label content={({ viewBox }) => viewBox && "cx" in viewBox && "cy" in viewBox ? <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle"><tspan x={viewBox.cx} dy="-0.5em" className="fill-foreground text-xs font-semibold tabular-nums">{percent(report.activeUserShare)} 活跃</tspan><tspan x={viewBox.cx} dy="1.5em" className="fill-muted-foreground text-xs tabular-nums">{percent(100 - report.activeUserShare)} 过期</tspan></text> : null} /></Pie><ChartTooltip content={<ChartTooltipContent hideLabel />} /></PieChart>
-          </ChartContainer>
+      <Card title="客户状态" description="当前全部套餐客户"><div className="grid place-items-center gap-4">
+          <DonutChart
+            label="客户状态"
+            unit="人"
+            totalLabel="客户总数"
+            size={176}
+            legend={false}
+            data={[{ key: "active", label: "活跃客户", value: report.activeUsers }, { key: "expired", label: "已过期", value: report.expiredUsers, color: "var(--border-strong)" }]}
+          />
           <section className="grid w-full grid-cols-2 gap-4 border-t pt-4 text-center">
             <article><p className="text-2xl font-semibold tabular-nums">{report.activeUsers}</p><p className="text-sm text-muted-foreground">活跃客户</p></article>
             <article><p className="text-2xl font-semibold tabular-nums">{report.expiredUsers}</p><p className="text-sm text-muted-foreground">已过期</p></article>
           </section>
-        </CardContent>
-      </Card>
+        </div></Card>
     </section> : null}
 
     {!profitabilityView ? <section className="grid gap-4 xl:grid-cols-2">
-      <Card>
-        <CardHeader><CardTitle>优惠码表现</CardTitle><CardDescription>亲友码保留展示，但不与公开活动混淆</CardDescription></CardHeader>
-        <CardContent><Table><TableHeader><TableRow><TableHead>优惠码</TableHead><TableHead className="text-right">订单</TableHead><TableHead className="text-right">销售额</TableHead><TableHead className="text-right">优惠</TableHead><TableHead className="text-right">老客</TableHead></TableRow></TableHeader><TableBody>{report.coupons.map(row => <TableRow key={row.code}><TableCell><Badge variant={/FRND|EUWN/i.test(row.code) ? "secondary" : "outline"}>{row.code}</Badge></TableCell><TableCell className="text-right tabular-nums">{row.orders}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(row.sales)}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(row.discount)}</TableCell><TableCell className="text-right tabular-nums">{row.returning}</TableCell></TableRow>)}</TableBody></Table></CardContent>
-      </Card>
+      <Card title="优惠码表现" description="亲友码保留展示，但不与公开活动混淆"><SimpleTable caption="优惠码列表" columns={["优惠码", "订单", "销售额", "优惠", "老客"]} rows={report.coupons} rowKey={(row) => row.code} cells={(row) => [<Badge tone={/FRND|EUWN/i.test(row.code) ? "neutral" : "neutral"}>{row.code}</Badge>, <span className="text-right tabular-nums">{row.orders}</span>, <span className="text-right tabular-nums">{formatMoney(row.sales)}</span>, <span className="text-right tabular-nums">{formatMoney(row.discount)}</span>, <span className="text-right tabular-nums">{row.returning}</span>]} /></Card>
 
-      <Card>
-        <CardHeader><CardTitle>支付渠道</CardTitle><CardDescription>历史渠道代码已合并</CardDescription></CardHeader>
-        <CardContent><Table><TableHeader><TableRow><TableHead>渠道</TableHead><TableHead className="text-right">订单</TableHead><TableHead className="text-right">销售额</TableHead><TableHead className="text-right">客单价</TableHead></TableRow></TableHeader><TableBody>{report.channels.map(row => <TableRow key={row.name}><TableCell className="font-medium">{row.name}</TableCell><TableCell className="text-right tabular-nums">{row.orders}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(row.sales)}</TableCell><TableCell className="text-right tabular-nums">{formatMoney(row.sales / row.orders)}</TableCell></TableRow>)}</TableBody></Table></CardContent>
-      </Card>
+      <Card title="支付渠道" description="历史渠道代码已合并"><SimpleTable caption="渠道列表" columns={["渠道", "订单", "销售额", "客单价"]} rows={report.channels} rowKey={(row) => row.name} cells={(row) => [<span className="font-medium">{row.name}</span>, <span className="text-right tabular-nums">{row.orders}</span>, <span className="text-right tabular-nums">{formatMoney(row.sales)}</span>, <span className="text-right tabular-nums">{formatMoney(row.sales / row.orders)}</span>]} /></Card>
     </section> : null}
   </div>
 }

@@ -4,12 +4,12 @@ import { AlertCircle, RefreshCw } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { apiFetch, fetchJson } from "@/api"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Skeleton } from "@/components/ui/skeleton"
 import { AppLayout } from "@/components/features/app-layout"
 import { AppSidebar } from "@/components/features/app-sidebar"
 import { useData } from "@/components/features/data-provider"
 import { getPageTitle, navItems } from "@/components/features/navigation"
+import { Alert } from "@/components/arc/alert/alert"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
 
 export type ServiceHealth = { status: string; latency?: number; kind?: string; url?: string; message?: string }
 export type HealthResponse = { services: { database: ServiceHealth; subconverter: ServiceHealth; telegram: ServiceHealth; resend: ServiceHealth } }
@@ -90,26 +90,23 @@ export function AppShell() {
         <div className="flex min-w-0 flex-col gap-4 md:gap-6 [&>div]:!px-0">
               {showHealthAlerts ? (
                 <div className="grid gap-2 px-4 lg:px-6">
-                  {healthError && <Alert variant="error"><AlertCircle /><AlertDescription>服务监控 API 连接异常：{healthError}</AlertDescription></Alert>}
-                  {failedServices.map(([name, service]) => <Alert key={name} variant="error"><AlertCircle /><AlertDescription>{name} 连接异常{service.message ? `：${service.message}` : ""}</AlertDescription></Alert>)}
+                  {healthError && <Alert tone="danger" title={`服务监控 API 连接异常：${healthError}`} />}
+                  {failedServices.map(([name, service]) => <Alert tone="danger" key={name} title={`${name} 连接异常${service.message ? `：${service.message}` : ""}`} />)}
                 </div>
               ) : null}
               {data.error && (
                 <div className="px-4 lg:px-6">
-                  <Alert variant="destructive">
-                    <AlertCircle />
-                    <AlertDescription>{data.error}</AlertDescription>
-                  </Alert>
+                  <Alert tone="danger" title={data.error} />
                 </div>
               )}
               {data.loading ? (
                 <div className="grid gap-4 px-4 lg:px-6">
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                     {[1, 2, 3, 4].map(item => (
-                      <Skeleton key={item} className="h-32" />
+                      <Skeleton lines={4} key={item} />
                     ))}
                   </div>
-                  <Skeleton className="h-96" />
+                  <Skeleton lines={6} />
                 </div>
               ) : (
                 <Outlet />

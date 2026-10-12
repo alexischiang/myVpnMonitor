@@ -27,28 +27,15 @@ import {
   Search,
 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { EmptyState } from "@/components/features/shared"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/arc/button/button"
+import { Input } from "@/components/arc/input/input"
+import { Select } from "@/components/arc/select/select"
 
 const normalizeSearchText = (value: unknown) => String(value ?? "").toLocaleLowerCase().replace(/\s+/g, "")
 const searchVariants = new Map<string, string[]>()
@@ -180,28 +167,20 @@ export function DataTable<TData, TValue>({
         {searchableColumn && (
           <div className="relative w-full lg:max-w-sm">
             {frame === "card" ? <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" /> : null}
-            <Input
-              placeholder={searchPlaceholder}
-              value={(searchableColumn.getFilterValue() as string) ?? ""}
-              onChange={event => {
+            <Input label={searchPlaceholder} hideLabel placeholder={searchPlaceholder} value={(searchableColumn.getFilterValue() as string) ?? ""} onChange={event => {
                 searchableColumn.setFilterValue(event.target.value)
                 onSearchChange?.(event.target.value)
-              }}
-              className={cn("w-full", frame === "card" ? "pl-9" : "h-8")}
-            />
+              }} className={cn("w-full", frame === "card" ? "pl-9" : "h-8")} />
           </div>
         )}
         <div className="flex min-w-0 flex-wrap items-center gap-2 lg:ml-auto lg:justify-end">
           {frame === "default" ? toolbar : null}
           {frame === "card" ? (
-            <Select value={`${table.getState().pagination.pageSize}`} onValueChange={value => table.setPageSize(Number(value))}>
-              <SelectTrigger size="sm" className="hidden md:flex" aria-label="每页行数"><SelectValue /></SelectTrigger>
-              <SelectContent align="end">{[10, 20, 30, 40, 50].map(size => <SelectItem key={size} value={`${size}`}>{size}</SelectItem>)}</SelectContent>
-            </Select>
+            <Select label="每页行数" hideLabel value={`${table.getState().pagination.pageSize}`} onValueChange={value => table.setPageSize(Number(value))} className="hidden md:flex" options={[...[10, 20, 30, 40, 50].map(size => ({ value: `${size}`, label: String(size) }))]} />
           ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="hidden md:inline-flex">
+              <Button variant="secondary" size="sm" className="hidden md:inline-flex">
                 <Columns3 />
                 <span className="hidden lg:inline">自定义列</span>
                 <span className="lg:hidden">列</span>
@@ -300,66 +279,24 @@ export function DataTable<TData, TValue>({
           {frame === "card" ? `共 ${filteredRows} 条` : `${selectedRows} / ${filteredRows} 行已选择`}
         </div>
         <div className="flex w-full items-center gap-8 lg:w-fit">
-          {frame === "default" ? <div className="hidden items-center gap-2 lg:flex">
-            <Label htmlFor="rows-per-page" className="text-sm font-medium">
-              每页行数
-            </Label>
-            <Select
-              value={`${table.getState().pagination.pageSize}`}
-              onValueChange={value => table.setPageSize(Number(value))}
-            >
-              <SelectTrigger size="sm" className="w-20" id="rows-per-page">
-                <SelectValue placeholder={table.getState().pagination.pageSize} />
-              </SelectTrigger>
-              <SelectContent side="top">
-                {[10, 20, 30, 40, 50].map(size => (
-                  <SelectItem key={size} value={`${size}`}>
-                    {size}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div> : null}
+          {frame === "default" ? <div className="hidden lg:flex"><Select label="每页行数" value={`${table.getState().pagination.pageSize}`} onValueChange={value => table.setPageSize(Number(value))} className="w-20" id="rows-per-page" placeholder={String(table.getState().pagination.pageSize)} options={[...[10, 20, 30, 40, 50].map(size => ({ value: `${size}`, label: String(size) }))]} /></div> : null}
           <div className="flex w-fit items-center justify-center text-sm font-medium">
             第 {table.getState().pagination.pageIndex + 1} / {pageCount} 页
           </div>
           <div className="ml-auto flex items-center gap-2 lg:ml-0">
-            <Button
-              variant="outline"
-              className="hidden h-8 w-8 p-0 lg:flex"
-              onClick={() => table.setPageIndex(0)}
-              disabled={!table.getCanPreviousPage()}
-            >
+            <Button variant="secondary" className="hidden h-8 w-8 p-0 lg:flex" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>
               <span className="sr-only">第一页</span>
               <ChevronsLeft />
             </Button>
-            <Button
-              variant="outline"
-              className="size-8"
-              size="icon"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
-            >
+            <Button variant="secondary" className="size-8" size="icon" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
               <span className="sr-only">上一页</span>
               <ChevronLeft />
             </Button>
-            <Button
-              variant="outline"
-              className="size-8"
-              size="icon"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
-            >
+            <Button variant="secondary" className="size-8" size="icon" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
               <span className="sr-only">下一页</span>
               <ChevronRight />
             </Button>
-            <Button
-              variant="outline"
-              className="hidden size-8 lg:flex"
-              size="icon"
-              onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-              disabled={!table.getCanNextPage()}
-            >
+            <Button variant="secondary" className="hidden size-8 lg:flex" size="icon" onClick={() => table.setPageIndex(table.getPageCount() - 1)} disabled={!table.getCanNextPage()}>
               <span className="sr-only">最后一页</span>
               <ChevronsRight />
             </Button>
@@ -383,15 +320,10 @@ export function DataTableColumnHeader({
     }
 
     return (
-      <Button
-        variant="ghost"
-        size="sm"
-        className={cn(
+      <Button variant="ghost" size="sm" className={cn(
           "h-8 w-full justify-start gap-1 px-0 text-left font-semibold data-[state=open]:bg-accent has-[>svg]:px-0",
           className
-        )}
-        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-      >
+        )} onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
         <span>{title}</span>
         <ChevronsUpDown />
       </Button>

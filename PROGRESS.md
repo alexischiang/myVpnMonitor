@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-11
-- Current Objective: 提醒设置新增：待交付提醒管理员（Telegram/邮件）与流量用尽邮件提醒用户（默认开，只对新用尽的用户发）
+- Last Updated: 2026-10-12
+- Current Objective: 把 shadcn 组件层替换为 Arc UI（已完成，未提交）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -412,8 +412,12 @@
 
 - 2026-10-11: 流量用尽邮件改为只在用户本轮新达到额度时发送，上线或开启开关时已用尽的用户不补发；npm run verify、npm run verify:harness、git diff --check 通过
 
+- 2026-10-11: npm run verify 通过；类型检查相对迁移前基线无新增错误；隔离环境巡检管理端 20 个、用户端 10 个路由及认证页、价格页，无控制台错误
+
+- 2026-10-12: npm run verify 通过；类型检查相对迁移前基线无新增错误；隔离环境下 45 个路由在浅色和深色各打开一遍，无控制台错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `notifier.js`, `server.js`, `src/components/features/general-settings.tsx`, `src/types.ts`, `test-notifier.js`, `test-payment.js`, `test.js`
+- Files: `AGENTS.md`, `PROGRESS.md`, `components.json`, `docs/agent/ui-rules.md`, `feature_list.json`, `package-lock.json`, `package.json`, `src/components/features/account-node-status.tsx`, `src/components/features/account-onboarding.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/account-traffic-chart.tsx`, `src/components/features/account-verification-icon.tsx`, `src/components/features/app-shell.tsx`, `src/components/features/app-sidebar.tsx`, `src/components/features/auth-pages.tsx`, `src/components/features/back-button.tsx`, `src/components/features/bento-button.tsx`, `src/components/features/bento-card.tsx`, `src/components/features/bills.tsx`, `src/components/features/cashier-card.tsx`, `src/components/features/cashier-page.tsx`, `src/components/features/cashier.tsx`, `src/components/features/catalog-plan-fields.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/category-pills.tsx`, `src/components/features/chart-area-interactive.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/data-table-card.tsx`, `src/components/features/data-table.tsx`, `src/components/features/date-picker.tsx`, `src/components/features/details.tsx`, `src/components/features/emby.tsx`, `src/components/features/general-settings.tsx`, `src/components/features/markdown-editor.tsx`, `src/components/features/notice-badge.tsx`, `src/components/features/online-payment.tsx`, `src/components/features/open-in-browser.tsx`, `src/components/features/orange-button-showcase.tsx`, `src/components/features/order-mobile-item.tsx`, `src/components/features/payment-settings.tsx`, `src/components/features/plan-offer-card.tsx`, `src/components/features/pricing-settings.tsx`, `src/components/features/provider-badge.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/purchased-services.tsx`, `src/components/features/request-progress.tsx`, `src/components/features/sales-analytics.tsx`, `src/components/features/sales-settings.tsx`, `src/components/features/section-cards.tsx`, `src/components/features/service-delivery.tsx`, `src/components/features/shared.tsx`, `src/components/features/simple-form.tsx`, `src/components/features/site-header.tsx`, `src/components/features/status-page.tsx`, `src/components/features/step-progress.tsx`, `src/components/features/subconverter.tsx`, `src/components/features/subscription-pool-select.tsx`, `src/components/features/summary-card.tsx`, `src/components/features/sync-jobs.tsx`, `src/components/features/ticket-pages.tsx`, `src/components/features/user-bills-card.tsx`, `src/components/features/user-form-dialog.tsx`, `src/components/features/users-summary-card.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-logs.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `src/styles.css`, `docs/agent/arc-migration.md`, `src/components/arc/`, `src/components/features/arc-data-table.tsx`, `src/components/features/new-password-field.tsx`, `src/components/features/simple-table.tsx`, `src/components/features/toast.tsx`
 - Known risks: none
-- Recommended Next Step: 保存提示遮挡保存按钮的问题待单独处理
+- Recommended Next Step: 由用户决定是否提交；保留项和没有套用的 block 见 docs/agent/arc-migration.md 第 7 节

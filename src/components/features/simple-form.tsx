@@ -2,16 +2,17 @@
 
 import { Loader2 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Textarea } from "@/components/ui/textarea"
 import { DatePicker } from "@/components/features/date-picker"
 import { cn } from "@/lib/utils"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Button } from "@/components/arc/button/button"
+import { Checkbox } from "@/components/arc/checkbox/checkbox"
+import { Input } from "@/components/arc/input/input"
+import { Select } from "@/components/arc/select/select"
+import { Switch } from "@/components/arc/switch/switch"
+import { Textarea } from "@/components/arc/textarea/textarea"
+import { Dialog, DialogContent } from "@/components/arc/dialog/dialog"
 
 type FieldVisibility = { visibleWhen?: { field: string; equals: string | number | boolean } }
 
@@ -94,12 +95,7 @@ export function SimpleFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn("max-h-[calc(100dvh-2rem)] overflow-hidden", contentClassName)}>
-        <form className="grid max-h-[calc(100dvh-5rem)] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-5" onSubmit={submit} noValidate>
-          <DialogHeader>
-            <DialogTitle>{title}</DialogTitle>
-            {description && <DialogDescription>{description}</DialogDescription>}
-          </DialogHeader>
+      <DialogContent title={title} description={description} className={cn("max-h-[calc(100dvh-2rem)] overflow-hidden", contentClassName)}><form className="grid max-h-[calc(100dvh-5rem)] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-5" onSubmit={submit} noValidate>
           <FieldGroup className="grid min-h-0 gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
             {fields.filter(field => !field.visibleWhen || values[field.visibleWhen.field] === field.visibleWhen.equals).map(field => {
               const value = values[field.name]
@@ -120,13 +116,7 @@ export function SimpleFormDialog({
                       {field.type === "switch" ? (
                         <Switch id={field.name} name={field.name} checked={Boolean(value)} onCheckedChange={checked => update(field.name, checked)} />
                       ) : (
-                        <Checkbox
-                          id={field.name}
-                          name={field.name}
-                          className="mt-0.5"
-                          checked={Boolean(value)}
-                          onCheckedChange={checked => update(field.name, checked === true)}
-                        />
+                        <Checkbox id={field.name} name={field.name} className="mt-0.5" checked={Boolean(value)} onCheckedChange={checked => update(field.name, checked === true)} />
                       )}
                       <FieldContent className="gap-1">
                         <FieldLabel htmlFor={field.name}>{field.label}</FieldLabel>
@@ -139,27 +129,16 @@ export function SimpleFormDialog({
                       {field.type === "date" ? (
                         <DatePicker
                           id={field.name}
+                          label={field.label}
                           value={String(value || "")}
                           invalid={Boolean(errors[field.name])}
                           onChange={value => update(field.name, value)}
                         />
                       ) : field.type === "textarea" ? (
-                        <Textarea
-                          id={field.name}
-                          name={field.name}
-                          className={field.controlClassName}
-                          required={field.required}
-                          aria-invalid={Boolean(errors[field.name])}
-                          rows={field.rows || 4}
-                          placeholder={field.placeholder}
-                          value={String(value || "")}
-                          onChange={event => update(field.name, event.target.value)}
-                        />
+                        <Textarea label={field.label} hideLabel id={field.name} name={field.name} className={field.controlClassName} required={field.required} aria-invalid={Boolean(errors[field.name])} rows={field.rows || 4} placeholder={field.placeholder} value={String(value || "")} onChange={event => update(field.name, event.target.value)} />
                       ) : field.type === "select" ? (
                         <>
-                          <Select
-                            value={customFields.has(field.name) ? "__custom__" : String(value || "")}
-                            onValueChange={next => {
+                          <Select label={field.placeholder || "请选择"} hideLabel value={customFields.has(field.name) ? "__custom__" : String(value || "")} onValueChange={next => {
                               setCustomFields(current => {
                                 const updated = new Set(current)
                                 if (next === "__custom__") updated.add(field.name)
@@ -167,40 +146,13 @@ export function SimpleFormDialog({
                                 return updated
                               })
                               update(field.name, next === "__custom__" ? "" : next)
-                            }}
-                            required={field.required}
-                          >
-                            <SelectTrigger id={field.name} className="w-full" aria-invalid={Boolean(errors[field.name])}>
-                              <SelectValue placeholder={field.placeholder || "请选择"} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {field.options.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
-                              {field.allowCustom ? <SelectItem value="__custom__">{field.customLabel || "新增选项"}</SelectItem> : null}
-                            </SelectContent>
-                          </Select>
+                            }} required={field.required} id={field.name} className="w-full" aria-invalid={Boolean(errors[field.name])} placeholder={field.placeholder || "请选择"} options={[...field.options.map(option => ({ value: option.value, label: option.label })), ...(field.allowCustom ? [{ value: "__custom__", label: field.customLabel || "新增选项" }] : [])]} />
                           {customFields.has(field.name) ? (
-                            <Input
-                              id={`${field.name}-custom`}
-                              name={field.name}
-                              required={field.required}
-                              aria-invalid={Boolean(errors[field.name])}
-                              placeholder={field.customPlaceholder || "输入新选项"}
-                              value={String(value || "")}
-                              onChange={event => update(field.name, event.target.value)}
-                            />
+                            <Input label={field.customPlaceholder || "输入新选项"} hideLabel id={`${field.name}-custom`} name={field.name} required={field.required} aria-invalid={Boolean(errors[field.name])} placeholder={field.customPlaceholder || "输入新选项"} value={String(value || "")} onChange={event => update(field.name, event.target.value)} />
                           ) : null}
                         </>
                       ) : (
-                        <Input
-                          id={field.name}
-                          name={field.name}
-                          required={field.required}
-                          aria-invalid={Boolean(errors[field.name])}
-                          type={field.type || "text"}
-                          placeholder={field.placeholder}
-                          value={String(value || "")}
-                          onChange={event => update(field.name, field.type === "number" && event.target.value !== "" ? Number(event.target.value) : event.target.value)}
-                        />
+                        <Input label={field.label} hideLabel id={field.name} name={field.name} required={field.required} aria-invalid={Boolean(errors[field.name])} type={field.type || "text"} placeholder={"placeholder" in field ? field.placeholder : undefined} value={String(value || "")} onChange={event => update(field.name, field.type === "number" && event.target.value !== "" ? Number(event.target.value) : event.target.value)} />
                       )}
                       <FieldError>{errors[field.name]}</FieldError>
                     </>
@@ -209,17 +161,13 @@ export function SimpleFormDialog({
               )
             })}
           </FieldGroup>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <div className="mt-6 flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
               取消
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? <Loader2 className="animate-spin" /> : null}
-              {submitting ? "保存中..." : submitLabel}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
+            <ActionButton type="submit" label={submitLabel} pendingLabel="保存中..." pending={submitting} />
+          </div>
+        </form></DialogContent>
     </Dialog>
   )
 }
