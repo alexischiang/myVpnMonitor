@@ -197,7 +197,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 |---|---|
 | `/register` | `signup-form`（扩展：邀请码字段、注册模式、`password-strength`；去掉第三方登录） |
 | `/login`、`/forgot-password`、`/reset-password` | 免费的登录 block（`sign-in`、`login-centered`）都是验证码或通行密钥流程，没有邮箱加密码的。以 `login-centered` 的卡片框架为底，步骤换成邮箱加 `password-field`。实现时验证 |
-| `/pricing` | `site-header`、`plan-comparison`（套餐数据在文件内常量，需改为属性）、`faq-section`、`site-footer` |
+| `/pricing` | `site-header`、`plan-comparison`（已改为属性驱动，见第 6 节；目前只在测试路由 `/account/plans/compare` 使用）、`faq-section`、`site-footer` |
 | 列表页（用户、订单、工单、账单、交付等） | `filter-toolbar`、`sortable-data-table`、`pagination`、`empty-state` |
 | 详情页（用户详情、订单详情、工单详情） | `page-header`（该 block 不接收属性，数据要提成属性） |
 | 工单对话 | `chat-thread` |
@@ -280,6 +280,8 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `metric-card`（补充） | 标题行的文字样式从 `.top span` 收窄为 `.top > span`（只作用于标题），`action` 插槽里的徽标、按钮保持自己的文字颜色和字号；`trailing`：右下角的控件（如圆形跳转按钮），数字和说明留在左下 |
 | `blocks/cta-section`（补充） | `transparent`（仅 banner）：去掉 banner 和外层 section 的底色并把边框加深一档，用于放在渐变或有底色的页面背景上（总览页的发送工单 banner） |
 | `user-menu`（补充） | 首字母头像用前景色填充（浅色主题黑底白字，深色主题浅底深字），在透明或渐变顶栏上保持显眼；原为 `surface-muted` 底、`text-secondary` 字 |
+| `money-input` | `size="md"`：与标准 `Input` 同高（`--control-height-md`）、同圆角、同字号，用于字段较多的表单（商品编辑页的价格）；默认仍是 Arc 的大号 `lg` |
+| `blocks/plan-comparison` | 演示常量改为属性（不传时仍显示原演示）：`plans`（任意数量，列数由 `--plan-count` 驱动；`tagline`、`badge`；`prices` 按周期给出 `amount`、`unit`、`note`，缺省表示该周期未开放，按钮禁用）、`periods`（周期切换，只有一个周期时隐藏）、`rows`（值为 `true`/`false`/`null`/文字；所有套餐取值相同即视为共用行，供「只看差异」过滤，可用 `shared` 覆盖）；周期与选中项可受控（`period`/`onPeriodChange`、`selected`/`onSelectedChange`）；`currency`、`footer`、`action`（页脚操作，如购买按钮）、`labels`（全部文案）；价格支持两位小数；列放不下时矩阵横向滚动（宽屏每列至少 168px，窄屏至少 156px） |
 
 ## 7. 进度
 
@@ -311,7 +313,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 
 ### 没有套用的 block
 
-- `plan-comparison`：它并排比较固定的两个档位，数据写在文件里；价格页的套餐来自接口，数量和周期都不固定，所以继续用卡片。
+- `plan-comparison`：原版并排比较固定的两个档位，数据写在文件里，所以价格页继续用卡片。现已改为属性驱动（见第 6 节），先在测试路由 `/account/plans/compare` 套用于周期性套餐，`/account/plans` 和 `/pricing` 暂不切换。
 - `signup-form`：注册页与登录页共用 `login-centered` 框架（见第 8 节第 1 条）。
 - 总览、钱包、设置页对应的 block 都是 Pro。
 

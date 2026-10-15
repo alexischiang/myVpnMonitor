@@ -3400,6 +3400,75 @@
         "page_errors": [],
         "checked_at": "2026-10-13"
       }
+    },
+    {
+      "id": "recurring-plan-compare-page",
+      "name": "Recurring plan comparison page with configurable comparison rows",
+      "description": "A test route /account/plans/compare shows recurring plans side by side in the Arc plan-comparison block, now driven by props (plans, periods, rows, labels, N columns). Rows: price header, monthly traffic, online IPs, extra traffic, regions and line tier (from the line group's inbounds), then admin-configured comparison rows (new table catalog_v2_compare_attributes, seeded with streaming / AI unlock / bandwidth / support). Products gain tagline and compare_values; every comparison row appears in every recurring plan's editor and is required for enabled plans.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The comparison rows are managed on /catalog-v2 and every row appears in the recurring plan editor, with derived rows previewed.",
+        "Saving an enabled recurring plan without a value for a row is refused with the row's name.",
+        "/account/plans/compare shows every recurring plan on sale, switches periods, filters to differences, and links the selected plan and period to checkout.",
+        "The existing /account/plans and /pricing pages are unchanged.",
+        "No console errors or page exceptions on the affected routes."
+      ],
+      "verification": [
+        "2026-10-15: npm run check, npm test, npm run verify:fast, npm run verify:harness, node test-catalog-v2.js (local DB round trip for tagline, compare_values and comparison rows) and git diff --check passed. npm run test:payment and test:wallet were not run: no TEST_DATABASE_URL on this machine and the local DB user cannot create a throwaway database (the payment test truncates app_records, so it was not pointed at the dev DB). Browser on the running dev server, logged in as the seeded expired-renew@xela.test: /account/plans/compare at 1024px and 375px showed 5 recurring plans and 9 rows; half-yearly switch showed totals with per-month and saving notes and disabled the plan without that period; show-differences-only filtered 9 to 3 rows; the footer link pointed to /account/plans/checkout?option=v2:cycled-pro:180d; no page-level horizontal overflow and no clipped plan buttons after widening narrow columns to 156px. /account/plans still rendered unchanged. The only console error was the pre-login 401 from /api/auth/me on /login. Not yet checked in the browser: /catalog-v2 comparison-row manager and the recurring plan editor (needs an admin login).",
+        "2026-10-15: Admin browser check (user logged in as admin): /catalog-v2 listed the 4 seeded comparison rows; added a yes/no row IPv6 through the form (fixed the type Select collapsing to its content width by wrapping it in a 160px container, and hidden field labels now use the row name instead of the internal id). /catalog-v2/products/test-standard showed the tagline field, the 5 derived rows previewed (traffic and IPs per period, extra traffic, regions and line tier with an explanation when the inbounds lack them) and all 5 configured rows; saving with no values was refused with 请填写对比项「流媒体解锁」。, saving with all values and a tagline stored them (IPv6 as yes). Lifetime editor shows the tagline but no comparison card; add-on editor shows neither. The IPv6 test row was deleted afterwards. Console: the deliberate 400 and two 401s from earlier login switches; no page exceptions."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans/compare",
+          "/account/plans",
+          "/catalog-v2",
+          "/catalog-v2/products/test-standard",
+          "/catalog-v2/products/lifetime-basic",
+          "/catalog-v2/products/appleid-us"
+        ],
+        "interactions": [
+          "Switched to half-yearly, toggled show differences only, read the footer checkout link, checked 1024px and 375px for clipping and page overflow.",
+          "Added a yes/no comparison row on /catalog-v2, then deleted it.",
+          "Saved test-standard without comparison values (refused with the row name), then with all values and a tagline (saved)."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-15"
+      }
+    },
+    {
+      "id": "catalog-editor-compact-price-input",
+      "name": "Compact CNY price fields in the product editor",
+      "description": "Every price in the V2 product editor (period price, extra-traffic step price, lifetime price, add-on price) uses one PriceInput: Arc MoneyInput with a new size=\"md\" (standard input height and type), CNY only, no quick-add chips and no min-range line. A cleared period price stays empty while retyping instead of snapping to ¥0.00.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "recurring-plan-compare-page"
+      ],
+      "done_criteria": [
+        "Price fields match the 36px height and 14px type of the other inputs.",
+        "No quick-add chips; currency is fixed to CNY.",
+        "Typing a new price after clearing the field stores the typed amount in cents."
+      ],
+      "verification": [
+        "2026-10-15: npm run check passed. Browser (admin): on /catalog-v2/products/test-standard the period and step price fields measured 36px high with 14px text, no quick-add group, CNY shown; cleared the 30-day price and typed 35, saved, API returned priceCents 3500, then restored 3000. Before the fix the cleared field snapped to 0.00 and typing 3 gave 30.00. Lifetime and add-on price fields also measured 36px. The editor's existing other inputs and pricing-settings.tsx (old pricing page, still on the large MoneyInput) were not changed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/catalog-v2/products/test-standard",
+          "/catalog-v2/products/lifetime-basic",
+          "/catalog-v2/products/appleid-us"
+        ],
+        "interactions": [
+          "Measured price field height and text size.",
+          "Cleared and retyped the 30-day price, saved, read priceCents back, restored it."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-15"
+      }
     }
   ]
 }

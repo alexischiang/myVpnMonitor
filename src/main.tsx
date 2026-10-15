@@ -44,6 +44,7 @@ const CashierPage = lazy(() => import("@/components/features/cashier-page").then
 const CheckoutPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.CheckoutPage })))
 const DeliveryPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.DeliveryPage })))
 const PricingPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.PricingPage })))
+const RecurringPlanComparePage = lazy(() => import("@/components/features/plan-compare-page").then(module => ({ default: module.RecurringPlanComparePage })))
 const ForgotPasswordPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.ForgotPasswordPage })))
 const LoginPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.LoginPage })))
 const RegisterPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.RegisterPage })))
@@ -140,6 +141,8 @@ function App() {
               <Route path="docs" element={<AccountDocsPage />} />
               <Route path="plans" element={<PricingPage />} />
               <Route path="design-system/buttons" element={<OrangeButtonShowcasePage />} />
+              {/* Test route for the plan comparison layout; the plans page itself is unchanged. */}
+              <Route path="plans/compare" element={<RecurringPlanComparePage />} />
               <Route path="plans/checkout" element={<CheckoutPage />} />
               <Route path="orders" element={<AccountOrdersPage />} />
               <Route path="wallet" element={<AccountWalletPage />} />

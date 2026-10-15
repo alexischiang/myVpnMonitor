@@ -46,7 +46,8 @@ async function main() {
     traffic: `test-traffic-${suffix}`,
     manual: `test-manual-${suffix}`,
     category: `test-category-${suffix}`,
-    customNode: `test-custom-node-${suffix}`
+    customNode: `test-custom-node-${suffix}`,
+    compare: `test-compare-${suffix}`
   };
   const createdProducts = [];
   const originalUsers = (await store.loadAll()).users || [];
@@ -72,6 +73,16 @@ async function main() {
     const savedCustomNode = products.find(item => item.id === ids.customNode);
     assert.deepEqual([savedCustomNode.fulfillment.handler, savedCustomNode.buyerInputLabel, savedCustomNode.serviceDurationDays], ["custom_node", "期望地区", 30]);
     assert.equal(products.find(item => item.id === ids.manual).buyerInputLabel, "");
+    assert.deepEqual([products.find(item => item.id === ids.recurring).tagline, products.find(item => item.id === ids.recurring).compareValues], ["", {}], "tagline and comparison values default to empty");
+    const compare = await store.upsertCatalogV2CompareAttribute({ id: ids.compare, label: "Test row", kind: "choice", options: ["A", "B"], sortOrder: 99 }, { create: true });
+    assert.deepEqual([compare.kind, compare.options], ["choice", ["A", "B"]]);
+    assert.equal((await store.upsertCatalogV2CompareAttribute({ ...compare, label: "Renamed row", options: ["A", "B", "C"] })).options.length, 3);
+    await store.saveCatalogV2Product({ ...recurring, tagline: "Short line", compareValues: { [ids.compare]: "C" } });
+    const savedRecurring = (await store.listCatalogV2Products()).find(item => item.id === ids.recurring);
+    assert.deepEqual([savedRecurring.tagline, savedRecurring.compareValues], ["Short line", { [ids.compare]: "C" }]);
+    await store.saveCatalogV2Product(recurring);
+    await store.deleteCatalogV2CompareAttribute(ids.compare);
+    assert.equal((await store.listCatalogV2CompareAttributes()).some(item => item.id === ids.compare), false);
     assert.equal(products.find(item => item.id === ids.manual).chargeTax, true, "charge_tax defaults to true");
     await store.saveCatalogV2Product({ ...manual, chargeTax: false });
     assert.equal((await store.listCatalogV2Products()).find(item => item.id === ids.manual).chargeTax, false);
@@ -181,7 +192,7 @@ async function main() {
     assert.equal(replayedCli.status, 0, replayedCli.stderr);
     assert.match(replayedCli.stdout, /"alreadyMigrated": 2/);
     fs.rmSync(cliDirectory, { recursive: true, force: true });
-    console.log("Catalog V2 checks passed: all product types, quotes, inventory reservations, payment collection, late-payment safety, and idempotent user migration, add-on categories, custom-node handler and buyer input.");
+    console.log("Catalog V2 checks passed: all product types, quotes, inventory reservations, payment collection, late-payment safety, and idempotent user migration, add-on categories, custom-node handler and buyer input, plan tagline and comparison rows.");
   } finally {
     await store.saveCollection("users", originalUsers);
     await store.pool.query("DELETE FROM app_records WHERE collection='migrationState' AND id=$1", [`cli-${suffix}`]);
@@ -189,6 +200,7 @@ async function main() {
     for (const id of createdProducts.reverse()) await store.deleteCatalogV2Product(id);
     await store.deleteCatalogV2LineGroup(ids.group);
     await store.deleteCatalogV2AddonCategory(ids.category);
+    await store.deleteCatalogV2CompareAttribute(ids.compare);
     await store.close();
   }
 }

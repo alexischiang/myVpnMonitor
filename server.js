@@ -21,7 +21,7 @@ const { createOperationLock } = require("./commerce/operation-lock");
 const { createSettlementService } = require("./commerce/settlement");
 const { createPaymentService, manualReceipt, transactionError } = require("./commerce/payments");
 const { createCheckoutWorkflow } = require("./commerce/checkout-workflow");
-const { resolvePurchase: resolveCatalogV2Purchase, visibleProducts: visibleCatalogV2Products } = require("./commerce/catalog-v2");
+const { resolvePurchase: resolveCatalogV2Purchase, visibleProducts: visibleCatalogV2Products, resolveCompareValues: resolveCatalogV2CompareValues, lineGroupCoverage: catalogV2LineGroupCoverage } = require("./commerce/catalog-v2");
 const addonServices = require("./commerce/addon-services");
 
 loadLocalEnv();
@@ -148,7 +148,27 @@ function normalizeCatalogV2AddonCategory(input = {}) {
   return { id: input.id ? normalizeCatalogV2Id(input.id, "分类标识") : `cat-${crypto.randomBytes(4).toString("hex")}`, name, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "分类排序" }) };
 }
 
+function normalizeCatalogV2CompareAttribute(input = {}) {
+  const label = String(input.label || "").trim().slice(0, 30);
+  if (!label) throw new Error("对比项名称不能为空。");
+  const kind = ["choice", "boolean", "text"].includes(input.kind) ? input.kind : "";
+  if (!kind) throw new Error("对比项类型无效。");
+  const options = kind === "choice" ? [...new Set((Array.isArray(input.options) ? input.options : []).map(option => String(option || "").trim().slice(0, 20)).filter(Boolean))] : [];
+  if (kind === "choice" && (options.length < 2 || options.length > 10)) throw new Error("选项型对比项需要 2-10 个选项。");
+  return { id: input.id ? normalizeCatalogV2Id(input.id, "对比项标识") : `cmp-${crypto.randomBytes(4).toString("hex")}`, label, kind, options, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "对比项排序" }) };
+}
+
+function normalizeCatalogV2CompareValues(value) {
+  return Object.fromEntries(Object.entries(value && typeof value === "object" && !Array.isArray(value) ? value : {})
+    .filter(([key]) => CATALOG_V2_ID_PATTERN.test(key))
+    .map(([key, item]) => [key, String(item ?? "").trim().slice(0, 60)])
+    .filter(([, item]) => item)
+    .slice(0, 50));
+}
+
+// Also replaces compareValues with the values checked against the current comparison rows.
 async function assertCatalogV2ProductReferences(product) {
+  product.compareValues = resolveCatalogV2CompareValues(product, await dataStore.listCatalogV2CompareAttributes());
   if (product.lineGroupId && !(await dataStore.listCatalogV2LineGroups()).some(group => group.id === product.lineGroupId && group.isEnabled)) throw new Error("请选择已启用的线路权限组。");
   if (product.addonCategoryId && !(await dataStore.listCatalogV2AddonCategories()).some(category => category.id === product.addonCategoryId)) throw new Error("附加服务分类不存在，请刷新后重新选择。");
 }
@@ -201,6 +221,8 @@ function normalizeCatalogV2Product(input = {}) {
   return {
     id: normalizeCatalogV2Id(input.id, "商品 ID"), type, isEnabled, isForSale: input.isForSale === true,
     stock, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "商品排序" }), name,
+    tagline: isAddon ? "" : String(input.tagline || "").trim().slice(0, 40),
+    compareValues: type === "recurring_plan" ? normalizeCatalogV2CompareValues(input.compareValues) : {},
     description: String(input.description || "").trim().slice(0, 500), features: normalizeCatalogV2Features(input.features),
     isRecommended: type !== "addon" && input.isRecommended === true, lineGroupId,
     addonCategoryId: isAddon && input.addonCategoryId ? normalizeCatalogV2Id(input.addonCategoryId, "附加服务分类") : null,
@@ -9239,6 +9261,18 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  // Data for the recurring plan comparison page: the comparison rows, and the regions and network
+  // levels reached by the line groups of plans on sale.
+  if (pathname === "/api/public/catalog-v2/compare" && req.method === "GET") {
+    const [products, attributes, groups, inbounds] = await Promise.all([dataStore.listCatalogV2Products(), dataStore.listCatalogV2CompareAttributes(), dataStore.listCatalogV2LineGroups(), dataStore.listXuiInbounds()]);
+    const groupIds = new Set(visibleCatalogV2Products(products).filter(product => product.type === "recurring_plan").map(product => product.lineGroupId).filter(Boolean));
+    sendJson(res, 200, {
+      attributes: attributes.map(({ id, label, kind, options, sortOrder }) => ({ id, label, kind, options, sortOrder })),
+      lineGroups: Object.fromEntries(groups.filter(group => groupIds.has(group.id)).map(group => [group.id, catalogV2LineGroupCoverage(group, inbounds)]))
+    });
+    return;
+  }
+
   if (pathname === "/api/public/catalog-v2" && req.method === "GET") {
     sendJson(res, 200, visibleCatalogV2Products(await dataStore.listCatalogV2Products()));
     return;
@@ -10557,7 +10591,9 @@ async function handleApi(req, res, pathname) {
 
   // ── Pricing ──
   if (pathname === "/api/catalog-v2/line-groups" && req.method === "GET") {
-    sendJson(res, 200, await dataStore.listCatalogV2LineGroups());
+    const [groups, inbounds] = await Promise.all([dataStore.listCatalogV2LineGroups(), dataStore.listXuiInbounds()]);
+    // coverage feeds the comparison-row preview in the product editor.
+    sendJson(res, 200, groups.map(group => ({ ...group, coverage: catalogV2LineGroupCoverage(group, inbounds) })));
     return;
   }
 
@@ -10678,6 +10714,41 @@ async function handleApi(req, res, pathname) {
       try {
         const result = await dataStore.deleteCatalogV2AddonCategory(id);
         if (!result.rowCount) { sendJson(res, 404, { error: "分类不存在。" }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+  }
+
+  if (pathname === "/api/catalog-v2/compare-attributes" && req.method === "GET") {
+    sendJson(res, 200, await dataStore.listCatalogV2CompareAttributes());
+    return;
+  }
+
+  if (pathname === "/api/catalog-v2/compare-attributes" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const attribute = normalizeCatalogV2CompareAttribute({ ...payload, id: undefined });
+      sendJson(res, 201, await dataStore.upsertCatalogV2CompareAttribute(attribute, { create: true }));
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
+    return;
+  }
+
+  const catalogV2CompareAttributeMatch = pathname.match(/^\/api\/catalog-v2\/compare-attributes\/([^/]+)$/);
+  if (catalogV2CompareAttributeMatch) {
+    const id = decodeURIComponent(catalogV2CompareAttributeMatch[1]);
+    if (req.method === "PUT") {
+      try {
+        const attribute = await dataStore.upsertCatalogV2CompareAttribute(normalizeCatalogV2CompareAttribute({ ...(await readJson(req)), id }));
+        if (!attribute) { sendJson(res, 404, { error: "对比项不存在。" }); return; }
+        sendJson(res, 200, attribute);
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+    if (req.method === "DELETE") {
+      try {
+        const result = await dataStore.deleteCatalogV2CompareAttribute(id);
+        if (!result.rowCount) { sendJson(res, 404, { error: "对比项不存在。" }); return; }
         sendJson(res, 200, { ok: true });
       } catch (error) { sendJson(res, 400, { error: error.message }); }
       return;
@@ -11956,6 +12027,8 @@ module.exports = Object.assign(requestHandler, {
   validateCatalogV2LineGroupInbounds,
   normalizeCatalogV2Product,
   normalizeCatalogV2AddonCategory,
+  normalizeCatalogV2CompareAttribute,
+  normalizeCatalogV2CompareValues,
   normalizeCheckoutSettings,
   releaseExpiredCustomNodes,
   deliverAddonOrder,

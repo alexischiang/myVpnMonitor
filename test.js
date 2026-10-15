@@ -67,6 +67,8 @@ const {
   validateCatalogV2LineGroupInbounds,
   normalizeCatalogV2Product,
   normalizeCatalogV2AddonCategory,
+  normalizeCatalogV2CompareAttribute,
+  normalizeCatalogV2CompareValues,
   normalizeCheckoutSettings,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
@@ -122,6 +124,36 @@ assert.strictEqual(catalogV2Product.isForSale, false);
 assert.strictEqual(catalogV2Product.periods[0].priceCents, 4900);
 assert.strictEqual(catalogV2Product.trafficCustomization.maxSteps, 10);
 assert.throws(() => normalizeCatalogV2Product({ ...catalogV2Product, periods: [{ ...catalogV2Product.periods[0], trafficBytes: null }] }), /无限流量周期/);
+{
+  // Comparison rows: tagline and values are kept for plans, values only for recurring plans.
+  const withCompare = normalizeCatalogV2Product({ ...catalogV2Product, tagline: "  适合轻量浏览  ", compareValues: { streaming: " 全部 ", "BAD KEY": "x", support: "" } });
+  assert.strictEqual(withCompare.tagline, "适合轻量浏览");
+  assert.deepStrictEqual(withCompare.compareValues, { streaming: "全部" });
+  assert.deepStrictEqual(normalizeCatalogV2Product({ id: "life-compare", type: "lifetime_plan", isEnabled: false, name: "L", compareValues: { streaming: "全部" } }).compareValues, {});
+  assert.deepStrictEqual(normalizeCatalogV2CompareValues(["x"]), {});
+  const choice = normalizeCatalogV2CompareAttribute({ label: "流媒体解锁", kind: "choice", options: ["基础", "全部", "全部", " "] });
+  assert.match(choice.id, /^cmp-[0-9a-f]{8}$/);
+  assert.deepStrictEqual(choice.options, ["基础", "全部"]);
+  assert.deepStrictEqual(normalizeCatalogV2CompareAttribute({ id: "ipv6", label: "IPv6", kind: "boolean", options: ["a", "b"] }).options, []);
+  assert.throws(() => normalizeCatalogV2CompareAttribute({ label: "X", kind: "choice", options: ["only"] }), /2-10 个选项/);
+  assert.throws(() => normalizeCatalogV2CompareAttribute({ label: "", kind: "text" }), /名称不能为空/);
+  const { resolveCompareValues, lineGroupCoverage } = require("./commerce/catalog-v2");
+  const attributes = [{ id: "streaming", label: "流媒体解锁", kind: "choice", options: ["基础", "全部"] }, { id: "ipv6", label: "IPv6", kind: "boolean", options: [] }];
+  assert.deepStrictEqual(resolveCompareValues({ type: "recurring_plan", isEnabled: true, compareValues: { streaming: "全部", ipv6: "yes", removed: "x" } }, attributes), { streaming: "全部", ipv6: "yes" });
+  assert.throws(() => resolveCompareValues({ type: "recurring_plan", isEnabled: true, compareValues: { streaming: "全部" } }, attributes), /请填写对比项「IPv6」/);
+  assert.throws(() => resolveCompareValues({ type: "recurring_plan", isEnabled: false, compareValues: { streaming: "高级" } }, attributes), /取值无效/);
+  assert.deepStrictEqual(resolveCompareValues({ type: "recurring_plan", isEnabled: false, compareValues: {} }, attributes), {});
+  assert.deepStrictEqual(resolveCompareValues({ type: "addon", isEnabled: true, compareValues: { streaming: "全部" } }, attributes), {});
+  const coverage = lineGroupCoverage({ inboundKeys: ["a:1", "b:2", "c:3", "d:4", "e:5"] }, [
+    { key: "a:1", enabled: true, inboundType: "package", region: "香港", networkLevel: "standard" },
+    { key: "b:2", enabled: true, inboundType: "package", region: "日本", networkLevel: "premium" },
+    { key: "c:3", enabled: false, inboundType: "package", region: "美国", networkLevel: "optimized" },
+    { key: "d:4", enabled: true, inboundType: "custom", region: "新加坡", networkLevel: "optimized" },
+    { key: "e:5", enabled: true, inboundType: "package", region: "香港", networkLevel: "" },
+    { key: "z:9", enabled: true, inboundType: "package", region: "英国", networkLevel: "premium" }
+  ]);
+  assert.deepStrictEqual(coverage, { regions: ["香港", "日本"], networkLevels: ["premium", "standard"] });
+}
 const catalogV2Lifetime = normalizeCatalogV2Product({ id: "ultra-lifetime", type: "lifetime_plan", isEnabled: true, isForSale: true, stock: null, name: "ULTRA 不限时", lineGroupId: "premium-1", trafficBytes: null, deviceLimit: 5, priceCents: 19900 });
 assert.deepStrictEqual([catalogV2Lifetime.durationDays, catalogV2Lifetime.trafficBytes, catalogV2Lifetime.deviceLimit, catalogV2Lifetime.priceCents], [null, null, 5, 19900]);
 const catalogV2TrafficAddon = normalizeCatalogV2Product({ id: "traffic-addon", type: "addon", isEnabled: true, isForSale: true, stock: 20, name: "流量附加包", priceCents: 1000, purchaseRequirement: "requires_recurring_plan", fulfillment: { mode: "automatic", handler: "traffic_credit", config: { trafficBytes: 50 * 1024 ** 3 } }, allowQuantity: true, minQuantity: 1, maxQuantity: 5 });

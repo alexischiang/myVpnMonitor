@@ -11,7 +11,8 @@ import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/compone
 import { DataTableCard, FilterSelect } from "@/components/features/data-table-card"
 import { EmptyState, PageHeader } from "@/components/features/shared"
 import { cn } from "@/lib/utils"
-import type { AddonHandler, CatalogV2AddonCategory, CatalogV2LineGroup, CatalogV2Period, CatalogV2Product } from "@/types"
+import type { AddonHandler, CatalogV2AddonCategory, CatalogV2CompareAttribute, CatalogV2LineGroup, CatalogV2Period, CatalogV2Product } from "@/types"
+import { builtInCompareRows, compareTrafficLabel, networkLevelSummary, regionsSummary, trafficCustomizationSummary } from "@/components/features/plan-compare-rows"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Alert } from "@/components/arc/alert/alert"
 import { Badge } from "@/components/arc/badge/badge"
@@ -42,7 +43,14 @@ function money(cents: number | null) {
 }
 
 function defaultProduct(): CatalogV2Product {
-  return { id: "", type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, sortOrder: 0, name: "", description: "", features: [], isRecommended: false, lineGroupId: null, addonCategoryId: null, buyerInputLabel: "", chargeTax: true, vipDiscount: true, durationDays: null, trafficBytes: null, deviceLimit: null, priceCents: null, trafficCustomization: { enabled: false, stepBytes: null, stepPriceCents: null, maxSteps: 10 }, purchaseRequirement: null, fulfillment: { mode: null, handler: null, config: {} }, deliveryDescription: "", serviceDurationDays: null, allowQuantity: true, minQuantity: 1, maxQuantity: null, periods: [] }
+  return { id: "", type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, sortOrder: 0, name: "", tagline: "", description: "", features: [], compareValues: {}, isRecommended: false, lineGroupId: null, addonCategoryId: null, buyerInputLabel: "", chargeTax: true, vipDiscount: true, durationDays: null, trafficBytes: null, deviceLimit: null, priceCents: null, trafficCustomization: { enabled: false, stepBytes: null, stepPriceCents: null, maxSteps: 10 }, purchaseRequirement: null, fulfillment: { mode: null, handler: null, config: {} }, deliveryDescription: "", serviceDurationDays: null, allowQuantity: true, minQuantity: 1, maxQuantity: null, periods: [] }
+}
+
+// Every price in the product editor: a standard-height CNY field without quick-add chips; the value is in cents.
+function PriceInput({ label, id, cents, onChange, description }: { label: string; id: string; cents: number | null; onChange: (cents: number | null) => void; description?: string }) {
+  // Period prices are stored as 0 when cleared; the field stays empty while the admin retypes instead of jumping to ¥0.00.
+  const [cleared, setCleared] = React.useState(false)
+  return <MoneyInput size="md" label={label} id={id} value={cleared && !cents ? null : cents} onValueChange={next => { setCleared(next === null); onChange(next) }} currency="CNY" currencies={["CNY"]} quickAdd={[]} locale="zh-CN" description={description} />
 }
 
 function nullableNumber(value: string, multiplier = 1) {
@@ -102,6 +110,97 @@ function AddonCategoryManager({ categories, onChange }: { categories: CatalogV2A
       return <ArcCard key={category.id} className="flex-wrap" description={category.productCount ? `${category.productCount} 个商品` : "暂无商品"} headerAction={<><ActionButton variant="secondary" onClick={() => void save(category)} disabled={!changed || !draft.name.trim() || busyId === category.id} aria-label={`保存分类 ${category.name}`} label="保存分类" pending={busyId === category.id} /><Button variant="danger" size="icon" onClick={() => void remove(category)} disabled={busyId === category.id} aria-label={`删除分类 ${category.name}`}><Trash2 /></Button></>}><div className="flex flex-wrap items-center gap-2"><Input label={`${category.name} 分类名称`} hideLabel className="min-w-0 flex-1 basis-40" value={draft.name} maxLength={40} onChange={event => update({ name: event.target.value })} /><Input label={`${category.name} 排序`} hideLabel className="w-24 tabular-nums" type="number" min="0" value={draft.sortOrder} onChange={event => update({ sortOrder: Number(event.target.value) })} /></div></ArcCard>
     })}</div> : <EmptyState title="尚未创建分类" description="创建分类后，可在附加服务商品中选择所属分类。" />}
     <form className="flex flex-wrap items-end gap-2" onSubmit={event => void create(event)}><div className="flex-1 basis-56"><Input label="新分类名称" id="addon-category-name" value={newName} maxLength={40} onChange={event => setNewName(event.target.value)} placeholder="例如：流量加油包" /></div><ActionButton type="submit" disabled={!newName.trim() || busyId === "new"} label="添加分类" pending={busyId === "new"} /></form>
+  </div></Card>
+}
+
+const compareKindLabels: Record<CatalogV2CompareAttribute["kind"], string> = { choice: "选项", boolean: "支持 / 不支持", text: "文字" }
+const compareKindOptions = Object.entries(compareKindLabels).map(([value, label]) => ({ value, label }))
+const splitCompareOptions = (value: string) => value.split(/[、,，\n]/).map(option => option.trim()).filter(Boolean)
+type CompareAttributeDraft = { label: string; kind: CatalogV2CompareAttribute["kind"]; options: string; sortOrder: number }
+
+function CompareAttributeManager({ attributes, onChange }: { attributes: CatalogV2CompareAttribute[]; onChange: (attributes: CatalogV2CompareAttribute[]) => void }) {
+  const emptyDraft: CompareAttributeDraft = { label: "", kind: "choice", options: "", sortOrder: 0 }
+  const [drafts, setDrafts] = React.useState<Record<string, CompareAttributeDraft>>({})
+  const [newDraft, setNewDraft] = React.useState(emptyDraft)
+  const [busyId, setBusyId] = React.useState("")
+  const draftOf = (attribute: CatalogV2CompareAttribute): CompareAttributeDraft => drafts[attribute.id] || { label: attribute.label, kind: attribute.kind, options: attribute.options.join("、"), sortOrder: attribute.sortOrder }
+  const payloadOf = (draft: CompareAttributeDraft) => ({ label: draft.label, kind: draft.kind, options: draft.kind === "choice" ? splitCompareOptions(draft.options) : [], sortOrder: draft.sortOrder })
+  const sorted = (list: CatalogV2CompareAttribute[]) => [...list].sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id))
+  async function create(event: React.FormEvent) {
+    event.preventDefault()
+    setBusyId("new")
+    try {
+      const created = await postJson<CatalogV2CompareAttribute>("/api/catalog-v2/compare-attributes", payloadOf({ ...newDraft, sortOrder: Math.max(0, ...attributes.map(attribute => attribute.sortOrder)) + 10 }))
+      onChange(sorted([...attributes, created]))
+      setNewDraft(emptyDraft)
+      toast({ type: "success", title: "对比项已添加", description: "已启用的周期性套餐需要补填该项后才能再次保存。" })
+    } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "添加对比项失败" }) } finally { setBusyId("") }
+  }
+  async function save(attribute: CatalogV2CompareAttribute) {
+    setBusyId(attribute.id)
+    try {
+      const saved = await putJson<CatalogV2CompareAttribute>(`/api/catalog-v2/compare-attributes/${encodeURIComponent(attribute.id)}`, payloadOf(draftOf(attribute)))
+      onChange(sorted(attributes.map(item => item.id === attribute.id ? saved : item)))
+      setDrafts(({ [attribute.id]: _, ...rest }) => rest)
+      toast({ type: "success", title: "对比项已保存" })
+    } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "保存对比项失败" }) } finally { setBusyId("") }
+  }
+  async function remove(attribute: CatalogV2CompareAttribute) {
+    if (!window.confirm(`删除对比项 ${attribute.label}？对比页将不再显示这一行，商品里已填写的值会在下次保存时清除。`)) return
+    setBusyId(attribute.id)
+    try {
+      await deleteJson(`/api/catalog-v2/compare-attributes/${encodeURIComponent(attribute.id)}`)
+      onChange(attributes.filter(item => item.id !== attribute.id))
+      toast({ type: "success", title: "对比项已删除" })
+    } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "删除对比项失败" }) } finally { setBusyId("") }
+  }
+  // name is the row's current label, used for the visually hidden field labels on existing rows; the new-row form shows its labels.
+  const draftFields = (draft: CompareAttributeDraft, update: (patch: Partial<CompareAttributeDraft>) => void, prefix: string, name?: string) => <>
+    <Input label={name ? `${name} 名称` : "对比项名称"} hideLabel={Boolean(name)} id={`${prefix}-label`} className="min-w-0 flex-1 basis-40" value={draft.label} maxLength={30} onChange={event => update({ label: event.target.value })} placeholder="例如：流媒体解锁" />
+    {/* Select sizes its outer field, not the trigger, so the width goes on a wrapper. */}
+    <div className="w-40 shrink-0"><Select label={name ? `${name} 类型` : "类型"} hideLabel={Boolean(name)} id={`${prefix}-kind`} value={draft.kind} onValueChange={kind => update({ kind: kind as CompareAttributeDraft["kind"] })} options={compareKindOptions} /></div>
+    {draft.kind === "choice" ? <Input label={name ? `${name} 选项` : "选项（用顿号或逗号分隔）"} hideLabel={Boolean(name)} id={`${prefix}-options`} className="min-w-0 flex-1 basis-56" value={draft.options} onChange={event => update({ options: event.target.value })} placeholder="不支持、基础、全部" /> : null}
+  </>
+  return <Card title="套餐对比项" description="周期性套餐对比页里，每月流量、在线IP、流量加购、可用地区、线路等级会根据商品数据自动显示；这里配置额外的对比行。每一行都会出现在所有周期性套餐的编辑页，启用的套餐必须填写。"><div className="grid gap-4">
+    {attributes.length ? <div className="grid gap-3">{attributes.map(attribute => {
+      const draft = draftOf(attribute)
+      const changed = JSON.stringify(payloadOf(draft)) !== JSON.stringify(payloadOf({ label: attribute.label, kind: attribute.kind, options: attribute.options.join("、"), sortOrder: attribute.sortOrder }))
+      const update = (patch: Partial<CompareAttributeDraft>) => setDrafts(current => ({ ...current, [attribute.id]: { ...draft, ...patch } }))
+      return <ArcCard key={attribute.id} className="flex-wrap" description={compareKindLabels[attribute.kind]} headerAction={<><ActionButton variant="secondary" onClick={() => void save(attribute)} disabled={!changed || !draft.label.trim() || busyId === attribute.id} aria-label={`保存对比项 ${attribute.label}`} label="保存对比项" pending={busyId === attribute.id} /><Button variant="danger" size="icon" onClick={() => void remove(attribute)} disabled={busyId === attribute.id} aria-label={`删除对比项 ${attribute.label}`}><Trash2 /></Button></>}><div className="flex flex-wrap items-center gap-2">
+        {draftFields(draft, update, `compare-${attribute.id}`, attribute.label)}
+        <Input label={`${attribute.label} 排序`} hideLabel className="w-24 tabular-nums" type="number" min="0" value={draft.sortOrder} onChange={event => update({ sortOrder: Number(event.target.value) })} />
+      </div></ArcCard>
+    })}</div> : <EmptyState title="尚未配置对比项" description="添加后，对比页会在自动生成的行之后显示这些行。" />}
+    <form className="flex flex-wrap items-end gap-2" onSubmit={event => void create(event)}>{draftFields(newDraft, patch => setNewDraft(current => ({ ...current, ...patch })), "compare-new")}<ActionButton type="submit" disabled={!newDraft.label.trim() || (newDraft.kind === "choice" && splitCompareOptions(newDraft.options).length < 2) || busyId === "new"} label="添加对比项" pending={busyId === "new"} /></form>
+  </div></Card>
+}
+
+// Every comparison row for one recurring plan: the rows derived from product data are previewed read-only,
+// the configured rows are edited here.
+function CompareFields({ product, update, attributes, group }: { product: CatalogV2Product; update: (patch: Partial<CatalogV2Product>) => void; attributes: CatalogV2CompareAttribute[]; group?: CatalogV2LineGroup }) {
+  const periods = product.periods.filter(period => period.isEnabled).toSorted((left, right) => left.durationDays - right.durationDays)
+  const perPeriod = (format: (period: CatalogV2Period) => string) => periods.length ? periods.map(period => `${period.durationDays} 天 ${format(period)}`).join(" · ") : "未启用周期"
+  const preview = (value: string | boolean | null, empty: string) => value === false ? "不支持" : value || empty
+  const derived: Record<typeof builtInCompareRows[number]["id"], string> = {
+    traffic: perPeriod(period => compareTrafficLabel(period.trafficBytes)),
+    devices: perPeriod(period => String(period.deviceLimit)),
+    "traffic-addon": preview(trafficCustomizationSummary(product), "不支持"),
+    regions: preview(regionsSummary(group?.coverage), group ? "权限组的入站未填写地区" : "未选择线路权限组"),
+    "network-level": preview(networkLevelSummary(group?.coverage), group ? "权限组的入站未填写线路等级" : "未选择线路权限组"),
+  }
+  const setValue = (id: string, value: string) => update({ compareValues: { ...product.compareValues, [id]: value } })
+  return <Card title="套餐对比" description={<>对比页的每一行。自动生成的行来自周期规格、流量定制和线路权限组；其余行在<Link className="underline underline-offset-4" to="/catalog-v2">商品管理</Link>页的「套餐对比项」中配置。</>}><div className="grid gap-6">
+    <dl className="grid gap-3 text-sm md:grid-cols-2">{builtInCompareRows.map(row => <div key={row.id} className="grid gap-1"><dt className="text-muted-foreground">{row.label}</dt><dd className="tabular-nums">{derived[row.id]}</dd></div>)}</dl>
+    <Separator />
+    {attributes.length ? <div className="grid items-start gap-4 md:grid-cols-2">{attributes.map(attribute => {
+      const id = `catalog-v2-compare-${attribute.id}`
+      const value = product.compareValues[attribute.id] || ""
+      const invalid = attribute.kind === "choice" && value && !attribute.options.includes(value)
+      const description = invalid ? `原值「${value}」已不在选项中，请重新选择。` : undefined
+      if (attribute.kind === "text") return <Input key={attribute.id} label={attribute.label} id={id} required={product.isEnabled} maxLength={60} value={value} onChange={event => setValue(attribute.id, event.target.value)} />
+      const options = attribute.kind === "boolean" ? [{ value: "yes", label: "支持" }, { value: "no", label: "不支持" }] : attribute.options.map(option => ({ value: option, label: option }))
+      return <Select key={attribute.id} label={attribute.label} description={description} id={id} className="w-full" value={invalid ? "" : value} onValueChange={next => setValue(attribute.id, next)} options={options} />
+    })}</div> : <p className="text-sm text-muted-foreground">尚未配置额外的对比项。</p>}
   </div></Card>
 }
 
@@ -207,8 +306,9 @@ export function CatalogV2ProductsPage() {
   const [products, setProducts] = React.useState<CatalogV2Product[] | null>(null)
   const [categories, setCategories] = React.useState<CatalogV2AddonCategory[]>([])
   const [groups, setGroups] = React.useState<CatalogV2LineGroup[]>([])
+  const [compareAttributes, setCompareAttributes] = React.useState<CatalogV2CompareAttribute[]>([])
   const [error, setError] = React.useState("")
-  React.useEffect(() => { Promise.all([fetchJson<CatalogV2Product[]>("/api/catalog-v2/products"), fetchJson<CatalogV2AddonCategory[]>("/api/catalog-v2/addon-categories"), fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups")]).then(([rows, addonCategories, lineGroups]) => { setProducts(rows); setCategories(addonCategories); setGroups(lineGroups) }).catch(error => setError(error.message)) }, [])
+  React.useEffect(() => { Promise.all([fetchJson<CatalogV2Product[]>("/api/catalog-v2/products"), fetchJson<CatalogV2AddonCategory[]>("/api/catalog-v2/addon-categories"), fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups"), fetchJson<CatalogV2CompareAttribute[]>("/api/catalog-v2/compare-attributes")]).then(([rows, addonCategories, lineGroups, attributes]) => { setProducts(rows); setCategories(addonCategories); setGroups(lineGroups); setCompareAttributes(attributes) }).catch(error => setError(error.message)) }, [])
   if (!products && !error) return <div className="grid gap-4 px-4 lg:px-6"><Skeleton lines={3} /><Skeleton lines={6} /></div>
   return <div className="grid gap-4 px-4 lg:px-6">
     <div className="flex flex-wrap items-start justify-between gap-4"><PageHeader title="商品管理" description="V2 商品是商城展示、支付、交付和线路权限的唯一数据源。" /><Button asChild><Link to="/catalog-v2/products/new"><Plus />新建商品</Link></Button></div>
@@ -217,6 +317,7 @@ export function CatalogV2ProductsPage() {
       <PlanProductsTable products={products} groups={groups} />
       <AddonProductsTable products={products} categories={categories} />
       <AddonCategoryManager categories={categories} onChange={setCategories} />
+      <CompareAttributeManager attributes={compareAttributes} onChange={setCompareAttributes} />
     </> : null}
   </div>
 }
@@ -234,7 +335,7 @@ function AddonFields({ product, update, categories }: { product: CatalogV2Produc
   return <Card title="附加服务" description="交付配置会在创建订单时复制到订单快照。"><div className="grid items-start gap-4 md:grid-cols-2">
     <div className="md:col-span-2"><Select label="服务类型" description={option.description} value={handler} onValueChange={selectHandler} id="catalog-v2-addon-handler" className="w-full" options={[...Object.entries(addonHandlerOptions).map(([value, item]) => ({ value: value, label: item.label }))]} /></div>
     <Field><FieldLabel htmlFor="catalog-v2-addon-category">分类</FieldLabel><Select label="选择" hideLabel value={product.addonCategoryId || NO_ADDON_CATEGORY} onValueChange={value => update({ addonCategoryId: value === NO_ADDON_CATEGORY ? null : value })} id="catalog-v2-addon-category" className="w-full" options={[{ value: NO_ADDON_CATEGORY, label: "未分类" }, ...categories.map(category => ({ value: category.id, label: category.name }))]} /><FieldDescription>分类在<Link className="underline underline-offset-4" to="/catalog-v2">商品管理</Link>页维护，用于用户端分组展示。</FieldDescription></Field>
-    <Input label="价格（元）" id="catalog-v2-addon-price" type="number" min="0" step="0.01" value={product.priceCents === null ? "" : product.priceCents / 100} onChange={event => update({ priceCents: nullableNumber(event.target.value, 100) })} />
+    <PriceInput label="价格" id="catalog-v2-addon-price" cents={product.priceCents} onChange={priceCents => update({ priceCents })} />
     <Field><FieldLabel htmlFor="catalog-v2-addon-requirement">购买要求</FieldLabel><Select label="选择" hideLabel value={product.purchaseRequirement || "standalone"} disabled={option.requiresPlan} onValueChange={purchaseRequirement => update({ purchaseRequirement: purchaseRequirement as CatalogV2Product["purchaseRequirement"] })} id="catalog-v2-addon-requirement" className="w-full" options={[{ value: "standalone", label: "可直接购买" }, { value: "requires_recurring_plan", label: "需要有效周期套餐" }]} />{option.requiresPlan ? <FieldDescription>该服务类型必须持有有效的周期性套餐。</FieldDescription> : null}</Field>
     {handler === "traffic_credit" ? <Input label="每份流量（GB）" id="catalog-v2-addon-traffic" type="number" min="1" value={product.fulfillment.config.trafficBytes ? product.fulfillment.config.trafficBytes / GB : ""} onChange={event => update({ fulfillment: { ...product.fulfillment, config: { trafficBytes: nullableNumber(event.target.value, GB) || undefined } } })} />
       : <Input label={handler === "custom_node" ? "每份有效天数" : "服务有效天数"} description={handler === "custom_node" ? "购买多份时按份数累加。" : "填写后从交付起算，到期显示为已过期。"} id="catalog-v2-addon-days" type="number" min="1" required={handler === "custom_node"} value={product.serviceDurationDays ?? ""} onChange={event => update({ serviceDurationDays: nullableNumber(event.target.value) })} placeholder={handler === "custom_node" ? "30" : "留空表示一次性交付"} />}
@@ -257,7 +358,7 @@ function PeriodEditor({ period, index, onChange, onRemove }: { period: CatalogV2
     <NumberField label="排序" id={fieldId("sort")} value={period.sortOrder} onValueChange={next => onChange({ ...period, sortOrder: next })} locale="zh-CN" min={0} />
     <Input label="默认流量（GB）" id={fieldId("traffic")} type="number" min="0" value={period.trafficBytes === null ? "" : period.trafficBytes / GB} onChange={event => onChange({ ...period, trafficBytes: nullableNumber(event.target.value, GB) })} placeholder="留空表示无限" />
     <NumberField label="在线IP数量" id={fieldId("devices")} value={period.deviceLimit} onValueChange={next => onChange({ ...period, deviceLimit: next })} locale="zh-CN" min={0} />
-    <MoneyInput label="价格（元）" id={fieldId("price")} value={Math.round((period.priceCents / 100) * 100)} onValueChange={cents => onChange({ ...period, priceCents: Math.round(((cents ?? 0) / 100) * 100) })} currencies={["CNY"]} locale="zh-CN" min={0} />
+    <PriceInput label="价格" id={fieldId("price")} cents={period.priceCents} onChange={priceCents => onChange({ ...period, priceCents: priceCents ?? 0 })} />
     <SwitchField className="md:col-span-3" id={fieldId("enabled")} label="启用该周期" checked={period.isEnabled} onCheckedChange={isEnabled => onChange({ ...period, isEnabled })} />
   </div></Card>
 }
@@ -269,9 +370,10 @@ export function CatalogV2ProductDetailPage() {
   const [product, setProduct] = React.useState<CatalogV2Product | null>(isNew ? defaultProduct() : null)
   const [groups, setGroups] = React.useState<CatalogV2LineGroup[]>([])
   const [addonCategories, setAddonCategories] = React.useState<CatalogV2AddonCategory[]>([])
+  const [compareAttributes, setCompareAttributes] = React.useState<CatalogV2CompareAttribute[]>([])
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState("")
-  React.useEffect(() => { Promise.all([fetchJson<CatalogV2Product[]>("/api/catalog-v2/products"), fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups"), fetchJson<CatalogV2AddonCategory[]>("/api/catalog-v2/addon-categories")]).then(([products, lineGroups, categories]) => { setGroups(lineGroups); setAddonCategories(categories); if (!isNew) setProduct(products.find(item => item.id === id) || null) }).catch(error => setError(error.message)) }, [id, isNew])
+  React.useEffect(() => { Promise.all([fetchJson<CatalogV2Product[]>("/api/catalog-v2/products"), fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups"), fetchJson<CatalogV2AddonCategory[]>("/api/catalog-v2/addon-categories"), fetchJson<CatalogV2CompareAttribute[]>("/api/catalog-v2/compare-attributes")]).then(([products, lineGroups, categories, attributes]) => { setGroups(lineGroups); setAddonCategories(categories); setCompareAttributes(attributes); if (!isNew) setProduct(products.find(item => item.id === id) || null) }).catch(error => setError(error.message)) }, [id, isNew])
   function update(patch: Partial<CatalogV2Product>) { setProduct(current => current ? { ...current, ...patch } : current) }
   async function save() {
     if (!product) return
@@ -298,6 +400,7 @@ export function CatalogV2ProductDetailPage() {
         <Input label="商品 ID" id="catalog-v2-id" value={product.id} disabled={!isNew} onChange={event => update({ id: event.target.value.toLowerCase() })} placeholder="example-product" />
         <Select label="商品类型" value={product.type} disabled={!isNew} onValueChange={type => update({ ...defaultProduct(), id: product.id, name: product.name, type: type as CatalogV2Product["type"], vipDiscount: type !== "addon" })} id="catalog-v2-type" className="w-full" options={[...Object.entries(typeLabels).map(([value, label]) => ({ value: value, label: label }))]} />
         <div className="md:col-span-2"><Input label="商品名称" id="catalog-v2-name" value={product.name} onChange={event => update({ name: event.target.value })} /></div>
+        {product.type === "addon" ? null : <div className="md:col-span-2"><Input label="一句话简介" description="显示在对比页套餐名称下方，最多 40 字；留空时显示商品描述。" id="catalog-v2-tagline" maxLength={40} value={product.tagline} onChange={event => update({ tagline: event.target.value })} placeholder="例如：适合轻量网页浏览和社交软件" /></div>}
         <NumberField label="排序" id="catalog-v2-sort" value={product.sortOrder} onValueChange={next => update({ sortOrder: next })} locale="zh-CN" min={0} />
         <Input label="库存" id="catalog-v2-stock" type="number" min="0" value={product.stock ?? ""} onChange={event => update({ stock: nullableNumber(event.target.value) })} placeholder="留空表示不限库存" />
         <div className="md:col-span-2"><Textarea label="商品描述" id="catalog-v2-description" value={product.description} onChange={event => update({ description: event.target.value })} /></div>
@@ -318,14 +421,15 @@ export function CatalogV2ProductDetailPage() {
       <Card title="流量定制" description="每档流量按每 30 天收取每档价格。"><div className="grid items-start gap-4 md:grid-cols-3">
         <SwitchField className="md:col-span-3" id="catalog-v2-traffic-custom" label="启用流量定制" checked={product.trafficCustomization.enabled} onCheckedChange={enabled => update({ trafficCustomization: { ...product.trafficCustomization, enabled } })} />
         <Input label="每档流量（GB）" id="catalog-v2-step-traffic" type="number" min="1" value={product.trafficCustomization.stepBytes === null ? "" : product.trafficCustomization.stepBytes / GB} onChange={event => update({ trafficCustomization: { ...product.trafficCustomization, stepBytes: nullableNumber(event.target.value, GB) } })} />
-        <Input label="每档价格（元 / 30 天）" id="catalog-v2-step-price" type="number" min="0.01" step="0.01" value={product.trafficCustomization.stepPriceCents === null ? "" : product.trafficCustomization.stepPriceCents / 100} onChange={event => update({ trafficCustomization: { ...product.trafficCustomization, stepPriceCents: nullableNumber(event.target.value, 100) } })} />
+        <PriceInput label="每档价格（每 30 天）" id="catalog-v2-step-price" cents={product.trafficCustomization.stepPriceCents} onChange={stepPriceCents => update({ trafficCustomization: { ...product.trafficCustomization, stepPriceCents } })} />
         <NumberField label="最多增加档数" id="catalog-v2-max-steps" value={product.trafficCustomization.maxSteps} onValueChange={next => update({ trafficCustomization: { ...product.trafficCustomization, maxSteps: next } })} locale="zh-CN" min={1} />
       </div></Card>
+      <CompareFields product={product} update={update} attributes={compareAttributes} group={groups.find(group => group.id === product.lineGroupId)} />
     </> : null}
     {product.type === "lifetime_plan" ? <Card title="不限时规格" description="时长固定为永久，流量留空表示无限。"><div className="grid items-start gap-4 md:grid-cols-3">
       <Input label="默认流量（GB）" id="catalog-v2-lifetime-traffic" type="number" min="0" value={product.trafficBytes === null ? "" : product.trafficBytes / GB} onChange={event => update({ trafficBytes: nullableNumber(event.target.value, GB) })} placeholder="留空表示无限" />
       <Input label="在线IP数量" id="catalog-v2-lifetime-devices" type="number" min="0" value={product.deviceLimit ?? ""} onChange={event => update({ deviceLimit: nullableNumber(event.target.value) })} />
-      <Input label="价格（元）" id="catalog-v2-lifetime-price" type="number" min="0" step="0.01" value={product.priceCents === null ? "" : product.priceCents / 100} onChange={event => update({ priceCents: nullableNumber(event.target.value, 100) })} />
+      <PriceInput label="价格" id="catalog-v2-lifetime-price" cents={product.priceCents} onChange={priceCents => update({ priceCents })} />
     </div></Card> : null}
     {product.type === "addon" ? <AddonFields product={product} update={update} categories={addonCategories} /> : null}
     <FeatureFields product={product} update={update} />

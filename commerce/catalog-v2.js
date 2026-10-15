@@ -160,4 +160,35 @@ function resolvePurchase(products, input = {}, context = {}) {
   };
 }
 
-module.exports = { GB, DURATION_BY_DAYS, trafficCustomizationCents, optionId, visibleProducts, resolvePurchase };
+const BOOLEAN_COMPARE_VALUES = Object.freeze(["yes", "no"]);
+const NETWORK_LEVEL_ORDER = Object.freeze(["premium", "optimized", "standard"]);
+
+// Keeps only values for comparison rows that still exist. An enabled recurring plan must have a valid
+// value for every row, so the comparison page never shows a gap for a plan on sale.
+function resolveCompareValues(product, attributes = []) {
+  if (product.type !== "recurring_plan") return {};
+  const values = {};
+  for (const attribute of attributes) {
+    const value = String(product.compareValues?.[attribute.id] ?? "").trim();
+    if (!value) {
+      if (product.isEnabled) throw new Error(`请填写对比项「${attribute.label}」。`);
+      continue;
+    }
+    if (attribute.kind === "choice" && !attribute.options.includes(value)) throw new Error(`对比项「${attribute.label}」的取值无效，请重新选择。`);
+    if (attribute.kind === "boolean" && !BOOLEAN_COMPARE_VALUES.includes(value)) throw new Error(`对比项「${attribute.label}」的取值无效，请重新选择。`);
+    values[attribute.id] = value;
+  }
+  return values;
+}
+
+// Regions and network levels a line group reaches, from the app's inbound table. Only enabled package
+// inbounds count; custom inbounds are sold separately and never come with a plan.
+function lineGroupCoverage(group, inbounds = []) {
+  const keys = new Set(group?.inboundKeys || []);
+  const reachable = inbounds.filter(inbound => keys.has(inbound.key) && inbound.enabled !== false && inbound.inboundType !== "custom");
+  const regions = [...new Set(reachable.map(inbound => String(inbound.region || "").trim()).filter(Boolean))];
+  const levels = new Set(reachable.map(inbound => inbound.networkLevel));
+  return { regions, networkLevels: NETWORK_LEVEL_ORDER.filter(level => levels.has(level)) };
+}
+
+module.exports = { GB, DURATION_BY_DAYS, BOOLEAN_COMPARE_VALUES, trafficCustomizationCents, optionId, visibleProducts, resolvePurchase, resolveCompareValues, lineGroupCoverage };

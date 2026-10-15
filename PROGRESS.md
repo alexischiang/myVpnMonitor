@@ -1,13 +1,13 @@
 # Current State
 
-- Last Updated: 2026-10-13
-- Current Objective: 总览渐变与透明顶栏收尾：banner 透明底修正、头像实色填充
+- Last Updated: 2026-10-15
+- Current Objective: 周期性套餐对比页与可配置对比行；商品编辑页紧凑 CNY 价格框
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
 - Active feature: none
-- Blockers: none
+- Blockers: 本机缺 TEST_DATABASE_URL，支付/钱包测试未运行
 
 ## Verification Evidence
 
@@ -450,8 +450,12 @@
 
 - 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 头像在浅色和深色下浏览器验证，无控制台错误
 
+- 2026-10-15: check、npm test、verify:fast、verify:harness、test-catalog-v2 通过；客户端对比页桌面与 375px 浏览器验证通过
+
+- 2026-10-15: check、npm test、verify:fast、verify:harness、test-catalog-v2 通过；客户端对比页与后台对比项/商品编辑页浏览器验证通过
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `feature_list.json`, `src/components/arc/blocks/cta-section/cta-section.module.css`, `src/components/arc/blocks/cta-section/cta-section.tsx`, `src/components/arc/metric-card/metric-card.module.css`, `src/components/arc/metric-card/metric-card.tsx`, `src/components/arc/user-menu/user-menu.module.css`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/bento-card.tsx`, `src/styles.css`, `src/components/arc/gauge/`
+- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `database.js`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/components/arc/blocks/plan-comparison/plan-comparison.module.css`, `src/components/arc/blocks/plan-comparison/plan-comparison.tsx`, `src/components/arc/money-input/money-input.module.css`, `src/components/arc/money-input/money-input.tsx`, `src/components/features/catalog-v2.tsx`, `src/main.tsx`, `src/types.ts`, `test-catalog-v2.js`, `test.js`, `src/components/features/plan-compare-page.tsx`, `src/components/features/plan-compare-rows.ts`
 - Known risks: none
-- Recommended Next Step: 用户确认新样式后可删除已无引用的 progress-ring.tsx；确认 CTA 后移除 Arc alert 的 inline/tinted/action 扩展；待付款 banner 外层 section 在总览渐变上仍有白色圆角
+- Recommended Next Step: 确认是否把 /account/plans 的周期性套餐切换为对比页；有 TEST_DATABASE_URL 时补跑 npm run test:payment 和 test:wallet

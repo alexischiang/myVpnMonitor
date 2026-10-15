@@ -33,6 +33,8 @@ export interface MoneyInputProps {
   min?: number;
   /** Highest amount in minor units. Typing past it is refused with a nudge. */
   max?: number;
+  /** XELA extension: "md" matches the height and type of a standard Input, for forms with many fields. Defaults to Arc's tall "lg". */
+  size?: "md" | "lg";
   /** Quick add chips in major units. Pass an empty array to hide them. */
   quickAdd?: number[];
   /** Arrow keys move by this many minor units. Defaults to one major unit; Shift moves ten times as far. */
@@ -213,7 +215,7 @@ function positionAfter(text: string, count: number, decimal: string) {
 export const MoneyInput = forwardRef<HTMLInputElement, MoneyInputProps>(function MoneyInput({
   label, hideLabel = false, value, defaultValue = null, onValueChange, currency: currencyProp, defaultCurrency = "USD", onCurrencyChange,
   currencies = ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "INR"], min, max, quickAdd = [10, 50, 100], step: stepProp, locale = "en-US",
-  description, error, disabled = false, name, id, className, onBlur,
+  description, error, disabled = false, name, id, className, onBlur, size = "lg",
 }, forwardedRef) {
   const reduced = useReducedFlag();
   const uid = useId();
@@ -478,7 +480,7 @@ export const MoneyInput = forwardRef<HTMLInputElement, MoneyInputProps>(function
   const instant = source === "type";
   const chips = quickAdd.filter(amount => amount > 0);
 
-  return <div className={[styles.field, className].filter(Boolean).join(" ")} data-disabled={disabled || undefined}>
+  return <div className={[styles.field, className].filter(Boolean).join(" ")} data-disabled={disabled || undefined} data-size={size}>
     <label htmlFor={inputId} className={hideLabel ? styles.srOnly : styles.label}>{label}</label>
 
     <div className={styles.control} data-invalid={invalid || undefined} data-focused={focused || undefined}>

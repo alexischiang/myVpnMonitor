@@ -333,7 +333,10 @@ export type PricingRow = {
 
 export type CatalogV2Feature = { label: string; isIncluded: boolean; sortOrder: number }
 export type CatalogV2Period = { id: string; durationDays: number; trafficBytes: number | null; deviceLimit: number; priceCents: number; isEnabled: boolean; sortOrder: number }
-export type CatalogV2LineGroup = { id: string; name: string; isEnabled: boolean; sortOrder: number; inboundKeys: string[]; productCount?: number; createdAt?: string; updatedAt?: string }
+export type CatalogV2CompareAttribute = { id: string; label: string; kind: "choice" | "boolean" | "text"; options: string[]; sortOrder: number; createdAt?: string; updatedAt?: string }
+/** Regions and network levels a line group reaches, for the plan comparison page. */
+export type CatalogV2LineGroupCoverage = { regions: string[]; networkLevels: Array<"premium" | "optimized" | "standard"> }
+export type CatalogV2LineGroup = { id: string; name: string; isEnabled: boolean; sortOrder: number; inboundKeys: string[]; productCount?: number; coverage?: CatalogV2LineGroupCoverage; createdAt?: string; updatedAt?: string }
 export type AddonHandler = "traffic_credit" | "custom_node" | "manual"
 export type AddonService = {
   id: string
@@ -380,8 +383,11 @@ export type CatalogV2Product = {
   stock: number | null
   sortOrder: number
   name: string
+  tagline: string
   description: string
   features: CatalogV2Feature[]
+  /** Comparison row id → value; "yes"/"no" for yes-no rows. Recurring plans only. */
+  compareValues: Record<string, string>
   isRecommended: boolean
   lineGroupId: string | null
   addonCategoryId: string | null

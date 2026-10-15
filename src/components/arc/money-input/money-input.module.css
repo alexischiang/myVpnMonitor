@@ -73,4 +73,9 @@
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 @media (max-width: 420px) { .control { padding-left: 14px; } .group { font-size: var(--text-2xl); } }
+/* XELA extension: size="md" sits in a form row with standard inputs — same height, radius, padding and type size. */
+.field[data-size="md"] .control { --money-input-height: var(--control-height-md); padding: 0 4px 0 var(--space-3); border-radius: var(--radius-control); }
+.field[data-size="md"] .group { font-family: var(--font-body); font-size: var(--text-sm); font-weight: 400; line-height: var(--leading-body); letter-spacing: var(--tracking-body); }
+.field[data-size="md"] .codeStatic { padding: 0 8px; color: var(--text-muted); font-size: var(--text-xs); }
+.field[data-size="md"] .currencyButton { height: calc(var(--control-height-md) - 8px); font-size: var(--text-xs); }
 @media (prefers-reduced-motion: reduce) { .control, .column, .check, .chip, .range { transition-duration: 0ms; } .chip:active:not(:disabled) { transform: none; } }
