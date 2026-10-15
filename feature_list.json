@@ -3208,6 +3208,198 @@
         "page_errors": [],
         "checked_at": "2026-10-12"
       }
+    },
+    {
+      "id": "overview-vip-arc-gauge",
+      "name": "VIP progress on the overview uses the Arc gauge",
+      "description": "The 个人信息 card on /account replaces the local ProgressRing with the Arc gauge (newly installed from the registry). The ring centre shows the percent toward the next VIP tier and the current level is the caption under the ring; 累计消费 and the remaining amount stay below. The gauge source gains an opt-in size prop (max ring width, number scales with it) so the card keeps its bento row height, and its screen-reader summary is in Chinese. progress-ring.tsx is kept as the fallback and is no longer referenced.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-vip-gauge-subscription-announcements"
+      ],
+      "done_criteria": [
+        "The VIP section renders the Arc gauge (role=meter) with the percent toward the next tier and the level as its label.",
+        "The profile card is no taller than its two bento rows require at desktop width and nothing overflows at 375px.",
+        "A max-level account shows 100% and 已达到最高等级; a zero-spend account shows 0%.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run agent:init passed before the change; npm run check passed after it. Browser (customer session and /api/account/* stubbed in-page on the dev server, as the local server has no customer login available): /account showed the gauge at 112px wide with a 22.4px number; the profile card dropped from 307px with the stock 176px ring to 273px, the height set by the neighbouring wallet and invite cards. Checked 55% (VIP 1, spend 320), 100% (VIP 3, 已达到最高等级) and 0% (VIP 0) at 1440px, and 375px in light and dark (arc oklch(0.49 0.19 150) light, oklch(0.78 0.18 150) dark) with no horizontal overflow. No console errors or page exceptions were captured from the overview; one TypeError came from my own incomplete wallet stub when I routed to /account/wallet and is unrelated to the change."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session and overview in-page, routed into the user centre and measured the gauge, number and card heights at 1440px.",
+          "Reloaded with spend 2500 and 0 to check the max-level and zero states.",
+          "Repeated at 375px in the light and dark themes."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "bento-badge-green-tone",
+      "name": "Green bento badges render green with white text",
+      "description": "BentoCardBadge tone=\"green\" (专属折扣 on the profile card, 获取返利 on the invite card) showed the Arc badge's neutral outline because Arc's CSS Modules outrank the Tailwind classes that set the green. The tone is now written as inline style: bento-green-strong background, white text and icon, transparent border, unchanged on hover. The metric-card header rule that colors its label (.top span) no longer reaches into the action slot, which had turned the invite badge's text grey.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-vip-arc-gauge"
+      ],
+      "done_criteria": [
+        "Both green badges on /account have a green background, white text and icon, and no visible border.",
+        "Hovering a green badge does not change its colors.",
+        "Default-tone bento badges are unchanged.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session and overview stubbed in-page on the dev server): on /account at 1440px both tone=green badges computed background rgb(47, 169, 46), text and icon rgb(255, 255, 255) and a transparent border, in the light theme and with the dark theme classes applied; the profile badge kept those values while hovered. Before the metric-card fix the invite badge's inner spans computed oklch(0.46 0 0) from .top span; after it they inherit white. No console errors or page exceptions. Not checked: the default-tone badges on /account/wallet and /account/referrals in the browser (their code path only gained a style passthrough), and 375px."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session and overview in-page, routed into the user centre and read the computed background, text, icon and border colors of both green badges.",
+          "Hovered the 专属折扣 badge and re-read its colors.",
+          "Applied the dark theme classes and re-read the colors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "overview-stat-card-trailing-action",
+      "name": "Overview stat cards: corner action, matching badges, deeper green",
+      "description": "The round link on the 钱包余额 and 邀请好友 cards moves from the title row to the bottom-right corner, as on 节点状态, through a new trailing slot on the Arc metric-card. The metric-card label rule is narrowed from .top span to .top > span so the invite badge keeps the badge's own 12px text and matches the 专属折扣 badge. bento-green-strong is darkened from #2fa92e to #228822 (about 4.5:1 against white).",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "bento-badge-green-tone"
+      ],
+      "done_criteria": [
+        "The wallet and invite cards show their link in the bottom-right corner with the same right inset as the node status card.",
+        "The two green badges have the same height and font size.",
+        "The green badge background is #228822 with white text.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session, overview, node status and traffic stubbed in-page on the dev server): on /account at 1440px the wallet, invite and node-status links were each 13px from the card's right edge; the wallet and invite links sat 17px from the bottom and the node-status link 21px (the bento card has 4px more padding than the compact metric card). Both green badges measured 28px high with 12px text (the invite badge was 14px before) and background rgb(34, 136, 34) with white text. The invite card is 125px high, down from 137px. At 375px the links are 44x44 with the same insets and there is no horizontal overflow. No console errors or page exceptions. Not checked: dark theme for this change."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session with an active self-hosted plan, routed into the user centre and measured the link insets on the wallet, invite and node-status cards.",
+          "Read the height, font size and colors of both green badges.",
+          "Repeated the measurements at 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "overview-gradient-hero-transparent-header",
+      "name": "Overview gradient band with a header that is transparent at the top",
+      "description": "On /account the user-centre shell paints Arc's soft brand gradient (--arc-gradient-soft) as a 28rem band behind the top of the page, fading into the page background. The site header is transparent while the page is at the top and returns to its solid white surface with the soft shadow once the page scrolls or a menu opens, using the header's own data-scrolled state. Other user-centre routes keep the always-solid header.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-stat-card-trailing-action"
+      ],
+      "done_criteria": [
+        "At the top of /account the header background is transparent with no shadow and the gradient shows behind it.",
+        "After scrolling the header is solid with its shadow; scrolling back to the top makes it transparent again.",
+        "Other /account/* routes keep the solid header at the top and have no gradient.",
+        "No script errors on the affected routes."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session and overview stubbed in-page on the dev server): on /account at 1440px the header computed a transparent background and no shadow at scrollY 0, oklch(1 0 0) with the shadow at scrollY 248, and transparent again back at the top; the band was 448px high with linear-gradient(135deg, oklch(0.975 0.016 300), oklch(0.98 0.016 65)) and a bottom fade mask. With the dark theme classes applied the band used the dark gradient and the scrolled header was oklch(0.19 0 0). /account/orders had no band and a solid header at the top. At 375px the header was transparent at the top with no horizontal overflow. No console errors or page exceptions. Not checked: the header with a mega menu panel open over the gradient."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/orders"
+        ],
+        "interactions": [
+          "Stubbed the customer session and overview in-page, routed to /account and read the header background and shadow at the top, after scrolling 300px and back at the top.",
+          "Applied the dark theme classes and repeated the top and scrolled readings.",
+          "Routed to /account/orders and read the header at the top.",
+          "Repeated the top reading at 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "overview-gradient-taller-transparent-cta",
+      "name": "Taller overview gradient and a transparent 发送工单 banner",
+      "description": "The overview gradient band grows from 28rem to 40rem. The 发送工单 CTA banner on the overview drops its white fill so the gradient shows through and gets a slightly darker border, through a new opt-in transparent prop on the cta-section banner. The warning-toned pending-payment banner is unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-gradient-hero-transparent-header"
+      ],
+      "done_criteria": [
+        "The gradient band on /account is 640px high.",
+        "The 发送工单 banner has a transparent background and a border darker than --border in both themes.",
+        "The pending-payment banner keeps its warning fill and border.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session, overview and a pending order stubbed in-page on the dev server): on /account at 1440px the band measured 640px; the 发送工单 banner computed background rgba(0, 0, 0, 0) and border oklab(0.8775 0 0) in the light theme (the default --border is 0.935) and oklab(0.345 0 0) with the dark theme classes applied; the pending-payment banner kept its warning background and border. No console errors or page exceptions. Not checked: 375px for this change.",
+        "2026-10-13 (follow-up): the first pass only cleared the banner element; the section wrapper behind it still painted var(--background), which showed as white corners and made the banner look unchanged. transparent now also clears the section. npm run check passed. Browser: every element from the banner up to the shell computed background rgba(0, 0, 0, 0) in the light theme and with the dark theme classes applied; no console errors or page exceptions."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session, overview and a pending order in-page, routed to /account and read the gradient band height and both banners' background and border colors.",
+          "Applied the dark theme classes and re-read the banner colors.",
+          "After the follow-up fix, walked the ancestors of the 发送工单 banner up to the shell and read each background in both themes."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "user-menu-avatar-solid-fill",
+      "name": "User menu initials avatar with a solid fill",
+      "description": "The initials avatar in the user-centre header (Arc user-menu) is filled with the foreground color and uses the background color for the letter, so it stands out on the transparent header over the overview gradient and on the solid header, in both themes. It was surface-muted with secondary text.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-gradient-hero-transparent-header"
+      ],
+      "done_criteria": [
+        "The avatar is dark with a white letter in the light theme and light with a dark letter in the dark theme.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session and overview stubbed in-page on the dev server): on /account at 1440px the avatar computed background oklch(0.15 0 0) with letter oklch(1 0 0) in the light theme, and oklch(0.96 0 0) with letter oklch(0.19 0 0) with the dark theme classes applied; 32px wide in both. No console errors or page exceptions. Not checked: the avatar inside the opened menu panel, and 375px."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session and overview in-page, routed to /account and read the avatar's background and text colors.",
+          "Applied the dark theme classes and re-read them."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
     }
   ]
 }

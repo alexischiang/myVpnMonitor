@@ -7,7 +7,7 @@ import { motionTokens } from "../lib/motion-tokens";
 import { AnimatedCounter } from "../animated-counter/animated-counter";
 import styles from "./metric-card.module.css";
 // XELA extension (see docs/agent/arc-migration.md): money and other formatted numbers (prefix, decimals, locale), a value that is not
-// known yet, an optional context line, and an action in the top row.
+// known yet, an optional context line, an action in the top row and a trailing control in the bottom-right corner.
 export interface MetricCardProps {
   label: string;
   /** null shows a dash, for a number that is still loading or unavailable. */
@@ -20,6 +20,8 @@ export interface MetricCardProps {
   change?: string;
   /** A control at the end of the top row, such as a link to the list behind the number. */
   action?: ReactNode;
+  /** A control in the bottom-right corner, beside the number, such as a round link to the page behind it. */
+  trailing?: ReactNode;
   /** Tighter padding for cards that sit in a fixed-height grid row. */
   density?: "default" | "compact";
   className?: string;
@@ -59,11 +61,14 @@ function Swap({ text, morph = false, block = false }: { text: string; morph?: bo
   </motion.span>;
 }
 
-export function MetricCard({ label, value, prefix, suffix, decimals, locale = "zh-CN", context, change, action, density = "default", className, style }: MetricCardProps) {
+export function MetricCard({ label, value, prefix, suffix, decimals, locale = "zh-CN", context, change, action, trailing, density = "default", className, style }: MetricCardProps) {
   const reduceMotion = !!useReducedMotion();
-  return <article className={[styles.card, density === "compact" ? styles.compact : "", className].filter(Boolean).join(" ")} style={style}>
-    <div className={styles.top}><span><Swap text={label} block /></span><AnimatePresence initial={false}>{change && <motion.small key="change" data-trend={/^[+]/.test(change) ? "up" : /^[-−]/.test(change) ? "down" : undefined} initial={{ opacity: 0, scale: reduceMotion ? 1 : .96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: reduceMotion ? 1 : .96, transition: { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.standard] } }} transition={reduceMotion ? { duration: 0 } : motionTokens.spring.snappy}><Swap text={change} morph /></motion.small>}</AnimatePresence>{action ? <div className={styles.action}>{action}</div> : null}</div>
+  const figure = <>
     {value === null ? <span className={styles.empty} aria-label="暂无数据">—</span> : <AnimatedCounter value={value} prefix={prefix} suffix={suffix} decimals={decimals} locale={locale} animateOnView />}
     {context ? <p><Swap text={context} block /></p> : null}
+  </>;
+  return <article className={[styles.card, density === "compact" ? styles.compact : "", trailing ? styles.withTrailing : "", className].filter(Boolean).join(" ")} style={style}>
+    <div className={styles.top}><span><Swap text={label} block /></span><AnimatePresence initial={false}>{change && <motion.small key="change" data-trend={/^[+]/.test(change) ? "up" : /^[-−]/.test(change) ? "down" : undefined} initial={{ opacity: 0, scale: reduceMotion ? 1 : .96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: reduceMotion ? 1 : .96, transition: { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.standard] } }} transition={reduceMotion ? { duration: 0 } : motionTokens.spring.snappy}><Swap text={change} morph /></motion.small>}</AnimatePresence>{action ? <div className={styles.action}>{action}</div> : null}</div>
+    {trailing ? <div className={styles.bottom}><div className={styles.figure}>{figure}</div><div className={styles.trailing}>{trailing}</div></div> : figure}
   </article>;
 }

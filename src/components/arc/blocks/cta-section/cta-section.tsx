@@ -40,6 +40,8 @@ export interface CtaSectionProps {
   compactAction?: boolean;
   /** XELA extension, banner only: washes the banner in the warning tone, for reminders that need action. */
   tone?: "warning";
+  /** XELA extension, banner only: no fill and a slightly stronger border, for a banner that sits on a tinted or gradient page background. */
+  transparent?: boolean;
   className?: string;
 }
 
@@ -138,6 +140,7 @@ export const CtaSection = forwardRef<HTMLElement, CtaSectionProps>(function CtaS
   onNavigate,
   compactAction = false,
   tone,
+  transparent = false,
   className,
 }, ref) {
   const id = useId();
@@ -151,14 +154,14 @@ export const CtaSection = forwardRef<HTMLElement, CtaSectionProps>(function CtaS
   const classes = [styles.cta, className].filter(Boolean).join(" ");
 
   if (variant === "banner") {
-    return <section ref={ref} className={classes} data-variant="banner" aria-labelledby={`${id}-title`}>
+    return <section ref={ref} className={classes} data-variant="banner" data-transparent={transparent ? "" : undefined} aria-labelledby={`${id}-title`}>
       <AnimatePresence initial={false} onExitComplete={onDismiss}>
         {open && <motion.div
           key="banner"
           className={styles.bannerWrap}
           exit={reduced ? { opacity: 0, transition: { duration: motionTokens.duration.instant } } : { opacity: 0, height: 0, transition: { height: motionTokens.spring.smooth, opacity: { duration: motionTokens.duration.fast, ease: standard } } }}
         >
-          <div className={bare ? undefined : styles.bannerPad}><div className={styles.banner} data-compact={compactAction ? "" : undefined} data-tone={tone}>
+          <div className={bare ? undefined : styles.bannerPad}><div className={styles.banner} data-compact={compactAction ? "" : undefined} data-tone={tone} data-transparent={transparent ? "" : undefined}>
             <p className={styles.bannerText}>
               <strong id={`${id}-title`}>{heading}</strong>
               <span>{text}</span>

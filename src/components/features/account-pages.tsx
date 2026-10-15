@@ -8,6 +8,7 @@ import { Avatar } from "@/components/arc/avatar/avatar"
 import { Carousel } from "@/components/arc/carousel/carousel"
 import { DropdownMenu } from "@/components/arc/dropdown-menu/dropdown-menu"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Gauge } from "@/components/arc/gauge/gauge"
 import { MetricCard } from "@/components/arc/metric-card/metric-card"
 import { Progress } from "@/components/arc/progress/progress"
 import { UsageMeter } from "@/components/arc/usage-meter/usage-meter"
@@ -19,7 +20,6 @@ import { BentoCard, BentoCardBadge, BentoGrid, bentoSpanClass, bentoSurfaceStyle
 import { DataTableRowActions } from "@/components/features/arc-data-table"
 import { MarkdownContent } from "@/components/features/markdown-content"
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
-import { ProgressRing } from "@/components/features/progress-ring"
 import { EmptyState } from "@/components/features/shared"
 import { CopyButton } from "@/components/arc/copy-button/copy-button"
 import { nextVipTier, vipLevelLabel, type VipTier } from "@/components/features/vip-badge"
@@ -147,9 +147,7 @@ function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }:
       <Separator className="sm:hidden" />
       <Separator orientation="vertical" className="hidden sm:block data-[orientation=vertical]:h-auto" />
       <section aria-label="VIP 等级" className="grid min-w-0 content-between justify-items-center gap-1 text-center sm:flex-[2]">
-        <ProgressRing value={vipProgress} size={100} sweep={270} className="text-bento-green-strong" label={vipTarget ? `距离 ${vipTarget.level} 已完成 ${Math.round(vipProgress)}%` : "已达到最高 VIP 等级"}>
-          <strong className="text-xl font-semibold">{currentLevel}</strong>
-        </ProgressRing>
+        <Gauge value={Math.round(vipProgress)} label={currentLevel} tone="success" size={112} />
         <div className="grid text-xs text-muted-foreground tabular-nums">
           <span>累计消费 <span className="font-medium text-foreground">{formatMoney(account.vipSpend)}</span></span>
           <span>{vipTarget ? `距离 ${vipTarget.level} 还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "已达到最高等级"}</span>
@@ -401,7 +399,7 @@ export function AccountOverviewPage() {
   return (
     <>
       <div className="grid gap-4">
-        <CtaSection variant="banner" bare compactAction title="遇到问题？" description="发送工单联系客服吧！" primaryAction={{ label: "发送工单", href: "/account/tickets/new" }} onNavigate={action => { if (action.href) navigate(action.href) }} />
+        <CtaSection variant="banner" bare compactAction transparent title="遇到问题？" description="发送工单联系客服吧！" primaryAction={{ label: "发送工单", href: "/account/tickets/new" }} onNavigate={action => { if (action.href) navigate(action.href) }} />
         <BentoGrid>
           <section className={cn(bentoSpanClass(SHOW_PROMO_SLOT ? 5 : 8, 2), "flex min-w-0 flex-col justify-center gap-6 py-4")} aria-labelledby="account-greeting">
             <h2 id="account-greeting" className="grid gap-1 text-3xl font-semibold tracking-tight wrap-anywhere lg:text-4xl"><span>What's up,</span><span>{emailLocal}{emailDomain ? <><wbr />@{emailDomain}</> : null}{"\u00a0"}!</span></h2>
@@ -469,10 +467,9 @@ export function AccountDocsPage() {
 // Shared inputs on bento surfaces: the rounded, borderless field used by the overview subscription link.
 const bentoInputClass = "h-11 min-w-0 rounded-4xl border-0 bg-background px-4 shadow-none dark:bg-background"
 
-// Figure card for one headline number, with an optional trailing control (usually a BentoIconLink).
-/** One figure of the overview grid on Arc's metric card: a count, or an amount in yuan when `money` is set. */
+/** One figure of the overview grid on Arc's metric card: a count, or an amount in yuan when `money` is set. `action` sits beside the title, `trailing` (usually a BentoIconLink) in the bottom-right corner. */
 function BentoStatCard({ title, value, money = false, unit, action, trailing, span, rowSpan }: { title: string; value: number; money?: boolean; unit?: string; action?: React.ReactNode; trailing?: React.ReactNode; span: BentoSpan; rowSpan: BentoRowSpan }) {
-  return <MetricCard className={bentoSpanClass(span, rowSpan)} label={title} value={value} prefix={money ? "¥" : undefined} decimals={money ? 2 : 0} context={unit} density="compact" style={bentoSurfaceStyle()} action={action || trailing ? <>{action}{trailing}</> : undefined} />
+  return <MetricCard className={bentoSpanClass(span, rowSpan)} label={title} value={value} prefix={money ? "¥" : undefined} decimals={money ? 2 : 0} context={unit} density="compact" style={bentoSurfaceStyle()} action={action} trailing={trailing} />
 }
 
 // Titled bento card for full-width record lists; sits outside BentoGrid so its height follows the content.

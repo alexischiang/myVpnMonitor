@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-12
-- Current Objective: 待付款提醒改用 cta-section banner（tone=warning）
+- Last Updated: 2026-10-13
+- Current Objective: 总览渐变与透明顶栏收尾：banner 透明底修正、头像实色填充
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -438,8 +438,20 @@
 
 - 2026-10-12: npm run check、verify:fast 通过；桌面/375px 单行显示，去支付站内跳转
 
+- 2026-10-13: npm run agent:init、npm run check、verify:harness、git diff --check 通过；/account 在 1440px 与 375px、浅色与深色、0%/55%/100% 三种进度下浏览器验证，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 两个绿色徽标在浅色、深色与悬停下均为绿底白字无边框，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 在 1440px 与 375px 浏览器验证按钮位置、徽标尺寸与颜色，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 顶部透明、滚动后恢复，浅色、深色与 375px 浏览器验证，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 渐变 640px、banner 透明底与加深边框在浅色和深色下浏览器验证，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 头像在浅色和深色下浏览器验证，无控制台错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/components/arc/alert/alert.module.css`, `src/components/arc/alert/alert.tsx`, `src/components/arc/blocks/site-footer/site-footer.module.css`, `src/components/arc/blocks/site-footer/site-footer.tsx`, `src/components/arc/card/card.module.css`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/sales-settings.tsx`, `src/styles.css`, `src/types.ts`, `test-payment.js`, `test.js`, `docs-site/`, `src/components/arc/blocks/cta-section/`
+- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `feature_list.json`, `src/components/arc/blocks/cta-section/cta-section.module.css`, `src/components/arc/blocks/cta-section/cta-section.tsx`, `src/components/arc/metric-card/metric-card.module.css`, `src/components/arc/metric-card/metric-card.tsx`, `src/components/arc/user-menu/user-menu.module.css`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/bento-card.tsx`, `src/styles.css`, `src/components/arc/gauge/`
 - Known risks: none
-- Recommended Next Step: 用户确认采用 CTA 后，移除 Arc alert 的 inline/tinted/action 扩展及其文档登记
+- Recommended Next Step: 用户确认新样式后可删除已无引用的 progress-ring.tsx；确认 CTA 后移除 Arc alert 的 inline/tinted/action 扩展；待付款 banner 外层 section 在总览渐变上仍有白色圆角

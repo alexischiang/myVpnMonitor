@@ -65,6 +65,9 @@
 .bannerText strong { font-weight: 500; }
 .bannerText span { color: var(--text-secondary); }
 .bannerActions { display: flex; flex: none; align-items: center; gap: var(--space-1); }
+/* XELA extension: transparent drops the fill of the banner and of the section behind it (which showed as white corners), so the page background shows through; the border is a step darker to hold the edge. */
+.cta[data-transparent] { background: transparent; }
+.banner[data-transparent] { border-color: color-mix(in oklab, var(--border-strong) 50%, var(--border)); background: transparent; }
 /* XELA extension: tone="warning" washes the banner in the warning token, matching a tinted warning alert. */
 .banner[data-tone="warning"] { border-color: color-mix(in oklab, var(--warning) 35%, var(--border)); background: color-mix(in oklab, var(--warning) 10%, var(--surface)); }
 .dismiss { display: grid; width: var(--control-height-sm); height: var(--control-height-sm); place-items: center; border: 0; border-radius: 50%; background: none; color: var(--text-muted); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }

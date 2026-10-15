@@ -6,6 +6,7 @@ import { useTheme } from "next-themes"
 import { apiFetch, clearJsonCache, fetchJson, setCachedJson } from "@/api"
 import { UserAlert } from "@/components/features/shared"
 import { DOCS_URL } from "@/lib/docs-site"
+import { cn } from "@/lib/utils"
 import type { UserAlertSetting } from "@/types"
 import { CtaSection } from "@/components/arc/blocks/cta-section/cta-section"
 import { SiteFooter, type SiteFooterLink } from "@/components/arc/blocks/site-footer/site-footer"
@@ -56,6 +57,10 @@ function currentGroup(pathname: string) {
   if (/^\/account\/(tickets|docs)(\/|$)/.test(pathname)) return "help"
   return ""
 }
+
+// The header is solid white with a soft shadow instead of Arc's border; on the overview only after scrolling (or while a menu is open).
+const solidHeader = "[&>header]:!border-b-transparent [&>header]:!bg-background [&>header]:!shadow-[0_6px_32px_rgb(0_0_0/0.06)]"
+const solidHeaderWhenScrolled = "[&>header[data-scrolled]]:!border-b-transparent [&>header[data-scrolled]]:!bg-background [&>header[data-scrolled]]:!shadow-[0_6px_32px_rgb(0_0_0/0.06)]"
 
 export function AccountShell() {
   const navigate = useNavigate()
@@ -121,8 +126,11 @@ export function AccountShell() {
     navigate("/login", { replace: true })
   }
 
+  // The overview has a gradient band behind its top: the header stays transparent over it and turns solid once the page scrolls.
+  const overview = location.pathname === "/account"
   return (
-    <div data-account-shell className="flex min-h-svh flex-col bg-background [&>header]:!border-b-transparent [&>header]:!bg-background [&>header]:!shadow-[0_6px_32px_rgb(0_0_0/0.06)]">
+    <div data-account-shell className={cn("relative flex min-h-svh flex-col bg-background", overview ? solidHeaderWhenScrolled : solidHeader)}>
+      {overview ? <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-160 bg-(image:--arc-gradient-soft) mask-b-from-50%" /> : null}
       <SiteHeader
         variant="mega"
         label="用户中心导航"
@@ -139,7 +147,7 @@ export function AccountShell() {
           align="end"
         />}
       />
-      <main className="@container/main mx-auto w-full flex-1 max-w-[1200px] p-4 min-[760px]:px-6 md:py-6 [&>div]:!px-0 [&>div]:lg:!px-0">
+      <main className="@container/main relative mx-auto w-full flex-1 max-w-[1200px] p-4 min-[760px]:px-6 md:py-6 [&>div]:!px-0 [&>div]:lg:!px-0">
             <div className="grid gap-3 pb-2">{userAlerts.filter(item => item.page === (location.pathname.includes("/plans/checkout") ? "checkout" : location.pathname === "/account" ? "account" : location.pathname === "/account/plans" ? "pricing" : "")).map(item => <UserAlert key={item.id} item={item} />)}{pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <CtaSection variant="banner" bare compactAction tone="warning" title="请注意" description="你有一笔订单等待付款。" primaryAction={{ label: "去支付", href: `/account/orders/${encodeURIComponent(pendingOrderId)}` }} onNavigate={action => { if (action.href) navigate(action.href) }} /> : null}</div>
             {email ? <Outlet context={{ email }} /> : <div className="grid gap-4 px-4 lg:px-6"><Skeleton lines={4} /><Skeleton lines={6} /></div>}
       </main>

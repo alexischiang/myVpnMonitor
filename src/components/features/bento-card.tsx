@@ -92,9 +92,12 @@ export function BentoCard({ span = 8, rowSpan = 2, tone, title, icon: Icon, acti
   </Card>
 }
 
+// The Arc badge sets its own colors (also on hover) and outranks utility classes, so the green tone is written inline.
+const greenBadgeStyle: React.CSSProperties = { background: "var(--color-bento-green-strong)", borderColor: "transparent", color: "var(--color-white)" }
+
 /** Small pill for a bento card's secondary figure, usually passed as the card `action`. */
-export function BentoCardBadge({ icon: Icon, tone = "default", className, children, ...props }: Omit<React.ComponentProps<typeof Badge>, "tone" | "icon"> & { icon?: LucideIcon; tone?: "default" | "green" }) {
-  return <Badge data-slot="bento-card-badge" data-tone={tone} className={cn("h-7 gap-1.5 rounded-full border-transparent bg-background px-2.5 text-xs font-medium", tone === "green" && "bento-light-surface bg-bento-green text-foreground", className)} {...props}>
+export function BentoCardBadge({ icon: Icon, tone = "default", className, style, children, ...props }: Omit<React.ComponentProps<typeof Badge>, "tone" | "icon"> & { icon?: LucideIcon; tone?: "default" | "green" }) {
+  return <Badge data-slot="bento-card-badge" data-tone={tone} className={cn("h-7 gap-1.5 rounded-full border-transparent bg-background px-2.5 text-xs font-medium", className)} style={tone === "green" ? { ...greenBadgeStyle, ...style } : style} {...props}>
     {Icon ? <Icon aria-hidden /> : null}{children}
   </Badge>
 }

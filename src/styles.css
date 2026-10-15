@@ -61,8 +61,8 @@
   --color-orange-1100: color-mix(in oklch, var(--color-orange-600) 34%, black);
   --color-bento-yellow: #fed230;
   --color-bento-green: #58e057;
-  /* Darker green for progress graphics on light cards (3:1 against white). */
-  --color-bento-green-strong: #2fa92e;
+  /* Dark green behind white text on bento badges (4.5:1 against white). */
+  --color-bento-green-strong: #228822;
   --color-usage-20: #72c238;
   --color-usage-60: #ff9e07;
   --color-usage-100: #ff594c;

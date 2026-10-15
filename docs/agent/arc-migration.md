@@ -276,6 +276,10 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `metric-card`（补充） | `style`（用于指定底色）；紧凑密度下数字用 `--text-2xl` |
 | `blocks/cta-section`（补充） | `tone="warning"`（仅 banner）：按 warning token 铺浅色底和描边，用于用户中心待付款提醒；发送工单 banner 不传，保持中性 |
 | `alert` | `inline`：标题和正文同一行，放不下时正文截断；`tinted`：按 tone 铺浅色底和描边；`action`：行尾操作（如“去支付”链接） |
+| `gauge` | 新安装；`size`：环的最大宽度（像素，默认 176），中间数字按同一比例缩放，用于行高固定的网格；读屏摘要改中文 |
+| `metric-card`（补充） | 标题行的文字样式从 `.top span` 收窄为 `.top > span`（只作用于标题），`action` 插槽里的徽标、按钮保持自己的文字颜色和字号；`trailing`：右下角的控件（如圆形跳转按钮），数字和说明留在左下 |
+| `blocks/cta-section`（补充） | `transparent`（仅 banner）：去掉 banner 和外层 section 的底色并把边框加深一档，用于放在渐变或有底色的页面背景上（总览页的发送工单 banner） |
+| `user-menu`（补充） | 首字母头像用前景色填充（浅色主题黑底白字，深色主题浅底深字），在透明或渐变顶栏上保持显眼；原为 `surface-muted` 底、`text-secondary` 字 |
 
 ## 7. 进度
 
@@ -292,6 +296,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 - 日期：单日用 `date-picker`，范围用 `date-range-picker`。
 - 图表：仪表盘的收入趋势、日收入、用户增长，销售统计的销售趋势、套餐表现、客户状态改用 `line-chart`、`bar-chart`、`donut-chart`。
 - 新手引导用 `stepper`，权限组保存进度用 `stepper`，公告用 `carousel`，工单对话用 `chat-thread`。
+- 用户总览「个人信息」卡片的 VIP 进度用 `gauge`（`tone="success"`、`size={112}`）：中间是到下一级的百分比，等级作为环下方的标签。
 - 数字和金额输入：13 处 `number-field`、4 处 `money-input`（见 5.2）；搜索框用 `search-field`；复制按钮用 `copy-button`。
 
 ### 保留项
@@ -301,7 +306,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 - `field`、`label`、`separator`：Arc 没有对应物，作为本地布局件保留。
 - 管理端 `sidebar` 及其内部的头像、菜单、气泡提示（`app-sidebar.tsx`、`site-header.tsx`、`main.tsx` 里的 `TooltipProvider`）：按约定保留本地实现。
 - `account-traffic-chart.tsx` 的「近 30 天流量明细」：按节点堆叠的柱状图，Arc 的免费图表里没有堆叠柱，继续用 recharts。
-- `data-table.tsx`、`summary-card.tsx`：旧实现，作为回退路径保留，已无页面引用。
+- `data-table.tsx`、`summary-card.tsx`、`progress-ring.tsx`：旧实现，作为回退路径保留，已无页面引用。
 - 约 30 处数字输入保持 `input type="number"`，原因见 5.2。
 
 ### 没有套用的 block
@@ -342,5 +347,6 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 20. **工单对话里客户的消息始终在右侧**，用户端和管理端一致（与原实现相同）；发送仍由下方的回复表单负责，没有启用 `chat-thread` 自带的输入框和表情回应。
 21. **公开价格页新增了顶栏和页脚**。顶栏有登录、注册入口，页脚有登录、注册、使用文档链接和原来的退款提示。
 22. **橙色按钮展示页保留**，为它补了四个橙色 variant，而不是删掉这个页面。
-23. **bento 卡片的底色用行内样式指定**。Arc `card` 自带底色和边框且优先级高于工具类，所以 `BentoCard` 按 tone 用行内样式写回原来的底色（灰、浅灰、黄、绿），网格里的 `metric-card` 通过 `bentoSurfaceStyle()` 取同样的底色。
+23. **bento 卡片的底色用行内样式指定**。Arc `card` 自带底色和边框且优先级高于工具类，所以 `BentoCard` 按 tone 用行内样式写回原来的底色（灰、浅灰、黄、绿），网格里的 `metric-card` 通过 `bentoSurfaceStyle()` 取同样的底色。`BentoCardBadge` 的 `tone="green"` 同理：深绿底（`bento-green-strong`，#228822，与白字对比度约 4.5:1）、白字、无边框写在行内样式里，悬停时也不变色。
 24. **bento 网格的行高改为自适应**。原来每行固定为一个 `--bento-row`，内容超出会被裁掉；现在以它为最小高度，随内容增高。
+25. **总览页顶部的渐变底色**。只有 `/account` 有：`AccountShell` 在页面顶部铺一条 `--arc-gradient-soft` 色带（高 40rem，下半段渐隐到页面底色），顶栏在页面顶部透明、滚动后或菜单打开时恢复白底加阴影（沿用 `site-header` 自带的 `data-scrolled`）。其它用户端页面的顶栏始终是白底。
