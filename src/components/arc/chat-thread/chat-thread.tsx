@@ -1,5 +1,6 @@
 "use client";
 
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ClipboardEvent as ReactClipboardEvent, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "motion/react";
@@ -92,6 +93,8 @@ export interface ChatThreadLabels extends ChatComposerLabels {
   reactWith?: (emoji: string) => string;
   /** Accessible name of a reaction under a message. */
   reactionCount?: (emoji: string, count: number, includesYou: boolean) => string;
+  /** XELA extension: accessible name of the button that closes an enlarged image. */
+  closeImage?: string;
 }
 
 const COMPOSER_LABELS: Required<ChatComposerLabels> = {
@@ -119,6 +122,7 @@ const THREAD_LABELS: Omit<Required<ChatThreadLabels>, "today" | "yesterday"> = {
   reactions: "回应",
   reactWith: emoji => `回应 ${emoji}`,
   reactionCount: (emoji, count, includesYou) => `${emoji} ${count}${includesYou ? "，包括你" : ""}`,
+  closeImage: "关闭图片",
 };
 
 /** A key passed as undefined keeps its default too. */
@@ -166,6 +170,8 @@ export interface ChatThreadProps {
   /** Words for localization. Leave out any key to keep its English default. */
   labels?: ChatThreadLabels;
   className?: string;
+  /** XELA extension: a title row above the messages, such as who is in the conversation and an action. */
+  header?: ReactNode;
 }
 
 type Row =
@@ -395,7 +401,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
 export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function ChatThread({
   participants, currentUserId, messages: messagesProp, defaultMessages, typing = [], readBy, onSend, onReact, onRetry,
   reactions = DEFAULT_REACTIONS, placeholder = "输入消息", composer = true, allowAttachments = true, accept,
-  groupWindow = 5 * 60_000, locale = "zh-CN", label = "对话", labels, className,
+  groupWindow = 5 * 60_000, locale = "zh-CN", label = "对话", labels, className, header,
 }, ref) {
   const t = useMemo(() => withDefaults({ ...THREAD_LABELS, today: relativeDay(locale, 0), yesterday: relativeDay(locale, -1) }, labels), [labels, locale]);
   const reduced = !!useReducedMotion();
@@ -539,12 +545,16 @@ export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function
     setInner(current => [...current, { id: `local-${Date.now()}-${++counter.current}`, authorId: currentUserId, text: draft.text || undefined, attachments, createdAt: new Date(), status: "sent" }]);
   };
 
+  // XELA extension: an image opens enlarged over the page instead of in a new tab. Modified clicks still follow the link.
+  const [viewer, setViewer] = useState<{ open: boolean; image: ChatAttachment | null }>({ open: false, image: null });
+
   const typers = typing.map(id => people.get(id)).filter((entry): entry is ChatParticipant => !!entry && entry.id !== currentUserId);
   const typingLabel = typers.length ? t.typing(typers.map(entry => entry.name)) : "";
 
   const arrive = (mine: boolean) => reduced ? { opacity: 0 } : { opacity: 0, scale: .92, y: 14, x: mine ? 8 : -8, filter: `blur(${blur.subtle}px)` };
 
   return <div className={[styles.root, className].filter(Boolean).join(" ")}>
+    {header && <div className={styles.header}>{header}</div>}
     <div className={styles.viewport}>
       <div ref={scrollRef} className={styles.scroller} onScroll={onScroll} data-chat-scroller="">
         <div className={styles.track}>
@@ -575,6 +585,7 @@ export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function
                         <div className={styles.parts}>
                           {images.length > 0 && <div className={styles.gallery} data-count={Math.min(images.length, 4)}>
                             {images.slice(0, 4).map((image, at) => <a key={image.id} className={styles.image} href={image.url} target="_blank" rel="noreferrer"
+                              onClick={event => { if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); setViewer({ open: true, image }); }}
                               style={images.length === 1 && image.width && image.height ? { aspectRatio: `${image.width} / ${image.height}` } : undefined}>
                               {/* eslint-disable-next-line @next/next/no-img-element -- registry components stay framework agnostic */}
                               <img src={image.url} alt={image.alt ?? image.name} loading="lazy" />
@@ -587,8 +598,9 @@ export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function
                           </a>)}
                           {message.text && <div className={styles.bubble} title={hydrated ? date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" }) : undefined}>{message.text}</div>}
                         </div>
-                        <ReactionPicker open={picker === message.id} mine={mine} reactions={reactions} reduced={reduced} labels={t} id={`${uid}-picker-${message.id}`}
-                          onToggle={() => setPicker(current => current === message.id ? null : message.id)} onClose={() => setPicker(null)} onPick={emoji => react(message.id, emoji)} />
+                        {/* XELA extension: an empty reaction list hides the picker, for a thread that takes no new reactions. */}
+                        {reactions.length > 0 && <ReactionPicker open={picker === message.id} mine={mine} reactions={reactions} reduced={reduced} labels={t} id={`${uid}-picker-${message.id}`}
+                          onToggle={() => setPicker(current => current === message.id ? null : message.id)} onClose={() => setPicker(null)} onPick={emoji => react(message.id, emoji)} />}
                       </div>
                       <AnimatePresence initial={false}>
                         {!!message.reactions?.length && <motion.div key="reactions" className={styles.reactionClip}
@@ -645,6 +657,23 @@ export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function
         </motion.button>}
       </AnimatePresence>
     </div>
+    <DialogPrimitive.Root open={viewer.open} onOpenChange={open => setViewer(current => ({ ...current, open }))}>
+      <AnimatePresence>
+        {viewer.open && viewer.image && <DialogPrimitive.Portal forceMount>
+          <DialogPrimitive.Overlay asChild forceMount>
+            <motion.div className={styles.lightboxOverlay} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: duration.exit } }} transition={{ duration: duration.fast }} />
+          </DialogPrimitive.Overlay>
+          <DialogPrimitive.Content asChild forceMount aria-describedby={undefined}>
+            <motion.div className={styles.lightbox} initial={reduced ? { opacity: 0 } : { opacity: 0, scale: .94 }} animate={{ opacity: 1, scale: 1 }} exit={reduced ? { opacity: 0 } : { opacity: 0, scale: .96, transition: { duration: duration.exit, ease: standard } }} transition={reduced ? { duration: duration.fast } : POP}>
+              <DialogPrimitive.Title className={styles.srOnly}>{viewer.image.alt ?? viewer.image.name}</DialogPrimitive.Title>
+              {/* eslint-disable-next-line @next/next/no-img-element -- registry components stay framework agnostic */}
+              <img className={styles.lightboxImage} src={viewer.image.url} alt={viewer.image.alt ?? viewer.image.name} />
+              <DialogPrimitive.Close className={styles.lightboxClose} aria-label={t.closeImage}><X size={18} strokeWidth={2} aria-hidden="true" /></DialogPrimitive.Close>
+            </motion.div>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>}
+      </AnimatePresence>
+    </DialogPrimitive.Root>
     {composer && <ChatComposer ref={composerRef} onSend={send} placeholder={placeholder} allowAttachments={allowAttachments} accept={accept} labels={t} />}
   </div>;
 });

@@ -10,6 +10,8 @@
   line-height: var(--leading-body);
 }
 
+/* XELA extension: optional title row, separated from the messages the same way the composer is. */
+.header { display: flex; flex: none; align-items: center; gap: 12px; min-width: 0; padding: 12px 16px; border-bottom: 1px solid var(--border-subtle); }
 .viewport { position: relative; display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .scroller { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
 /* The content springs up from where it was when the thread grows; the clip keeps that travel out of the scroll range. */
@@ -240,3 +242,11 @@
   .content { padding-inline: 12px; }
   .stack { max-width: 84%; }
 }
+
+/* XELA extension: an enlarged image over the page. Clicking the dimmed backdrop, the close button or Escape closes it. */
+.lightboxOverlay { position: fixed; inset: 0; z-index: 50; background: oklch(10% 0 0 / .72); backdrop-filter: blur(6px); }
+.lightbox { position: fixed; inset: 0; z-index: 51; width: fit-content; height: fit-content; margin: auto; outline: none; }
+.lightboxImage { display: block; max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); border-radius: 12px; object-fit: contain; box-shadow: var(--shadow-floating); }
+.lightboxClose { position: absolute; top: 8px; right: 8px; display: grid; width: 36px; height: 36px; place-items: center; border: 0; border-radius: 50%; background: oklch(10% 0 0 / .6); color: #fff; cursor: pointer; }
+.lightboxClose:hover { background: oklch(10% 0 0 / .8); }
+.lightboxClose:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }

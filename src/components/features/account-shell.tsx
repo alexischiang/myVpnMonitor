@@ -129,7 +129,7 @@ export function AccountShell() {
   // The overview has a gradient band behind its top: the header stays transparent over it and turns solid once the page scrolls.
   const overview = location.pathname === "/account"
   return (
-    <div data-account-shell className={cn("relative flex min-h-svh flex-col bg-background", overview ? solidHeaderWhenScrolled : solidHeader)}>
+    <div data-account-shell data-account-overview={overview || undefined} className={cn("relative flex min-h-svh flex-col bg-background", overview ? solidHeaderWhenScrolled : solidHeader)}>
       {overview ? <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-160 bg-(image:--arc-gradient-soft) mask-b-from-50%" /> : null}
       <SiteHeader
         variant="mega"

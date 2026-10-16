@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-12",
+  "updated_at": "2026-10-16",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -3468,6 +3468,243 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-15"
+      }
+    },
+    {
+      "id": "pricing-selector-segmented-control",
+      "name": "Pricing page selectors use Arc SegmentedControl",
+      "description": "The billing-period and plan-type selectors on /pricing and /account/plans were Arc Tabs with shadcn trigger classes and a hand-made sliding highlight. They have no panels, so they now use Arc SegmentedControl (aria-pressed buttons, built-in gliding highlight), with the 限量 badge passed as the lifetime option accessory.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "No Tabs or hand-made highlight span remain on the pricing page.",
+        "Choosing a period updates prices; choosing 不限时套餐 hides the period selector and shows lifetime prices.",
+        "Selectors fit a 375px viewport without horizontal page scroll."
+      ],
+      "verification": [
+        "2026-10-16: npm run check passed. Browser on the running Vite dev server: /pricing desktop, clicked 年付 (cards showed / 360天) then 不限时套餐 (period group removed, cards showed / 不限时); 375px mobile: document width 375, both groups centred and not scrolling. /account/plans redirected to login in this browser, so the in-account view was not checked while signed in; it renders the same 套餐类型 control.",
+        "2026-10-16: The plan-type switch had no highlight animation because the plan section was keyed by mode, so React remounted it and its selectors on every switch (group node isConnected=false after click). Gave the section a stable key; after the fix the group stays connected and the highlight starts from the previous option (transform matrix(0.63,0,0,1,-155.9,0) 50ms after click) in both directions.",
+        "2026-10-16: Recurring plan cards no longer repeat 周期性套餐 above the description (the selector already says it); lifetime cards keep their 固定流量不限时长 line. Browser: on /pricing the main text contains 周期性套餐 once (the selector button), and the lifetime view still shows the line on each card; no 4xx responses in this page load."
+      ],
+      "browser_verification": {
+        "routes": ["/pricing"],
+        "interactions": [
+          "Selected 年付 and read the price unit.",
+          "Selected 不限时套餐 and confirmed the period selector hides.",
+          "Measured selector widths at 375px.",
+          "Switched plan type both ways and confirmed the selector is not remounted and its highlight animates."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "ticket-chat-thread-replies",
+      "name": "Ticket conversations fully on Arc ChatThread with image replies",
+      "description": "Both ticket detail pages send replies through ChatThread's own composer instead of the separate reply form. Replies can carry up to 3 screenshots (PNG/JPEG/WebP/GIF, 8MB each); the account and admin reply endpoints accept attachments through a shared ticketReplyMessage helper, and text may be empty when images are attached. Each side sees its own messages on the trailing side. Pending replies show 发送中, failures show 发送失败 with retry; closed tickets hide the composer.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Customer and admin reply from the ChatThread composer; ReplyComposer is removed.",
+        "Replies can include up to 3 images on both sides; image-only replies are accepted.",
+        "A failed send stays in the thread with a retry that delivers it once.",
+        "Closed tickets show no composer."
+      ],
+      "verification": [
+        "2026-10-16: test.js covers ticketReplyMessage (image-only reply, text-only reply without attachments key, empty reply rejected, foreign URL rejected, 4 images rejected). npm run check and npm run verify:fast passed.",
+        "2026-10-16: Browser against an isolated server on the test database (port 3100, integrations blanked). Customer page: text reply via Enter showed 发送中 then 已发送; image-only reply saved an empty message with one /uploads/markdown attachment that loaded; forced one reply request to fail, saw 发送失败 and 重试, retry saved exactly one copy. Admin page: customer messages on the left, admin reply on the right, status became pending_user; admin image-only reply uploaded through /api/markdown/images. After resolving, the admin page showed no composer and the closed notice.",
+        "2026-10-16: First run logged net::ERR_FILE_NOT_FOUND after an image reply because the local blob preview was revoked while the sent copy was still fading out. Previews are now released on unmount; repeated customer and admin image replies in a fresh tab logged no console errors. Test accounts, tickets and the four uploaded test images were removed afterwards.",
+        "2026-10-16: Fixed 提交工单 doing nothing on /account/tickets/new. The button sits outside the form and was linked only by form=create-ticket, but Arc ActionButton defaults to type=button, so it never submitted. Reproduced on the isolated test-database server: valid subject and description, click sent no request and the page stayed. Added type=submit; after rebuilding, an empty form reached the server and showed 工单主题至少需要 4 个字符 (expected 400), and a valid form created the ticket and opened its detail page; a fresh tab logged no console errors. Test account and tickets were removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/tickets/new",
+          "/account/tickets/:id",
+          "/tickets/:id"
+        ],
+        "interactions": [
+          "Sent a text reply with Enter from the customer composer.",
+          "Sent image-only and text-plus-image replies through the attach input on both sides.",
+          "Forced a failed send and retried it.",
+          "Opened a resolved ticket and confirmed the composer is hidden.",
+          "Submitted the create-ticket form empty and filled from the 提交工单 button."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "account-password-save-submit",
+      "name": "Account password form submits from 保存密码",
+      "description": "On /account/settings the 保存密码 button is an Arc ActionButton inside the change-password form, but ActionButton defaults to type=button, so neither clicking it nor pressing Enter submitted the form. It now has type=submit.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Clicking 保存密码 or pressing Enter in the form runs its submit handler.",
+        "Mismatched confirmation shows 两次输入的密码不一致 without a request.",
+        "A valid change calls PUT /api/auth/password and returns to /login."
+      ],
+      "verification": [
+        "2026-10-16: Reproduced on an isolated server on the test database: with all three password fields filled, clicking 保存密码 and pressing Enter sent no request. Added type=submit and rebuilt (npm run check passed). Mismatched confirmation showed 两次输入的密码不一致 and sent nothing; a valid change submitted by Enter returned 200 from PUT /api/auth/password and landed on /login, and the account record's updatedAt moved past createdAt. The only console error was the expected 401 from GET /api/auth/me after the session was ended. A repo-wide grep found no other ActionButton without onClick, onAction or type=submit. Test account removed afterwards."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/settings"
+        ],
+        "interactions": [
+          "Clicked 保存密码 with a mismatched confirmation.",
+          "Pressed Enter in the confirm field with a valid new password."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "ticket-thread-polish-and-card-surface",
+      "name": "White cards off the overview; ticket thread lightbox, reactions and frame",
+      "description": "User-centre cards keep the light grey surface only on the overview (/account); other user-centre pages use the default card surface (white in light mode). Arc ChatThread gains an in-page image lightbox (close button, overlay click or Escape; modified clicks still open a new tab) and hides the reaction picker for an empty list. Ticket threads enable the six reactions, saved per side through new reaction endpoints, and render ChatThread directly with its own border, rounded-4xl corners and white background instead of inside a Card.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "ticket-chat-thread-replies"
+      ],
+      "done_criteria": [
+        "Cards on non-overview user-centre pages are white in light mode; the overview keeps its grey cards.",
+        "Clicking a thread image enlarges it in the page; the close button, overlay click and Escape each close it, and no new tab opens.",
+        "The reaction picker offers the six emoji; reactions persist per side and each side sees the other's.",
+        "Resolved tickets show existing reactions but no picker, and the server rejects new reactions.",
+        "The ticket conversation is ChatThread itself with its own frame, not wrapped in a Card."
+      ],
+      "verification": [
+        "2026-10-16: test.js covers toggleTicketReaction (add per side, remove, drop empty entries, reject unknown emoji and missing message). npm run check and npm run verify:fast passed.",
+        "2026-10-16: Browser against an isolated server on the test database. /account: shell has data-account-overview and --card-surface oklch(97.3% 0 0). /account/tickets: no overview flag, --card-surface unset, the 我的工单 card computed background oklch(1 0 0). /account/tickets/:id: ChatThread root has 1px border, 26px radius, white background, 640px height and no Card ancestor. Clicking the screenshot opened a dialog titled shot.png with the image at its natural 400px and focus on 关闭图片; the close button, a click on the overlay corner and Escape each closed it; the URL and tab list were unchanged. Picker listed 👍 ❤️ 😂 🎉 👀 🙏; choosing 👍 saved {\"👍\":[\"user\"]} and survived a reload. /tickets/:id (admin): showed 👍 1 not pressed; clicking it saved [\"user\",\"admin\"] and showed 👍 2 including you. After resolving, the page had no 添加回应 button or composer, still showed 👍 2, and a direct reaction POST returned 400 已结束工单不能添加回应 (the only console error, from that probe). Test account, ticket and uploaded image were removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/tickets",
+          "/account/tickets/:id",
+          "/tickets/:id"
+        ],
+        "interactions": [
+          "Compared the card surface on the overview and the ticket list.",
+          "Opened the enlarged screenshot and closed it with the button, the overlay and Escape.",
+          "Added 👍 from the customer side and reloaded.",
+          "Added the admin's 👍 to the same message.",
+          "Opened a resolved ticket and checked the picker and composer are hidden."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "ticket-thread-header",
+      "name": "Ticket thread title row inside the ChatThread frame",
+      "description": "Arc ChatThread gains a header slot. Ticket threads use it for a title row: avatar-group for the customer and NEXORA 团队, the ticket subject, the participants, and at the end the admin's 标记已解决 button (moved from the page header; status badge once resolved) or the ticket status for the customer. The Arc demo's Go offline control is demo chrome, not part of the component, and is not reproduced.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "ticket-thread-polish-and-card-surface"
+      ],
+      "done_criteria": [
+        "Both ticket detail pages show the title row inside the thread frame, above the messages.",
+        "The admin resolve button appears once, in the title row, and still opens the confirmation and resolves the ticket.",
+        "Long subjects and emails truncate at phone width without horizontal scroll."
+      ],
+      "verification": [
+        "2026-10-16: Confirmed from https://uiarc.dev/r/chat-thread.json and the component docs that the screenshot's header (avatars, CSV export limit, Go offline) is not in the chat-thread source or API. npm run check passed.",
+        "2026-10-16: Browser against an isolated server on the test database. /account/tickets/:id: header is the first child of the ChatThread root, 61px with a 1px bottom divider, avatar group labelled 对话成员 with the customer email and NEXORA 团队, subject, participants and 待客服回复. /tickets/:id: exactly one 标记已解决 button, inside the header; it opened the existing confirmation, and confirming resolved the ticket: the header showed 已解决, the button and composer were gone and the closed notice appeared. At 375px the document stayed 375 wide and the header text truncated. Console had no errors. Test account and ticket removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/tickets/:id",
+          "/tickets/:id"
+        ],
+        "interactions": [
+          "Read the title row on the customer page.",
+          "Resolved the ticket from the title-row button through the confirmation dialog.",
+          "Checked the title row at 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "admin-ticket-sidebar-compact",
+      "name": "Compact admin ticket sidebar",
+      "description": "The admin ticket detail sidebar no longer nests cards inside the customer and related-order cards. Each card shows a compact label/value list (new shared InfoList), traffic as a list row with the plain Arc Progress bar and sync time, and a small secondary button to the user or order detail.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "No cards nested inside the customer or related-order card.",
+        "Traffic shows used / total with a plain progress bar when the quota is known; unlimited and unsynced traffic show text only.",
+        "Values such as the expiry date are no longer cut off; no horizontal scroll at 375px."
+      ],
+      "verification": [
+        "2026-10-16: npm run check passed. Browser on the running dev server, read-only (no clicks that write): /tickets/T260924-6968 sidebar has 0 nested cards; lists read 流量使用 159 GB / 200 GB, 当前套餐 PRO 套餐 · 季付 90天, 设备连接 1 / 3, 有效期 2026/12/07, and the order list 套餐 / 订单号 / 金额 / 状态; progressbar labelled 已使用流量 80% with 同步于 text; sidebar height 570px (was about 866px). At 375px the document stayed 375 wide with no element past the edge. A fresh tab logged no console errors and both API calls returned 200. An earlier tab showed ReferenceErrors from Vite hot-reloading the file between edits, before the imports were fixed; they did not recur.",
+        "2026-10-16: The customer ticket page's 工单信息 card now uses the same InfoList instead of nested cards: 当前状态 (badge), 创建时间 (back after the conversation card was removed), 最后更新, and with a related order 关联订单 / 套餐 / 金额 plus a small 查看订单详情 button. npm run check passed. Browser against an isolated server on the test database: without an order the card had 0 nested cards and the three rows; after linking a test order (inserted into the test database, server restarted to reload it) it showed all six rows and the button linked to /account/orders/<id>. 375px had no overflow and the console had no errors. Test account, ticket and order removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/tickets/:id",
+          "/account/tickets/:id"
+        ],
+        "interactions": [
+          "Read the customer and related-order cards on a ticket with a linked user, traffic and order.",
+          "Checked the sidebar at 375px.",
+          "Read the customer 工单信息 card with and without a related order."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "ticket-detail-status-badges",
+      "name": "Tickets: ticket status and reply status badges on detail and list pages",
+      "description": "Ticket detail pages show two badges only. Next to the big title: the ticket status, 进行中 (warning) or 已解决 (success). At the end of the ChatThread title row: whose turn it is from the viewer's side, 待您回复 (info) or 待客户回复 / 待客服回复 (neutral), hidden once resolved. On the admin page the 标记已解决 button sits between the title and the status badge. The customer 工单信息 card drops its 当前状态 row. Ticket list pages keep the three-state badge.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "ticket-thread-header"
+      ],
+      "done_criteria": [
+        "Each detail page shows only the title status badge and the reply status badge.",
+        "Reply status reads from the viewer's side on both pages and flips after a reply.",
+        "Admin 标记已解决 sits between the title and the status badge and still resolves the ticket.",
+        "A resolved ticket shows 已解决 and no reply badge or resolve button."
+      ],
+      "verification": [
+        "2026-10-16: npm run check passed. Browser against an isolated server on the test database. New ticket: customer page badges were 进行中 and 待客服回复 (thread title row), 工单信息 rows 创建时间 / 最后更新 only; admin page showed 标签验证, then 标记已解决, then 进行中, with 待您回复 in the thread. After the admin replied from the composer, the admin saw 待客户回复 and the customer saw 待您回复. Resolving from the title-row button through the confirmation left 已解决 as the only ticket badge, removed the button and the reply badge. Console had no errors. Test account and ticket removed.",
+        "2026-10-16: Ticket list pages switched too: the old three-state badge (待客服回复 / 待用户回复 / 已解决) is removed; each row and mobile card shows 进行中 or 已解决, plus the viewer-side reply badge while open. The customer tab and admin filter label 已结束 became 已解决. npm run check passed. Browser against an isolated server on the test database with one open and one resolved ticket: /account/tickets rows read 进行中 待客服回复 and 已解决, tabs 全部 / 进行中 / 已解决, and the 已解决 tab (?status=ended) showed only the resolved ticket; 375px cards showed both badges with no horizontal scroll. /tickets?status=all rows read 进行中 待您回复 and 已解决, and the filter offered 全部状态 / 进行中 / 已解决. Console had no errors. Test account and tickets removed.",
+        "2026-10-16: Title-row badges moved to the right and 待您回复 highlighted. Arc page-header gained statusAlign=\"end\" (title row stretches, status slot gets margin-left auto); both ticket detail pages use it. 待您回复 switched from info to danger, because info follows this project's near-black --accent and rendered grey. npm run check passed. Browser: dev server, read-only, /tickets/T260924-6968: the status slot (标记已解决 + 进行中) ended at the header's right edge (x 1330 = row right), 待您回复 had the danger class and red text; at 375px the slot wrapped to its own line, still right-aligned, no horizontal scroll; console clean. Isolated test database, customer ticket after an admin reply: 进行中 at the right edge, the customer's 待您回复 red, console clean. Test account and ticket removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/tickets/:id",
+          "/tickets/:id",
+          "/account/tickets",
+          "/tickets"
+        ],
+        "interactions": [
+          "Read badges on both pages for an open ticket waiting on support.",
+          "Sent an admin reply and re-read both pages.",
+          "Resolved the ticket from the button beside the title.",
+          "Read list badges for an open and a resolved ticket on both list pages, switched the customer tab to 已解决 and opened the admin status filter.",
+          "Measured the title-row status slot against the header edge on both detail pages, desktop and 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
       }
     }
   ]

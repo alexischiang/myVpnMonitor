@@ -22,6 +22,8 @@ export interface PageHeaderProps {
   title: ReactNode;
   /** A badge beside the title. */
   status?: ReactNode;
+  /** XELA extension: "end" stretches the title row and pushes the status slot (badges, a page-level button) to its right edge. */
+  statusAlign?: "inline" | "end";
   description?: ReactNode;
   /** A quiet line under the description: owner, dates, identifiers. */
   meta?: ReactNode;
@@ -30,7 +32,7 @@ export interface PageHeaderProps {
   className?: string;
 }
 
-export function PageHeader({ breadcrumbs, title, status, description, meta, actions, className }: PageHeaderProps) {
+export function PageHeader({ breadcrumbs, title, status, statusAlign = "inline", description, meta, actions, className }: PageHeaderProps) {
   return (
     <header className={[styles.header, styles.standalone, className].filter(Boolean).join(" ")}>
       {breadcrumbs?.length || actions ? <div className={styles.bar}>
@@ -54,7 +56,7 @@ export function PageHeader({ breadcrumbs, title, status, description, meta, acti
         {actions ? <div className={styles.actions}><div className={styles.trailing}>{actions}</div></div> : null}
       </div> : null}
       <div className={styles.introInner}>
-        <div className={styles.titleRow}><h1 className={styles.title}>{title}</h1>{status}</div>
+        <div className={styles.titleRow} data-status-end={statusAlign === "end" || undefined}><h1 className={styles.title}>{title}</h1>{status && statusAlign === "end" ? <div className={styles.statusEnd}>{status}</div> : status}</div>
         {description || meta ? <div className={styles.details}>
           {description ? <p className={styles.description}>{description}</p> : null}
           {meta ? <div className={styles.meta}>{meta}</div> : null}

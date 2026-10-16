@@ -267,7 +267,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `calendar`、`date-range-picker`、`carousel`、`stepper`、`chat-thread`、`bar-chart`、`line-chart`、`donut-chart`、`number-field`、`money-input`、`usage-meter` | 内置文案改中文，日期类默认 `locale` 改为 `zh-CN` |
 | `blocks/page-header` | 去掉演示用的滚动容器、标签页、议题面板和模拟操作，改为可传参的头部：`breadcrumbs`、`title`、`status`、`description`、`meta`、`actions` |
 | `blocks/faq-section`、`blocks/site-footer` | 默认文案改中文 |
-| `card`（补充） | 背景先读 `--card-surface`（缺省回落到 `--surface`），用户端外壳借此把普通卡片设为浅灰，不影响共用的 `--surface` |
+| `card`（补充） | 背景先读 `--card-surface`（缺省回落到 `--surface`），用户端外壳借此只在总览页（`[data-account-overview]`）把普通卡片设为浅灰，其它用户端页面保持默认白底，不影响共用的 `--surface` |
 | `blocks/cta-section` | 新安装（只取 block 本身，`lib/media.ts` 沿用项目已有版本）；`bare`：banner 去掉自带的居中列和留白，放进页面已有的内容列；`onNavigate`：`/` 开头的 `href` 动作走前端路由；`compactAction`：banner 在窄宽度下保持一行，链接动作只显示箭头图标（文案保留给读屏）；关闭按钮读屏文案改中文 |
 | `blocks/site-footer`（补充） | `contained`：内容收进与 `site-header` 相同的 1200px 列和左右留白（窄于 760px 时 16px），上边框仍通栏；传了 `onNavigate` 时站内链接（`/` 开头）走前端路由，不再整页刷新；`status.static` 把状态显示为纯文本（不渲染成无动作的按钮）；社交链接列表的读屏标签改中文 |
 | `button`、`badge`、`tabs`、`segmented-control`、`card` | 没有写尺寸类的图标按控件给定尺寸（按钮和标签页 16px，小号按钮 14px，徽标 12px，卡片标题 18px）；带 `size-*` 类的图标不受影响 |
@@ -282,6 +282,8 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `user-menu`（补充） | 首字母头像用前景色填充（浅色主题黑底白字，深色主题浅底深字），在透明或渐变顶栏上保持显眼；原为 `surface-muted` 底、`text-secondary` 字 |
 | `money-input` | `size="md"`：与标准 `Input` 同高（`--control-height-md`）、同圆角、同字号，用于字段较多的表单（商品编辑页的价格）；默认仍是 Arc 的大号 `lg` |
 | `blocks/plan-comparison` | 演示常量改为属性（不传时仍显示原演示）：`plans`（任意数量，列数由 `--plan-count` 驱动；`tagline`、`badge`；`prices` 按周期给出 `amount`、`unit`、`note`，缺省表示该周期未开放，按钮禁用）、`periods`（周期切换，只有一个周期时隐藏）、`rows`（值为 `true`/`false`/`null`/文字；所有套餐取值相同即视为共用行，供「只看差异」过滤，可用 `shared` 覆盖）；周期与选中项可受控（`period`/`onPeriodChange`、`selected`/`onSelectedChange`）；`currency`、`footer`、`action`（页脚操作，如购买按钮）、`labels`（全部文案）；价格支持两位小数；列放不下时矩阵横向滚动（宽屏每列至少 168px，窄屏至少 156px） |
+| `chat-thread` | 点击消息里的图片在当前页放大查看（Radix Dialog：关闭按钮、点遮罩或 Esc 关闭；带修饰键或中键点击仍按链接在新标签页打开）；新增文案 `closeImage`；`reactions` 为空数组时不显示添加回应按钮；`header`：消息列表上方的标题行（与输入框一样用细分隔线隔开） |
+| `blocks/page-header`（补充） | `statusAlign`：`"end"` 时标题行撑满整行，`status` 插槽（徽标、页面级按钮）靠右；默认 `"inline"` 保持紧跟标题 |
 
 ## 7. 进度
 
@@ -346,7 +348,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 17. **订单详情的「标签加内容」表格改为描述列表**。它们不是表格数据，没有表头，改用 `dl` 加 Arc 的边框变量。
 18. **销售趋势从堆叠面积图改为两条折线**。Arc 的折线图每个系列都从坐标轴画起，不堆叠；新客和老客各一条线。套餐表现从横向柱改为纵向柱。
 19. **新手引导从可滑动的轮播改为步骤条**。每次只显示当前一步，用上一步、下一步按钮或点击已完成的步骤切换，不能再左右拖动。
-20. **工单对话里客户的消息始终在右侧**，用户端和管理端一致（与原实现相同）；发送仍由下方的回复表单负责，没有启用 `chat-thread` 自带的输入框和表情回应。
+20. **工单对话整体使用 `chat-thread`**（2026-10-16 起）：回复由其自带输入框发送，可附最多 3 张截图（粘贴、拖入或点附件按钮）；双方都看到自己的消息在右侧，用户端 `currentUserId="user"`、管理端 `currentUserId="admin"`。发送中显示“发送中”，失败显示“发送失败”和重试；工单已解决时不显示输入框。表情回应开启（👍 ❤️ 😂 🎉 👀 🙏，与服务端 `TICKET_REACTIONS` 一致），按用户端/管理端分别保存在消息的 `reactions` 中，双方互相可见；已解决的工单不能再添加回应。对话直接使用 `chat-thread` 本身（自带边框、`rounded-4xl` 圆角和白底），不再套卡片，外层只保留给定高度的容器。框内顶部用 `header` 放标题行：`avatar-group`（客户邮箱、NEXORA 团队）、工单主题和参与方，行尾是从查看者角度的回复状态：待您回复（danger 红色高亮；本项目 `--accent` 接近黑色，info 会显示成灰色）/ 待客户回复或待客服回复（neutral），已解决后不显示。工单状态只有进行中（warning）/ 已解决（success），用 `page-header` 的 `statusAlign="end"` 显示在大标题这一行的最右侧；管理端的“标记已解决”按钮在状态标签左边。工单列表页（用户端和管理端）同样显示进行中/已解决，进行中的工单再加一个从查看者角度的回复状态；列表标签和筛选里的“已结束”统一改为“已解决”。Arc 演示页里的“Go offline”是演示外壳，不属于组件，工单没有在线状态，不做。
 21. **公开价格页新增了顶栏和页脚**。顶栏有登录、注册入口，页脚有登录、注册、使用文档链接和原来的退款提示。
 22. **橙色按钮展示页保留**，为它补了四个橙色 variant，而不是删掉这个页面。
 23. **bento 卡片的底色用行内样式指定**。Arc `card` 自带底色和边框且优先级高于工具类，所以 `BentoCard` 按 tone 用行内样式写回原来的底色（灰、浅灰、黄、绿），网格里的 `metric-card` 通过 `bentoSurfaceStyle()` 取同样的底色。`BentoCardBadge` 的 `tone="green"` 同理：深绿底（`bento-green-strong`，#228822，与白字对比度约 4.5:1）、白字、无边框写在行内样式里，悬停时也不变色。

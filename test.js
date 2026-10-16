@@ -99,6 +99,8 @@ const {
   disabledAccountPlaceholderSubscription,
   clearSubscriptionSourceState,
   ticketTelegramText,
+  ticketReplyMessage,
+  toggleTicketReaction,
   planRenewalOffer
 } = require("./server");
 
@@ -296,6 +298,23 @@ const ticketAlert = ticketTelegramText({ id: "T1", email: "user@example.com", su
 assert(ticketAlert.includes("正文：\n最新追问"));
 assert(!ticketAlert.includes("首次描述"));
 assert(Array.from(ticketTelegramText({ id: "T1", email: "user@example.com", subject: "连接问题", messages: [{ message: "😀".repeat(5000) }] }, "https://example.com/tickets/T1")).length <= 4096);
+const screenshotReply = ticketReplyMessage({ message: " ", attachments: [{ url: "/uploads/markdown/0f8b6c2e-1a2b-4c3d-8e9f-001122334455.png", name: "a.png" }] }, "admin", "NEXORA 团队", "2026-10-16T00:00:00.000Z");
+assert.strictEqual(screenshotReply.message, "");
+assert.deepStrictEqual(screenshotReply.attachments, [{ url: "/uploads/markdown/0f8b6c2e-1a2b-4c3d-8e9f-001122334455.png", name: "a.png" }]);
+assert.strictEqual("attachments" in ticketReplyMessage({ message: "仅文字" }, "user", "u@example.com", "2026-10-16T00:00:00.000Z"), false);
+assert.throws(() => ticketReplyMessage({ message: " " }, "user", "u@example.com", "2026-10-16T00:00:00.000Z"), /回复内容至少需要 1 个字符/);
+assert.throws(() => ticketReplyMessage({ message: "x", attachments: [{ url: "https://evil.example/a.png", name: "a.png" }] }, "user", "u@example.com", "2026-10-16T00:00:00.000Z"), /截图附件无效/);
+assert.throws(() => ticketReplyMessage({ message: "x", attachments: Array(4).fill({ url: "/uploads/markdown/0f8b6c2e-1a2b-4c3d-8e9f-001122334455.png", name: "a.png" }) }, "user", "u@example.com", "2026-10-16T00:00:00.000Z"), /最多上传 3 张/);
+const reactionTicket = { messages: [{ id: "m1", sender: "user", message: "hi" }] };
+toggleTicketReaction(reactionTicket, "m1", "👍", "user");
+toggleTicketReaction(reactionTicket, "m1", "👍", "admin");
+assert.deepStrictEqual(reactionTicket.messages[0].reactions, { "👍": ["user", "admin"] });
+toggleTicketReaction(reactionTicket, "m1", "👍", "user");
+assert.deepStrictEqual(reactionTicket.messages[0].reactions, { "👍": ["admin"] });
+toggleTicketReaction(reactionTicket, "m1", "👍", "admin");
+assert.strictEqual("reactions" in reactionTicket.messages[0], false);
+assert.throws(() => toggleTicketReaction(reactionTicket, "m1", "💩", "user"), /不支持的表情/);
+assert.throws(() => toggleTicketReaction(reactionTicket, "missing", "👍", "user"), /消息不存在/);
 assert.deepStrictEqual(salesMonthRange(2, 2024), { from: new Date(2024, 1, 1), to: new Date(2024, 1, 29) });
 assert.deepStrictEqual(unlinkedSalesBills(
   [{ userId: "paid", amount: 40, paidAt: "2026-08-01T00:00:00.000Z", status: "paid" }],

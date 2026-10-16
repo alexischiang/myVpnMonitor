@@ -9,6 +9,13 @@ import { Badge } from "@/components/arc/badge/badge"
 import { Button } from "@/components/arc/button/button"
 import { CopyButton } from "@/components/arc/copy-button/copy-button"
 
+// A compact label/value list for detail sidebars: labels on the left, values right-aligned and truncated, numbers in tabular widths.
+export function InfoList({ items }: { items: { label: string; value: React.ReactNode }[] }) {
+  return <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+    {items.map(item => <React.Fragment key={item.label}><dt className="text-muted-foreground">{item.label}</dt><dd className="min-w-0 truncate text-right font-medium tabular-nums">{item.value}</dd></React.Fragment>)}
+  </dl>
+}
+
 export function PageHeader({ actions }: { title: string; description?: string; actions?: React.ReactNode }) {
   return actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null
 }

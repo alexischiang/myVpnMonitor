@@ -1,13 +1,13 @@
 # Current State
 
-- Last Updated: 2026-10-15
-- Current Objective: 周期性套餐对比页与可配置对比行；商品编辑页紧凑 CNY 价格框
+- Last Updated: 2026-10-16
+- Current Objective: 工单详情页标签靠右、待您回复高亮
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
 - Active feature: none
-- Blockers: 本机缺 TEST_DATABASE_URL，支付/钱包测试未运行
+- Blockers: none
 
 ## Verification Evidence
 
@@ -454,8 +454,30 @@
 
 - 2026-10-15: check、npm test、verify:fast、verify:harness、test-catalog-v2 通过；客户端对比页与后台对比项/商品编辑页浏览器验证通过
 
+- 2026-10-16: npm run check、verify:harness 通过；/pricing 桌面与 375px 浏览器检查无控制台错误
+
+- 2026-10-16: test.js 新增 ticketReplyMessage 用例；check、verify:fast、verify:harness 通过；隔离测试库上用户端与管理端文字/图片/失败重试/已解决状态浏览器检查无控制台错误
+
+- 2026-10-16: 复现：填好表单点击无请求；加 type=submit 后空表单显示服务端校验、有效表单创建工单并跳转；新标签页无控制台错误；check、verify:harness 通过
+
+- 2026-10-16: 复现点击与回车均无请求；加 type=submit 后不一致提示正常、有效修改 PUT /api/auth/password 200 并跳转 /login；check、verify:harness 通过
+
+- 2026-10-16: test.js 新增 toggleTicketReaction 用例；check、verify:fast、verify:harness 通过；隔离测试库浏览器检查卡片底色、图片放大三种关闭方式、双方回应与已解决状态
+
+- 2026-10-16: check、verify:harness 通过；隔离测试库浏览器检查用户端/管理端标题行、标记已解决流程、375px 截断，无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；开发服务器只读浏览器检查 T260924-6968 侧栏、375px 无溢出、新标签页无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；隔离测试库浏览器检查有无关联订单两种情况、375px 无溢出、无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；隔离测试库浏览器检查新建/管理员回复/已解决三个阶段两端标签，无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；隔离测试库浏览器检查用户端/管理端列表（进行中+回复状态、已解决）、已解决标签页与筛选、375px，无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；开发服务器只读与隔离测试库浏览器检查两端标签靠右、待您回复红色、375px，无控制台错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `database.js`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/components/arc/blocks/plan-comparison/plan-comparison.module.css`, `src/components/arc/blocks/plan-comparison/plan-comparison.tsx`, `src/components/arc/money-input/money-input.module.css`, `src/components/arc/money-input/money-input.tsx`, `src/components/features/catalog-v2.tsx`, `src/main.tsx`, `src/types.ts`, `test-catalog-v2.js`, `test.js`, `src/components/features/plan-compare-page.tsx`, `src/components/features/plan-compare-rows.ts`
+- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/components/arc/blocks/page-header/page-header.module.css`, `src/components/arc/blocks/page-header/page-header.tsx`, `src/components/arc/chat-thread/chat-thread.module.css`, `src/components/arc/chat-thread/chat-thread.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/shared.tsx`, `src/components/features/ticket-pages.tsx`, `src/styles.css`, `test.js`
 - Known risks: none
-- Recommended Next Step: 确认是否把 /account/plans 的周期性套餐切换为对比页；有 TEST_DATABASE_URL 时补跑 npm run test:payment 和 test:wallet
+- Recommended Next Step: 无

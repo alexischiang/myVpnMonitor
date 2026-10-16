@@ -1078,6 +1078,28 @@ function normalizeTicketAttachments(value) {
   });
 }
 
+// A reply needs text or at least one screenshot.
+function ticketReplyMessage(payload, sender, senderName, now) {
+  const attachments = normalizeTicketAttachments(payload?.attachments);
+  const message = validateTicketText(payload?.message, "回复内容", attachments.length ? 0 : 1, 5000);
+  return { id: crypto.randomUUID(), sender, senderName, message, ...(attachments.length ? { attachments } : {}), createdAt: now };
+}
+
+const TICKET_REACTIONS = ["👍", "❤️", "😂", "🎉", "👀", "🙏"];
+
+// Toggles one side's emoji on a message. Reactions are stored as { emoji: ["user" | "admin"] } and empty entries are dropped.
+function toggleTicketReaction(ticket, messageId, emoji, side) {
+  if (!TICKET_REACTIONS.includes(emoji)) throw new Error("不支持的表情。");
+  const message = ticket.messages.find(item => item.id === messageId);
+  if (!message) throw new Error("消息不存在。");
+  const sides = new Set(message.reactions?.[emoji] || []);
+  if (sides.has(side)) sides.delete(side); else sides.add(side);
+  const reactions = { ...(message.reactions || {}), [emoji]: [...sides] };
+  if (!sides.size) delete reactions[emoji];
+  if (Object.keys(reactions).length) message.reactions = reactions; else delete message.reactions;
+  return message;
+}
+
 function ticketStatusForReply(sender) {
   return sender === "admin" ? "pending_user" : "pending_support";
 }
@@ -8907,6 +8929,24 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  const accountTicketReactionMatch = pathname.match(/^\/api\/account\/tickets\/([^/]+)\/messages\/([^/]+)\/reactions$/);
+  if (accountTicketReactionMatch && req.method === "POST") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      await loadLatestData();
+      const ticket = ticketById(decodeURIComponent(accountTicketReactionMatch[1]));
+      if (!ticket || ticket.accountId !== session.accountId) return sendJson(res, 404, { error: "工单不存在。" });
+      if (ticket.status === "closed") throw new Error("已结束工单不能添加回应。");
+      toggleTicketReaction(ticket, decodeURIComponent(accountTicketReactionMatch[2]), String((await readJson(req)).emoji || ""), "user");
+      await saveTicket(ticket);
+      sendJson(res, 200, publicTicket(ticket));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const accountTicketReplyMatch = pathname.match(/^\/api\/account\/tickets\/([^/]+)\/reply$/);
   if (accountTicketReplyMatch && req.method === "POST") {
     const session = requireUser(req, res);
@@ -8918,7 +8958,7 @@ async function handleApi(req, res, pathname) {
       if (ticket.status === "closed") throw new Error("已结束工单不能继续回复。");
       const payload = await readJson(req);
       const now = new Date().toISOString();
-      ticket.messages.push({ id: crypto.randomUUID(), sender: "user", senderName: ticket.email, message: validateTicketText(payload.message, "回复内容", 1, 5000), createdAt: now });
+      ticket.messages.push(ticketReplyMessage(payload, "user", ticket.email, now));
       ticket.status = ticketStatusForReply("user");
       ticket.updatedAt = now;
       await saveTicket(ticket);
@@ -9507,6 +9547,21 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  const adminTicketReactionMatch = pathname.match(/^\/api\/tickets\/([^/]+)\/messages\/([^/]+)\/reactions$/);
+  if (adminTicketReactionMatch && req.method === "POST") {
+    try {
+      const ticket = ticketById(decodeURIComponent(adminTicketReactionMatch[1]));
+      if (!ticket) return sendJson(res, 404, { error: "工单不存在。" });
+      if (ticket.status === "closed") throw new Error("已结束工单不能添加回应。");
+      toggleTicketReaction(ticket, decodeURIComponent(adminTicketReactionMatch[2]), String((await readJson(req)).emoji || ""), "admin");
+      await saveTicket(ticket);
+      sendJson(res, 200, publicTicket(ticket, { admin: true }));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const adminTicketReplyMatch = pathname.match(/^\/api\/tickets\/([^/]+)\/reply$/);
   if (adminTicketReplyMatch && req.method === "POST") {
     try {
@@ -9514,9 +9569,10 @@ async function handleApi(req, res, pathname) {
       if (!ticket) return sendJson(res, 404, { error: "工单不存在。" });
       if (ticket.status === "closed") throw new Error("已结束工单不能继续回复。");
       const payload = await readJson(req);
-      const message = validateTicketText(payload.message, "回复内容", 1, 5000);
       const now = new Date().toISOString();
-      ticket.messages.push({ id: crypto.randomUUID(), sender: "admin", senderName: "NEXORA 团队", message, createdAt: now });
+      const reply = ticketReplyMessage(payload, "admin", "NEXORA 团队", now);
+      const message = reply.message || `[${reply.attachments.length} 张图片]`;
+      ticket.messages.push(reply);
       ticket.status = ticketStatusForReply("admin");
       ticket.closedAt = "";
       ticket.updatedAt = now;
@@ -11974,6 +12030,8 @@ module.exports = Object.assign(requestHandler, {
   normalizeTicketAttachments,
   ticketStatusForReply,
   ticketTelegramText,
+  ticketReplyMessage,
+  toggleTicketReaction,
   validateTicketText,
   liveConfigFromCachedPoolConfig,
   startOfUtcDate,
