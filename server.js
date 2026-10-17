@@ -21,7 +21,7 @@ const { createOperationLock } = require("./commerce/operation-lock");
 const { createSettlementService } = require("./commerce/settlement");
 const { createPaymentService, manualReceipt, transactionError } = require("./commerce/payments");
 const { createCheckoutWorkflow } = require("./commerce/checkout-workflow");
-const { resolvePurchase: resolveCatalogV2Purchase, visibleProducts: visibleCatalogV2Products } = require("./commerce/catalog-v2");
+const { resolvePurchase: resolveCatalogV2Purchase, visibleProducts: visibleCatalogV2Products, resolveCompareValues: resolveCatalogV2CompareValues, lineGroupCoverage: catalogV2LineGroupCoverage } = require("./commerce/catalog-v2");
 const addonServices = require("./commerce/addon-services");
 
 loadLocalEnv();
@@ -148,7 +148,62 @@ function normalizeCatalogV2AddonCategory(input = {}) {
   return { id: input.id ? normalizeCatalogV2Id(input.id, "分类标识") : `cat-${crypto.randomBytes(4).toString("hex")}`, name, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "分类排序" }) };
 }
 
+function normalizeCatalogV2CompareAttribute(input = {}) {
+  const label = String(input.label || "").trim().slice(0, 30);
+  if (!label) throw new Error("对比项名称不能为空。");
+  const kind = ["choice", "boolean", "text"].includes(input.kind) ? input.kind : "";
+  if (!kind) throw new Error("对比项类型无效。");
+  const options = kind === "choice" ? [...new Set((Array.isArray(input.options) ? input.options : []).map(option => String(option || "").trim().slice(0, 20)).filter(Boolean))] : [];
+  if (kind === "choice" && (options.length < 2 || options.length > 10)) throw new Error("选项型对比项需要 2-10 个选项。");
+  return { id: input.id ? normalizeCatalogV2Id(input.id, "对比项标识") : `cmp-${crypto.randomBytes(4).toString("hex")}`, label, kind, options, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "对比项排序" }) };
+}
+
+// Colour keys a changelog tag can take; the frontend maps each one to a theme token.
+const CHANGELOG_TAG_COLORS = ["accent", "muted", "success", "warning", "danger", "blue", "purple", "orange", "teal"];
+
+function normalizeChangelogTag(input = {}) {
+  const label = String(input.label || "").trim().slice(0, 12);
+  if (!label) throw new Error("标签名称不能为空。");
+  const color = CHANGELOG_TAG_COLORS.includes(input.color) ? input.color : "";
+  if (!color) throw new Error("请选择标签颜色。");
+  const sortOrder = input.sortOrder === undefined || input.sortOrder === null || input.sortOrder === "" ? null : catalogV2Integer(input.sortOrder, { label: "标签排序" });
+  return { id: input.id ? normalizeCatalogV2Id(input.id, "标签标识") : `tag-${crypto.randomBytes(4).toString("hex")}`, label, color, sortOrder };
+}
+
+// Content is plain text: the first non-empty line is the summary, each later line one detail (a leading "-" or "•" is dropped).
+function normalizeChangelogEntry(input = {}) {
+  const title = String(input.title || "").trim().slice(0, 80);
+  if (!title) throw new Error("更新标题不能为空。");
+  const content = String(input.content || "").replace(/\r\n?/g, "\n").split("\n").map(line => line.trim()).filter(Boolean).join("\n").slice(0, 4000);
+  if (!content) throw new Error("更新内容不能为空。");
+  // Whether the tag exists is checked by the route against the tag table.
+  const kind = typeof input.kind === "string" && CATALOG_V2_ID_PATTERN.test(input.kind) ? input.kind : "";
+  if (!kind) throw new Error("请选择更新标签。");
+  const publishedAt = input.publishedAt ? new Date(input.publishedAt) : null;
+  if (publishedAt && Number.isNaN(publishedAt.getTime())) throw new Error("发布时间无效。");
+  return { id: input.id ? String(input.id) : `cl-${crypto.randomBytes(6).toString("hex")}`, title, content, kind, publishedAt: publishedAt ? publishedAt.toISOString() : "" };
+}
+
+async function assertChangelogTagExists(id) {
+  if (!(await dataStore.listChangelogTags()).some(tag => tag.id === id)) throw new Error("所选标签不存在，请刷新后重新选择。");
+}
+
+function publicChangelogEntry(entry) {
+  const [summary = "", ...details] = String(entry.content || "").split("\n").map(line => line.replace(/^[-•·*]\s*/, "").trim()).filter(Boolean);
+  return { id: entry.id, title: entry.title, kind: entry.kind, summary, details, publishedAt: entry.publishedAt };
+}
+
+function normalizeCatalogV2CompareValues(value) {
+  return Object.fromEntries(Object.entries(value && typeof value === "object" && !Array.isArray(value) ? value : {})
+    .filter(([key]) => CATALOG_V2_ID_PATTERN.test(key))
+    .map(([key, item]) => [key, String(item ?? "").trim().slice(0, 60)])
+    .filter(([, item]) => item)
+    .slice(0, 50));
+}
+
+// Also replaces compareValues with the values checked against the current comparison rows.
 async function assertCatalogV2ProductReferences(product) {
+  product.compareValues = resolveCatalogV2CompareValues(product, await dataStore.listCatalogV2CompareAttributes());
   if (product.lineGroupId && !(await dataStore.listCatalogV2LineGroups()).some(group => group.id === product.lineGroupId && group.isEnabled)) throw new Error("请选择已启用的线路权限组。");
   if (product.addonCategoryId && !(await dataStore.listCatalogV2AddonCategories()).some(category => category.id === product.addonCategoryId)) throw new Error("附加服务分类不存在，请刷新后重新选择。");
 }
@@ -201,6 +256,8 @@ function normalizeCatalogV2Product(input = {}) {
   return {
     id: normalizeCatalogV2Id(input.id, "商品 ID"), type, isEnabled, isForSale: input.isForSale === true,
     stock, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "商品排序" }), name,
+    tagline: isAddon ? "" : String(input.tagline || "").trim().slice(0, 40),
+    compareValues: type === "recurring_plan" ? normalizeCatalogV2CompareValues(input.compareValues) : {},
     description: String(input.description || "").trim().slice(0, 500), features: normalizeCatalogV2Features(input.features),
     isRecommended: type !== "addon" && input.isRecommended === true, lineGroupId,
     addonCategoryId: isAddon && input.addonCategoryId ? normalizeCatalogV2Id(input.addonCategoryId, "附加服务分类") : null,
@@ -1056,6 +1113,28 @@ function normalizeTicketAttachments(value) {
   });
 }
 
+// A reply needs text or at least one screenshot.
+function ticketReplyMessage(payload, sender, senderName, now) {
+  const attachments = normalizeTicketAttachments(payload?.attachments);
+  const message = validateTicketText(payload?.message, "回复内容", attachments.length ? 0 : 1, 5000);
+  return { id: crypto.randomUUID(), sender, senderName, message, ...(attachments.length ? { attachments } : {}), createdAt: now };
+}
+
+const TICKET_REACTIONS = ["👍", "❤️", "😂", "🎉", "👀", "🙏"];
+
+// Toggles one side's emoji on a message. Reactions are stored as { emoji: ["user" | "admin"] } and empty entries are dropped.
+function toggleTicketReaction(ticket, messageId, emoji, side) {
+  if (!TICKET_REACTIONS.includes(emoji)) throw new Error("不支持的表情。");
+  const message = ticket.messages.find(item => item.id === messageId);
+  if (!message) throw new Error("消息不存在。");
+  const sides = new Set(message.reactions?.[emoji] || []);
+  if (sides.has(side)) sides.delete(side); else sides.add(side);
+  const reactions = { ...(message.reactions || {}), [emoji]: [...sides] };
+  if (!sides.size) delete reactions[emoji];
+  if (Object.keys(reactions).length) message.reactions = reactions; else delete message.reactions;
+  return message;
+}
+
 function ticketStatusForReply(sender) {
   return sender === "admin" ? "pending_user" : "pending_support";
 }
@@ -1645,7 +1724,7 @@ function normalizeAlertSettings(value, strict = false) {
 }
 
 function initialSalesSettings() {
-  return { id: "default", registrationMode: "open", onboardingEnabled: true, alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [], userAlerts: [] };
+  return { id: "default", registrationMode: "open", onboardingEnabled: true, alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [], userAlertsEnabled: true, userAlerts: [] };
 }
 
 function readBuffer(req, limit) {
@@ -1701,7 +1780,7 @@ function normalizeCheckoutSettings(payload = {}) {
 
 function currentSalesSettings() {
   const settings = salesSettings[0];
-  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], userAlerts: settings.userAlerts || [] } : initialSalesSettings();
+  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], userAlertsEnabled: settings.userAlertsEnabled !== false, userAlerts: settings.userAlerts || [] } : initialSalesSettings();
 }
 
 function paymentCoupons(value) {
@@ -1793,6 +1872,7 @@ function normalizeSalesSettings(payload) {
     if (category.length > 40 || title.length > 80 || description.length > 200 || content.length > 20000) throw new Error("广告分类最多 40 字，标题最多 80 字，简介最多 200 字，正文最多 20000 字。");
     return { id: String(item.id || crypto.randomUUID()), category, title, description, content, enabled: item.enabled !== false };
   });
+  const userAlertsEnabled = payload?.userAlertsEnabled !== false;
   const userAlerts = (Array.isArray(payload?.userAlerts) ? payload.userAlerts : []).slice(0, 50).map(item => {
     const page = ["pricing", "checkout", "account"].includes(item.page) ? item.page : "pricing";
     const variant = ["default", "success", "warning", "error"].includes(item.variant) ? item.variant : "default";
@@ -1801,7 +1881,7 @@ function normalizeSalesSettings(payload) {
     if (!title && !message) throw new Error("Alert 标题和内容不能同时为空。");
     return { id: String(item.id || crypto.randomUUID()), page, variant, title, message, enabled: item.enabled !== false };
   });
-  return { id: "default", registrationMode, onboardingEnabled, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, userAlerts };
+  return { id: "default", registrationMode, onboardingEnabled, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, userAlertsEnabled, userAlerts };
 }
 
 // Validates the docs site's /api/announcements.json. Bad entries are dropped instead of failing the feed, and links must
@@ -8884,6 +8964,24 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  const accountTicketReactionMatch = pathname.match(/^\/api\/account\/tickets\/([^/]+)\/messages\/([^/]+)\/reactions$/);
+  if (accountTicketReactionMatch && req.method === "POST") {
+    const session = requireUser(req, res);
+    if (!session) return;
+    try {
+      await loadLatestData();
+      const ticket = ticketById(decodeURIComponent(accountTicketReactionMatch[1]));
+      if (!ticket || ticket.accountId !== session.accountId) return sendJson(res, 404, { error: "工单不存在。" });
+      if (ticket.status === "closed") throw new Error("已结束工单不能添加回应。");
+      toggleTicketReaction(ticket, decodeURIComponent(accountTicketReactionMatch[2]), String((await readJson(req)).emoji || ""), "user");
+      await saveTicket(ticket);
+      sendJson(res, 200, publicTicket(ticket));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const accountTicketReplyMatch = pathname.match(/^\/api\/account\/tickets\/([^/]+)\/reply$/);
   if (accountTicketReplyMatch && req.method === "POST") {
     const session = requireUser(req, res);
@@ -8895,7 +8993,7 @@ async function handleApi(req, res, pathname) {
       if (ticket.status === "closed") throw new Error("已结束工单不能继续回复。");
       const payload = await readJson(req);
       const now = new Date().toISOString();
-      ticket.messages.push({ id: crypto.randomUUID(), sender: "user", senderName: ticket.email, message: validateTicketText(payload.message, "回复内容", 1, 5000), createdAt: now });
+      ticket.messages.push(ticketReplyMessage(payload, "user", ticket.email, now));
       ticket.status = ticketStatusForReply("user");
       ticket.updatedAt = now;
       await saveTicket(ticket);
@@ -9238,6 +9336,18 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  // Data for the recurring plan comparison page: the comparison rows, and the regions and network
+  // levels reached by the line groups of plans on sale.
+  if (pathname === "/api/public/catalog-v2/compare" && req.method === "GET") {
+    const [products, attributes, groups, inbounds] = await Promise.all([dataStore.listCatalogV2Products(), dataStore.listCatalogV2CompareAttributes(), dataStore.listCatalogV2LineGroups(), dataStore.listXuiInbounds()]);
+    const groupIds = new Set(visibleCatalogV2Products(products).filter(product => product.type === "recurring_plan").map(product => product.lineGroupId).filter(Boolean));
+    sendJson(res, 200, {
+      attributes: attributes.map(({ id, label, kind, options, sortOrder }) => ({ id, label, kind, options, sortOrder })),
+      lineGroups: Object.fromEntries(groups.filter(group => groupIds.has(group.id)).map(group => [group.id, catalogV2LineGroupCoverage(group, inbounds)]))
+    });
+    return;
+  }
+
   if (pathname === "/api/public/catalog-v2" && req.method === "GET") {
     sendJson(res, 200, visibleCatalogV2Products(await dataStore.listCatalogV2Products()));
     return;
@@ -9246,7 +9356,14 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/public/sales-settings" && req.method === "GET") {
     await loadLatestData();
     const settings = currentSalesSettings();
-    sendJson(res, 200, { registrationMode: settings.registrationMode, onboardingEnabled: settings.onboardingEnabled, faqs: settings.faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })), userAlerts: settings.userAlerts.filter(item => item.enabled !== false), vipTiers: publicVipTiers() });
+    sendJson(res, 200, { registrationMode: settings.registrationMode, onboardingEnabled: settings.onboardingEnabled, faqs: settings.faqs.filter(item => item.enabled !== false).map(({ id, question, answer }) => ({ id, question, answer })), userAlerts: settings.userAlertsEnabled ? settings.userAlerts.filter(item => item.enabled !== false) : [], vipTiers: publicVipTiers() });
+    return;
+  }
+
+  if (pathname === "/api/public/changelog" && req.method === "GET") {
+    const limit = Math.min(Math.max(Number(new URL(req.url, "http://localhost").searchParams.get("limit")) || 200, 1), 200);
+    const [entries, tags] = await Promise.all([dataStore.listChangelogEntries({ limit }), dataStore.listChangelogTags()]);
+    sendJson(res, 200, { tags: tags.map(({ id, label, color }) => ({ id, label, color })), entries: entries.map(publicChangelogEntry) });
     return;
   }
 
@@ -9472,6 +9589,21 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  const adminTicketReactionMatch = pathname.match(/^\/api\/tickets\/([^/]+)\/messages\/([^/]+)\/reactions$/);
+  if (adminTicketReactionMatch && req.method === "POST") {
+    try {
+      const ticket = ticketById(decodeURIComponent(adminTicketReactionMatch[1]));
+      if (!ticket) return sendJson(res, 404, { error: "工单不存在。" });
+      if (ticket.status === "closed") throw new Error("已结束工单不能添加回应。");
+      toggleTicketReaction(ticket, decodeURIComponent(adminTicketReactionMatch[2]), String((await readJson(req)).emoji || ""), "admin");
+      await saveTicket(ticket);
+      sendJson(res, 200, publicTicket(ticket, { admin: true }));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   const adminTicketReplyMatch = pathname.match(/^\/api\/tickets\/([^/]+)\/reply$/);
   if (adminTicketReplyMatch && req.method === "POST") {
     try {
@@ -9479,9 +9611,10 @@ async function handleApi(req, res, pathname) {
       if (!ticket) return sendJson(res, 404, { error: "工单不存在。" });
       if (ticket.status === "closed") throw new Error("已结束工单不能继续回复。");
       const payload = await readJson(req);
-      const message = validateTicketText(payload.message, "回复内容", 1, 5000);
       const now = new Date().toISOString();
-      ticket.messages.push({ id: crypto.randomUUID(), sender: "admin", senderName: "NEXORA 团队", message, createdAt: now });
+      const reply = ticketReplyMessage(payload, "admin", "NEXORA 团队", now);
+      const message = reply.message || `[${reply.attachments.length} 张图片]`;
+      ticket.messages.push(reply);
       ticket.status = ticketStatusForReply("admin");
       ticket.closedAt = "";
       ticket.updatedAt = now;
@@ -10556,7 +10689,9 @@ async function handleApi(req, res, pathname) {
 
   // ── Pricing ──
   if (pathname === "/api/catalog-v2/line-groups" && req.method === "GET") {
-    sendJson(res, 200, await dataStore.listCatalogV2LineGroups());
+    const [groups, inbounds] = await Promise.all([dataStore.listCatalogV2LineGroups(), dataStore.listXuiInbounds()]);
+    // coverage feeds the comparison-row preview in the product editor.
+    sendJson(res, 200, groups.map(group => ({ ...group, coverage: catalogV2LineGroupCoverage(group, inbounds) })));
     return;
   }
 
@@ -10677,6 +10812,113 @@ async function handleApi(req, res, pathname) {
       try {
         const result = await dataStore.deleteCatalogV2AddonCategory(id);
         if (!result.rowCount) { sendJson(res, 404, { error: "分类不存在。" }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+  }
+
+  if (pathname === "/api/catalog-v2/compare-attributes" && req.method === "GET") {
+    sendJson(res, 200, await dataStore.listCatalogV2CompareAttributes());
+    return;
+  }
+
+  if (pathname === "/api/catalog-v2/compare-attributes" && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      const attribute = normalizeCatalogV2CompareAttribute({ ...payload, id: undefined });
+      sendJson(res, 201, await dataStore.upsertCatalogV2CompareAttribute(attribute, { create: true }));
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
+    return;
+  }
+
+  const catalogV2CompareAttributeMatch = pathname.match(/^\/api\/catalog-v2\/compare-attributes\/([^/]+)$/);
+  if (catalogV2CompareAttributeMatch) {
+    const id = decodeURIComponent(catalogV2CompareAttributeMatch[1]);
+    if (req.method === "PUT") {
+      try {
+        const attribute = await dataStore.upsertCatalogV2CompareAttribute(normalizeCatalogV2CompareAttribute({ ...(await readJson(req)), id }));
+        if (!attribute) { sendJson(res, 404, { error: "对比项不存在。" }); return; }
+        sendJson(res, 200, attribute);
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+    if (req.method === "DELETE") {
+      try {
+        const result = await dataStore.deleteCatalogV2CompareAttribute(id);
+        if (!result.rowCount) { sendJson(res, 404, { error: "对比项不存在。" }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+  }
+
+  if (pathname === "/api/changelog" && req.method === "GET") {
+    sendJson(res, 200, await dataStore.listChangelogEntries());
+    return;
+  }
+
+  if (pathname === "/api/changelog" && req.method === "POST") {
+    try {
+      const entry = normalizeChangelogEntry({ ...(await readJson(req)), id: undefined });
+      await assertChangelogTagExists(entry.kind);
+      sendJson(res, 201, await dataStore.upsertChangelogEntry(entry, { create: true }));
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
+    return;
+  }
+
+  if (pathname === "/api/changelog-tags" && req.method === "GET") {
+    sendJson(res, 200, await dataStore.listChangelogTags());
+    return;
+  }
+
+  if (pathname === "/api/changelog-tags" && req.method === "POST") {
+    try {
+      const tag = normalizeChangelogTag({ ...(await readJson(req)), id: undefined });
+      sendJson(res, 201, await dataStore.upsertChangelogTag(tag, { create: true }));
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
+    return;
+  }
+
+  const changelogTagMatch = pathname.match(/^\/api\/changelog-tags\/([^/]+)$/);
+  if (changelogTagMatch) {
+    const id = decodeURIComponent(changelogTagMatch[1]);
+    if (req.method === "PUT") {
+      try {
+        const tag = await dataStore.upsertChangelogTag(normalizeChangelogTag({ ...(await readJson(req)), id }));
+        if (!tag) { sendJson(res, 404, { error: "标签不存在。" }); return; }
+        sendJson(res, 200, tag);
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+    if (req.method === "DELETE") {
+      try {
+        const result = await dataStore.deleteChangelogTag(id);
+        if (result.inUse) { sendJson(res, 409, { error: `有 ${result.inUse} 条更新正在使用该标签，请先修改这些更新的标签。` }); return; }
+        if (!result.rowCount) { sendJson(res, 404, { error: "标签不存在。" }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+  }
+
+  const changelogMatch = pathname.match(/^\/api\/changelog\/([^/]+)$/);
+  if (changelogMatch) {
+    const id = decodeURIComponent(changelogMatch[1]);
+    if (req.method === "PUT") {
+      try {
+        const normalized = normalizeChangelogEntry({ ...(await readJson(req)), id });
+        await assertChangelogTagExists(normalized.kind);
+        const entry = await dataStore.upsertChangelogEntry(normalized);
+        if (!entry) { sendJson(res, 404, { error: "更新记录不存在。" }); return; }
+        sendJson(res, 200, entry);
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+    if (req.method === "DELETE") {
+      try {
+        const result = await dataStore.deleteChangelogEntry(id);
+        if (!result.rowCount) { sendJson(res, 404, { error: "更新记录不存在。" }); return; }
         sendJson(res, 200, { ok: true });
       } catch (error) { sendJson(res, 400, { error: error.message }); }
       return;
@@ -11902,6 +12144,8 @@ module.exports = Object.assign(requestHandler, {
   normalizeTicketAttachments,
   ticketStatusForReply,
   ticketTelegramText,
+  ticketReplyMessage,
+  toggleTicketReaction,
   validateTicketText,
   liveConfigFromCachedPoolConfig,
   startOfUtcDate,
@@ -11955,6 +12199,11 @@ module.exports = Object.assign(requestHandler, {
   validateCatalogV2LineGroupInbounds,
   normalizeCatalogV2Product,
   normalizeCatalogV2AddonCategory,
+  normalizeCatalogV2CompareAttribute,
+  normalizeCatalogV2CompareValues,
+  normalizeChangelogEntry,
+  normalizeChangelogTag,
+  publicChangelogEntry,
   normalizeCheckoutSettings,
   releaseExpiredCustomNodes,
   deliverAddonOrder,

@@ -1,7 +1,6 @@
 import * as React from "react"
 import { Bar, BarChart, CartesianGrid, Rectangle, XAxis, YAxis, type BarShapeProps } from "recharts"
 
-import { CardContent } from "@/components/ui/card"
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Separator } from "@/components/ui/separator"
 import { BentoCard, type BentoRowSpan, type BentoSpan } from "@/components/features/bento-card"
@@ -46,7 +45,7 @@ export function AccountTrafficChart({ usage, span = 8, rowSpan = 3, className }:
   }, [chartData.length])
 
   return <BentoCard span={span} rowSpan={rowSpan} className={className} title="近 30 天流量明细">
-    <CardContent className="grid flex-1 gap-6 xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,16rem)]">
+    <div className="grid flex-1 gap-6 xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,16rem)]">
       <section className="grid min-w-0 content-start gap-3" aria-label="每日用量图表">
         <p className="text-xs text-muted-foreground">北京时间 · 按节点倍率计算 · 合计 <span className="font-medium text-foreground tabular-nums">{formatBytes(total)}</span></p>
         {total ? <div className="flex min-w-0">
@@ -100,6 +99,6 @@ export function AccountTrafficChart({ usage, span = 8, rowSpan = 3, className }:
           })}
         </ul> : <p className="text-sm text-muted-foreground">近 30 天暂无节点用量</p>}
       </section>
-    </CardContent>
+    </div>
   </BentoCard>
 }

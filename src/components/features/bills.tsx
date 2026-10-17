@@ -1,20 +1,11 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
-import { Link, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
 import { AlertCircle, BadgeCheck, Eye, Link2, Loader2, Undo2 } from "lucide-react"
 
 import { fetchJson, postJson } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Field, FieldLabel } from "@/components/ui/field"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
-import { Textarea } from "@/components/ui/textarea"
 import { DataTableCard } from "@/components/features/data-table-card"
-import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
+import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { EmptyState, PageHeader } from "@/components/features/shared"
 import { BackButton } from "@/components/features/back-button"
@@ -22,6 +13,15 @@ import { ServiceDeliveryForm } from "@/components/features/service-delivery"
 import { useSearchParamState } from "@/hooks/use-search-param-state"
 import { durationLabels, formatDateTime, formatMoney, orderProductLabel } from "@/utils"
 import type { AddonService } from "@/types"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Alert } from "@/components/arc/alert/alert"
+import { Badge } from "@/components/arc/badge/badge"
+import { PageHeader as DetailHeader } from "@/components/arc/blocks/page-header/page-header"
+import { Button } from "@/components/arc/button/button"
+import { Card } from "@/components/arc/card/card"
+import { Dialog, DialogClose, DialogContent } from "@/components/arc/dialog/dialog"
+import { Select } from "@/components/arc/select/select"
+import { Textarea } from "@/components/arc/textarea/textarea"
 
 type AdminOrder = {
   manualPaidBy?: string
@@ -120,9 +120,9 @@ function orderStatus(order: AdminOrder) {
 
 function statusBadgeVariant(status: string) {
   if (status === "fulfilled") return "success" as const
-  if (["failed", "abnormal", "unfulfilled"].includes(status)) return "destructive" as const
+  if (["failed", "abnormal", "unfulfilled"].includes(status)) return "danger" as const
   if (["pending", "paid", "manual_pending"].includes(status)) return "warning" as const
-  return "secondary" as const
+  return "neutral" as const
 }
 
 function displayOrderNumber(value: string) {
@@ -181,7 +181,7 @@ export function OrdersPage() {
       accessorFn: orderType,
       header: DataTableColumnHeader({ title: "账单种类" }),
       meta: { label: "账单种类" },
-      cell: ({ row }) => <Badge variant={orderTypeVariants[orderType(row.original)]}>{orderTypeLabels[orderType(row.original)]}</Badge>,
+      cell: ({ row }) => <Badge tone={orderTypeVariants[orderType(row.original)]}>{orderTypeLabels[orderType(row.original)]}</Badge>,
     },
     {
       accessorKey: "totalAmount",
@@ -196,7 +196,7 @@ export function OrdersPage() {
       meta: { label: "状态" },
       cell: ({ row }) => {
         const status = orderStatus(row.original)
-        return <Badge variant={statusBadgeVariant(status)}>{orderStatusLabels[status] || row.original.statusText}</Badge>
+        return <Badge tone={statusBadgeVariant(status)}>{orderStatusLabels[status] || row.original.statusText}</Badge>
       },
     },
     {
@@ -215,8 +215,8 @@ export function OrdersPage() {
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="Orders" description="显示所有客户创建的订单，包括待付款、取消、失败、未发放和已完成订单。" />
       <DataTableCard filters={<>
-        <Field><FieldLabel htmlFor="order-status-filter">订单状态</FieldLabel><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger id="order-status-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(orderStatusLabels).map(([status, label]) => <SelectItem key={status} value={status}>{label}</SelectItem>)}</SelectContent></Select></Field>
-        <Field><FieldLabel htmlFor="order-purpose-filter">订单类型</FieldLabel><Select value={purposeFilter} onValueChange={setPurposeFilter}><SelectTrigger id="order-purpose-filter" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem value="plan">套餐购买</SelectItem><SelectItem value="traffic_pack">流量包购买</SelectItem><SelectItem value="addon">附加服务</SelectItem><SelectItem value="recharge">余额充值</SelectItem></SelectContent></Select></Field>
+        <Select label="订单状态" value={statusFilter} onValueChange={setStatusFilter} id="order-status-filter" className="w-full" options={[{ value: "all", label: "全部状态" }, ...Object.entries(orderStatusLabels).map(([status, label]) => ({ value: status, label: label }))]} />
+        <Select label="订单类型" value={purposeFilter} onValueChange={setPurposeFilter} id="order-purpose-filter" className="w-full" options={[{ value: "all", label: "全部类型" }, { value: "plan", label: "套餐购买" }, { value: "traffic_pack", label: "流量包购买" }, { value: "addon", label: "附加服务" }, { value: "recharge", label: "余额充值" }]} />
       </>}>
         <DataTable columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={30} frame="card" renderMobileItem={renderMobileOrder} stateKey="orders" />
       </DataTableCard>
@@ -226,6 +226,7 @@ export function OrdersPage() {
 
 export function OrderDetailPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [order, setOrder] = React.useState<AdminOrder | null>(null)
   const [error, setError] = React.useState("")
   const [retryError, setRetryError] = React.useState("")
@@ -306,56 +307,41 @@ export function OrderDetailPage() {
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="订单详情" description={order.merOrderTid} actions={<>
+      <DetailHeader breadcrumbs={[{ label: "Orders", href: "/orders", onClick: event => { event.preventDefault(); navigate("/orders") } }, { label: "订单详情" }]} title="订单详情" status={<Badge tone={statusBadgeVariant(status)}>{orderStatusLabels[status] || order.statusText}</Badge>} description={order.merOrderTid} actions={<>
         {status === "pending" ? <>
           <Button size="sm" disabled={markingPaid} onClick={() => setMarkPaidOpen(true)}><BadgeCheck />已人工收款</Button>
-          <AlertDialog open={markPaidOpen} onOpenChange={setMarkPaidOpen}>
-            <AlertDialogContent>
-              <AlertDialogHeader><AlertDialogTitle>确认已收到转账？</AlertDialogTitle><AlertDialogDescription>客户 {order.email}，套餐 {order.optionLabel}。本次需要线下收取 {formatMoney(order.amount)}。已预留的余额将另行结算，确认后按原订单发放服务。请勿在尚未到账时操作。</AlertDialogDescription></AlertDialogHeader>
-              <Field><FieldLabel htmlFor="manual-collection-note">收款备注</FieldLabel><Textarea id="manual-collection-note" value={manualNote} onChange={event => setManualNote(event.target.value)} maxLength={500} placeholder="例如收款方式、转账流水号或核对说明" disabled={markingPaid} /></Field>
-              <AlertDialogFooter><AlertDialogCancel disabled={markingPaid}>取消</AlertDialogCancel><AlertDialogAction disabled={markingPaid} onClick={event => { event.preventDefault(); void markOrderPaid() }}>{markingPaid ? <Loader2 className="animate-spin" /> : null}确认已收款</AlertDialogAction></AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <Dialog open={markPaidOpen} onOpenChange={setMarkPaidOpen}>
+            <DialogContent title="确认已收到转账？" description={`客户 ${order.email}，套餐 ${order.optionLabel}。本次需要线下收取 ${formatMoney(order.amount)}。已预留的余额将另行结算，确认后按原订单发放服务。请勿在尚未到账时操作。`}><Textarea label="收款备注" id="manual-collection-note" value={manualNote} onChange={event => setManualNote(event.target.value)} maxLength={500} placeholder="例如收款方式、转账流水号或核对说明" disabled={markingPaid} /><div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={markingPaid}>取消</Button></DialogClose><DialogClose asChild><Button disabled={markingPaid} onClick={event => { event.preventDefault(); void markOrderPaid() }}>{markingPaid ? <Loader2 className="animate-spin" /> : null}确认已收款</Button></DialogClose></div></DialogContent>
+          </Dialog>
         </> : null}
         {order.reversible ? <>
-          <Button variant="destructive" size="sm" disabled={reversing || retrying} onClick={() => setReverseOpen(true)}><Undo2 />{reversing ? "正在撤销" : "撤销订单"}</Button>
-          <AlertDialog open={reverseOpen} onOpenChange={setReverseOpen}>
-            <AlertDialogContent>
-              <AlertDialogHeader><AlertDialogTitle>确认撤销此订单？</AlertDialogTitle><AlertDialogDescription>系统会撤销该订单产生的套餐变更、钱包与 VIP 流水、账单、邀请返利和优惠券占用。第三方实付款不会自动退回，仍需按实际情况人工退款。此操作不能在后台恢复。</AlertDialogDescription></AlertDialogHeader>
-              <AlertDialogFooter><AlertDialogCancel disabled={reversing}>取消</AlertDialogCancel><Button variant="destructive" asChild><AlertDialogAction disabled={reversing} onClick={() => void reverseOrder()}>确认撤销</AlertDialogAction></Button></AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <Button variant="danger" size="sm" disabled={reversing || retrying} onClick={() => setReverseOpen(true)}><Undo2 />{reversing ? "正在撤销" : "撤销订单"}</Button>
+          <Dialog open={reverseOpen} onOpenChange={setReverseOpen}>
+            <DialogContent title="确认撤销此订单？" description="系统会撤销该订单产生的套餐变更、钱包与 VIP 流水、账单、邀请返利和优惠券占用。第三方实付款不会自动退回，仍需按实际情况人工退款。此操作不能在后台恢复。"><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={reversing}>取消</Button></DialogClose><Button variant="primary" asChild><DialogClose asChild><Button disabled={reversing} onClick={() => void reverseOrder()}>确认撤销</Button></DialogClose></Button></div></DialogContent>
+          </Dialog>
         </> : null}
         {status === "unfulfilled" ? <>
-          <Button variant="destructive" size="sm" disabled={retrying} onClick={() => setRetryOpen(true)}>{retrying ? <Loader2 className="animate-spin" /> : null}{retrying ? "正在发放" : "重新发放"}</Button>
-          <AlertDialog open={retryOpen} onOpenChange={setRetryOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader><AlertDialogTitle>确认重新发放套餐？</AlertDialogTitle><AlertDialogDescription>系统会按原订单重新执行套餐发放。已经结算的钱包和 VIP 流水不会重复记账。</AlertDialogDescription></AlertDialogHeader>
-            <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void retryFulfillment()}>确认发放</AlertDialogAction></AlertDialogFooter>
-          </AlertDialogContent>
-          </AlertDialog>
+          <ActionButton variant="danger" size="sm" onClick={() => setRetryOpen(true)} label="重新发放" pendingLabel="正在发放" pending={retrying} arrow={false} />
+          <Dialog open={retryOpen} onOpenChange={setRetryOpen}>
+          <DialogContent title="确认重新发放套餐？" description="系统会按原订单重新执行套餐发放。已经结算的钱包和 VIP 流水不会重复记账。"><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary">取消</Button></DialogClose><DialogClose asChild><Button onClick={() => void retryFulfillment()}>确认发放</Button></DialogClose></div></DialogContent>
+          </Dialog>
         </> : null}
         {order.bindingNeedsRepair ? <>
-          <Button variant="outline" size="sm" disabled={repairing} onClick={() => setRepairOpen(true)}>{repairing ? <Loader2 className="animate-spin" /> : <Link2 />}{repairing ? "补关联中..." : "补关联"}</Button>
-          <AlertDialog open={repairOpen} onOpenChange={setRepairOpen}>
-            <AlertDialogContent>
-              <AlertDialogHeader><AlertDialogTitle>补关联此订单的V2套餐？</AlertDialogTitle><AlertDialogDescription>将核对 {order.email} 的最新套餐订单，并按该订单的已交付账单补齐用户套餐绑定和权益，立即同步3x-ui。不会重复收款或生成账单；存在后续套餐或权益变更时将拒绝覆盖。</AlertDialogDescription></AlertDialogHeader>
-              <AlertDialogFooter><AlertDialogCancel disabled={repairing}>取消</AlertDialogCancel><AlertDialogAction disabled={repairing} onClick={event => { event.preventDefault(); void repairBinding() }}>{repairing ? <Loader2 className="animate-spin" /> : <Link2 />}{repairing ? "补关联中..." : "确认补关联"}</AlertDialogAction></AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <ActionButton variant="secondary" size="sm" onClick={() => setRepairOpen(true)} label="补关联" pendingLabel="补关联中..." pending={repairing} />
+          <Dialog open={repairOpen} onOpenChange={setRepairOpen}>
+            <DialogContent title="补关联此订单的V2套餐？" description={`将核对 ${order.email} 的最新套餐订单，并按该订单的已交付账单补齐用户套餐绑定和权益，立即同步3x-ui。不会重复收款或生成账单；存在后续套餐或权益变更时将拒绝覆盖。`}><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={repairing}>取消</Button></DialogClose><DialogClose asChild><Button disabled={repairing} onClick={event => { event.preventDefault(); void repairBinding() }}>{repairing ? <Loader2 className="animate-spin" /> : <Link2 />}{repairing ? "补关联中..." : "确认补关联"}</Button></DialogClose></div></DialogContent>
+          </Dialog>
         </> : null}
         <BackButton fallback="/orders" size="sm" />
       </>} />
-      {retryError ? <Alert variant="error"><AlertCircle /><AlertTitle>订单操作失败</AlertTitle><AlertDescription>{retryError}</AlertDescription></Alert> : null}
-      {failure ? <Alert variant="error"><AlertCircle /><AlertTitle>{status === "unfulfilled" ? "已付款但套餐未发放" : "订单处理异常"}</AlertTitle><AlertDescription>{failure}</AlertDescription></Alert> : null}
-      <Alert><AlertCircle /><AlertTitle>金额分类</AlertTitle><AlertDescription>realCash 是用户实际支付、充值或获得的返利；virtualCash 是后台赠送余额，不代表用户现金支出。下方钱包明细仍按赠送、返利、充值分别记录。</AlertDescription></Alert>
+      {retryError ? <Alert tone="danger" title="订单操作失败">{retryError}</Alert> : null}
+      {failure ? <Alert tone="danger" title={status === "unfulfilled" ? "已付款但套餐未发放" : "订单处理异常"}>{failure}</Alert> : null}
+      <Alert title="金额分类">realCash 是用户实际支付、充值或获得的返利；virtualCash 是后台赠送余额，不代表用户现金支出。下方钱包明细仍按赠送、返利、充值分别记录。</Alert>
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle>订单信息</CardTitle></CardHeader>
-          <CardContent><Table><TableBody>
+        <Card title="订单信息"><dl>
             <DetailRow label="客户" value={order.email || "-"} />
-            <DetailRow label="账单种类" value={<Badge variant={orderTypeVariants[orderType(order)]}>{orderTypeLabels[orderType(order)]}</Badge>} />
-            <DetailRow label="订单状态" value={<Badge variant={statusBadgeVariant(status)}>{orderStatusLabels[status] || order.statusText}</Badge>} />
+            <DetailRow label="账单种类" value={<Badge tone={orderTypeVariants[orderType(order)]}>{orderTypeLabels[orderType(order)]}</Badge>} />
+            <DetailRow label="订单状态" value={<Badge tone={statusBadgeVariant(status)}>{orderStatusLabels[status] || order.statusText}</Badge>} />
             {order.manualPaidBy ? <DetailRow label="收款确认人" value={order.manualPaidBy} /> : null}
             {order.manualPaymentNote ? <DetailRow label="收款备注" value={order.manualPaymentNote} /> : null}
             {order.duplicatePaymentReferences?.length ? <DetailRow label="重复收款待核查" value={order.duplicatePaymentReferences.join("、")} /> : null}
@@ -369,11 +355,8 @@ export function OrderDetailPage() {
             {order.fulfillmentStartedAt ? <DetailRow label="开始交付" value={formatDateTime(order.fulfillmentStartedAt)} /> : null}
             {order.fulfilledAt ? <DetailRow label="完成交付" value={formatDateTime(order.fulfilledAt)} /> : null}
             {order.deliveryNote ? <DetailRow label="交付说明" value={order.deliveryNote} /> : null}
-          </TableBody></Table></CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle>支付详情</CardTitle></CardHeader>
-          <CardContent><Table><TableBody>
+          </dl></Card>
+        <Card title="支付详情"><dl>
             <DetailRow label="商品" value={orderProductLabel(order, " · ")} />
             <DetailRow label="支付渠道" value={paymentChannelLabels[order.channelCode || ""] || order.channelCode || "未知"} />
             <DetailRow label="套餐第 1 档原价" value={formatMoney(order.baseAmount ?? order.originalAmount ?? order.totalAmount ?? order.amount)} />
@@ -390,14 +373,13 @@ export function OrderDetailPage() {
             <DetailRow label="realCash（实际现金）" value={formatMoney(order.realCashAmount ?? ((order.amount || 0) + (order.walletCashAmount || 0) + (order.walletReferralAmount || 0)))} />
             <DetailRow label="virtualCash（后台赠送）" value={formatMoney(order.virtualCashAmount ?? order.walletGiftAmount ?? 0)} />
             <DetailRow label="订单支付合计" value={<strong>{formatMoney(order.totalAmount ?? order.amount)}</strong>} />
-          </TableBody></Table></CardContent>
-        </Card>
+          </dl></Card>
       </div>
-      {order.addOnSnapshots?.length ? <Card><CardHeader><CardTitle>附加服务快照</CardTitle></CardHeader><CardContent><Table><TableBody>{order.addOnSnapshots.map(addOn => <React.Fragment key={addOn.optionId}><DetailRow label="服务" value={`${addOn.name}${addOn.regionName ? ` · ${addOn.regionName}` : ""}`} /><DetailRow label="成交价格" value={formatMoney(addOn.amount)} />{addOn.durationDays ? <DetailRow label="服务期限" value={`${addOn.durationDays} 天`} /> : null}<DetailRow label="交付方式" value={addOn.deliveryMode === "manual" ? "人工交付" : "自动交付"} />{addOn.deliveryDescription ? <DetailRow label="交付约定" value={addOn.deliveryDescription} /> : null}</React.Fragment>)}{order.services?.map(service => <React.Fragment key={service.id}><DetailRow label="服务类型" value={service.handlerLabel} />{service.buyerInputLabel ? <DetailRow label={service.buyerInputLabel} value={service.buyerInput || "未填写"} /> : null}{service.expiresAt ? <DetailRow label="有效期至" value={formatDateTime(service.expiresAt)} /> : null}</React.Fragment>)}</TableBody></Table>{order.fulfillmentStatus === "manual_pending" ? <section className="grid gap-3 pt-4"><ServiceDeliveryForm order={order} onDelivered={delivered => setOrder(delivered as AdminOrder)} /></section> : null}</CardContent></Card> : null}
+      {order.addOnSnapshots?.length ? <Card title="附加服务快照"><><dl>{order.addOnSnapshots.map(addOn => <React.Fragment key={addOn.optionId}><DetailRow label="服务" value={`${addOn.name}${addOn.regionName ? ` · ${addOn.regionName}` : ""}`} /><DetailRow label="成交价格" value={formatMoney(addOn.amount)} />{addOn.durationDays ? <DetailRow label="服务期限" value={`${addOn.durationDays} 天`} /> : null}<DetailRow label="交付方式" value={addOn.deliveryMode === "manual" ? "人工交付" : "自动交付"} />{addOn.deliveryDescription ? <DetailRow label="交付约定" value={addOn.deliveryDescription} /> : null}</React.Fragment>)}{order.services?.map(service => <React.Fragment key={service.id}><DetailRow label="服务类型" value={service.handlerLabel} />{service.buyerInputLabel ? <DetailRow label={service.buyerInputLabel} value={service.buyerInput || "未填写"} /> : null}{service.expiresAt ? <DetailRow label="有效期至" value={formatDateTime(service.expiresAt)} /> : null}</React.Fragment>)}</dl>{order.fulfillmentStatus === "manual_pending" ? <section className="grid gap-3 pt-4"><ServiceDeliveryForm order={order} onDelivered={delivered => setOrder(delivered as AdminOrder)} /></section> : null}</></Card> : null}
     </div>
   )
 }
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
-  return <TableRow><TableCell className="text-muted-foreground">{label}</TableCell><TableCell className="text-right whitespace-normal">{value}</TableCell></TableRow>
+  return <div className="flex items-start justify-between gap-4 border-b border-border py-3 text-sm last:border-b-0"><dt className="shrink-0 text-muted-foreground">{label}</dt><dd className="min-w-0 text-right">{value}</dd></div>
 }

@@ -2,9 +2,9 @@ import * as React from "react"
 
 import { fetchJson } from "@/api"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { CatalogV2Period, CatalogV2Product } from "@/types"
 import { formatBytes } from "@/utils"
+import { Select } from "@/components/arc/select/select"
 
 export type CatalogPurchaseOption = { value: string; label: string; product: CatalogV2Product; period: CatalogV2Period | null }
 
@@ -88,20 +88,14 @@ export function CatalogPlanFields({
     <>
       <Field data-invalid={Boolean(error) || undefined}>
         <FieldLabel htmlFor={`${idPrefix}-option`}>{label}</FieldLabel>
-        <Select value={value} onValueChange={onValueChange} disabled={disabled || !options.length}>
-          <SelectTrigger id={`${idPrefix}-option`} className="w-full" aria-invalid={Boolean(error) || undefined}><SelectValue placeholder={placeholder} /></SelectTrigger>
-          <SelectContent>{options.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
-        </Select>
+        <Select label={placeholder} hideLabel value={value} onValueChange={onValueChange} disabled={disabled || !options.length} id={`${idPrefix}-option`} className="w-full" aria-invalid={Boolean(error) || undefined} placeholder={placeholder} options={[...options.map(option => ({ value: option.value, label: option.label }))]} />
         {description ? <FieldDescription>{description}</FieldDescription> : null}
         <FieldError>{error}</FieldError>
       </Field>
       {config && catalogPlanHasTiers(config) ? (
         <Field>
           <FieldLabel htmlFor={`${idPrefix}-traffic-tier`}>定制流量</FieldLabel>
-          <Select value={trafficTier} onValueChange={onTrafficTierChange} disabled={disabled}>
-            <SelectTrigger id={`${idPrefix}-traffic-tier`} className="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>{Array.from({ length: config.maxTier }, (_, index) => index + 1).map(tier => <SelectItem key={tier} value={String(tier)}>第 {tier} 档 · {formatBytes(config.baseBytes + (tier - 1) * config.stepBytes)}</SelectItem>)}</SelectContent>
-          </Select>
+          <Select label="选择" hideLabel value={trafficTier} onValueChange={onTrafficTierChange} disabled={disabled} id={`${idPrefix}-traffic-tier`} className="w-full" options={[...Array.from({ length: config.maxTier }, (_, index) => index + 1).map(tier => ({ value: String(tier), label: `第 ${tier} 档 · ${formatBytes(config.baseBytes + (tier - 1) * config.stepBytes)}` }))]} />
           {tierDescription ? <FieldDescription>{tierDescription}</FieldDescription> : null}
         </Field>
       ) : null}

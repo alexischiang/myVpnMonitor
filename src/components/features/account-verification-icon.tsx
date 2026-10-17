@@ -1,6 +1,6 @@
 import { BadgeCheck } from "lucide-react"
+import { Tooltip } from "@/components/arc/tooltip/tooltip"
 
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 type AccountType = "regular" | "super" | "family" | "business"
 type VerifiedAccountType = Exclude<AccountType, "regular">
@@ -17,16 +17,11 @@ export function AccountVerificationIcon({ type }: { type: AccountType }) {
   const account = accountStyles[type]
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <BadgeCheck
+    <Tooltip content={account.label}><BadgeCheck
           className={`size-5 shrink-0 text-transparent ${account.className} [&>path:last-child]:origin-center [&>path:last-child]:scale-125 [&>path:last-child]:stroke-white`}
           role="img"
           aria-label={`${account.label}认证`}
           tabIndex={0}
-        />
-      </TooltipTrigger>
-      <TooltipContent>{account.label}</TooltipContent>
-    </Tooltip>
+        /></Tooltip>
   )
 }

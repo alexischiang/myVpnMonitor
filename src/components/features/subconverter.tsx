@@ -1,25 +1,25 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { CircleHelp, Loader2, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/features/toast"
 
 import { deleteJson, postJson, putJson } from "@/api"
-import { Button } from "@/components/ui/button"
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { Field, FieldContent, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
+import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
 import { useData } from "@/components/features/data-provider"
 import { SimpleFormDialog, type Field as SimpleFormField, type FormValues } from "@/components/features/simple-form"
 import { PageHeader } from "@/components/features/shared"
 import type { PlaceholderNode, Preset, Vendor } from "@/types"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Button } from "@/components/arc/button/button"
+import { Card } from "@/components/arc/card/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs"
+import { Tooltip } from "@/components/arc/tooltip/tooltip"
+import { Checkbox } from "@/components/arc/checkbox/checkbox"
+import { Input } from "@/components/arc/input/input"
+import { Select } from "@/components/arc/select/select"
+import { Switch } from "@/components/arc/switch/switch"
 
 const targets = ["clash", "clashr", "quan", "quanx", "loon", "surge&ver=4", "surge&ver=3", "shadowrocket", "v2ray", "mixed"]
 const booleanOptions = [
@@ -55,7 +55,7 @@ export function SubconverterPage() {
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="Subconverter" description="订阅转换预设、供应商覆写与占位节点配置。" />
       <Tabs defaultValue="preset" className="min-w-0 gap-4">
-        <TabsList variant="line">
+        <TabsList>
           <TabsTrigger value="preset">转换预设</TabsTrigger>
           <TabsTrigger value="vendors">供应商覆写</TabsTrigger>
           <TabsTrigger value="placeholders">占位节点</TabsTrigger>
@@ -82,7 +82,7 @@ function PresetCard() {
       await runAsync(async () => {
         await putJson("/api/presets", values)
         await reload(["presets"])
-        toast.success("转换预设已保存")
+        toast({ type: "success", title: "转换预设已保存" })
       }, "保存转换预设...")
     } finally {
       setSaving(false)
@@ -90,50 +90,16 @@ function PresetCard() {
   }
   return (
     <>
-      <Card>
-        <CardHeader>
-          <CardTitle><Label htmlFor="post-subconverter" className="text-base">执行 postSubconverter</Label></CardTitle>
-          <CardDescription>关闭后直接返回 Subconverter 的原始转换结果。</CardDescription>
-          <CardAction>
-            <Switch
-              id="post-subconverter"
-              checked={values.postSubconverter}
-              onCheckedChange={postSubconverter => setValues(current => ({ ...current, postSubconverter }))}
-            />
-          </CardAction>
-        </CardHeader>
-        <CardContent>
-          <Field orientation="horizontal" className="justify-between">
+      <Card title={<Label htmlFor="post-subconverter" className="text-base">执行 postSubconverter</Label>} description="关闭后直接返回 Subconverter 的原始转换结果。" headerAction={<Switch id="post-subconverter" checked={values.postSubconverter} onCheckedChange={postSubconverter => setValues(current => ({ ...current, postSubconverter }))} />}><Field orientation="horizontal" className="justify-between">
             <FieldContent className="flex flex-row items-center gap-1.5">
               <FieldLabel htmlFor="nextin-compatible">Nextin 适配</FieldLabel>
-              <Tooltip>
-                <TooltipTrigger aria-label="Nextin 适配说明"><CircleHelp className="size-4 text-muted-foreground" /></TooltipTrigger>
-                <TooltipContent>开启后从 postSubconverter 结果中排除 global-client-fingerprint。</TooltipContent>
-              </Tooltip>
+              <Tooltip content="开启后从 postSubconverter 结果中排除 global-client-fingerprint。"><button type="button" aria-label="Nextin 适配说明"><CircleHelp className="size-4 text-muted-foreground" /></button></Tooltip>
             </FieldContent>
-            <Switch
-              id="nextin-compatible"
-              checked={values.nextinCompatible}
-              disabled={!values.postSubconverter}
-              onCheckedChange={nextinCompatible => setValues(current => ({ ...current, nextinCompatible }))}
-            />
-          </Field>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader><CardTitle>默认转换预设</CardTitle></CardHeader>
-        <CardContent className="grid gap-4">
-          <div className="grid gap-2">
-            <Label>目标客户端</Label>
-            <Select value={values.target} onValueChange={target => setValues(current => ({ ...current, target }))}>
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>{targets.map(target => <SelectItem key={target} value={target}>{target}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-2">
-            <Label>远程配置</Label>
-            <Input value={values.config} onChange={event => setValues(current => ({ ...current, config: event.target.value }))} placeholder="https://..." />
-          </div>
+            <Switch id="nextin-compatible" checked={values.nextinCompatible} disabled={!values.postSubconverter} onCheckedChange={nextinCompatible => setValues(current => ({ ...current, nextinCompatible }))} />
+          </Field></Card>
+      <Card title="默认转换预设"><div className="grid gap-4">
+          <Select label="目标客户端" value={values.target} onValueChange={target => setValues(current => ({ ...current, target }))} className="w-full" options={[...targets.map(target => ({ value: target, label: target }))]} />
+          <Input label="远程配置" value={values.config} onChange={event => setValues(current => ({ ...current, config: event.target.value }))} placeholder="https://..." />
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {booleanOptions.map(option => (
               <Label key={option.key} htmlFor={`preset-${option.key}`} className="flex items-center gap-2">
@@ -142,9 +108,8 @@ function PresetCard() {
               </Label>
             ))}
           </div>
-          <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : null}{saving ? "保存中..." : "保存预设"}</Button>
-        </CardContent>
-      </Card>
+          <ActionButton onClick={save} label="保存预设" pendingLabel="保存中..." pending={saving} />
+        </div></Card>
     </>
   )
 }
@@ -167,7 +132,7 @@ function VendorOverrides() {
       if (vendor) await putJson(`/api/vendors/${vendor.id}`, values)
       else await postJson("/api/vendors", { ...values, name: editing.name })
       await reload(["vendors"])
-      toast.success("供应商配置已保存")
+      toast({ type: "success", title: "供应商配置已保存" })
     }, "保存供应商配置...")
   }
 
@@ -192,26 +157,20 @@ function VendorOverrides() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => <DataTableRowActions><DropdownMenuItem onSelect={() => { setEditing(row.original); setOpen(true) }}>编辑</DropdownMenuItem></DataTableRowActions>,
+      cell: ({ row }) => <DataTableRowActions actions={[{ label: "编辑", onSelect: () => { setEditing(row.original); setOpen(true) } }]} />,
       enableHiding: false,
       enableSorting: false,
     },
   ], [])
 
   return (
-    <Card>
-      <CardHeader><CardTitle>供应商覆写</CardTitle></CardHeader>
-      <CardContent>
-        <DataTable
+    <Card title="供应商覆写"><DataTable
           columns={columns}
           data={vendorRows}
           searchKey="name"
           searchPlaceholder="搜索供应商..."
           emptyTitle="暂无订阅池供应商"
-        />
-      </CardContent>
-      <SimpleFormDialog open={open} title={`编辑 ${editing?.name || ""} 覆写`} description="规则留空时使用默认转换配置。" fields={fields} initialValues={editing || {}} contentClassName="sm:max-w-2xl" onOpenChange={setOpen} onSubmit={save} />
-    </Card>
+        /><SimpleFormDialog open={open} title={`编辑 ${editing?.name || ""} 覆写`} description="规则留空时使用默认转换配置。" fields={fields} initialValues={editing || {}} contentClassName="sm:max-w-2xl" onOpenChange={setOpen} onSubmit={save} /></Card>
   )
 }
 
@@ -230,7 +189,7 @@ function PlaceholderNodes() {
       if (editing?.id) await putJson(`/api/placeholder-nodes/${editing.id}`, { tag: values.tag, nodes })
       else await postJson("/api/placeholder-nodes", { tag: values.tag, nodes })
       await reload(["placeholderNodes"])
-      toast.success("占位节点已保存")
+      toast({ type: "success", title: "占位节点已保存" })
     }, "保存占位节点...")
   }
   async function remove(item: PlaceholderNode) {
@@ -259,31 +218,20 @@ function PlaceholderNodes() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => <DataTableRowActions>
-        <DropdownMenuItem onSelect={() => { setEditing(row.original); setOpen(true) }}>编辑</DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onSelect={() => remove(row.original)} disabled={Boolean(deletingId)}>
-          {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}删除
-        </DropdownMenuItem>
-      </DataTableRowActions>,
+      cell: ({ row }) => <DataTableRowActions actions={[{ label: "编辑", onSelect: () => { setEditing(row.original); setOpen(true) } }, { label: "删除", icon: <Trash2 size={15} />, destructive: true, disabled: Boolean(deletingId), onSelect: () => remove(row.original) }]} />,
       enableHiding: false,
       enableSorting: false,
     },
   ], [deletingId])
 
   return (
-    <Card>
-      <CardHeader><CardTitle>占位节点</CardTitle></CardHeader>
-      <CardContent>
-        <DataTable
+    <Card title="占位节点"><DataTable
           columns={columns}
           data={placeholderNodes}
           searchKey="tag"
           searchPlaceholder="搜索占位节点..."
           emptyTitle="暂无占位节点"
           toolbar={<Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增</Button>}
-        />
-      </CardContent>
-      <SimpleFormDialog open={open} title={editing ? "编辑占位节点" : "新增占位节点"} fields={fields} initialValues={editing ? { tag: editing.tag, nodesText: editing.nodes.join("\n") } : {}} onOpenChange={setOpen} onSubmit={save} />
-    </Card>
+        /><SimpleFormDialog open={open} title={editing ? "编辑占位节点" : "新增占位节点"} fields={fields} initialValues={editing ? { tag: editing.tag, nodesText: editing.nodes.join("\n") } : {}} onOpenChange={setOpen} onSubmit={save} /></Card>
   )
 }

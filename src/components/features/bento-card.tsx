@@ -3,9 +3,9 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import type { LucideIcon } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
-import { Card, CardAction, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/arc/badge/badge"
+import { Card } from "@/components/arc/card/card"
 
 /** Shared corner radius for bento cards and bento buttons. */
 export const bentoRadius = "rounded-4xl"
@@ -36,18 +36,32 @@ const rowSpanClasses: Record<BentoRowSpan, string> = {
   6: "lg:row-span-6",
 }
 
-/** Eight equal columns; on wide screens every row is one `--bento-row` unit tall. */
+/** Eight equal columns; on wide screens every row is at least one `--bento-row` unit tall and grows with its content. */
 export function BentoGrid({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="bento-grid" className={cn("grid grid-cols-8 gap-4 xl:auto-rows-(--bento-row)", className)} {...props} />
+  return <div data-slot="bento-grid" className={cn("grid grid-cols-8 gap-4 xl:auto-rows-[minmax(var(--bento-row),auto)]", className)} {...props} />
 }
 
-const bentoCardVariants = cva(`${bentoRadius} gap-4 xl:overflow-y-auto`, {
+// Arc's card sets its own surface and border, and its stylesheet outranks utility classes, so the bento surface of each tone
+// is applied as an inline style. The light tones also switch their text and controls to dark through bento-light-surface.
+const bentoSurface: Record<"default" | "muted" | "yellow" | "green", string> = {
+  default: "var(--bento-surface)",
+  muted: "var(--muted)",
+  yellow: "var(--color-bento-yellow)",
+  green: "var(--color-bento-green)",
+}
+
+/** The surface style of a bento tone, for Arc components placed in the grid that are not a BentoCard. */
+export function bentoSurfaceStyle(tone: keyof typeof bentoSurface = "default"): React.CSSProperties {
+  return { background: bentoSurface[tone], borderColor: "transparent", boxShadow: "none" }
+}
+
+const bentoCardVariants = cva("", {
   variants: {
     tone: {
-      default: "border-transparent bg-bento-surface",
-      muted: "border-transparent bg-muted",
-      yellow: "bento-light-surface border-transparent bg-bento-yellow text-foreground [&_[data-slot=item]]:bg-white/50",
-      green: "bento-light-surface border-transparent bg-bento-green text-foreground [&_[data-slot=item]]:bg-white/50",
+      default: "",
+      muted: "",
+      yellow: "bento-light-surface",
+      green: "bento-light-surface",
     },
   },
   defaultVariants: { tone: "default" },
@@ -66,19 +80,24 @@ export type BentoCardProps = Omit<React.ComponentProps<typeof Card>, "title"> & 
   action?: React.ReactNode
 }
 
-export function BentoCard({ span = 8, rowSpan = 2, tone, title, icon: Icon, action, className, children, ...props }: BentoCardProps) {
-  return <Card data-slot="bento-card" data-tone={tone ?? "default"} className={cn(bentoCardVariants({ tone }), span && bentoSpanClass(span), rowSpan && rowSpanClasses[rowSpan], rowSpan === 1 && "gap-2 py-4", className)} {...props}>
-    {title ? <CardHeader>
-      <CardTitle className="flex min-w-0 items-center gap-2 text-lg font-bold text-foreground">{Icon ? <Icon className="size-5 shrink-0" aria-hidden /> : null}{title}</CardTitle>
-      {action ? <CardAction>{action}</CardAction> : null}
-    </CardHeader> : null}
-    {children}
+export function BentoCard({ span = 8, rowSpan = 2, tone, title, icon: Icon, action, className, style, children, ...props }: BentoCardProps) {
+  return <Card fill data-slot="bento-card" data-tone={tone ?? "default"} className={cn(bentoCardVariants({ tone }), span && bentoSpanClass(span), rowSpan && rowSpanClasses[rowSpan], className)} style={{ ...bentoSurfaceStyle(tone ?? "default"), ...style }} {...props}>
+    <div className="flex flex-1 flex-col gap-3">
+      {title || action ? <div className="flex min-w-0 items-start justify-between gap-3">
+        {title ? <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">{Icon ? <Icon className="size-4 shrink-0" aria-hidden /> : null}{title}</h3> : <span />}
+        {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
+      </div> : null}
+      {children}
+    </div>
   </Card>
 }
 
+// The Arc badge sets its own colors (also on hover) and outranks utility classes, so the green tone is written inline.
+const greenBadgeStyle: React.CSSProperties = { background: "var(--color-bento-green-strong)", borderColor: "transparent", color: "var(--color-white)" }
+
 /** Small pill for a bento card's secondary figure, usually passed as the card `action`. */
-export function BentoCardBadge({ icon: Icon, tone = "default", className, children, ...props }: React.ComponentProps<typeof Badge> & { icon?: LucideIcon; tone?: "default" | "green" }) {
-  return <Badge data-slot="bento-card-badge" data-tone={tone} variant="outline" className={cn("h-7 gap-1.5 rounded-full border-transparent bg-background px-2.5 text-xs font-medium", tone === "green" && "bento-light-surface bg-bento-green text-foreground", className)} {...props}>
+export function BentoCardBadge({ icon: Icon, tone = "default", className, style, children, ...props }: Omit<React.ComponentProps<typeof Badge>, "tone" | "icon"> & { icon?: LucideIcon; tone?: "default" | "green" }) {
+  return <Badge data-slot="bento-card-badge" data-tone={tone} className={cn("h-7 gap-1.5 rounded-full border-transparent bg-background px-2.5 text-xs font-medium", className)} style={tone === "green" ? { ...greenBadgeStyle, ...style } : style} {...props}>
     {Icon ? <Icon aria-hidden /> : null}{children}
   </Badge>
 }

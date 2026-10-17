@@ -1,31 +1,35 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
-import { ArrowLeft, Check, CheckCircle, HousePlug, LinkIcon, Loader2, PackagePlus, Rocket, ShieldCheck, Tag, TriangleAlert } from "lucide-react"
-import { toast } from "sonner"
+import { ArrowLeft, Check, CheckCircle, LinkIcon, Loader2, PackagePlus, Rocket, ShieldCheck, Tag, TriangleAlert } from "lucide-react"
+import { toast } from "@/components/features/toast"
 
 import { clearJsonCache, fetchJson, postJson } from "@/api"
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { FaqSection } from "@/components/arc/blocks/faq-section/faq-section"
+import { SiteFooter } from "@/components/arc/blocks/site-footer/site-footer"
+import { SiteHeader } from "@/components/arc/blocks/site-header/site-header"
+import { DOCS_URL } from "@/lib/docs-site"
+import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
+import { RadioCards } from "@/components/arc/radio-cards/radio-cards"
 import { Separator } from "@/components/ui/separator"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Slider } from "@/components/ui/slider"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CopyButton, EmptyState } from "@/components/features/shared"
+import { Slider } from "@/components/arc/slider/slider"
+import { EmptyState } from "@/components/features/shared"
+import { CopyButton } from "@/components/arc/copy-button/copy-button"
 import { BentoButton } from "@/components/features/bento-button"
 import { PlanOfferCard } from "@/components/features/plan-offer-card"
 import { CategoryPills } from "@/components/features/category-pills"
 import { vipLevelLabel } from "@/components/features/vip-badge"
 import type { CatalogV2AddonCategory, CatalogV2Product, FaqSetting } from "@/types"
 import { formatDate, formatMoney, orderProductLabel } from "@/utils"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Alert } from "@/components/arc/alert/alert"
+import { Badge } from "@/components/arc/badge/badge"
+import { Button } from "@/components/arc/button/button"
+import { Card } from "@/components/arc/card/card"
+import { Dialog, DialogClose, DialogContent } from "@/components/arc/dialog/dialog"
+import SegmentedControl from "@/components/arc/segmented-control/segmented-control"
+import { Checkbox } from "@/components/arc/checkbox/checkbox"
+import { Input } from "@/components/arc/input/input"
+import { Card as ArcCard } from "@/components/arc/card/card"
 
 const periods = [
   { id: "monthly", label: "月付", days: "30天", suffix: "30", months: 1 },
@@ -39,7 +43,7 @@ const inlinePlanBadgeClass = "h-[18px] rounded-sm px-1.5 py-0 text-[11px] leadin
 function BillingDiscount({ monthlyPrice, totalPrice, months }: { monthlyPrice: number; totalPrice: number; months: number }) {
   if (months === 1) return null
   const percent = Math.max(0, Math.round((1 - totalPrice / (monthlyPrice * months)) * 100))
-  return percent ? <Badge variant="destructive" className={inlinePlanBadgeClass}>-{percent}%</Badge> : null
+  return percent ? <Badge tone="danger" className={inlinePlanBadgeClass}>-{percent}%</Badge> : null
 }
 
 function billingMonths(optionId: string) {
@@ -72,6 +76,7 @@ const defaultPricingFaqs: FaqSetting[] = [
 
 export function PricingPage() {
   const location = useLocation()
+  const navigate = useNavigate()
   const inAccount = location.pathname.startsWith("/account")
   const [plans, setPlans] = React.useState<typeof defaultPlans>([])
   const [addOnProducts, setAddOnProducts] = React.useState<CatalogV2Product[]>([])
@@ -80,6 +85,12 @@ export function PricingPage() {
   const [pricingFaqs, setPricingFaqs] = React.useState(defaultPricingFaqs)
   const [periodIndex, setPeriodIndex] = React.useState(0)
   const [planMode, setPlanMode] = React.useState<"recurring" | "lifetime">("recurring")
+  const addOnsRef = React.useRef<HTMLElement>(null)
+
+  // Links such as the overview's "购买流量包" open this page at the add-ons once they have loaded.
+  React.useEffect(() => {
+    if (location.hash === "#addons" && addOnProducts.length) addOnsRef.current?.scrollIntoView({ block: "start" })
+  }, [addOnProducts.length, location.hash])
 
   React.useEffect(() => {
     fetchJson<CatalogV2Product[]>("/api/public/catalog-v2").then(rows => {
@@ -132,28 +143,24 @@ export function PricingPage() {
   const PageRoot = inAccount ? "div" : "main"
 
   return (
+    <>
+    {/* The public price list is a standalone page, so it carries the site header and footer; inside the user centre the shell provides them. */}
+    {inAccount ? null : <SiteHeader variant="simple" label="站点导航" brand={{ name: "NEXORA", href: "/pricing", mark: <></> }} items={[]} secondaryAction={{ label: "登录", href: "/login" }} primaryAction={{ label: "注册", href: "/register" }} onNavigate={destination => { if (destination.href?.startsWith("/")) navigate(destination.href) }} />}
     <PageRoot className={inAccount ? "pt-4" : "min-h-svh bg-background px-4 py-8 text-foreground md:py-20"}>
       <section className={inAccount ? "grid w-full min-w-0 gap-6" : "grid w-full min-w-0 gap-2"}>
         {displayedPlanModes.map(lifetime => {
           const visiblePlans = plans.filter(plan => lifetime ? plan.lifetimeAvailable && Number.isFinite(plan.lifetimePrice) : plan.recurringAvailable && Number.isFinite(plan.prices[periodIndex]))
-          return <section key={lifetime ? "lifetime" : "recurring"} className={inAccount ? "grid gap-12" : "contents"}>
+          // Stable key: remounting on mode change would rebuild the selectors and skip their highlight animation.
+          return <section key="plans" className={inAccount ? "grid gap-12" : "contents"}>
             <header className="grid min-w-0 justify-items-center gap-4 text-center">
               <h1 className="text-2xl font-semibold sm:text-3xl md:text-4xl">{inAccount ? lifetime ? "不限时套餐" : "周期性套餐" : "定制您的套餐"}</h1>
               <p className="text-sm text-muted-foreground sm:text-base">{inAccount ? lifetime ? "不设到期时间 流量用完为止" : "按付款周期计费 每月重置流量" : "选择流量版本与计费周期，支付成功后立即生效。"}</p>
-              <div className="flex min-w-0 w-full flex-col justify-center gap-2 sm:w-auto sm:flex-row">
-                {!inAccount && !lifetime ? <Tabs className="min-w-0 w-full sm:w-auto" value={periods[periodIndex].id} onValueChange={value => setPeriodIndex(periods.findIndex(item => item.id === value))}>
-                  <TabsList className="relative grid min-w-0 w-full grid-cols-4 overflow-hidden">
-                    <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 4)", transform: `translateX(${periodIndex * 100}%)` }} />
-                    {periods.map(item => <TabsTrigger key={item.id} value={item.id} className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent">{item.label}</TabsTrigger>)}
-                  </TabsList>
-                </Tabs> : null}
-                <Tabs className="min-w-0 w-full sm:w-auto" value={planMode} onValueChange={selectPlanMode}>
-                  <TabsList className="relative grid min-w-0 w-full grid-cols-2">
-                    <span aria-hidden className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-md bg-background shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none dark:bg-input/30" style={{ width: "calc((100% - 6px) / 2)", transform: `translateX(${planMode === "lifetime" ? 100 : 0}%)` }} />
-                    <TabsTrigger value="recurring" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="sm:hidden">周期套餐</span><span className="hidden sm:inline">周期性套餐</span></TabsTrigger>
-                    <TabsTrigger value="lifetime" className="relative z-10 min-w-0 px-1 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-2 sm:text-sm dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent"><span className="inline-flex min-w-0 items-center gap-1"><span className="sm:hidden">不限时</span><span className="hidden sm:inline">不限时套餐</span><Badge variant="destructive" className="px-1 text-[10px] leading-4">限量</Badge></span></TabsTrigger>
-                  </TabsList>
-                </Tabs>
+              <div className="flex min-w-0 w-full flex-col items-center justify-center gap-2 sm:w-auto sm:flex-row">
+                {!inAccount && !lifetime ? <SegmentedControl label="计费周期" value={periods[periodIndex].id} onValueChange={value => setPeriodIndex(periods.findIndex(item => item.id === value))} options={periods.map(item => ({ value: item.id, label: item.label }))} /> : null}
+                <SegmentedControl label="套餐类型" value={planMode} onValueChange={selectPlanMode} options={[
+                  { value: "recurring", label: "周期性套餐" },
+                  { value: "lifetime", label: "不限时套餐", accessory: <Badge tone="danger">限量</Badge> },
+                ]} />
               </div>
             </header>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -171,7 +178,7 @@ export function PricingPage() {
                 return <PlanOfferCard
                   key={plan.id}
                   title={lifetime ? plan.lifetimeName : plan.name}
-                  description={<><span className="block font-medium text-foreground">{lifetime ? plan.lifetimeTitle : plan.title}</span><span className="mt-1 block">{lifetime ? plan.lifetimeDescription : plan.description}</span></>}
+                  description={lifetime ? <><span className="block font-medium text-foreground">{plan.lifetimeTitle}</span><span className="mt-1 block">{plan.lifetimeDescription}</span></> : plan.description}
                   price={`￥${Number.isFinite(displayedPrice) ? displayedPrice : "—"}`}
                   priceUnit={`/ ${lifetime ? "不限时" : periods[periodIndex].days}`}
                   priceExtra={!lifetime ? <BillingDiscount monthlyPrice={plan.prices[0]} totalPrice={plan.prices[periodIndex]} months={periods[periodIndex].months} /> : null}
@@ -185,23 +192,21 @@ export function PricingPage() {
             </div>
           </section>
         })}
-        {inAccount ? <section className="grid gap-4">
+        {inAccount ? <section ref={addOnsRef} id="addons" className="grid scroll-mt-20 gap-4">
           <header className="grid gap-1"><h2 className="text-xl font-semibold">附加服务</h2><p className="text-sm text-muted-foreground">按需购买额外服务，不影响当前套餐。</p></header>
           {showAddOnGroupTitles ? <CategoryPills label="附加服务分类" value={activeAddOnFilter} onValueChange={setAddOnFilter} options={[{ value: "all", label: "全部商品" }, ...addOnGroups.map(group => ({ value: group.id, label: group.name }))]} /> : null}
           {visibleAddOnGroups.map(group => <section key={group.id} aria-label={showAddOnGroupTitles && activeAddOnFilter === "all" ? undefined : group.id === "uncategorized" ? "附加服务" : group.name} className="grid gap-3">
           {showAddOnGroupTitles && activeAddOnFilter === "all" ? <h3 className="text-base font-medium">{group.name}</h3> : null}
           <div className="grid gap-4 md:grid-cols-2">
-            {group.products.map(product => <Card key={product.id}>
-              <CardHeader><CardTitle className="flex items-center gap-2"><PackagePlus className="size-5" />{product.name}</CardTitle><CardDescription>{product.description || "附加服务"}</CardDescription></CardHeader>
-              <CardContent className="grid gap-4"><p className="text-2xl font-semibold">{formatMoney(Number(product.priceCents || 0) / 100)} <span className="text-sm font-normal text-muted-foreground">/ 次</span></p>{product.features.filter(feature => feature.isIncluded).map(feature => <p key={feature.label} className="flex items-center gap-2 text-sm"><Check className="size-4" />{feature.label}</p>)}{product.deliveryDescription ? <p className="text-sm text-muted-foreground">{product.deliveryDescription}</p> : null}<Button variant="outline" asChild><Link to={`/account/plans/checkout?option=${encodeURIComponent(`v2:${product.id}`)}`}>购买服务</Link></Button></CardContent>
-            </Card>)}
+            {group.products.map(product => <Card key={product.id} title={<><PackagePlus className="size-5" />{product.name}</>} description={product.description || "附加服务"}><div className="grid gap-4"><p className="text-2xl font-semibold">{formatMoney(Number(product.priceCents || 0) / 100)} <span className="text-sm font-normal text-muted-foreground">/ 次</span></p>{product.features.filter(feature => feature.isIncluded).map(feature => <p key={feature.label} className="flex items-center gap-2 text-sm"><Check className="size-4" />{feature.label}</p>)}{product.deliveryDescription ? <p className="text-sm text-muted-foreground">{product.deliveryDescription}</p> : null}<Button variant="secondary" asChild><Link to={`/account/plans/checkout?option=${encodeURIComponent(`v2:${product.id}`)}`}>购买服务</Link></Button></div></Card>)}
           </div>
           </section>)}
         </section> : null}
-        {pricingFaqs.length ? <><Separator /><section className="grid w-full gap-4"><Accordion type="single" collapsible>{pricingFaqs.map(item => <AccordionItem key={item.id} value={item.id}><AccordionTrigger>{item.question}</AccordionTrigger><AccordionContent>{item.answer}</AccordionContent></AccordionItem>)}</Accordion></section></> : null}
-        {!inAccount ? <p className="text-center text-sm text-muted-foreground">所有套餐一经支付不支持退款</p> : null}
+        {pricingFaqs.length ? <FaqSection variant="accordion" title="常见问题" items={pricingFaqs.map(item => ({ id: item.id, question: item.question, answer: item.answer }))} contact={null} /> : null}
       </section>
     </PageRoot>
+    {inAccount ? null : <SiteFooter variant="minimal" brand={{ name: "NEXORA", href: "/pricing", mark: <></> }} tagline="" links={[{ label: "登录", href: "/login" }, { label: "注册", href: "/register" }, { label: "使用文档", href: DOCS_URL }]} newsletter={null} status={null} socials={[]} />}
+    </>
   )
 }
 
@@ -276,27 +281,37 @@ export function CheckoutPage() {
   const [submitting, setSubmitting] = React.useState(false)
   const submissionStartingRef = React.useRef(false)
   const [useBalance, setUseBalance] = React.useState(true)
-  const [addOns, setAddOns] = React.useState<string[]>([])
   const [trafficTier, setTrafficTier] = React.useState(() => Math.max(1, Math.trunc(Number(searchParams.get("traffic"))) || 1))
   const [replacementOpen, setReplacementOpen] = React.useState(false)
   const [buyerInput, setBuyerInput] = React.useState("")
   const [buyerInputError, setBuyerInputError] = React.useState("")
 
-  async function loadQuote(code = "", nextOptionId = optionId, nextUseBalance = useBalance, nextAddOns = addOns, nextTrafficTier = trafficTier) {
-    setLoading(true)
+  // Re-quoting keeps the controls enabled so the page does not flash a disabled state on every change; only the latest request
+  // updates the quote, and submitting waits for it.
+  const quoteRequestRef = React.useRef(0)
+  const quotePendingRef = React.useRef<Promise<void> | null>(null)
+
+  function loadQuote(code = "", nextOptionId = optionId, nextUseBalance = useBalance, nextTrafficTier = trafficTier) {
+    const request = ++quoteRequestRef.current
     setCouponError("")
-    try {
-      const nextQuote = await postJson<CheckoutQuote>("/api/orders/quote", trafficPack ? { product: "traffic_pack", useBalance: nextUseBalance } : homeIp ? { product: "home_ip", optionId: nextOptionId, useBalance: nextUseBalance } : { optionId: nextOptionId, couponCode: code, useBalance: nextUseBalance, addOns: nextAddOns, trafficTier: nextTrafficTier })
-      setQuote(nextQuote)
-      setOptionId(nextQuote.optionId)
-      if (code) toast.success("优惠码已应用")
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "获取结算信息失败"
-      if (code) setCouponError(message)
-      else toast.error(message)
-    } finally {
-      setLoading(false)
-    }
+    const pending = (async () => {
+      try {
+        const nextQuote = await postJson<CheckoutQuote>("/api/orders/quote", trafficPack ? { product: "traffic_pack", useBalance: nextUseBalance } : homeIp ? { product: "home_ip", optionId: nextOptionId, useBalance: nextUseBalance } : { optionId: nextOptionId, couponCode: code, useBalance: nextUseBalance, addOns: [], trafficTier: nextTrafficTier })
+        if (request !== quoteRequestRef.current) return
+        setQuote(nextQuote)
+        setOptionId(nextQuote.optionId)
+        if (code) toast({ type: "success", title: "优惠码已应用" })
+      } catch (error) {
+        if (request !== quoteRequestRef.current) return
+        const message = error instanceof Error ? error.message : "获取结算信息失败"
+        if (code) setCouponError(message)
+        else toast({ type: "error", title: message })
+      } finally {
+        if (request === quoteRequestRef.current) setLoading(false)
+      }
+    })()
+    quotePendingRef.current = pending
+    return pending
   }
 
   React.useEffect(() => {
@@ -309,22 +324,10 @@ export function CheckoutPage() {
     void loadQuote("", nextOptionId)
   }
 
-  function selectAddOn(id: string, checked: boolean) {
-    const nextAddOns = checked ? [...addOns, id] : addOns.filter(addOn => addOn !== id)
-    setAddOns(nextAddOns)
-    void loadQuote(quote?.couponCode || "", optionId, useBalance, nextAddOns)
-  }
-
-  function selectAddOnOption(id: string) {
-    const nextAddOns = id ? [...addOns.filter(addOn => !addOn.startsWith("home_ip:")), id] : addOns.filter(addOn => !addOn.startsWith("home_ip:"))
-    setAddOns(nextAddOns)
-    void loadQuote(quote?.couponCode || "", optionId, useBalance, nextAddOns)
-  }
-
   function selectTrafficTier(values: number[]) {
     const nextTier = values[0] || 1
     setTrafficTier(nextTier)
-    void loadQuote(quote?.couponCode || "", optionId, useBalance, addOns, nextTier)
+    void loadQuote(quote?.couponCode || "", optionId, useBalance, nextTier)
   }
 
   async function validateCoupon() {
@@ -347,6 +350,7 @@ export function CheckoutPage() {
     submissionStartingRef.current = true
     setSubmitting(true)
     try {
+      await quotePendingRef.current
       const pending = (await fetchJson<Array<{ id: string; status: string }>>("/api/account/orders")).find(order => order.status === "pending")
       if (pending) {
         navigate(`/account/orders/${encodeURIComponent(pending.id)}`)
@@ -354,13 +358,13 @@ export function CheckoutPage() {
       }
       const order = await postJson<{ id: string }>("/api/orders", {
         product: trafficPack ? "traffic_pack" : homeIp ? "home_ip" : "plan",
-        optionId, couponCode: quote.couponCode, addOns, trafficTier, useBalance, confirmReplacement, buyerInput,
+        optionId, couponCode: quote.couponCode, addOns: [], trafficTier, useBalance, confirmReplacement, buyerInput,
       })
       clearJsonCache()
       window.dispatchEvent(new Event("payment-order-updated"))
       navigate(`/cashier/${encodeURIComponent(order.id)}`)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "提交订单失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "提交订单失败" })
     } finally {
       submissionStartingRef.current = false
       setSubmitting(false)
@@ -390,44 +394,21 @@ export function CheckoutPage() {
     <div className="px-4 lg:px-6">
       <section className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-5">
         <header className="grid gap-1 lg:col-span-5"><h1 className="text-2xl font-semibold tracking-tight">确认订单</h1><p className="text-sm text-muted-foreground">{trafficPack ? "确认流量包信息后提交订单" : homeIp ? "选择服务地区并确认人工交付信息" : "确认商品、计费周期与优惠信息后提交订单"}</p><Separator className="mt-3" /></header>
-        {quote.purchaseAction !== "initial" ? <Alert variant={quote.purchaseAction === "replace" ? "warning" : "default"} className="lg:col-span-5"><TriangleAlert /><AlertDescription>{actionMessage}</AlertDescription></Alert> : null}
+        {quote.purchaseAction !== "initial" ? <Alert tone={quote.purchaseAction === "replace" ? "warning" : "info"} className="lg:col-span-5" title={actionMessage} /> : null}
         <section className="grid content-start gap-4 lg:col-span-3">
-          <Card>
-            <CardHeader><CardTitle>{orderProductLabel({ planName: quote.planName, optionLabel: quote.title === quote.description ? "" : quote.title }, " · ")}</CardTitle><CardDescription>{quote.description}</CardDescription></CardHeader>
-            <CardContent className="grid gap-4">
+          <Card title={orderProductLabel({ planName: quote.planName, optionLabel: quote.title === quote.description ? "" : quote.title }, " · ")} description={quote.description}><div className="grid gap-4">
               <div className="grid gap-3 text-sm">{quote.traffic ? <p className="flex items-center gap-2"><Check className="size-4" />{quote.traffic}</p> : null}{quote.devices ? <p className="flex items-center gap-2"><Check className="size-4" />在线IP数量：{quote.devices}</p> : null}{quote.features.map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}</div>
-            </CardContent>
-          </Card>
-          {buyerInputLabel ? <Card>
-            <CardHeader><CardTitle>下单信息</CardTitle><CardDescription>用于人工交付，提交后不可修改，请仔细核对。</CardDescription></CardHeader>
-            <CardContent><Field data-invalid={Boolean(buyerInputError)}><FieldLabel htmlFor="checkout-buyer-input">{buyerInputLabel}</FieldLabel><Input id="checkout-buyer-input" required maxLength={200} value={buyerInput} aria-invalid={Boolean(buyerInputError)} aria-describedby={buyerInputError ? "checkout-buyer-input-error" : undefined} onChange={event => { setBuyerInput(event.target.value); setBuyerInputError("") }} disabled={submitting} /><FieldError id="checkout-buyer-input-error">{buyerInputError}</FieldError></Field></CardContent>
-          </Card> : null}
-          {isStandaloneAddOn ? null : <Card>
-            <CardHeader><CardTitle>{homeIp ? "选择服务地区" : "选择计费周期"}</CardTitle><CardDescription>{homeIp ? "不同地区按后台配置的月费结算，每次服务 30 天。" : "选择适合你的购买周期"}</CardDescription></CardHeader>
-            <CardContent><RadioGroup value={optionId} onValueChange={selectCycle} disabled={loading} className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{quote.cycles.map(cycle => <FieldLabel key={cycle.optionId} htmlFor={`cycle-${cycle.optionId}`} className="w-full cursor-pointer sm:min-w-0 sm:flex-1 sm:basis-[calc(50%-0.375rem)]"><Field orientation="horizontal" className="h-full w-full rounded-md border p-4 has-[[data-state=checked]]:border-primary"><FieldContent className="flex-1"><FieldTitle className="flex items-center gap-1.5 leading-[18px]">{quote.unlimited ? <>{cycle.label.replace(/\s*无限流量$/, "")}<Badge variant="outline" className={`${inlinePlanBadgeClass} relative isolate overflow-hidden border-transparent bg-[linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec4899)] bg-clip-padding text-white dark:bg-[linear-gradient(135deg,#0284c7,#7c3aed,#db2777)]`}><span aria-hidden className="premium-shine absolute inset-0" /><span className="relative flex h-full items-center leading-none">无限流量</span></Badge></> : cycle.label}{homeIp ? null : <BillingDiscount monthlyPrice={monthlyPrice} totalPrice={cycle.amount} months={billingMonths(cycle.optionId)} />}</FieldTitle><FieldDescription>{formatMoney(cycle.amount)}{cycle.devices ? ` · 在线IP数量：${cycle.devices}` : ""}</FieldDescription></FieldContent><RadioGroupItem id={`cycle-${cycle.optionId}`} value={cycle.optionId} /></Field></FieldLabel>)}</RadioGroup></CardContent>
-          </Card>}
-          {!trafficPack && !quote.lifetime && (quote.trafficMaxTier || 1) > 1 ? <Card>
-            <CardHeader><CardTitle>定制每月流量</CardTitle><CardDescription>{quote.trafficStepGb ? `每档在套餐默认流量上增加 ${quote.trafficStepGb} GB，价格根据所选流量自动计算。` : "可按套餐默认流量的倍数增加，价格根据所选流量自动计算。"}</CardDescription></CardHeader>
-            <CardContent className="grid gap-4">
-              <Slider aria-label="每月流量" min={1} max={quote.trafficMaxTier} step={1} value={[trafficTier]} onValueChange={values => setTrafficTier(values[0] || 1)} onValueCommit={selectTrafficTier} disabled={loading || submitting} />
-              <Item variant="muted"><ItemContent><ItemDescription>当前选择</ItemDescription><ItemTitle>每月 {selectedTrafficGb} GB</ItemTitle></ItemContent><ItemActions><span className="text-xl font-semibold tabular-nums">{formatMoney(quote.originalAmount)}</span></ItemActions></Item>
-            </CardContent>
-          </Card> : null}
-          {isStandaloneAddOn || quote.lifetime ? null : <Card>
-            <CardHeader><CardTitle>附加服务</CardTitle><CardDescription>可与基础套餐合并结算，按需选择。</CardDescription></CardHeader>
-            <CardContent><ItemGroup>
-              {(quote.availableAddOns || []).map(addOn => <Item key={addOn.id} variant="muted">{addOn.id === "home_ip" ? <HousePlug /> : <PackagePlus />}<ItemContent><ItemTitle>{addOn.name}</ItemTitle><ItemDescription>{addOn.description}{addOn.available ? " · 支付后进入人工交付" : ` · ${addOn.unavailableReason}`}</ItemDescription></ItemContent><ItemActions>{addOn.available && addOn.options?.length ? <Select value={addOns.find(id => id.startsWith(`${addOn.id}:`)) || "none"} onValueChange={value => selectAddOnOption(value === "none" ? "" : value)} disabled={loading || submitting}><SelectTrigger aria-label={`选择${addOn.name}地区`} className="w-full sm:w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">不购买</SelectItem>{addOn.options.map(option => <SelectItem key={option.id} value={option.id}>{option.label} · {formatMoney(option.amount)}</SelectItem>)}</SelectContent></Select> : <Badge variant="secondary">{addOn.unavailableReason}</Badge>}</ItemActions></Item>)}
-            </ItemGroup></CardContent>
-          </Card>}
+            </div></Card>
+          {buyerInputLabel ? <Card title="下单信息" description="用于人工交付，提交后不可修改，请仔细核对。"><Field data-invalid={Boolean(buyerInputError)}><FieldLabel htmlFor="checkout-buyer-input">{buyerInputLabel}</FieldLabel><Input label="输入" hideLabel id="checkout-buyer-input" required maxLength={200} value={buyerInput} aria-invalid={Boolean(buyerInputError)} aria-describedby={buyerInputError ? "checkout-buyer-input-error" : undefined} onChange={event => { setBuyerInput(event.target.value); setBuyerInputError("") }} disabled={submitting} /><FieldError id="checkout-buyer-input-error">{buyerInputError}</FieldError></Field></Card> : null}
+          {isStandaloneAddOn ? null : <Card title={homeIp ? "选择服务地区" : "选择计费周期"} description={homeIp ? "不同地区按后台配置的月费结算，每次服务 30 天。" : "选择适合你的购买周期"}><RadioCards aria-label={homeIp ? "选择服务地区" : "选择计费周期"} value={optionId} onValueChange={selectCycle} layout="grid" minColumnWidth={220} options={quote.cycles.map(cycle => ({ value: cycle.optionId, label: <span className="flex flex-wrap items-center gap-1.5">{quote.unlimited ? <>{cycle.label.replace(/\s*无限流量$/, "")}<Badge className={`${inlinePlanBadgeClass} relative isolate overflow-hidden border-transparent bg-[linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec4899)] bg-clip-padding text-white dark:bg-[linear-gradient(135deg,#0284c7,#7c3aed,#db2777)]`}><span aria-hidden className="premium-shine absolute inset-0" /><span className="relative flex h-full items-center leading-none">无限流量</span></Badge></> : cycle.label}{homeIp ? null : <BillingDiscount monthlyPrice={monthlyPrice} totalPrice={cycle.amount} months={billingMonths(cycle.optionId)} />}</span>, description: <>{formatMoney(cycle.amount)}{cycle.devices ? ` · 在线IP数量：${cycle.devices}` : ""}</> }))} /></Card>}
+          {!trafficPack && !quote.lifetime && (quote.trafficMaxTier || 1) > 1 ? <Card title="定制每月流量" description={quote.trafficStepGb ? `每档在套餐默认流量上增加 ${quote.trafficStepGb} GB，价格根据所选流量自动计算。` : "可按套餐默认流量的倍数增加，价格根据所选流量自动计算。"}><div className="grid gap-4">
+              <Slider label="每月流量" min={1} max={quote.trafficMaxTier} step={1} value={trafficTier} onValueChange={value => setTrafficTier(value || 1)} onValueCommit={value => selectTrafficTier([value])} disabled={submitting} />
+              <ArcCard title={`每月 ${selectedTrafficGb} GB`} description="当前选择" headerAction={<><span className="text-xl font-semibold tabular-nums">{formatMoney(quote.originalAmount)}</span></>} />
+            </div></Card> : null}
         </section>
         <aside className="grid content-start gap-4 lg:col-span-2">
-          {isStandaloneAddOn ? null : <Card>
-            <CardHeader><CardTitle>优惠码</CardTitle><CardDescription>优惠码仅适用于基础套餐服务。</CardDescription></CardHeader>
-            <CardContent><Field><div className="flex gap-2"><Input aria-label="优惠码" aria-invalid={Boolean(couponError)} aria-describedby={couponError ? "coupon-error" : couponApplied ? "coupon-success" : undefined} placeholder="输入优惠码（如有）" value={couponCode} onChange={event => { setCouponCode(event.target.value); setCouponError("") }} /><Button variant="outline" size="default" onClick={validateCoupon} disabled={loading}>{validatingCoupon ? <Loader2 className="animate-spin" /> : <Tag />}验证</Button></div><FieldError id="coupon-error">{couponError}</FieldError>{couponApplied ? <FieldDescription id="coupon-success" className="text-emerald-600 dark:text-emerald-500">优惠码验证成功</FieldDescription> : null}</Field></CardContent>
-          </Card>}
-          <Card>
-            <CardHeader><CardTitle>订单摘要</CardTitle><CardDescription>{orderProductLabel(quote, " · ")}</CardDescription></CardHeader>
-            <CardContent className="grid gap-4">
+          {isStandaloneAddOn ? null : <Card title="优惠码" description="优惠码仅适用于基础套餐服务。"><Field><div className="flex gap-2"><div className="min-w-0 flex-1"><Input label="优惠码" hideLabel aria-invalid={Boolean(couponError)} aria-describedby={couponError ? "coupon-error" : couponApplied ? "coupon-success" : undefined} placeholder="输入优惠码（如有）" value={couponCode} onChange={event => { setCouponCode(event.target.value); setCouponError("") }} /></div><ActionButton variant="secondary" onClick={validateCoupon} label="验证" pending={validatingCoupon} /></div><FieldError id="coupon-error">{couponError}</FieldError>{couponApplied ? <FieldDescription id="coupon-success" className="text-emerald-600 dark:text-emerald-500">优惠码验证成功</FieldDescription> : null}</Field></Card>}
+          <Card title="订单摘要" description={orderProductLabel(quote, " · ")}><div className="grid gap-4">
               <div className="grid gap-3 text-sm">
                 <p className="flex justify-between"><span className="text-muted-foreground">{(quote.trafficTier || 1) > 1 ? `套餐基础价（每月 ${quote.trafficBaseGb} GB）` : "商品原价"}</span><span>{formatMoney(quote.baseAmount ?? quote.originalAmount)}</span></p>
                 {(quote.trafficTier || 1) > 1 ? <p className="flex justify-between"><span className="text-muted-foreground">流量定制至每月 {quote.trafficGb} GB</span><span>+{trafficCustomizationLabel(quote)}</span></p> : null}
@@ -440,23 +421,19 @@ export function CheckoutPage() {
                 {quote.walletReferralAmount ? <p className="flex justify-between"><span className="text-muted-foreground">返利余额</span><span>-{formatMoney(quote.walletReferralAmount)}</span></p> : null}
                 {quote.walletCashAmount ? <p className="flex justify-between"><span className="text-muted-foreground">充值余额</span><span>-{formatMoney(quote.walletCashAmount)}</span></p> : null}
               </div>
-              {quote.wallet.availableBalance > 0 ? <FieldLabel htmlFor="use-wallet" className="min-h-10 w-full cursor-pointer justify-between rounded-md border bg-muted/40 px-3 py-2.5 transition-colors hover:bg-muted/60 has-[[data-disabled]]:cursor-not-allowed">使用余额抵扣<Checkbox id="use-wallet" checked={useBalance} onCheckedChange={checked => { const enabled = checked === true; setUseBalance(enabled); void loadQuote(quote.couponCode, optionId, enabled) }} disabled={loading || submitting} /></FieldLabel> : null}
+              {quote.wallet.availableBalance > 0 ? <FieldLabel htmlFor="use-wallet" className="min-h-10 w-full cursor-pointer justify-between rounded-md border bg-muted/40 px-3 py-2.5 transition-colors hover:bg-muted/60 has-[[data-disabled]]:cursor-not-allowed">使用余额抵扣<Checkbox id="use-wallet" checked={useBalance} onCheckedChange={checked => { const enabled = checked === true; setUseBalance(enabled); void loadQuote(quote.couponCode, optionId, enabled) }} disabled={submitting} /></FieldLabel> : null}
               <Separator />
               <p className="flex justify-between text-base font-semibold"><span>待付金额</span><span>{formatMoney(quote.amount)}</span></p>
-              <Button className="min-h-11" onClick={confirmOrder} disabled={submitting || loading}>{submitting ? <Loader2 className="animate-spin" /> : <Check />}{submitting ? "正在提交订单…" : "提交订单"}</Button>
+              <ActionButton className="min-h-11" onClick={confirmOrder} disabled={submitting} label="提交订单" pendingLabel="正在提交订单…" pending={submitting} />
               <p className="text-xs text-muted-foreground">提交后进入收银台，确认付款后发放服务。</p>
-              <Button variant="outline" onClick={() => navigate(-1)}><ArrowLeft />{isStandaloneAddOn ? "返回服务列表" : "返回服务选择"}</Button>
+              <Button variant="secondary" onClick={() => navigate(-1)}><ArrowLeft />{isStandaloneAddOn ? "返回服务列表" : "返回服务选择"}</Button>
               <p className="text-xs text-muted-foreground">{trafficPack || quote.purchaseAction === "add_on" && quote.fulfillment?.mode === "automatic" ? "付款成功后流量立即生效，月度重置、续费或更换套餐后失效。" : quote.purchaseAction === "add_on" ? "付款成功后进入人工交付，交付内容可在订单详情查看；数字商品不支持退款。" : homeIp ? "付款成功后进入人工交付，服务有效期以订单快照和交付记录为准。" : "付款成功后套餐立即生效，数字商品不支持退款。"}</p>
-            </CardContent>
-          </Card>
+            </div></Card>
         </aside>
       </section>
-      <AlertDialog open={replacementOpen} onOpenChange={setReplacementOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>确认覆盖当前套餐？</AlertDialogTitle><AlertDialogDescription>支付成功后，{quote.planName} 将立即覆盖当前套餐，原套餐剩余有效期和流量不再保留，且无法恢复。</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={submitting}>返回检查</AlertDialogCancel><AlertDialogAction onClick={() => void submitOrder(true)} disabled={submitting}>{submitting ? <Loader2 className="animate-spin" /> : null}确认并提交订单</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <Dialog open={replacementOpen} onOpenChange={setReplacementOpen}>
+        <DialogContent title="确认覆盖当前套餐？" description={`支付成功后，${quote.planName} 将立即覆盖当前套餐，原套餐剩余有效期和流量不再保留，且无法恢复。`}><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={submitting}>返回检查</Button></DialogClose><DialogClose asChild><Button onClick={() => void submitOrder(true)} disabled={submitting}>{submitting ? <Loader2 className="animate-spin" /> : null}确认并提交订单</Button></DialogClose></div></DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -481,27 +458,19 @@ export function DeliveryPage() {
           <Badge className="w-fit">NEXORA</Badge>
           <h1 className="text-3xl font-semibold tracking-tight">订阅已生效</h1>
         </div>
-        <Card>
-          <CardContent className="grid gap-4 md:grid-cols-3">
+        <Card><div className="grid gap-4 md:grid-cols-3">
             <Metric label="到期时间" value={formatDate(data.expiresAt)} />
             <Metric label="套餐等级" value={String(data.lineGroupId || "-").toUpperCase()} />
             <Metric label="VIP 等级" value={vipLevelLabel(data.vipLevel)} />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><LinkIcon />订阅 URL</CardTitle></CardHeader>
-          <CardContent className="grid gap-3">
+          </div></Card>
+        <Card title={<><LinkIcon />订阅 URL</>}><div className="grid gap-3">
             <code className="truncate rounded bg-muted px-2 py-1 text-sm">{data.subscriptionUrl}</code>
-            <CopyButton value={data.subscriptionUrl} label="复制订阅 URL" variant="default" />
-            <Button variant="outline" onClick={() => { window.location.href = `shadowrocket://add/${encodeURIComponent(data.subscriptionUrl)}` }}><Rocket />导入 Shadowrocket</Button>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck />客户端教程</CardTitle></CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            {(data.tutorials || []).map((item: any) => <Button asChild key={`${item.platform}-${item.client}`} variant="outline"><a href={item.url} target="_blank" rel="noreferrer"><CheckCircle />{item.platform}</a></Button>)}
-          </CardContent>
-        </Card>
+            <CopyButton value={data.subscriptionUrl || ""} disabled={!data.subscriptionUrl} label="复制订阅 URL" />
+            <Button variant="secondary" onClick={() => { window.location.href = `shadowrocket://add/${encodeURIComponent(data.subscriptionUrl)}` }}><Rocket />导入 Shadowrocket</Button>
+          </div></Card>
+        <Card title={<><ShieldCheck />客户端教程</>}><div className="flex flex-wrap gap-2">
+            {(data.tutorials || []).map((item: any) => <Button asChild key={`${item.platform}-${item.client}`} variant="secondary"><a href={item.url} target="_blank" rel="noreferrer"><CheckCircle />{item.platform}</a></Button>)}
+          </div></Card>
       </section>
     </main>
   )

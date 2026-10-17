@@ -1,29 +1,16 @@
 import * as React from "react"
 import { Loader2 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Progress } from "@/components/ui/progress"
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Progress } from "@/components/arc/progress/progress"
 import { CatalogPlanFields, catalogPlanConfig, catalogPlanHasTiers, catalogPlanOptions, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import { DatePicker } from "@/components/features/date-picker"
 import type { User } from "@/types"
 import { formatDate, toDateInputValue } from "@/utils"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Button } from "@/components/arc/button/button"
+import { Dialog, DialogClose, DialogContent } from "@/components/arc/dialog/dialog"
+import { Input } from "@/components/arc/input/input"
 
 // New users are self-hosted and bound to a V2 plan spec; editing only changes identity fields.
 export type UserFormValues = {
@@ -144,26 +131,19 @@ export function UserFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex min-w-0 max-h-[calc(100vh-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
-        <DialogHeader className="shrink-0 bg-card px-6 pt-6 text-left text-card-foreground">
-          <DialogTitle>{user ? "编辑用户" : "新增用户"}</DialogTitle>
-          <DialogDescription className={steps.length > 1 ? "sr-only" : undefined}>{user ? "修改用户的基本信息；套餐请在用户详情中通过更改套餐调整。" : "创建自研线路用户并绑定 V2 商品规格"}</DialogDescription>
-          {steps.length > 1 ? (
+      <DialogContent title={user ? "编辑用户" : "新增用户"} description={user ? "修改用户的基本信息；套餐请在用户详情中通过更改套餐调整。" : "创建自研线路用户并绑定 V2 商品规格"} size="lg" className="flex min-w-0 max-h-[calc(100vh-2rem)] flex-col overflow-hidden p-0">{steps.length > 1 ? (
             <FieldGroup className="gap-2 pt-2">
               <FieldDescription>步骤 {stepIndex + 1} / {steps.length} · {steps[stepIndex]}</FieldDescription>
               <Progress value={((stepIndex + 1) / steps.length) * 100} />
             </FieldGroup>
-          ) : null}
-        </DialogHeader>
-
-        <form className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden" onSubmit={submit} noValidate>
+          ) : null}<form className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden" onSubmit={submit} noValidate>
           <FieldGroup className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pb-6">
             {stepIndex === 0 ? (
               <FieldGroup className="grid-cols-1 sm:grid-cols-2">
-                <Field data-invalid={Boolean(errors.userId) || undefined}><FieldLabel htmlFor="userId">用户 ID</FieldLabel><Input id="userId" required aria-invalid={Boolean(errors.userId)} value={values.userId || ""} onChange={event => update("userId", event.target.value)} /><FieldError>{errors.userId}</FieldError></Field>
-                <Field><FieldLabel htmlFor="wechatName">微信名</FieldLabel><Input id="wechatName" value={values.wechatName || ""} onChange={event => update("wechatName", event.target.value)} /></Field>
-                <Field data-invalid={Boolean(errors.email) || undefined}><FieldLabel htmlFor="email">邮箱</FieldLabel><Input id="email" type="email" required={!user} aria-invalid={Boolean(errors.email)} value={values.email || ""} onChange={event => update("email", event.target.value)} /><FieldError>{errors.email}</FieldError></Field>
-                <Field><FieldLabel htmlFor="imessage">iMessage</FieldLabel><Input id="imessage" value={values.imessage || ""} onChange={event => update("imessage", event.target.value)} /></Field>
+                <Input label="用户 ID" error={(errors.userId) || undefined} id="userId" required aria-invalid={Boolean(errors.userId)} value={values.userId || ""} onChange={event => update("userId", event.target.value)} />
+                <Input label="微信名" id="wechatName" value={values.wechatName || ""} onChange={event => update("wechatName", event.target.value)} />
+                <Input label="邮箱" error={(errors.email) || undefined} id="email" type="email" required={!user} aria-invalid={Boolean(errors.email)} value={values.email || ""} onChange={event => update("email", event.target.value)} />
+                <Input label="iMessage" id="imessage" value={values.imessage || ""} onChange={event => update("imessage", event.target.value)} />
               </FieldGroup>
             ) : (
               <>
@@ -181,24 +161,23 @@ export function UserFormDialog({
                   error={errors.optionId}
                 />
                 <FieldGroup className="grid-cols-1 sm:grid-cols-2">
-                  <Field data-invalid={Boolean(errors.purchasedAt) || undefined}><FieldLabel htmlFor="purchasedAt">购买日期</FieldLabel><DatePicker id="purchasedAt" value={values.purchasedAt} onChange={value => update("purchasedAt", value)} /><FieldError>{errors.purchasedAt}</FieldError></Field>
-                  <Field><FieldLabel htmlFor="expiresAt">到期日</FieldLabel><Input id="expiresAt" value={expiresAt} placeholder="选择商品规格后自动计算" readOnly /></Field>
+                  <Field data-invalid={Boolean(errors.purchasedAt) || undefined}><FieldLabel htmlFor="purchasedAt">购买日期</FieldLabel><DatePicker id="purchasedAt" label="购买日期" value={values.purchasedAt} onChange={value => update("purchasedAt", value)} /><FieldError>{errors.purchasedAt}</FieldError></Field>
+                  <Input label="到期日" id="expiresAt" value={expiresAt} placeholder="选择商品规格后自动计算" readOnly />
                 </FieldGroup>
-                <Field data-invalid={Boolean(errors.actualPaid) || undefined}><FieldLabel htmlFor="actualPaid">本次消费金额</FieldLabel><Input id="actualPaid" type="number" min="0" step="0.01" value={values.actualPaid ?? price ?? ""} aria-invalid={Boolean(errors.actualPaid)} onChange={event => update("actualPaid", event.target.value === "" ? undefined : Number(event.target.value))} /><FieldDescription>默认按商品规格和流量档位的售价填写，可按实际收款修改。</FieldDescription><FieldError>{errors.actualPaid}</FieldError></Field>
+                <Input label="本次消费金额" description="默认按商品规格和流量档位的售价填写，可按实际收款修改。" error={(errors.actualPaid) || undefined} id="actualPaid" type="number" min="0" step="0.01" value={values.actualPaid ?? price ?? ""} aria-invalid={Boolean(errors.actualPaid)} onChange={event => update("actualPaid", event.target.value === "" ? undefined : Number(event.target.value))} />
               </>
             )}
           </FieldGroup>
 
-          <DialogFooter className="shrink-0 flex-row items-center justify-between border-t bg-card px-6 py-4 text-card-foreground sm:justify-between">
-            <DialogClose asChild><Button type="button" variant="outline">取消</Button></DialogClose>
+          <div className="mt-6 flex flex-wrap justify-end gap-2 shrink-0 flex-row items-center justify-between border-t bg-card text-card-foreground sm:justify-between">
+            <DialogClose asChild><Button type="button" variant="secondary">取消</Button></DialogClose>
             <div className="flex gap-2">
-              {stepIndex > 0 ? <Button type="button" variant="outline" onClick={() => setStepIndex(current => current - 1)}>上一步</Button> : null}
+              {stepIndex > 0 ? <Button type="button" variant="secondary" onClick={() => setStepIndex(current => current - 1)}>上一步</Button> : null}
               {/* Distinct keys: reusing one element would turn the clicked "下一步" into a submit button mid-click. */}
-              {!lastStep ? <Button key="next" type="button" onClick={nextStep}>下一步</Button> : <Button key="submit" type="submit" disabled={submitting || Boolean(user && !changed)}>{submitting ? <Loader2 className="animate-spin" /> : null}{submitting ? "保存中..." : user ? "保存修改" : "创建用户"}</Button>}
+              {!lastStep ? <Button key="next" type="button" onClick={nextStep}>下一步</Button> : <ActionButton key="submit" type="submit" disabled={submitting || Boolean(user && !changed)} label={user ? "保存修改" : "创建用户"} pendingLabel="保存中..." pending={submitting} />}
             </div>
-          </DialogFooter>
-        </form>
-      </DialogContent>
+          </div>
+        </form></DialogContent>
     </Dialog>
   )
 }

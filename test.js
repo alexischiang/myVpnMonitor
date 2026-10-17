@@ -67,6 +67,11 @@ const {
   validateCatalogV2LineGroupInbounds,
   normalizeCatalogV2Product,
   normalizeCatalogV2AddonCategory,
+  normalizeCatalogV2CompareAttribute,
+  normalizeCatalogV2CompareValues,
+  normalizeChangelogEntry,
+  normalizeChangelogTag,
+  publicChangelogEntry,
   normalizeCheckoutSettings,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
@@ -97,6 +102,8 @@ const {
   disabledAccountPlaceholderSubscription,
   clearSubscriptionSourceState,
   ticketTelegramText,
+  ticketReplyMessage,
+  toggleTicketReaction,
   planRenewalOffer
 } = require("./server");
 
@@ -122,6 +129,52 @@ assert.strictEqual(catalogV2Product.isForSale, false);
 assert.strictEqual(catalogV2Product.periods[0].priceCents, 4900);
 assert.strictEqual(catalogV2Product.trafficCustomization.maxSteps, 10);
 assert.throws(() => normalizeCatalogV2Product({ ...catalogV2Product, periods: [{ ...catalogV2Product.periods[0], trafficBytes: null }] }), /无限流量周期/);
+{
+  // Comparison rows: tagline and values are kept for plans, values only for recurring plans.
+  const withCompare = normalizeCatalogV2Product({ ...catalogV2Product, tagline: "  适合轻量浏览  ", compareValues: { streaming: " 全部 ", "BAD KEY": "x", support: "" } });
+  assert.strictEqual(withCompare.tagline, "适合轻量浏览");
+  assert.deepStrictEqual(withCompare.compareValues, { streaming: "全部" });
+  assert.deepStrictEqual(normalizeCatalogV2Product({ id: "life-compare", type: "lifetime_plan", isEnabled: false, name: "L", compareValues: { streaming: "全部" } }).compareValues, {});
+  assert.deepStrictEqual(normalizeCatalogV2CompareValues(["x"]), {});
+  const choice = normalizeCatalogV2CompareAttribute({ label: "流媒体解锁", kind: "choice", options: ["基础", "全部", "全部", " "] });
+  assert.match(choice.id, /^cmp-[0-9a-f]{8}$/);
+  assert.deepStrictEqual(choice.options, ["基础", "全部"]);
+  assert.deepStrictEqual(normalizeCatalogV2CompareAttribute({ id: "ipv6", label: "IPv6", kind: "boolean", options: ["a", "b"] }).options, []);
+  assert.throws(() => normalizeCatalogV2CompareAttribute({ label: "X", kind: "choice", options: ["only"] }), /2-10 个选项/);
+  assert.throws(() => normalizeCatalogV2CompareAttribute({ label: "", kind: "text" }), /名称不能为空/);
+  const changelog = normalizeChangelogEntry({ title: " 新增节点 ", content: "香港节点上线\r\n\r\n- 延迟更低\n• 支持流媒体 ", kind: "new" });
+  assert.match(changelog.id, /^cl-[0-9a-f]{12}$/);
+  assert.strictEqual(changelog.title, "新增节点");
+  assert.strictEqual(changelog.content, "香港节点上线\n- 延迟更低\n• 支持流媒体");
+  assert.deepStrictEqual(publicChangelogEntry({ ...changelog, publishedAt: "2026-10-01T00:00:00.000Z" }), { id: changelog.id, title: "新增节点", kind: "new", summary: "香港节点上线", details: ["延迟更低", "支持流媒体"], publishedAt: "2026-10-01T00:00:00.000Z" });
+  assert.strictEqual(normalizeChangelogEntry({ title: "X", content: "Y", kind: "tag-1a2b" }).kind, "tag-1a2b");
+  assert.throws(() => normalizeChangelogEntry({ title: "X", content: "Y", kind: "Bad Tag" }), /请选择更新标签/);
+  assert.throws(() => normalizeChangelogEntry({ title: "X", content: "Y" }), /请选择更新标签/);
+  const tag = normalizeChangelogTag({ label: " 安全公告 ", color: "danger" });
+  assert.match(tag.id, /^tag-[0-9a-f]{8}$/);
+  assert.deepStrictEqual({ label: tag.label, color: tag.color, sortOrder: tag.sortOrder }, { label: "安全公告", color: "danger", sortOrder: null });
+  assert.strictEqual(normalizeChangelogTag({ id: "new", label: "新功能", color: "accent", sortOrder: "10" }).sortOrder, 10);
+  assert.throws(() => normalizeChangelogTag({ label: "X", color: "pink" }), /请选择标签颜色/);
+  assert.throws(() => normalizeChangelogTag({ label: " ", color: "blue" }), /标签名称不能为空/);
+  assert.throws(() => normalizeChangelogEntry({ title: "", content: "Y", kind: "new" }), /标题不能为空/);
+  assert.throws(() => normalizeChangelogEntry({ title: "X", content: " \n ", kind: "fixed" }), /内容不能为空/);
+  const { resolveCompareValues, lineGroupCoverage } = require("./commerce/catalog-v2");
+  const attributes = [{ id: "streaming", label: "流媒体解锁", kind: "choice", options: ["基础", "全部"] }, { id: "ipv6", label: "IPv6", kind: "boolean", options: [] }];
+  assert.deepStrictEqual(resolveCompareValues({ type: "recurring_plan", isEnabled: true, compareValues: { streaming: "全部", ipv6: "yes", removed: "x" } }, attributes), { streaming: "全部", ipv6: "yes" });
+  assert.throws(() => resolveCompareValues({ type: "recurring_plan", isEnabled: true, compareValues: { streaming: "全部" } }, attributes), /请填写对比项「IPv6」/);
+  assert.throws(() => resolveCompareValues({ type: "recurring_plan", isEnabled: false, compareValues: { streaming: "高级" } }, attributes), /取值无效/);
+  assert.deepStrictEqual(resolveCompareValues({ type: "recurring_plan", isEnabled: false, compareValues: {} }, attributes), {});
+  assert.deepStrictEqual(resolveCompareValues({ type: "addon", isEnabled: true, compareValues: { streaming: "全部" } }, attributes), {});
+  const coverage = lineGroupCoverage({ inboundKeys: ["a:1", "b:2", "c:3", "d:4", "e:5"] }, [
+    { key: "a:1", enabled: true, inboundType: "package", region: "香港", networkLevel: "standard" },
+    { key: "b:2", enabled: true, inboundType: "package", region: "日本", networkLevel: "premium" },
+    { key: "c:3", enabled: false, inboundType: "package", region: "美国", networkLevel: "optimized" },
+    { key: "d:4", enabled: true, inboundType: "custom", region: "新加坡", networkLevel: "optimized" },
+    { key: "e:5", enabled: true, inboundType: "package", region: "香港", networkLevel: "" },
+    { key: "z:9", enabled: true, inboundType: "package", region: "英国", networkLevel: "premium" }
+  ]);
+  assert.deepStrictEqual(coverage, { regions: ["香港", "日本"], networkLevels: ["premium", "standard"] });
+}
 const catalogV2Lifetime = normalizeCatalogV2Product({ id: "ultra-lifetime", type: "lifetime_plan", isEnabled: true, isForSale: true, stock: null, name: "ULTRA 不限时", lineGroupId: "premium-1", trafficBytes: null, deviceLimit: 5, priceCents: 19900 });
 assert.deepStrictEqual([catalogV2Lifetime.durationDays, catalogV2Lifetime.trafficBytes, catalogV2Lifetime.deviceLimit, catalogV2Lifetime.priceCents], [null, null, 5, 19900]);
 const catalogV2TrafficAddon = normalizeCatalogV2Product({ id: "traffic-addon", type: "addon", isEnabled: true, isForSale: true, stock: 20, name: "流量附加包", priceCents: 1000, purchaseRequirement: "requires_recurring_plan", fulfillment: { mode: "automatic", handler: "traffic_credit", config: { trafficBytes: 50 * 1024 ** 3 } }, allowQuantity: true, minQuantity: 1, maxQuantity: 5 });
@@ -264,6 +317,23 @@ const ticketAlert = ticketTelegramText({ id: "T1", email: "user@example.com", su
 assert(ticketAlert.includes("正文：\n最新追问"));
 assert(!ticketAlert.includes("首次描述"));
 assert(Array.from(ticketTelegramText({ id: "T1", email: "user@example.com", subject: "连接问题", messages: [{ message: "😀".repeat(5000) }] }, "https://example.com/tickets/T1")).length <= 4096);
+const screenshotReply = ticketReplyMessage({ message: " ", attachments: [{ url: "/uploads/markdown/0f8b6c2e-1a2b-4c3d-8e9f-001122334455.png", name: "a.png" }] }, "admin", "NEXORA 团队", "2026-10-16T00:00:00.000Z");
+assert.strictEqual(screenshotReply.message, "");
+assert.deepStrictEqual(screenshotReply.attachments, [{ url: "/uploads/markdown/0f8b6c2e-1a2b-4c3d-8e9f-001122334455.png", name: "a.png" }]);
+assert.strictEqual("attachments" in ticketReplyMessage({ message: "仅文字" }, "user", "u@example.com", "2026-10-16T00:00:00.000Z"), false);
+assert.throws(() => ticketReplyMessage({ message: " " }, "user", "u@example.com", "2026-10-16T00:00:00.000Z"), /回复内容至少需要 1 个字符/);
+assert.throws(() => ticketReplyMessage({ message: "x", attachments: [{ url: "https://evil.example/a.png", name: "a.png" }] }, "user", "u@example.com", "2026-10-16T00:00:00.000Z"), /截图附件无效/);
+assert.throws(() => ticketReplyMessage({ message: "x", attachments: Array(4).fill({ url: "/uploads/markdown/0f8b6c2e-1a2b-4c3d-8e9f-001122334455.png", name: "a.png" }) }, "user", "u@example.com", "2026-10-16T00:00:00.000Z"), /最多上传 3 张/);
+const reactionTicket = { messages: [{ id: "m1", sender: "user", message: "hi" }] };
+toggleTicketReaction(reactionTicket, "m1", "👍", "user");
+toggleTicketReaction(reactionTicket, "m1", "👍", "admin");
+assert.deepStrictEqual(reactionTicket.messages[0].reactions, { "👍": ["user", "admin"] });
+toggleTicketReaction(reactionTicket, "m1", "👍", "user");
+assert.deepStrictEqual(reactionTicket.messages[0].reactions, { "👍": ["admin"] });
+toggleTicketReaction(reactionTicket, "m1", "👍", "admin");
+assert.strictEqual("reactions" in reactionTicket.messages[0], false);
+assert.throws(() => toggleTicketReaction(reactionTicket, "m1", "💩", "user"), /不支持的表情/);
+assert.throws(() => toggleTicketReaction(reactionTicket, "missing", "👍", "user"), /消息不存在/);
 assert.deepStrictEqual(salesMonthRange(2, 2024), { from: new Date(2024, 1, 1), to: new Date(2024, 1, 29) });
 assert.deepStrictEqual(unlinkedSalesBills(
   [{ userId: "paid", amount: 40, paidAt: "2026-08-01T00:00:00.000Z", status: "paid" }],
@@ -637,6 +707,8 @@ assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T0
 const announcementSettings = normalizeSalesSettings({ announcements: [{ title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true }] });
 assert.deepStrictEqual(announcementSettings.announcements[0], { id: announcementSettings.announcements[0].id, title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true });
 assert.strictEqual(normalizeSalesSettings({ onboardingEnabled: false }).onboardingEnabled, false);
+assert.strictEqual(normalizeSalesSettings({}).userAlertsEnabled, true);
+assert.strictEqual(normalizeSalesSettings({ userAlertsEnabled: false }).userAlertsEnabled, false);
 const alertSettings = normalizeSalesSettings({ alertSettings: { payment: { telegram: false, mail: true }, traffic: { telegram: true, mail: true, userMail: true }, trafficThresholdPercent: 85 } }).alertSettings;
 assert.deepStrictEqual(alertSettings, { payment: { telegram: false, mail: true }, ticket: { telegram: true, mail: false }, delivery: { telegram: true, mail: false }, traffic: { telegram: true, mail: true, userMail: true, userDepletedMail: true }, trafficThresholdPercent: 85 });
 assert.strictEqual(normalizeSalesSettings({ alertSettings: { traffic: { userDepletedMail: false } } }).alertSettings.traffic.userDepletedMail, false);

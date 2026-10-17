@@ -3,9 +3,9 @@ import { Link, NavLink, useLocation } from "react-router-dom"
 import { IconDotsVertical, IconExternalLink, IconInnerShadowTop, IconLogout, IconUserCircle } from "@tabler/icons-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarRail, SidebarSeparator, useSidebar } from "@/components/ui/sidebar"
+import { Badge } from "@/components/arc/badge/badge"
 
 export type SidebarNavItem = {
   title: string
@@ -50,7 +50,7 @@ export function AppSidebar({
               <Link to={homeUrl}>
                 <IconInnerShadowTop className="size-5!" />
                 <span className="text-lg font-semibold">NEXORA</span>
-                <Badge variant="outline" className="h-4 self-baseline rounded-sm border-foreground bg-foreground px-1.5 py-0 text-[11px] text-background">beta</Badge>
+                <Badge className="h-4 self-baseline rounded-sm border-foreground bg-foreground px-1.5 py-0 text-[11px] text-background">beta</Badge>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

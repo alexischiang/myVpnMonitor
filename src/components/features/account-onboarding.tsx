@@ -3,17 +3,17 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 import { ArrowLeft, ArrowRight, CheckCircle2, Copy, Laptop, Link2, MonitorSmartphone, Percent, ShieldCheck, Smartphone, Users } from "lucide-react"
 
 import { fetchJson } from "@/api"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { type CarouselApi, Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel"
-import { Input } from "@/components/ui/input"
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
-import { Progress } from "@/components/ui/progress"
+import { Stepper } from "@/components/arc/stepper/stepper"
+import { Progress } from "@/components/arc/progress/progress"
 import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
 import { VipBadge, vipLevelLabel, type VipTier } from "@/components/features/vip-badge"
 import { formatMoney } from "@/utils"
+import { Badge } from "@/components/arc/badge/badge"
+import { Button } from "@/components/arc/button/button"
+import { Card } from "@/components/arc/card/card"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
+import { Input } from "@/components/arc/input/input"
+import { Card as ArcCard } from "@/components/arc/card/card"
 
 const steps = [
   {
@@ -47,20 +47,15 @@ function VipStepPreview({ tiers }: { tiers: VipTier[] }) {
   // Sample progress sits 60% of the way to the top tier.
   const sampleSpend = top ? Math.round(top.minSpend * 0.6) : 0
   return (
-    <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
-      <CardHeader className="flex-row items-start justify-between gap-4 px-4 sm:px-6">
-        <div className="grid gap-1.5"><CardDescription>VIP 成长</CardDescription><CardTitle>专属折扣随等级提升</CardTitle></div>
-        {tiers[1] ? <VipBadge level={tiers[1].level} /> : null}
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        <ItemGroup className="items-center gap-2" style={{ gridTemplateColumns: tiers.map(() => "1fr").join(" auto ") }}>
+    <Card className="gap-4 py-4 sm:gap-6 sm:py-6"><div className="grid gap-1.5"><p className="text-sm text-muted-foreground">VIP 成长</p><h3 className="text-lg font-medium">专属折扣随等级提升</h3></div>{tiers[1] ? <VipBadge level={tiers[1].level} /> : null}<div className="grid gap-4">
+        <div className="grid gap-3 items-center gap-2" style={{ gridTemplateColumns: tiers.map(() => "1fr").join(" auto ") }}>
           {tiers.map((tier, index) => (
             <React.Fragment key={tier.level}>
               {index > 0 ? <ArrowRight className="size-4 text-muted-foreground" /> : null}
-              <Item variant={index === 1 ? "muted" : "outline"} size="sm" className="justify-center"><ItemContent className="items-center text-center"><VipBadge level={tier.level} /><ItemDescription>{tier.minSpend > 0 ? `累计 ${formatMoney(tier.minSpend)}` : "起始等级"}</ItemDescription><ItemTitle>{tier.discountPercent}% 折扣</ItemTitle></ItemContent></Item>
+              <ArcCard className="justify-center" title={`${tier.discountPercent}% 折扣`} description={tier.minSpend > 0 ? `累计 ${formatMoney(tier.minSpend)}` : "起始等级"}><VipBadge level={tier.level} /></ArcCard>
             </React.Fragment>
           ))}
-        </ItemGroup>
+        </div>
         {top ? (
           <section className="grid gap-2" aria-label="VIP 成长进度示例">
             <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground tabular-nums"><span>成长进度</span><span>{formatMoney(sampleSpend)} / {formatMoney(top.minSpend)}</span></div>
@@ -68,81 +63,51 @@ function VipStepPreview({ tiers }: { tiers: VipTier[] }) {
             <p className="text-xs text-muted-foreground">当前等级和成长进度可在“总览”中查看。</p>
           </section>
         ) : null}
-      </CardContent>
-    </Card>
+      </div></Card>
   )
 }
 
 function StepPreview({ step, vipTiers }: { step: number; vipTiers: VipTier[] }) {
   if (step === 0) return (
-    <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardDescription>购买服务</CardDescription>
-        <CardTitle>选择适合你的套餐</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        <Item variant="muted">
-          <ItemContent><ItemTitle>PRO · 高级套餐</ItemTitle><ItemDescription>每月 200G 流量 · 在线IP数量：5</ItemDescription></ItemContent>
-          <Badge>推荐</Badge>
-        </Item>
+    <Card className="gap-4 py-4 sm:gap-6 sm:py-6" description="购买服务" title="选择适合你的套餐"><div className="grid gap-4">
+        <ArcCard title="PRO · 高级套餐" description="每月 200G 流量 · 在线IP数量：5" headerAction={<><Badge>推荐</Badge></>} />
         <Separator />
-        <CardDescription>选择计费周期</CardDescription>
-        <ItemGroup>
-          <Item variant="outline"><ItemContent><ItemTitle>月付 30 天</ItemTitle><ItemDescription>¥49.00 · 在线IP数量：3</ItemDescription></ItemContent><Badge variant="outline">已选择</Badge></Item>
-          <Item variant="outline"><ItemContent><ItemTitle>年付 360 天</ItemTitle><ItemDescription>¥429.00 · 在线IP数量：5</ItemDescription></ItemContent><Badge variant="destructive">-27%</Badge></Item>
-        </ItemGroup>
-      </CardContent>
-    </Card>
+        <p className="text-sm text-muted-foreground">选择计费周期</p>
+        <div className="grid gap-3">
+          <ArcCard title="月付 30 天" description="¥49.00 · 在线IP数量：3" headerAction={<><Badge>已选择</Badge></>} />
+          <ArcCard title="年付 360 天" description="¥429.00 · 在线IP数量：5" headerAction={<><Badge tone="danger">-27%</Badge></>} />
+        </div>
+      </div></Card>
   )
 
   if (step === 3) return <VipStepPreview tiers={vipTiers} />
 
   if (step === 4) return (
-    <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardDescription>邀请返利</CardDescription>
-        <CardTitle>分享邀请，好友和你都受益</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-3 px-4 sm:px-6">
-        <Item variant="muted"><Users /><ItemContent><ItemTitle>邀请好友注册</ItemTitle><ItemDescription>在邀请返利页面找到你的邀请链接。</ItemDescription></ItemContent></Item>
-        <Item variant="muted"><Copy /><ItemContent><ItemTitle>分享专属链接</ItemTitle><ItemDescription>好友通过你的链接购买套餐，你将获得佣金返利。</ItemDescription></ItemContent></Item>
-        <Item variant="muted"><Percent /><ItemContent><ItemTitle>返利直接到账</ItemTitle><ItemDescription>返利余额可在购买套餐时直接抵扣。</ItemDescription></ItemContent></Item>
-      </CardContent>
-    </Card>
+    <Card className="gap-4 py-4 sm:gap-6 sm:py-6" description="邀请返利" title="分享邀请，好友和你都受益"><div className="grid gap-3">
+        <ArcCard title={<span className="flex items-center gap-2"><Users />邀请好友注册</span>} description="在邀请返利页面找到你的邀请链接。" />
+        <ArcCard title={<span className="flex items-center gap-2"><Copy />分享专属链接</span>} description="好友通过你的链接购买套餐，你将获得佣金返利。" />
+        <ArcCard title={<span className="flex items-center gap-2"><Percent />返利直接到账</span>} description="返利余额可在购买套餐时直接抵扣。" />
+      </div></Card>
   )
 
   if (step === 1) return (
-    <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
-      <CardHeader className="flex-row items-start justify-between gap-4 px-4 sm:px-6">
-        <div className="grid gap-1.5"><CardDescription>当前订阅</CardDescription><CardTitle>STANDARD</CardTitle></div>
-        <Badge variant="success"><CheckCircle2 />生效中</Badge>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
+    <Card className="gap-4 py-4 sm:gap-6 sm:py-6"><div className="grid gap-1.5"><p className="text-sm text-muted-foreground">当前订阅</p><h3 className="text-lg font-medium">STANDARD</h3></div><Badge tone="success"><CheckCircle2 />生效中</Badge><div className="grid gap-4">
         <div className="grid grid-cols-2 gap-4 text-sm">
-          <Item variant="muted"><ItemContent><ItemDescription>当前到期</ItemDescription><ItemTitle>2026-12-31</ItemTitle></ItemContent></Item>
-          <Item variant="muted"><ItemContent><ItemDescription>在线IP数量</ItemDescription><ItemTitle>5</ItemTitle></ItemContent></Item>
+          <ArcCard title="2026-12-31" description="当前到期" />
+          <ArcCard title="5" description="在线IP数量" />
         </div>
-        <Input readOnly value="https://example.com/subscription/..." tabIndex={-1} aria-label="订阅链接示例" />
-        <Button variant="outline" className="w-full" tabIndex={-1}><Link2 />复制订阅链接</Button>
-      </CardContent>
-    </Card>
+        <Input label="订阅链接示例" hideLabel readOnly value="https://example.com/subscription/..." tabIndex={-1} />
+        <Button variant="secondary" className="w-full" tabIndex={-1}><Link2 />复制订阅链接</Button>
+      </div></Card>
   )
 
   return (
-    <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardDescription>使用文档</CardDescription>
-        <CardTitle>选择你的设备</CardTitle>
-      </CardHeader>
-      <CardContent className="px-4 sm:px-6">
-        <ItemGroup className="grid-cols-2">
-          <Item variant="outline" size="sm"><Smartphone /><ItemContent><ItemTitle>iPhone / iPad</ItemTitle><ItemDescription>Shadowrocket</ItemDescription></ItemContent></Item>
-          <Item variant="outline" size="sm"><Smartphone /><ItemContent><ItemTitle>Android</ItemTitle><ItemDescription>移动端客户端</ItemDescription></ItemContent></Item>
-          <Item variant="outline" size="sm"><MonitorSmartphone /><ItemContent><ItemTitle>Windows</ItemTitle><ItemDescription>桌面端客户端</ItemDescription></ItemContent></Item>
-          <Item variant="outline" size="sm"><Laptop /><ItemContent><ItemTitle>macOS</ItemTitle><ItemDescription>桌面端客户端</ItemDescription></ItemContent></Item>
-        </ItemGroup>
-      </CardContent>
-    </Card>
+    <Card className="gap-4 py-4 sm:gap-6 sm:py-6" description="使用文档" title="选择你的设备"><div className="grid gap-3 grid-cols-2">
+          <ArcCard title={<span className="flex items-center gap-2"><Smartphone />iPhone / iPad</span>} description="Shadowrocket" />
+          <ArcCard title={<span className="flex items-center gap-2"><Smartphone />Android</span>} description="移动端客户端" />
+          <ArcCard title={<span className="flex items-center gap-2"><MonitorSmartphone />Windows</span>} description="桌面端客户端" />
+          <ArcCard title={<span className="flex items-center gap-2"><Laptop />macOS</span>} description="桌面端客户端" />
+        </div></Card>
   )
 }
 
@@ -150,7 +115,6 @@ export function AccountOnboardingPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [email, setEmail] = React.useState("")
-  const [carouselApi, setCarouselApi] = React.useState<CarouselApi>()
   const [step, setStep] = React.useState(0)
   const [onboardingEnabled, setOnboardingEnabled] = React.useState<boolean | null>(null)
   const [vipTiers, setVipTiers] = React.useState<VipTier[]>([])
@@ -174,36 +138,31 @@ export function AccountOnboardingPage() {
       .catch(() => navigate("/login", { replace: true }))
   }, [navigate, searchParams])
 
-  React.useEffect(() => {
-    if (!carouselApi) return
-    const select = () => setStep(carouselApi.selectedScrollSnap())
-    select()
-    carouselApi.on("select", select)
-    return () => { carouselApi.off("select", select) }
-  }, [carouselApi])
-
   function finish() {
     localStorage.setItem(`account-onboarding:${email}`, "1")
     navigate("/account", { replace: true })
   }
 
-  if (!email || onboardingEnabled !== true) return <main className="grid h-svh place-items-center overflow-hidden p-6"><Skeleton className="h-96 w-full max-w-5xl" /></main>
+  if (!email || onboardingEnabled !== true) return <main className="grid h-svh place-items-center overflow-hidden p-6"><Skeleton lines={6} className="w-full max-w-5xl" /></main>
 
   const lastStep = step === steps.length - 1
 
   return (
     <main className="flex h-svh flex-col overflow-hidden bg-background">
       <header className="flex shrink-0 items-center justify-between gap-4 border-b px-4 py-3 sm:px-6 lg:px-10">
-        <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-5" />NEXORA <Badge variant="outline">使用入门</Badge></p>
+        <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-5" />NEXORA <Badge>使用入门</Badge></p>
         <Button variant="ghost" onClick={finish}>跳过</Button>
       </header>
 
-      <Carousel className="flex min-h-0 flex-1 flex-col overflow-hidden [&_[data-slot=carousel-content]]:h-full" setApi={setCarouselApi} opts={{ watchDrag: true }} aria-label="用户中心使用引导">
-        <CarouselContent className="h-full items-center">
-          {steps.map((item, index) => {
-            const description = index === 3 && vipTiers.length ? `${item.description}${vipTierSummary(vipTiers)}。` : item.description
-            return (
-              <CarouselItem className="h-full" key={item.title} aria-label={`${index + 1} / ${steps.length}`}>
+      <div className="shrink-0 border-b px-4 py-3 sm:px-6 lg:px-10">
+        <div className="mx-auto max-w-6xl"><Stepper label="使用引导进度" current={step} onStepSelect={setStep} details="current" steps={steps.map(item => ({ id: item.title, label: item.title }))} /></div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
+        {steps.map((item, index) => {
+          if (index !== step) return null
+          const description = index === 3 && vipTiers.length ? `${item.description}${vipTierSummary(vipTiers)}。` : item.description
+          return (
+            <React.Fragment key={item.title}>
                 <section className="mx-auto grid h-full w-full max-w-6xl content-center items-center gap-4 px-4 py-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] sm:px-6 md:gap-8 lg:gap-16 lg:px-10">
                   <header className="grid gap-3">
                     <p className="text-4xl font-semibold tracking-tight text-muted-foreground md:text-6xl">Step {index + 1}</p>
@@ -214,16 +173,15 @@ export function AccountOnboardingPage() {
                   </header>
                   <StepPreview step={index} vipTiers={vipTiers} />
                 </section>
-              </CarouselItem>
-            )
-          })}
-        </CarouselContent>
-      </Carousel>
+            </React.Fragment>
+          )
+        })}
+      </div>
 
       <footer className="shrink-0 border-t px-4 py-3 sm:px-6 lg:px-10">
         <div className="mx-auto grid max-w-6xl grid-cols-2 gap-4">
-          <Button variant="outline" onClick={() => carouselApi?.scrollPrev()} disabled={step === 0} className="sm:justify-self-start"><ArrowLeft />上一步</Button>
-          <Button onClick={lastStep ? finish : () => carouselApi?.scrollNext()} className="sm:justify-self-end">{lastStep ? "进入用户中心" : "下一步"}<ArrowRight /></Button>
+          <Button variant="secondary" onClick={() => setStep(current => Math.max(0, current - 1))} disabled={step === 0} className="sm:justify-self-start"><ArrowLeft />上一步</Button>
+          <Button onClick={lastStep ? finish : () => setStep(current => Math.min(steps.length - 1, current + 1))} className="sm:justify-self-end">{lastStep ? "进入用户中心" : "下一步"}<ArrowRight /></Button>
         </div>
       </footer>
     </main>

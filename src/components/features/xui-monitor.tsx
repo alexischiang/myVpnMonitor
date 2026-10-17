@@ -1,19 +1,21 @@
 import * as React from "react"
 import { Activity, AlertTriangle, HelpCircle, Loader2, RefreshCw, Server, Settings2 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/features/toast"
 
 import { fetchJson, putJson } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent } from "@/components/arc/dialog/dialog"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatDateTime } from "@/utils"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Alert } from "@/components/arc/alert/alert"
+import { Badge } from "@/components/arc/badge/badge"
+import { Button } from "@/components/arc/button/button"
+import { Card } from "@/components/arc/card/card"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
+import { Tooltip } from "@/components/arc/tooltip/tooltip"
+import { Input } from "@/components/arc/input/input"
+import { PasswordField } from "@/components/arc/password-field/password-field"
+import { Select } from "@/components/arc/select/select"
 
 type MonitorData = {
   configured: boolean
@@ -143,9 +145,9 @@ export function XuiMonitorPage() {
       setNodeTokens(current => ({ ...current, [guid]: "" }))
       setSettingsGuid("")
       setData(current => current ? { ...current, nodes: current.nodes.map(item => item.guid === guid ? { ...item, multiplier: savedMultiplier, costConfig: savedCost, trafficConfigured: configured, trafficError: configured ? "" : item.trafficError } : item) } : current)
-      toast.success("节点设置已保存")
+      toast({ type: "success", title: "节点设置已保存" })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "保存失败" })
     } finally {
       setSavingGuid("")
     }
@@ -170,9 +172,9 @@ export function XuiMonitorPage() {
       || draft.trafficMode !== original.trafficMode
   }
 
-  if (loading && !data) return <div className="grid gap-4 px-4 lg:px-6"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{[1, 2, 3, 4].map(item => <Skeleton key={item} className="h-36" />)}</div><Skeleton className="h-80" /></div>
+  if (loading && !data) return <div className="grid gap-4 px-4 lg:px-6"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{[1, 2, 3, 4].map(item => <Skeleton lines={4} key={item} />)}</div><Skeleton lines={6} /></div>
 
-  if (!data?.configured) return <div className="px-4 lg:px-6"><Alert><Server /><AlertDescription>尚未配置 3x-ui。请在服务端设置 XUI_BASE_URL 和 XUI_API_TOKEN。</AlertDescription></Alert></div>
+  if (!data?.configured) return <div className="px-4 lg:px-6"><Alert title="尚未配置 3x-ui。请在服务端设置 XUI_BASE_URL 和 XUI_API_TOKEN。" /></div>
 
   const settingsNode = data.nodes.find(node => node.guid === settingsGuid)
   const missingTokenNodes = data.nodes.filter(node => node.trafficTokenRequired && !node.trafficConfigured)
@@ -181,43 +183,30 @@ export function XuiMonitorPage() {
     <>
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 lg:px-6">
         <p className="text-sm text-muted-foreground">每 2 分钟自动更新 · {data.checkedAt ? formatDateTime(data.checkedAt) : "尚未更新"} · {data.latency ?? "-"} ms</p>
-        <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
-          {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          刷新
-        </Button>
+        <ActionButton variant="secondary" size="sm" onClick={() => void refresh()} label="刷新" pending={loading} />
       </div>
 
-      {error ? <div className="px-4 lg:px-6"><Alert variant="destructive"><Activity /><AlertDescription>{error}</AlertDescription></Alert></div> : null}
+      {error ? <div className="px-4 lg:px-6"><Alert tone="danger" title={error} /></div> : null}
 
-      {missingTokenNodes.length ? <div className="px-4 lg:px-6"><Alert variant="warning"><AlertTriangle /><AlertTitle>{missingTokenNodes.length} 个节点尚未设置 API Token</AlertTitle><AlertDescription>{missingTokenNodes.map(node => node.name).join("、")}。请进入对应节点设置完成配置，否则无法统计该节点流量。</AlertDescription></Alert></div> : null}
+      {missingTokenNodes.length ? <div className="px-4 lg:px-6"><Alert tone="warning" title={`${missingTokenNodes.length} 个节点尚未设置 API Token`}>{missingTokenNodes.map(node => node.name).join("、")}。请进入对应节点设置完成配置，否则无法统计该节点流量。</Alert></div> : null}
 
       <div className="px-4 lg:px-6">
-        <Card>
-          <CardHeader>
-            <CardDescription>当前在线客户端</CardDescription>
-            <CardTitle className="text-3xl tabular-nums">{data.onlineUsers ?? "-"}</CardTitle>
-            <CardDescription>{data.nodes.map(node => `${node.name} ${node.onlineCount}`).join(" · ") || "暂无节点"}</CardDescription>
-          </CardHeader>
-        </Card>
+        <Card description="当前在线客户端" title={data.onlineUsers ?? "-"}><p className="text-sm text-muted-foreground">{data.nodes.map(node => `${node.name} ${node.onlineCount}`).join(" · ") || "暂无节点"}</p></Card>
       </div>
 
       <div className="grid gap-4 px-4 lg:px-6">
         {data.nodes.map(node => {
           const online = node.enabled && node.status.toLowerCase() === "online"
           return (
-            <Card key={node.id}>
-              <CardHeader>
-                <div className="flex flex-wrap items-start justify-between gap-3">
+            <Card key={node.id}><div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="grid gap-1">
-                    <CardTitle className="flex flex-wrap items-center gap-2"><Server className="size-5" />{node.name}<Badge variant={online ? "success" : "secondary"}>{node.enabled ? node.status : "disabled"}</Badge>{node.trafficTokenRequired && !node.trafficConfigured ? <Badge variant="destructive">未设置 API</Badge> : null}{!node.costConfig ? <Badge variant="warning">未设置成本</Badge> : null}<Badge variant="outline">× {node.multiplier}</Badge></CardTitle>
-                    <CardDescription>{node.address}{node.port ? `:${node.port}` : ""}</CardDescription>
+                    <h3 className="text-lg font-medium flex flex-wrap items-center gap-2"><Server className="size-5" />{node.name}<Badge tone={online ? "success" : "neutral"}>{node.enabled ? node.status : "disabled"}</Badge>{node.trafficTokenRequired && !node.trafficConfigured ? <Badge tone="danger">未设置 API</Badge> : null}{!node.costConfig ? <Badge tone="warning">未设置成本</Badge> : null}<Badge>× {node.multiplier}</Badge></h3>
+                    <p className="text-sm text-muted-foreground">{node.address}{node.port ? `:${node.port}` : ""}</p>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => openNodeSettings(node)}><Settings2 />节点设置</Button>
+                    <Button variant="secondary" size="sm" onClick={() => openNodeSettings(node)}><Settings2 />节点设置</Button>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent className="grid gap-4">
+                </div><div className="grid gap-4">
                 <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                   <p className="grid gap-1 text-muted-foreground">延迟<span className="font-medium text-foreground">{node.latencyMs ? `${node.latencyMs} ms` : "-"}</span></p>
                   <p className="grid gap-1 text-muted-foreground">入站<span className="font-medium text-foreground">{node.inboundCount}</span></p>
@@ -225,47 +214,38 @@ export function XuiMonitorPage() {
                   <p className="grid gap-1 text-muted-foreground">当前使用<span className="font-medium text-foreground">{node.onlineCount}</span></p>
                 </div>
                 <p className="text-xs text-muted-foreground">最后心跳：{node.lastHeartbeat ? formatDateTime(node.lastHeartbeat) : "-"}</p>
-                {node.trafficError ? <Alert variant="destructive"><Activity /><AlertDescription>节点流量读取失败：{node.trafficError}</AlertDescription></Alert> : null}
-                {node.lastError ? <Alert variant="destructive"><Activity /><AlertDescription>{node.lastError}</AlertDescription></Alert> : null}
-              </CardContent>
-            </Card>
+                {node.trafficError ? <Alert tone="danger" title={`节点流量读取失败：${node.trafficError}`} /> : null}
+                {node.lastError ? <Alert tone="danger" title={node.lastError} /> : null}
+              </div></Card>
           )
         })}
       </div>
 
       <Dialog open={Boolean(settingsNode)} onOpenChange={open => { if (!open) setSettingsGuid("") }}>
-        <DialogContent>
+        <DialogContent title={`${settingsNode?.name ?? ""} 节点设置`} description="配置整个面板的流量倍率；该面板中的所有端口和协议统一按此倍率计费。">
           {settingsNode ? <form className="grid gap-6" onSubmit={event => { event.preventDefault(); void saveNodeSettings(settingsNode.guid) }}>
-            <DialogHeader>
-              <DialogTitle>{settingsNode.name} 节点设置</DialogTitle>
-              <DialogDescription>配置整个面板的流量倍率；该面板中的所有端口和协议统一按此倍率计费。</DialogDescription>
-            </DialogHeader>
-            <Field>
-              <FieldLabel htmlFor={`settings-multiplier-${settingsNode.id}`}>流量倍率</FieldLabel>
-              <Input id={`settings-multiplier-${settingsNode.id}`} type="number" min="0" max="100" step="0.1" value={nodeMultipliers[settingsNode.guid] ?? "1"} onChange={event => setNodeMultipliers(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
-              <FieldDescription>保存后，该节点所有入站新增流量统一按此倍率计算。</FieldDescription>
-            </Field>
+            <Input label="流量倍率" description="保存后，该节点所有入站新增流量统一按此倍率计算。" id={`settings-multiplier-${settingsNode.id}`} type="number" min="0" max="100" step="0.1" value={nodeMultipliers[settingsNode.guid] ?? "1"} onChange={event => setNodeMultipliers(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
             <section className="grid gap-4 border-t pt-4">
               <div className="flex items-center gap-2">
                 <h3 className="font-medium">VPS 月度成本</h3>
-                <TooltipProvider><Tooltip><TooltipTrigger asChild><button type="button" className="text-muted-foreground" aria-label="说明用户扣量与 VPS 成本计量"><HelpCircle className="size-4" /></button></TooltipTrigger><TooltipContent className="max-w-72">用户扣量始终按 in + out；VPS 成本计量根据此节点设置使用 in + out 或仅 out。</TooltipContent></Tooltip></TooltipProvider>
+                <Tooltip content="用户扣量始终按 in + out；VPS 成本计量根据此节点设置使用 in + out 或仅 out。"><button type="button" className="text-muted-foreground" aria-label="说明用户扣量与 VPS 成本计量"><HelpCircle className="size-4" /></button></Tooltip>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field><FieldLabel htmlFor={`cost-date-${settingsNode.id}`}>购买日期</FieldLabel><Input id={`cost-date-${settingsNode.id}`} type="date" value={nodeCosts[settingsNode.guid]?.purchaseDate || ""} onChange={event => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], purchaseDate: event.target.value } }))} /></Field>
-                <Field><FieldLabel htmlFor={`cost-fee-${settingsNode.id}`}>月费（¥）</FieldLabel><Input id={`cost-fee-${settingsNode.id}`} type="number" min="0" step="0.01" value={nodeCosts[settingsNode.guid]?.monthlyFee || ""} onChange={event => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], monthlyFee: event.target.value } }))} /></Field>
-                <Field><FieldLabel htmlFor={`cost-quota-${settingsNode.id}`}>流量额度（GiB）</FieldLabel><Input id={`cost-quota-${settingsNode.id}`} type="number" min="0.01" step="0.01" value={nodeCosts[settingsNode.guid]?.trafficQuotaGiB || ""} onChange={event => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], trafficQuotaGiB: event.target.value } }))} /></Field>
-                <Field><FieldLabel htmlFor={`cost-mode-${settingsNode.id}`}>VPS 流量计算方式</FieldLabel><Select value={nodeCosts[settingsNode.guid]?.trafficMode || "in_out"} onValueChange={(trafficMode: "in_out" | "out_only") => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], trafficMode } }))}><SelectTrigger id={`cost-mode-${settingsNode.id}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="in_out">in + out</SelectItem><SelectItem value="out_only">out only</SelectItem></SelectContent></Select></Field>
+                <Input label="购买日期" id={`cost-date-${settingsNode.id}`} type="date" value={nodeCosts[settingsNode.guid]?.purchaseDate || ""} onChange={event => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], purchaseDate: event.target.value } }))} />
+                <Input label="月费（¥）" id={`cost-fee-${settingsNode.id}`} type="number" min="0" step="0.01" value={nodeCosts[settingsNode.guid]?.monthlyFee || ""} onChange={event => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], monthlyFee: event.target.value } }))} />
+                <Input label="流量额度（GiB）" id={`cost-quota-${settingsNode.id}`} type="number" min="0.01" step="0.01" value={nodeCosts[settingsNode.guid]?.trafficQuotaGiB || ""} onChange={event => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], trafficQuotaGiB: event.target.value } }))} />
+                <Select label="VPS 流量计算方式" value={nodeCosts[settingsNode.guid]?.trafficMode || "in_out"} onValueChange={(trafficMode: "in_out" | "out_only") => setNodeCosts(current => ({ ...current, [settingsNode.guid]: { ...current[settingsNode.guid], trafficMode } }))} id={`cost-mode-${settingsNode.id}`} options={[{ value: "in_out", label: "in + out" }, { value: "out_only", label: "out only" }]} />
               </div>
               <FieldDescription>购买日期是月度计费周期起点，精确到日；费用、额度或计量方式变化时，按实际变更日期保存。</FieldDescription>
             </section>
             <Field>
-              <FieldLabel htmlFor={`settings-token-${settingsNode.id}`}>节点 API Token <Badge variant={settingsNode.trafficConfigured ? "success" : "secondary"}>{settingsNode.trafficConfigured ? "已配置" : "未配置"}</Badge></FieldLabel>
-              <Input id={`settings-token-${settingsNode.id}`} type="password" autoComplete="new-password" placeholder={settingsNode.trafficConfigured ? "留空保持现有 Token" : "输入该节点的 API Token"} value={nodeTokens[settingsNode.guid] ?? ""} onChange={event => setNodeTokens(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
+              <FieldLabel htmlFor={`settings-token-${settingsNode.id}`}>节点 API Token <Badge tone={settingsNode.trafficConfigured ? "success" : "neutral"}>{settingsNode.trafficConfigured ? "已配置" : "未配置"}</Badge></FieldLabel>
+              <PasswordField label={settingsNode.trafficConfigured ? "留空保持现有 Token" : "输入该节点的 API Token"} hideLabel id={`settings-token-${settingsNode.id}`} autoComplete="new-password" placeholder={settingsNode.trafficConfigured ? "留空保持现有 Token" : "输入该节点的 API Token"} value={nodeTokens[settingsNode.guid] ?? ""} onChange={event => setNodeTokens(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
             </Field>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setSettingsGuid("")} disabled={savingGuid === settingsNode.guid}>取消</Button>
-              <Button type="submit" disabled={savingGuid === settingsNode.guid || !nodeSettingsChanged(settingsNode)}>{savingGuid === settingsNode.guid ? <Loader2 className="animate-spin" /> : null}保存设置</Button>
-            </DialogFooter>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setSettingsGuid("")} disabled={savingGuid === settingsNode.guid}>取消</Button>
+              <ActionButton type="submit" disabled={savingGuid === settingsNode.guid || !nodeSettingsChanged(settingsNode)} label="保存设置" pending={savingGuid === settingsNode.guid} />
+            </div>
           </form> : null}
         </DialogContent>
       </Dialog>

@@ -3,10 +3,11 @@ import { createRoot } from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { ThemeProvider } from "next-themes"
 
+import "@/components/arc/foundation.css"
 import "./styles.css"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { Toaster } from "@/components/ui/sonner"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
+import { AppToasts } from "@/components/features/toast"
 import { DataProvider } from "@/components/features/data-provider"
 import { AppShell } from "@/components/features/app-shell"
 import { RequestProgress } from "@/components/features/request-progress"
@@ -43,6 +44,7 @@ const CashierPage = lazy(() => import("@/components/features/cashier-page").then
 const CheckoutPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.CheckoutPage })))
 const DeliveryPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.DeliveryPage })))
 const PricingPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.PricingPage })))
+const RecurringPlanComparePage = lazy(() => import("@/components/features/plan-compare-page").then(module => ({ default: module.RecurringPlanComparePage })))
 const ForgotPasswordPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.ForgotPasswordPage })))
 const LoginPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.LoginPage })))
 const RegisterPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.RegisterPage })))
@@ -51,6 +53,8 @@ const AccountShell = lazy(() => import("@/components/features/account-shell").th
 const AccountOnboardingPage = lazy(() => import("@/components/features/account-onboarding").then(module => ({ default: module.AccountOnboardingPage })))
 const AccountNodeStatusPage = lazy(() => import("@/components/features/account-node-status").then(module => ({ default: module.AccountNodeStatusPage })))
 const OrangeButtonShowcasePage = lazy(() => import("@/components/features/orange-button-showcase").then(module => ({ default: module.OrangeButtonShowcasePage })))
+const ChangelogAdminPage = lazy(() => import("@/components/features/changelog-admin").then(module => ({ default: module.ChangelogAdminPage })))
+const AccountChangelogPage = lazy(() => import("@/components/features/changelog").then(module => ({ default: module.AccountChangelogPage })))
 const AccountDocsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountDocsPage })))
 const AccountOrderDetailPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrderDetailPage })))
 const AccountOrdersPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrdersPage })))
@@ -77,11 +81,13 @@ function ProtectedApp() {
 }
 
 function ScrollToTop() {
-  const { pathname, search } = useLocation()
+  const { pathname, search, hash } = useLocation()
   useEffect(() => {
+    // A link to an anchor (such as /account/plans#addons) lets the page scroll to it instead.
+    if (hash) return
     const frame = window.requestAnimationFrame(() => document.scrollingElement?.scrollTo({ top: 0, left: 0 }))
     return () => window.cancelAnimationFrame(frame)
-  }, [pathname, search])
+  }, [hash, pathname, search])
   return null
 }
 
@@ -112,13 +118,14 @@ function CrispChat() {
 
 function App() {
   return (
-    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} storageKey="themeMode">
+    <ThemeProvider attribute={["class", "data-theme"]} defaultTheme="light" enableSystem={false} storageKey="themeMode">
       <CrispChat />
       <RequestProgress />
       <TooltipProvider>
+        <AppToasts>
         <BrowserRouter>
           <ScrollToTop />
-          <Suspense fallback={<Skeleton className="m-6 min-h-24" />}>
+          <Suspense fallback={<Skeleton lines={3} className="m-6" />}>
           <WechatGuard>
           <Routes>
             <Route path={OPEN_IN_BROWSER_PATH} element={<OpenInBrowserPage />} />
@@ -136,8 +143,11 @@ function App() {
               <Route path="nodes" element={<AccountNodeStatusPage />} />
               <Route path="subscription" element={<Navigate to="/account" replace />} />
               <Route path="docs" element={<AccountDocsPage />} />
+              <Route path="changelog" element={<AccountChangelogPage />} />
               <Route path="plans" element={<PricingPage />} />
               <Route path="design-system/buttons" element={<OrangeButtonShowcasePage />} />
+              {/* Test route for the plan comparison layout; the plans page itself is unchanged. */}
+              <Route path="plans/compare" element={<RecurringPlanComparePage />} />
               <Route path="plans/checkout" element={<CheckoutPage />} />
               <Route path="orders" element={<AccountOrdersPage />} />
               <Route path="wallet" element={<AccountWalletPage />} />
@@ -166,6 +176,7 @@ function App() {
               <Route path="orders/:id" element={<OrderDetailPage />} />
               <Route path="tickets" element={<AdminTicketsPage />} />
               <Route path="tickets/:id" element={<AdminTicketDetailPage />} />
+              <Route path="changelog" element={<ChangelogAdminPage />} />
               <Route path="deliveries" element={<ServiceDeliveriesPage />} />
               <Route path="bills" element={<Navigate to="/orders" replace />} />
               <Route path="pricing-settings" element={<PricingSettingsPage />} />
@@ -186,7 +197,7 @@ function App() {
           </WechatGuard>
           </Suspense>
         </BrowserRouter>
-        <Toaster position="bottom-right" richColors />
+        </AppToasts>
       </TooltipProvider>
     </ThemeProvider>
   )

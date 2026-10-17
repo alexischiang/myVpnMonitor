@@ -303,6 +303,14 @@ async function main() {
     const publicSettings = await request("/api/public/sales-settings");
     const { vipTiers: _publicVipTiers, ...publicSalesSettings } = publicSettings.data;
     assert.deepStrictEqual(publicSalesSettings, { registrationMode: "open", onboardingEnabled: true, faqs: [{ id: "payment-faq", question: "测试问题", answer: "测试回答" }], userAlerts: [] });
+    const savedAlerts = await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...savedSettings.data, userAlerts: [{ id: "pricing-alert", page: "pricing", variant: "warning", title: "提醒", message: "", enabled: true }] } });
+    assert.strictEqual(savedAlerts.data.userAlertsEnabled, true);
+    assert.deepStrictEqual((await request("/api/public/sales-settings")).data.userAlerts.map(item => item.id), ["pricing-alert"]);
+    const hiddenAlerts = await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...savedAlerts.data, userAlertsEnabled: false } });
+    assert.strictEqual(hiddenAlerts.data.userAlertsEnabled, false);
+    assert.strictEqual(hiddenAlerts.data.userAlerts.length, 1);
+    assert.deepStrictEqual((await request("/api/public/sales-settings")).data.userAlerts, []);
+    await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...hiddenAlerts.data, userAlertsEnabled: true, userAlerts: [] } });
     const adminPricing = await request("/api/pricing", { cookie: adminCookie });
     const shopperPricing = await request("/api/public/pricing");
     assert.ok(adminPricing.data.some(item => item.group === "friends-lifetime-unlimited" && item.internal === true));
@@ -312,8 +320,10 @@ async function main() {
     assert.strictEqual(v2Group.response.status, 201, v2Group.text);
     const flowGroup = await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: catalogV2Ids.flowGroup, name: "Payment flow", isEnabled: true, sortOrder: 0, inboundKeys: ["local:1"] } });
     assert.strictEqual(flowGroup.response.status, 201, flowGroup.text);
+    // Enabled recurring plans need a value for every comparison row.
+    const compareValues = Object.fromEntries((await request("/api/catalog-v2/compare-attributes", { cookie: adminCookie })).data.map(attribute => [attribute.id, attribute.kind === "boolean" ? "yes" : attribute.options[0]]));
     const v2Product = await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: {
-      id: catalogV2Ids.product, type: "recurring_plan", isEnabled: true, isForSale: true, stock: 2, sortOrder: 0,
+      id: catalogV2Ids.product, type: "recurring_plan", isEnabled: true, isForSale: true, stock: 2, sortOrder: 0, compareValues,
       name: "Payment V2 plan", description: "V2 checkout", features: [], isRecommended: false, lineGroupId: catalogV2Ids.group,
       trafficCustomization: { enabled: false, stepBytes: null, stepPriceCents: null, maxSteps: 10 },
       periods: [{ id: "30d", durationDays: 30, trafficBytes: 50 * 1024 ** 3, deviceLimit: 2, priceCents: 100, isEnabled: true, sortOrder: 0 }]
@@ -326,14 +336,14 @@ async function main() {
     } });
     assert.strictEqual(lifetimeProduct.response.status, 201, lifetimeProduct.text);
     const flowProduct = await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: {
-      id: catalogV2Ids.flow, type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, sortOrder: 0,
+      id: catalogV2Ids.flow, type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, sortOrder: 0, compareValues,
       name: "PRO", description: "Payment flow checks", features: [], isRecommended: false, lineGroupId: catalogV2Ids.flowGroup,
       trafficCustomization: { enabled: false, stepBytes: null, stepPriceCents: null, maxSteps: 10 },
       periods: [{ id: "30d", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3, priceCents: 100, isEnabled: true, sortOrder: 0 }]
     } });
     assert.strictEqual(flowProduct.response.status, 201, flowProduct.text);
     const flowBasicProduct = await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: {
-      id: catalogV2Ids.flowBasic, type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, sortOrder: 0,
+      id: catalogV2Ids.flowBasic, type: "recurring_plan", isEnabled: true, isForSale: true, stock: null, sortOrder: 0, compareValues,
       name: "BASIC", description: "Plan replacement checks", features: [], isRecommended: false, lineGroupId: catalogV2Ids.flowGroup,
       trafficCustomization: { enabled: false, stepBytes: null, stepPriceCents: null, maxSteps: 10 },
       periods: [

@@ -1,0 +1,33 @@
+.card { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-surface); padding: var(--space-6); background: var(--surface); box-shadow: var(--shadow-resting); }
+.top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-8); }
+/* XELA extension: only the label (the direct child), so controls in the action slot keep their own text color and size. Was `.top span`. */
+.top > span { color: var(--text-secondary); font-size: var(--text-sm); }
+.top small { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 3px 8px; color: var(--text-secondary); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.card p { margin: var(--space-4) 0 0; color: var(--text-muted); font-size: var(--text-sm); line-height: var(--leading-body); }
+@media (max-width: 380px) { .card { padding: var(--space-4); } .top { align-items: flex-start; flex-wrap: wrap; margin-bottom: var(--space-6); } }
+/* Text swaps: the outgoing copy is popped out of flow so the wrapper never holds both widths. */
+.swap, .swapBlock { position: relative; max-width: 100%; }
+.swap { display: inline-flex; overflow-x: clip; white-space: nowrap; vertical-align: top; }
+.swapBlock { display: block; }
+.swap > .text { display: inline-block; }
+.swapBlock > .text { display: block; }
+.sizer { position: absolute; top: 0; left: 0; visibility: hidden; white-space: nowrap; pointer-events: none; }
+/* A signed change reads its direction in color as well as sign: a faint tint behind, the color on the text. */
+.top small[data-trend] span { color: inherit; }
+.top small[data-trend] { border-color: transparent; transition: color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard); }
+.top small[data-trend="up"] { background: color-mix(in oklab, var(--success) 11%, transparent); color: var(--success); }
+.top small[data-trend="down"] { background: color-mix(in oklab, var(--danger) 11%, transparent); color: var(--danger); }
+
+/* XELA extension: an action in the top row and a placeholder for an unknown value. */
+.action { display: flex; flex: none; align-items: center; gap: var(--space-2); margin-left: auto; }
+/* XELA extension: a trailing control in the bottom-right corner; the number and context stay bottom-left beside it. */
+.withTrailing { display: flex; flex-direction: column; }
+.bottom { display: flex; flex: 1; align-items: flex-end; justify-content: space-between; gap: var(--space-3); min-width: 0; }
+.figure { min-width: 0; }
+.trailing { display: flex; flex: none; align-items: center; }
+.empty { display: block; color: var(--text-muted); font-size: var(--text-3xl); line-height: var(--leading-display); }
+.compact { padding: var(--space-4) var(--space-5); }
+.compact .top { margin-bottom: var(--space-2); }
+.compact p { margin-top: var(--space-1); }
+.compact > span:not(.empty), .compact .figure > span:not(.empty) { font-size: var(--text-2xl); }
+.compact .empty { font-size: var(--text-2xl); }

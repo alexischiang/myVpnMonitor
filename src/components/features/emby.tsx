@@ -1,18 +1,17 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Loader2, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/features/toast"
 
 import { deleteJson, postJson, putJson } from "@/api"
-import { Button } from "@/components/ui/button"
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
+import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
 import { useData } from "@/components/features/data-provider"
 import { SimpleFormDialog, type Field, type FormValues } from "@/components/features/simple-form"
 import { PageHeader } from "@/components/features/shared"
 import type { EmbyUser, EmbyVendor } from "@/types"
 import { formatDate, formatMoney } from "@/utils"
+import { Button } from "@/components/arc/button/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs"
 
 export function EmbyPage() {
   return (
@@ -52,7 +51,7 @@ function EmbyUsers() {
       if (editing?.id) await putJson(`/api/emby-users/${editing.id}`, values)
       else await postJson("/api/emby-users", values)
       await reload(["embyUsers"])
-      toast.success("Emby 用户已保存")
+      toast({ type: "success", title: "Emby 用户已保存" })
     }, "保存 Emby 用户...")
   }
 
@@ -103,12 +102,7 @@ function EmbyUsers() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => <DataTableRowActions>
-        <DropdownMenuItem onSelect={() => { setEditing(row.original); setOpen(true) }}>编辑</DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onSelect={() => remove(row.original)} disabled={Boolean(deletingId)}>
-          {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}删除
-        </DropdownMenuItem>
-      </DataTableRowActions>,
+      cell: ({ row }) => <DataTableRowActions actions={[{ label: "编辑", onSelect: () => { setEditing(row.original); setOpen(true) } }, { label: "删除", icon: <Trash2 size={15} />, destructive: true, disabled: Boolean(deletingId), onSelect: () => remove(row.original) }]} />,
       enableHiding: false,
       enableSorting: false,
     },
@@ -148,7 +142,7 @@ function EmbyVendors() {
       if (editing?.id) await putJson(`/api/emby-vendors/${editing.id}`, payload)
       else await postJson("/api/emby-vendors", payload)
       await reload(["embyVendors"])
-      toast.success("Emby 供应商已保存")
+      toast({ type: "success", title: "Emby 供应商已保存" })
     }, "保存供应商...")
   }
 
@@ -187,12 +181,7 @@ function EmbyVendors() {
     {
       id: "actions",
       header: "操作",
-      cell: ({ row }) => <DataTableRowActions>
-        <DropdownMenuItem onSelect={() => { setEditing(row.original); setOpen(true) }}>编辑</DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onSelect={() => remove(row.original)} disabled={Boolean(deletingId)}>
-          {deletingId === row.original.id ? <Loader2 className="animate-spin" /> : <Trash2 />}删除
-        </DropdownMenuItem>
-      </DataTableRowActions>,
+      cell: ({ row }) => <DataTableRowActions actions={[{ label: "编辑", onSelect: () => { setEditing(row.original); setOpen(true) } }, { label: "删除", icon: <Trash2 size={15} />, destructive: true, disabled: Boolean(deletingId), onSelect: () => remove(row.original) }]} />,
       enableHiding: false,
       enableSorting: false,
     },

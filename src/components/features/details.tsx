@@ -2,27 +2,15 @@ import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
 import { AlertCircle, ArrowRightLeft, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, UserCog } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/features/toast"
 
 import { fetchJson, postJson, putJson } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item"
+import { Avatar } from "@/components/arc/avatar/avatar"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
-import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/data-table"
+import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
 import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
@@ -32,6 +20,20 @@ import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalog
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
 import type { User, XuiCustomInboundManagement } from "@/types"
 import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, purchasedPlanName, userStatus } from "@/utils"
+import { ActionButton } from "@/components/arc/action-button/action-button"
+import { Alert } from "@/components/arc/alert/alert"
+import { Badge } from "@/components/arc/badge/badge"
+import { Button } from "@/components/arc/button/button"
+import { Card } from "@/components/arc/card/card"
+import { Dialog as ArcDialog, DialogClose as ArcDialogClose, DialogContent as ArcDialogContent } from "@/components/arc/dialog/dialog"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs"
+import { Checkbox } from "@/components/arc/checkbox/checkbox"
+import { Input } from "@/components/arc/input/input"
+import { SearchField } from "@/components/arc/search-field/search-field"
+import { Select } from "@/components/arc/select/select"
+import { Dialog, DialogClose, DialogContent } from "@/components/arc/dialog/dialog"
+import { Card as ArcCard } from "@/components/arc/card/card"
+import { SimpleTable } from "@/components/features/simple-table"
 
 type GiftPreview = {
   expiresAt: string
@@ -71,7 +73,7 @@ const userTypeLabels = { regular: "普通账户", family: "亲友账户", busine
 const xuiMigrationLabels = {
   completed: { label: "已完成", variant: "success" },
   activation_required: { label: "待激活", variant: "warning" },
-  failed: { label: "失败", variant: "destructive" },
+  failed: { label: "失败", variant: "danger" },
 } as const
 
 function userType(user: User): keyof typeof userTypeLabels {
@@ -85,8 +87,8 @@ function xuiMigrationStatus(user: User) {
   return user.xuiMigrationStatus
     ? xuiMigrationLabels[user.xuiMigrationStatus]
     : user.xuiClientEmail
-      ? { label: "无需迁移", variant: "secondary" as const }
-      : { label: "未触发", variant: "secondary" as const }
+      ? { label: "无需迁移", variant: "neutral" as const }
+      : { label: "未触发", variant: "neutral" as const }
 }
 
 function xuiMigrationSource(user: User) {
@@ -173,7 +175,7 @@ export function SubscriptionDetailPage() {
       await runAsync(async () => {
         await putJson(`/api/subscriptions/${item.id}`, { excludeFromAutoSwitch: !item.excludeFromAutoSwitch })
         await reload(["subscriptions"])
-        toast.success(item.excludeFromAutoSwitch ? "已恢复自动换池切入" : "已禁止自动换池切入")
+        toast({ type: "success", title: item.excludeFromAutoSwitch ? "已恢复自动换池切入" : "已禁止自动换池切入" })
       }, item.excludeFromAutoSwitch ? "恢复自动换池切入..." : "禁止自动换池切入...")
     } finally {
       setTogglingAutoSwitch(false)
@@ -188,15 +190,13 @@ export function SubscriptionDetailPage() {
         actions={
           <>
             <BackButton fallback="/urls" size="sm" />
-            {item.sourceType === "url" ? <Button variant="outline" size="sm" onClick={toggleAutoSwitch} disabled={togglingAutoSwitch}>{togglingAutoSwitch ? <Loader2 className="animate-spin" /> : null}{item.excludeFromAutoSwitch ? "恢复自动切入" : "禁止自动切入"}</Button> : null}
-            <Button size="sm" onClick={refresh} disabled={refreshing}>{refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新</Button>
+            {item.sourceType === "url" ? <ActionButton variant="secondary" size="sm" onClick={toggleAutoSwitch} label={item.excludeFromAutoSwitch ? "恢复自动切入" : "禁止自动切入"} pending={togglingAutoSwitch} /> : null}
+            <ActionButton size="sm" onClick={refresh} label="刷新" pending={refreshing} />
           </>
         }
       />
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle>基础信息</CardTitle></CardHeader>
-          <CardContent className="grid gap-4">
+        <Card title="基础信息"><div className="grid gap-4">
             {item.sourceType === "manual" ? <Info label="配置来源" value="手动 Base64" /> : item.sourceType === "yaml" ? <Info label="配置来源" value="手动 YAML" /> : <UrlCell value={item.url} />}
             <div className="grid gap-3">
               <Info label="HTTP" value={item.httpStatus || "-"} />
@@ -207,39 +207,25 @@ export function SubscriptionDetailPage() {
               <Info label="状态" value={<StatusBadge status={item.status} />} />
             </div>
             {item.lastError && (
-              <Alert variant="destructive">
-                <AlertDescription>{item.lastError}</AlertDescription>
-              </Alert>
+              <Alert tone="danger" title={item.lastError} />
             )}
-          </CardContent>
-        </Card>
+          </div></Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>实时配置</CardTitle>
-            <Button variant="outline" size="sm" onClick={refreshCache} disabled={refreshingCache}>{refreshingCache ? <Loader2 className="animate-spin" /> : <RefreshCw />}刷新缓存</Button>
-          </CardHeader>
-          <CardContent className="grid gap-3">
+        <Card title="实时配置"><ActionButton variant="secondary" size="sm" onClick={refreshCache} label="刷新缓存" pending={refreshingCache} /><div className="grid gap-3">
             <p className="text-sm text-muted-foreground">
               {cache?.body ? `缓存时间：${formatDateTime(cache.bodyFetchedAt || cache.fetchedAt)} - ${formatBytes(cache.bodyLength)}` : cache?.fetchedAt ? `最近尝试：${formatDateTime(cache.fetchedAt)}` : "未加载"}
             </p>
-            {cache?.error ? <Alert variant="destructive"><AlertDescription>最新配置拉取失败：{cache.error}{cache.body ? ` 当前显示的是 ${formatDateTime(cache.bodyFetchedAt || cache.fetchedAt)} 的缓存配置。` : " 当前没有可显示的缓存配置。"}</AlertDescription></Alert> : null}
+            {cache?.error ? <Alert tone="danger" title={`最新配置拉取失败：${cache.error}${cache.body ? ` 当前显示的是 ${formatDateTime(cache.bodyFetchedAt || cache.fetchedAt)} 的缓存配置。` : " 当前没有可显示的缓存配置。"}`} /> : null}
             <pre className="max-h-96 overflow-auto rounded-lg border bg-muted p-3 text-xs">{cache?.body || "(empty)"}</pre>
-          </CardContent>
-        </Card>
+          </div></Card>
 
-        <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>绑定用户</CardTitle></CardHeader>
-          <CardContent>
-            <DataTable
+        <Card className="lg:col-span-2" title="绑定用户"><DataTable
               columns={boundUserColumns}
               data={boundUsers}
               searchKey="user"
               searchPlaceholder="搜索绑定用户..."
               emptyTitle="暂无绑定用户"
-            />
-          </CardContent>
-        </Card>
+            /></Card>
       </div>
     </div>
   )
@@ -406,7 +392,7 @@ export function UserDetailPage() {
       setCustomInboundData(result)
       setCustomInboundDraft(result.extraInboundIds)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "个人定制入站读取失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "个人定制入站读取失败" })
       setCustomInboundOpen(false)
     } finally {
       setCustomInboundLoading(false)
@@ -424,9 +410,9 @@ export function UserDetailPage() {
       await putJson(`/api/users/${user.id}/custom-inbounds`, { inboundIds: customInboundDraft })
       await refreshUserDetails()
       setCustomInboundOpen(false)
-      toast.success("个人定制入站已同步")
+      toast({ type: "success", title: "个人定制入站已同步" })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "个人定制入站保存失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "个人定制入站保存失败" })
     } finally {
       setCustomInboundSaving(false)
     }
@@ -474,10 +460,10 @@ export function UserDetailPage() {
         await postJson(`/api/users/${user.id}/account-invite`, { email: inviteEmail })
         await reload(["users"], { silent: true })
         setInviteOpen(false)
-        toast.success("账户认领邮件已发送")
+        toast({ type: "success", title: "账户认领邮件已发送" })
       }, "发送认领邮件...")
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "账户认领邮件发送失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "账户认领邮件发送失败" })
     } finally {
       setInviteSending(false)
     }
@@ -490,10 +476,10 @@ export function UserDetailPage() {
       await runAsync(async () => {
         await putJson(`/api/referrals/accounts/${user.accountId}`, { referralRate, recurringReferral })
         await reload(["users"], { silent: true })
-        toast.success("返利设置已保存")
+        toast({ type: "success", title: "返利设置已保存" })
       }, "保存返利设置...")
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "保存失败" })
     } finally {
       setReferralSaving(false)
     }
@@ -513,9 +499,9 @@ export function UserDetailPage() {
       setGiftBalanceAmount("")
       setGiftBalanceNote("")
       setWalletBalance(wallet.availableBalance)
-      toast.success(`已赠送 ${formatMoney(amount)}，用户可用余额 ${formatMoney(wallet.availableBalance)}`)
+      toast({ type: "success", title: `已赠送 ${formatMoney(amount)}，用户可用余额 ${formatMoney(wallet.availableBalance)}` })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "赠送余额失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "赠送余额失败" })
     } finally {
       setGiftBalanceSaving(false)
     }
@@ -536,7 +522,7 @@ export function UserDetailPage() {
       setTrafficGiftOpen(false)
       setTrafficGiftGb("")
       setTrafficGiftNote("")
-      toast.success(`已单向赠送 ${trafficGb} GB 流量`)
+      toast({ type: "success", title: `已单向赠送 ${trafficGb} GB 流量` })
     } catch (error) {
       setTrafficGiftError(error instanceof Error ? error.message : "赠送流量失败")
     } finally {
@@ -559,9 +545,9 @@ export function UserDetailPage() {
       await postJson(`/api/users/${user.id}/pool`, { subscriptionId: poolId, allowDisabled: allowDisabledPool, allowFull: allowFullPool })
       await refreshUserDetails()
       setPoolOpen(false)
-      toast.success("用户订阅池已更新")
+      toast({ type: "success", title: "用户订阅池已更新" })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "换池失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "换池失败" })
     } finally {
       setPoolSaving(false)
     }
@@ -606,7 +592,7 @@ export function UserDetailPage() {
       await postJson(`/api/users/${user.id}/gift`, { days: Number(giftDays), subscriptionId: giftPoolId, allowDisabled: allowDisabledGiftPool, allowFull: allowFullGiftPool })
       await refreshUserDetails()
       setGiftOpen(false)
-      toast.success("赠送时长已生效")
+      toast({ type: "success", title: "赠送时长已生效" })
     } catch (error) {
       setGiftError(error instanceof Error ? error.message : "赠送时长失败")
     } finally {
@@ -621,9 +607,9 @@ export function UserDetailPage() {
       await postJson(`/api/users/${user.id}/account-status`, { disabled: disabling })
       await reload(["users"], { silent: true })
       setAccountStatusOpen(false)
-      toast.success(disabling ? "账户已停用" : "账户已恢复")
+      toast({ type: "success", title: disabling ? "账户已停用" : "账户已恢复" })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "账户状态更新失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "账户状态更新失败" })
     } finally {
       setAccountStatusSaving(false)
     }
@@ -640,9 +626,9 @@ export function UserDetailPage() {
       await postJson(`/api/users/${user.id}/type`, { type: selectedUserType })
       await refreshUserDetails()
       setUserTypeOpen(false)
-      toast.success("用户类型已更新")
+      toast({ type: "success", title: "用户类型已更新" })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "用户类型更新失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "用户类型更新失败" })
     } finally {
       setUserTypeSaving(false)
     }
@@ -680,7 +666,7 @@ export function UserDetailPage() {
       await refreshUserDetails()
       setPlanConfirmOpen(false)
       setPlanOpen(false)
-      toast.success("套餐已更改并记录")
+      toast({ type: "success", title: "套餐已更改并记录" })
     } catch (error) {
       setPlanError(error instanceof Error ? error.message : "套餐更改失败")
     } finally {
@@ -694,9 +680,9 @@ export function UserDetailPage() {
       await postJson(`/api/users/${user.id}/plan-rollback`, { changeId: planRollbackId })
       await refreshUserDetails()
       setPlanRollbackId("")
-      toast.success("已撤销最近一次套餐变更")
+      toast({ type: "success", title: "已撤销最近一次套餐变更" })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "撤销套餐变更失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "撤销套餐变更失败" })
     } finally {
       setPlanRollbackSaving(false)
     }
@@ -708,9 +694,9 @@ export function UserDetailPage() {
       await postJson(`/api/users/${user.id}/traffic-reset`, {})
       await refreshUserDetails()
       setTrafficResetOpen(false)
-      toast.success("用户流量已重置")
+      toast({ type: "success", title: "用户流量已重置" })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "流量重置失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "流量重置失败" })
     } finally {
       setTrafficResetSaving(false)
     }
@@ -722,9 +708,9 @@ export function UserDetailPage() {
       await postJson(`/api/users/${user.id}/xui-sync`, {})
       await refreshUserDetails()
       setXuiRecoverOpen(false)
-      toast.success("已按V2套餐同步到3x-ui")
+      toast({ type: "success", title: "已按V2套餐同步到3x-ui" })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "3x-ui 同步失败")
+      toast({ type: "error", title: error instanceof Error ? error.message : "3x-ui 同步失败" })
     } finally {
       setXuiRecoverSaving(false)
     }
@@ -774,7 +760,7 @@ export function UserDetailPage() {
       })
       setManualPaymentOpen(false)
       await reload(["users", "subscriptions", "bills"])
-      toast.success("人工收款已完成，套餐已生效")
+      toast({ type: "success", title: "人工收款已完成，套餐已生效" })
       if (user.registeredOnly && order.userId) navigate(`/users/detail/${order.userId}`)
       else await refreshUserDetails()
     } catch (error) {
@@ -789,188 +775,113 @@ export function UserDetailPage() {
   return (
     <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
       <Dialog open={manualPaymentOpen} onOpenChange={setManualPaymentOpen}>
-        <DialogContent>
-          <form className="grid gap-4" onSubmit={submitManualPayment}>
-            <DialogHeader><DialogTitle>人工收款</DialogTitle></DialogHeader>
+        <DialogContent title="人工收款"><form className="grid gap-4" onSubmit={submitManualPayment}>
             <FieldGroup>
-              <Field><FieldLabel htmlFor="manual-payment-plan">V2 商品规格</FieldLabel><Select value={manualPaymentOption} onValueChange={value => { setManualPaymentOption(value); void loadManualPaymentQuote(value) }} disabled={manualPaymentLoading || manualPaymentSaving || !catalogPurchaseOptions.length}><SelectTrigger id="manual-payment-plan" className="w-full"><SelectValue placeholder="暂无可用 V2 商品" /></SelectTrigger><SelectContent>{catalogPurchaseOptions.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+              <Select label="V2 商品规格" value={manualPaymentOption} onValueChange={value => { setManualPaymentOption(value); void loadManualPaymentQuote(value) }} disabled={manualPaymentLoading || manualPaymentSaving || !catalogPurchaseOptions.length} id="manual-payment-plan" className="w-full" placeholder="暂无可用 V2 商品" options={[...catalogPurchaseOptions.map(item => ({ value: item.value, label: item.label }))]} />
             </FieldGroup>
-            {manualPaymentLoading ? <Item variant="outline"><ItemContent><ItemTitle>正在计算报价</ItemTitle><ItemDescription>请稍候</ItemDescription></ItemContent><ItemActions><Loader2 className="animate-spin" /></ItemActions></Item> : null}
-            {manualPaymentQuote ? <><Item variant="outline"><ItemContent><ItemTitle>{manualPaymentQuote.optionLabel}</ItemTitle><ItemDescription>仅显示套餐原价，不统计税费等</ItemDescription></ItemContent><ItemActions><span className="font-semibold">{formatMoney(manualPaymentQuote.originalAmount)}</span></ItemActions></Item><Field><FieldLabel htmlFor="manual-payment-amount">收款金额</FieldLabel><Input id="manual-payment-amount" inputMode="decimal" value={manualPaymentAmount} onChange={event => { setManualPaymentAmount(event.target.value); setManualPaymentError("") }} aria-invalid={Boolean(manualPaymentError)} required /></Field></> : null}
-            {["replace", "extend"].includes(manualPaymentQuote?.purchaseAction || "") ? <Alert variant="warning"><AlertCircle /><AlertDescription>{manualPaymentQuote?.purchaseAction === "replace" ? "确认后将立即替换当前套餐。" : "确认后将在当前到期日基础上续期。"}</AlertDescription></Alert> : null}
-            {manualPaymentError ? <Alert variant="error"><AlertCircle /><AlertTitle>人工收款失败</AlertTitle><AlertDescription>{manualPaymentError}</AlertDescription></Alert> : null}
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={manualPaymentSaving}>取消</Button></DialogClose><Button type="submit" disabled={!manualPaymentQuote || manualPaymentLoading || manualPaymentSaving}>{manualPaymentSaving ? <Loader2 className="animate-spin" /> : <Banknote />}{manualPaymentSaving ? "处理中..." : `确认收款 ${manualPaymentAmount && Number.isFinite(Number(manualPaymentAmount)) ? formatMoney(Number(manualPaymentAmount)) : ""}`}</Button></DialogFooter>
-          </form>
-        </DialogContent>
+            {manualPaymentLoading ? <ArcCard title="正在计算报价" description="请稍候" headerAction={<><Loader2 className="animate-spin" /></>} /> : null}
+            {manualPaymentQuote ? <><ArcCard title={manualPaymentQuote.optionLabel} description="仅显示套餐原价，不统计税费等" headerAction={<><span className="font-semibold">{formatMoney(manualPaymentQuote.originalAmount)}</span></>} /><Input label="收款金额" id="manual-payment-amount" inputMode="decimal" value={manualPaymentAmount} onChange={event => { setManualPaymentAmount(event.target.value); setManualPaymentError("") }} aria-invalid={Boolean(manualPaymentError)} required /></> : null}
+            {["replace", "extend"].includes(manualPaymentQuote?.purchaseAction || "") ? <Alert tone="warning" title={manualPaymentQuote?.purchaseAction === "replace" ? "确认后将立即替换当前套餐。" : "确认后将在当前到期日基础上续期。"} /> : null}
+            {manualPaymentError ? <Alert tone="danger" title="人工收款失败">{manualPaymentError}</Alert> : null}
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={manualPaymentSaving}>取消</Button></DialogClose><ActionButton type="submit" disabled={!manualPaymentQuote || manualPaymentLoading || manualPaymentSaving} label={`确认收款 ${manualPaymentAmount && Number.isFinite(Number(manualPaymentAmount)) ? formatMoney(Number(manualPaymentAmount)) : ""}`} pendingLabel="处理中..." pending={manualPaymentSaving} /></div>
+          </form></DialogContent>
       </Dialog>
       <Dialog open={giftBalanceOpen} onOpenChange={setGiftBalanceOpen}>
-        <DialogContent>
-          <form className="grid gap-4" onSubmit={giftBalance}>
-            <DialogHeader><DialogTitle>赠送余额</DialogTitle><DialogDescription>赠送金额永久有效，购买套餐时优先于返利和充值余额使用，不计入 VIP。</DialogDescription></DialogHeader>
-            <Field><FieldLabel htmlFor="gift-balance-amount">赠送金额</FieldLabel><Input id="gift-balance-amount" inputMode="decimal" placeholder="0.00" value={giftBalanceAmount} onChange={event => { setGiftBalanceAmount(event.target.value); setGiftBalanceError("") }} aria-invalid={Boolean(giftBalanceError)} autoFocus required /><FieldError>{giftBalanceError}</FieldError></Field>
-            <Field><FieldLabel htmlFor="gift-balance-note">备注</FieldLabel><Input id="gift-balance-note" maxLength={100} placeholder="可选" value={giftBalanceNote} onChange={event => setGiftBalanceNote(event.target.value)} /></Field>
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={giftBalanceSaving}>取消</Button></DialogClose><Button type="submit" disabled={giftBalanceSaving}>{giftBalanceSaving ? <Loader2 className="animate-spin" /> : <Gift />}{giftBalanceSaving ? "赠送中..." : "确认赠送"}</Button></DialogFooter>
-          </form>
-        </DialogContent>
+        <DialogContent title="赠送余额" description="赠送金额永久有效，购买套餐时优先于返利和充值余额使用，不计入 VIP。"><form className="grid gap-4" onSubmit={giftBalance}>
+            <Input label="赠送金额" error={(giftBalanceError) || undefined} id="gift-balance-amount" inputMode="decimal" placeholder="0.00" value={giftBalanceAmount} onChange={event => { setGiftBalanceAmount(event.target.value); setGiftBalanceError("") }} aria-invalid={Boolean(giftBalanceError)} autoFocus required />
+            <Input label="备注" id="gift-balance-note" maxLength={100} placeholder="可选" value={giftBalanceNote} onChange={event => setGiftBalanceNote(event.target.value)} />
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={giftBalanceSaving}>取消</Button></DialogClose><ActionButton type="submit" label="确认赠送" pendingLabel="赠送中..." pending={giftBalanceSaving} /></div>
+          </form></DialogContent>
       </Dialog>
       <Dialog open={trafficGiftOpen} onOpenChange={setTrafficGiftOpen}>
-        <DialogContent>
-          <form className="grid gap-4" onSubmit={giftTraffic}>
-            <DialogHeader><DialogTitle>单向赠送流量</DialogTitle><DialogDescription>只会增加用户额度，不能覆盖或扣减。最终额度始终由本地套餐、已购流量包和赠送记录计算，不读取 3x-ui 额度。</DialogDescription></DialogHeader>
-            <Field><FieldLabel htmlFor="traffic-gift-gb">赠送流量（GB）</FieldLabel><Input id="traffic-gift-gb" type="number" min="0.01" max="102400" step="0.01" value={trafficGiftGb} onChange={event => { setTrafficGiftGb(event.target.value); setTrafficGiftError("") }} aria-invalid={Boolean(trafficGiftError)} autoFocus required /><FieldError>{trafficGiftError}</FieldError></Field>
-            <Field><FieldLabel htmlFor="traffic-gift-note">备注</FieldLabel><Input id="traffic-gift-note" maxLength={200} placeholder="可选" value={trafficGiftNote} onChange={event => setTrafficGiftNote(event.target.value)} /></Field>
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={trafficGiftSaving}>取消</Button></DialogClose><Button type="submit" disabled={trafficGiftSaving}>{trafficGiftSaving ? <Loader2 className="animate-spin" /> : <Gift />}{trafficGiftSaving ? "赠送中..." : "确认单向赠送"}</Button></DialogFooter>
-          </form>
-        </DialogContent>
+        <DialogContent title="单向赠送流量" description="只会增加用户额度，不能覆盖或扣减。最终额度始终由本地套餐、已购流量包和赠送记录计算，不读取 3x-ui 额度。"><form className="grid gap-4" onSubmit={giftTraffic}>
+            <Input label="赠送流量（GB）" error={(trafficGiftError) || undefined} id="traffic-gift-gb" type="number" min="0.01" max="102400" step="0.01" value={trafficGiftGb} onChange={event => { setTrafficGiftGb(event.target.value); setTrafficGiftError("") }} aria-invalid={Boolean(trafficGiftError)} autoFocus required />
+            <Input label="备注" id="traffic-gift-note" maxLength={200} placeholder="可选" value={trafficGiftNote} onChange={event => setTrafficGiftNote(event.target.value)} />
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={trafficGiftSaving}>取消</Button></DialogClose><ActionButton type="submit" label="确认单向赠送" pendingLabel="赠送中..." pending={trafficGiftSaving} /></div>
+          </form></DialogContent>
       </Dialog>
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
-        <DialogContent>
-          <form className="grid gap-4" onSubmit={sendAccountInvite} noValidate>
-            <DialogHeader><DialogTitle>发送账户认领邮件</DialogTitle><DialogDescription>用户将通过该邮箱设置密码并认领订阅账户。</DialogDescription></DialogHeader>
-            <Field><FieldLabel htmlFor="invite-email">收件邮箱</FieldLabel><Input id="invite-email" name="inviteEmail" type="email" value={inviteEmail} onChange={event => { setInviteEmail(event.target.value); setInviteEmailError("") }} aria-invalid={Boolean(inviteEmailError)} autoFocus required /><FieldError>{inviteEmailError}</FieldError></Field>
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={inviteSending}>取消</Button></DialogClose><Button type="submit" disabled={inviteSending}>{inviteSending ? <Loader2 className="animate-spin" /> : <MailCheck />}{inviteSending ? "发送中..." : "发送邮件"}</Button></DialogFooter>
-          </form>
-        </DialogContent>
+        <DialogContent title="发送账户认领邮件" description="用户将通过该邮箱设置密码并认领订阅账户。"><form className="grid gap-4" onSubmit={sendAccountInvite} noValidate>
+            <Input label="收件邮箱" error={(inviteEmailError) || undefined} id="invite-email" name="inviteEmail" type="email" value={inviteEmail} onChange={event => { setInviteEmail(event.target.value); setInviteEmailError("") }} aria-invalid={Boolean(inviteEmailError)} autoFocus required />
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={inviteSending}>取消</Button></DialogClose><ActionButton type="submit" label="发送邮件" pendingLabel="发送中..." pending={inviteSending} /></div>
+          </form></DialogContent>
       </Dialog>
       <Dialog open={poolOpen} onOpenChange={setPoolOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <form className="grid gap-4" onSubmit={changePool} noValidate>
-            <DialogHeader><DialogTitle>手动换池</DialogTitle><DialogDescription className="break-all">当前订阅池：{poolDisplayName(currentPool)}</DialogDescription></DialogHeader>
+        <DialogContent title="手动换池" description={`当前订阅池：${poolDisplayName(currentPool)}`} size="lg"><form className="grid gap-4" onSubmit={changePool} noValidate>
             <SubscriptionPoolSelect id="detail-manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={user.isSuperAccount ? undefined : user.activeGroup} />
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={poolSaving}>取消</Button></DialogClose><Button type="submit" disabled={poolSaving || !poolId || poolId === user.subscriptionId}>{poolSaving ? <RefreshCw className="animate-spin" /> : <RefreshCw />}{poolSaving ? "换池中..." : "确认换池"}</Button></DialogFooter>
-          </form>
-        </DialogContent>
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={poolSaving}>取消</Button></DialogClose><ActionButton type="submit" disabled={poolSaving || !poolId || poolId === user.subscriptionId} label="确认换池" pendingLabel="换池中..." pending={poolSaving} /></div>
+          </form></DialogContent>
       </Dialog>
       <Dialog open={giftOpen} onOpenChange={setGiftOpen}>
-        <DialogContent>
-          <form className="grid gap-4" onSubmit={submitGift} noValidate>
-            <DialogHeader><DialogTitle>赠送时长</DialogTitle><DialogDescription>{user.userId || user.email || "用户"} · 当前到期 {formatDate(user.expiresAt)}</DialogDescription></DialogHeader>
+        <DialogContent title="赠送时长" description={`${user.userId || user.email || "用户"} · 当前到期 ${formatDate(user.expiresAt)}`}><form className="grid gap-4" onSubmit={submitGift} noValidate>
             <FieldGroup>
-              <Field><FieldLabel htmlFor="detail-gift-days">赠送天数</FieldLabel><Input id="detail-gift-days" type="number" min="1" step="1" value={giftDays} onChange={event => { setGiftDays(event.target.value); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }} /><FieldError>{giftError}</FieldError></Field>
-              <Field><FieldLabel>快捷选择</FieldLabel><div className="flex flex-wrap gap-2">{[7, 15, 30].map(days => <Button key={days} type="button" variant={giftDays === String(days) ? "default" : "outline"} size="sm" onClick={() => { setGiftDays(String(days)); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }}>{days} 天</Button>)}</div></Field>
-              {giftExpiresAt ? <Field><FieldLabel htmlFor="detail-gift-expires-at">赠送后到期日</FieldLabel><Input id="detail-gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /></Field> : null}
+              <Input label="赠送天数" error={(giftError) || undefined} id="detail-gift-days" type="number" min="1" step="1" value={giftDays} onChange={event => { setGiftDays(event.target.value); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }} />
+              <Field><FieldLabel>快捷选择</FieldLabel><div className="flex flex-wrap gap-2">{[7, 15, 30].map(days => <Button key={days} type="button" variant={giftDays === String(days) ? "primary" : "secondary"} size="sm" onClick={() => { setGiftDays(String(days)); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }}>{days} 天</Button>)}</div></Field>
+              {giftExpiresAt ? <Input label="赠送后到期日" id="detail-gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /> : null}
               {giftExpiresAt ? <SubscriptionPoolSelect id="detail-gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={user.isSuperAccount ? undefined : user.activeGroup} description={giftMessage} /> : <FieldDescription>输入天数后先计算到期日和推荐订阅池。</FieldDescription>}
             </FieldGroup>
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={giftSaving}>取消</Button></DialogClose>{giftExpiresAt ? <Button type="submit" disabled={giftSaving || !giftPoolId}>{giftSaving ? <Loader2 className="animate-spin" /> : <Gift />}{giftSaving ? "赠送中..." : "确认赠送"}</Button> : <Button type="button" onClick={() => void previewGift()} disabled={giftPreviewing}>{giftPreviewing ? <Loader2 className="animate-spin" /> : <Gift />}{giftPreviewing ? "计算中..." : "推荐订阅池"}</Button>}</DialogFooter>
-          </form>
-        </DialogContent>
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={giftSaving}>取消</Button></DialogClose>{giftExpiresAt ? <ActionButton type="submit" disabled={giftSaving || !giftPoolId} label="确认赠送" pendingLabel="赠送中..." pending={giftSaving} /> : <ActionButton type="button" onClick={() => void previewGift()} label="推荐订阅池" pendingLabel="计算中..." pending={giftPreviewing} />}</div>
+          </form></DialogContent>
       </Dialog>
       <Dialog open={userTypeOpen} onOpenChange={setUserTypeOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>设置用户类型</DialogTitle><DialogDescription>超级账户可跨越 BASIC、PRO、ULTRA 套餐等级选择订阅池。</DialogDescription></DialogHeader>
-          <Field>
-            <FieldLabel htmlFor="user-type">用户类型</FieldLabel>
-            <Select value={selectedUserType} onValueChange={value => setSelectedUserType(value as keyof typeof userTypeLabels)} disabled={userTypeSaving}>
-              <SelectTrigger id="user-type" className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {Object.entries(userTypeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </Field>
-          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={userTypeSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void saveUserType()} disabled={userTypeSaving}>{userTypeSaving ? <Loader2 className="animate-spin" /> : <UserCog />}{userTypeSaving ? "保存中..." : "保存类型"}</Button></DialogFooter>
-        </DialogContent>
+        <ArcDialogContent title="设置用户类型" description="超级账户可跨越 BASIC、PRO、ULTRA 套餐等级选择订阅池。"><Select label="用户类型" value={selectedUserType} onValueChange={value => setSelectedUserType(value as keyof typeof userTypeLabels)} disabled={userTypeSaving} id="user-type" className="w-full" options={[...Object.entries(userTypeLabels).map(([value, label]) => ({ value: value, label: label }))]} /><div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={userTypeSaving}>取消</Button></DialogClose><ActionButton type="button" onClick={() => void saveUserType()} label="保存类型" pendingLabel="保存中..." pending={userTypeSaving} /></div></ArcDialogContent>
       </Dialog>
       <Dialog open={customInboundOpen} onOpenChange={setCustomInboundOpen}>
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-4xl">
-          <DialogHeader><DialogTitle>管理个人定制入站</DialogTitle><DialogDescription>个人定制授权不随套餐变更或到期清除。用户到期时仍只显示占位节点，重新购买套餐后自动恢复授权。</DialogDescription></DialogHeader>
-          {customInboundLoading ? <Item variant="muted"><ItemContent><ItemTitle>正在读取可用入站</ItemTitle><ItemDescription>请稍候…</ItemDescription></ItemContent><Loader2 className="animate-spin" /></Item> : customInboundData ? <>
-            {customInboundData.staleExtraInboundIds.length ? <Alert variant="warning"><AlertCircle /><AlertTitle>存在已删除的授权入站</AlertTitle><AlertDescription className="grid gap-2"><span>这些授权当前不会提供给用户，可以取消以清理记录。</span>{customInboundData.staleExtraInboundIds.map(inboundId => <Label key={inboundId} className="flex items-center gap-2"><Checkbox checked={customInboundDraft.includes(inboundId)} onCheckedChange={checked => setCustomInboundSelected(inboundId, checked === true)} disabled={customInboundSaving} />入站 #{inboundId}（已删除）</Label>)}</AlertDescription></Alert> : null}
-            {offlineCustomInbounds.length ? <Alert variant="warning"><AlertCircle /><AlertTitle>所选入站当前离线</AlertTitle><AlertDescription>{offlineCustomInbounds.map(inbound => inbound.name).join("、")} 当前无法连接，授权仍会保存并同步。</AlertDescription></Alert> : null}
-            <Field><FieldLabel htmlFor="custom-inbound-search">筛选入站</FieldLabel><Input id="custom-inbound-search" value={customInboundSearch} onChange={event => setCustomInboundSearch(event.target.value)} placeholder="搜索名称、节点、地区或协议" /></Field>
-            <Table>
-              <TableHeader><TableRow><TableHead className="w-12">选择</TableHead><TableHead>入站</TableHead><TableHead>状态</TableHead><TableHead>授权来源</TableHead><TableHead className="text-right">定制用户</TableHead></TableRow></TableHeader>
-              <TableBody>{customInboundRows.length ? customInboundRows.map(inbound => {
-                const inherited = customInboundData.inheritedInboundIds.includes(inbound.id)
-                const selected = customInboundDraft.includes(inbound.id)
-                const cannotAdd = !inbound.enabled && !selected
-                return <TableRow key={inbound.key}>
-                  <TableCell><Checkbox checked={selected ? true : inherited ? "indeterminate" : false} onCheckedChange={checked => setCustomInboundSelected(inbound.id, checked === true)} disabled={inherited && !selected || cannotAdd || customInboundSaving} aria-label={`${selected ? "取消个人定制" : inherited ? "套餐已包含" : "选择"} ${inbound.name}`} /></TableCell>
-                  <TableCell><span className="font-medium">{inbound.name}</span><p className="text-xs text-muted-foreground">{inbound.nodeName}{inbound.region ? ` · ${inbound.region}` : ""} · {inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</p></TableCell>
-                  <TableCell><span className="flex flex-wrap gap-1"><Badge variant={inbound.enabled ? "success" : "secondary"}>{inbound.enabled ? "启用" : "停用"}</Badge><Badge variant={inbound.probeStatus === "online" ? "success" : inbound.probeStatus === "offline" ? "destructive" : "secondary"}>{inbound.probeStatus === "online" ? "正常" : inbound.probeStatus === "offline" ? "离线" : inbound.probeStatus === "disabled" ? "未检测" : "未知"}</Badge></span></TableCell>
-                  <TableCell><span className="flex flex-wrap gap-1">{inherited ? <Badge variant="outline">套餐包含</Badge> : null}{selected ? <Badge>个人定制</Badge> : null}{!inherited && !selected ? <span className="text-muted-foreground">未授权</span> : null}</span></TableCell>
-                  <TableCell className="text-right tabular-nums">{inbound.customAssignmentCount}</TableCell>
-                </TableRow>
-              }) : <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">没有符合条件的入站</TableCell></TableRow>}</TableBody>
-            </Table>
-          </> : null}
-          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={customInboundSaving}>取消</Button></DialogClose><Button type="button" onClick={() => void saveCustomInbounds()} disabled={customInboundLoading || customInboundSaving || !customInboundData || !customInboundChanged}>{customInboundSaving ? <Loader2 className="animate-spin" /> : <Network />}{customInboundSaving ? "同步中..." : "保存并同步"}</Button></DialogFooter>
-        </DialogContent>
+        <ArcDialogContent title="管理个人定制入站" description="个人定制授权不随套餐变更或到期清除。用户到期时仍只显示占位节点，重新购买套餐后自动恢复授权。" size="xl" className="max-h-[calc(100dvh-2rem)] overflow-y-auto">{customInboundLoading ? <ArcCard title="正在读取可用入站" description="请稍候…" headerAction={<><Loader2 className="animate-spin" /></>} /> : customInboundData ? <>
+            {customInboundData.staleExtraInboundIds.length ? <Alert tone="warning" title="存在已删除的授权入站"><span>这些授权当前不会提供给用户，可以取消以清理记录。</span>{customInboundData.staleExtraInboundIds.map(inboundId => <Label key={inboundId} className="flex items-center gap-2"><Checkbox checked={customInboundDraft.includes(inboundId)} onCheckedChange={checked => setCustomInboundSelected(inboundId, checked === true)} disabled={customInboundSaving} />入站 #{inboundId}（已删除）</Label>)}</Alert> : null}
+            {offlineCustomInbounds.length ? <Alert tone="warning" title="所选入站当前离线">{offlineCustomInbounds.map(inbound => inbound.name).join("、")} 当前无法连接，授权仍会保存并同步。</Alert> : null}
+            <SearchField label="筛选入站" id="custom-inbound-search" value={customInboundSearch} onValueChange={setCustomInboundSearch} placeholder="搜索名称、节点、地区或协议" />
+            <SimpleTable<XuiCustomInboundManagement["inbounds"][number]> caption="选择列表" columns={["选择", "入站", "状态", "授权来源", "定制用户"]} rows={customInboundRows} rowKey={(inbound) => {
+const inherited = customInboundData.inheritedInboundIds.includes(inbound.id)
+const selected = customInboundDraft.includes(inbound.id)
+const cannotAdd = !inbound.enabled && !selected
+return inbound.key }} cells={(inbound) => {
+const inherited = customInboundData.inheritedInboundIds.includes(inbound.id)
+const selected = customInboundDraft.includes(inbound.id)
+const cannotAdd = !inbound.enabled && !selected
+return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false} onCheckedChange={checked => setCustomInboundSelected(inbound.id, checked === true)} disabled={inherited && !selected || cannotAdd || customInboundSaving} aria-label={`${selected ? "取消个人定制" : inherited ? "套餐已包含" : "选择"} ${inbound.name}`} />, <><span className="font-medium">{inbound.name}</span><p className="text-xs text-muted-foreground">{inbound.nodeName}{inbound.region ? ` · ${inbound.region}` : ""} · {inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</p></>, <span className="flex flex-wrap gap-1"><Badge tone={inbound.enabled ? "success" : "neutral"}>{inbound.enabled ? "启用" : "停用"}</Badge><Badge tone={inbound.probeStatus === "online" ? "success" : inbound.probeStatus === "offline" ? "danger" : "neutral"}>{inbound.probeStatus === "online" ? "正常" : inbound.probeStatus === "offline" ? "离线" : inbound.probeStatus === "disabled" ? "未检测" : "未知"}</Badge></span>, <span className="flex flex-wrap gap-1">{inherited ? <Badge>套餐包含</Badge> : null}{selected ? <Badge>个人定制</Badge> : null}{!inherited && !selected ? <span className="text-muted-foreground">未授权</span> : null}</span>, <span className="text-right tabular-nums">{inbound.customAssignmentCount}</span>] }} emptyMessage="没有符合条件的入站" />
+          </> : null}<div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={customInboundSaving}>取消</Button></DialogClose><ActionButton type="button" onClick={() => void saveCustomInbounds()} disabled={customInboundLoading || customInboundSaving || !customInboundData || !customInboundChanged} label="保存并同步" pendingLabel="同步中..." pending={customInboundSaving} /></div></ArcDialogContent>
       </Dialog>
       <Dialog open={planOpen} onOpenChange={open => { setPlanOpen(open); if (!open) setPlanConfirmOpen(false) }}>
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
-          <form className="grid gap-4" onSubmit={previewPlanChange}>
-            <DialogHeader><DialogTitle>更改套餐</DialogTitle><DialogDescription>可选择商品库中的套餐规格，包括未上架商品；附加商品和旧版规格不可选择。操作原因会写入用户记录。</DialogDescription></DialogHeader>
+        <DialogContent title="更改套餐" description="可选择商品库中的套餐规格，包括未上架商品；附加商品和旧版规格不可选择。操作原因会写入用户记录。" size="lg" className="max-h-[calc(100dvh-2rem)] overflow-y-auto"><form className="grid gap-4" onSubmit={previewPlanChange}>
             <FieldGroup>
               <CatalogPlanFields idPrefix="plan" label="目标商品规格" placeholder="当前周期没有可用商品规格" options={planOptions} value={planOptionId} onValueChange={setPlanOptionId} trafficTier={planTrafficTier} onTrafficTierChange={setPlanTrafficTier} disabled={planSaving} description="切换至不限时规格后，到期日将改为永久有效。" tierDescription="后台调整不计算价格，所选流量配额会直接同步到 3x-ui。" />
-              <Field><FieldLabel htmlFor="plan-note">变更原因</FieldLabel><Input id="plan-note" maxLength={200} value={planNote} onChange={event => { setPlanNote(event.target.value); setPlanError("") }} placeholder="例如：客服补偿、套餐升级" aria-invalid={Boolean(planError)} autoFocus required /><FieldError>{planError}</FieldError></Field>
+              <Input label="变更原因" error={(planError) || undefined} id="plan-note" maxLength={200} value={planNote} onChange={event => { setPlanNote(event.target.value); setPlanError("") }} placeholder="例如：客服补偿、套餐升级" aria-invalid={Boolean(planError)} autoFocus required />
             </FieldGroup>
-            {planPreview?.changes.length ? <Item variant="muted"><ItemContent><ItemTitle>变更预览</ItemTitle><Table><TableHeader><TableRow><TableHead>项目</TableHead><TableHead>当前</TableHead><TableHead>变更后</TableHead></TableRow></TableHeader><TableBody>{planPreview.changes.map(change => <TableRow key={change.label}><TableCell className="font-medium">{change.label}</TableCell><TableCell className="whitespace-normal text-muted-foreground">{change.before}</TableCell><TableCell className="whitespace-normal">{change.after}</TableCell></TableRow>)}</TableBody></Table></ItemContent></Item> : null}
-            {planPreview ? <Alert variant="warning"><AlertCircle /><AlertTitle>执行影响</AlertTitle><AlertDescription>{planPreview.impacts.join("；")}。</AlertDescription></Alert> : null}
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={planSaving}>取消</Button></DialogClose><Button type="submit" disabled={planSaving || !planPreview?.changes.length}><ArrowRightLeft />查看变更确认</Button></DialogFooter>
-          </form>
-        </DialogContent>
+            {planPreview?.changes.length ? <ArcCard title="变更预览"><SimpleTable caption="项目列表" columns={["项目", "当前", "变更后"]} rows={planPreview.changes} rowKey={(change) => change.label} cells={(change) => [<span className="font-medium">{change.label}</span>, <span className="whitespace-normal text-muted-foreground">{change.before}</span>, <span className="whitespace-normal">{change.after}</span>]} /></ArcCard> : null}
+            {planPreview ? <Alert tone="warning" title="执行影响">{planPreview.impacts.join("；")}。</Alert> : null}
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={planSaving}>取消</Button></DialogClose><Button type="submit" disabled={planSaving || !planPreview?.changes.length}><ArrowRightLeft />查看变更确认</Button></div>
+          </form></DialogContent>
       </Dialog>
-      <AlertDialog open={planConfirmOpen} onOpenChange={setPlanConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>确认执行套餐变更？</AlertDialogTitle><AlertDialogDescription>更改将立即同步到 3x-ui，当前流量包会失效。操作完成后可从用户日志撤销最近一次变更。</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={planSaving}>返回修改</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void changePlan() }} disabled={planSaving}>{planSaving ? <Loader2 className="animate-spin" /> : <ArrowRightLeft />}{planSaving ? "同步中..." : "确认更改套餐"}</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={Boolean(planRollbackId)} onOpenChange={open => { if (!open) setPlanRollbackId("") }}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>撤销最近一次套餐变更？</AlertDialogTitle><AlertDialogDescription>将恢复变更前的套餐周期、到期日、商品绑定和流量包权益，并重新同步 3x-ui。撤销操作本身也会写入用户日志。</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={planRollbackSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void rollbackPlanChange() }} disabled={planRollbackSaving}>{planRollbackSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{planRollbackSaving ? "恢复中..." : "确认撤销变更"}</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ArcDialog open={planConfirmOpen} onOpenChange={setPlanConfirmOpen}>
+        <ArcDialogContent title="确认执行套餐变更？" description="更改将立即同步到 3x-ui，当前流量包会失效。操作完成后可从用户日志撤销最近一次变更。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={planSaving}>返回修改</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void changePlan() }} disabled={planSaving}>{planSaving ? <Loader2 className="animate-spin" /> : <ArrowRightLeft />}{planSaving ? "同步中..." : "确认更改套餐"}</Button></ArcDialogClose></div></ArcDialogContent>
+      </ArcDialog>
+      <ArcDialog open={Boolean(planRollbackId)} onOpenChange={open => { if (!open) setPlanRollbackId("") }}>
+        <ArcDialogContent title="撤销最近一次套餐变更？" description="将恢复变更前的套餐周期、到期日、商品绑定和流量包权益，并重新同步 3x-ui。撤销操作本身也会写入用户日志。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={planRollbackSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void rollbackPlanChange() }} disabled={planRollbackSaving}>{planRollbackSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{planRollbackSaving ? "恢复中..." : "确认撤销变更"}</Button></ArcDialogClose></div></ArcDialogContent>
+      </ArcDialog>
       <XuiClientDialog user={user} open={xuiOpen} onOpenChange={setXuiOpen} onComplete={refreshUserDetails} />
-      <AlertDialog open={trafficResetOpen} onOpenChange={setTrafficResetOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>确认重置用户流量？</AlertDialogTitle><AlertDialogDescription>将清零 {user.userId || user.email || "该用户"} 当前已使用流量，套餐额度、流量包和下次自动重置日期保持不变。操作完成后无法恢复。</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={trafficResetSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void resetTraffic() }} disabled={trafficResetSaving}>{trafficResetSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{trafficResetSaving ? "重置中..." : "确认重置流量"}</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={accountStatusOpen} onOpenChange={setAccountStatusOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>{user.accountStatus === "active" ? "确认停用账户？" : "确认恢复账户？"}</AlertDialogTitle><AlertDialogDescription>{user.accountStatus === "active" ? "停用后用户将无法登录，当前登录状态也会失效；订阅链接将返回停用提示，3x-ui 客户端也会停用。" : "恢复后用户可以重新登录账户；有效期内的自研线路 3x-ui 客户端也会恢复，原有订阅和余额保持不变。"}</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={accountStatusSaving}>取消</AlertDialogCancel><AlertDialogAction className={user.accountStatus === "active" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined} onClick={event => { event.preventDefault(); void toggleAccountStatus() }} disabled={accountStatusSaving}>{accountStatusSaving ? <Loader2 className="animate-spin" /> : <Power />}{accountStatusSaving ? "处理中..." : user.accountStatus === "active" ? "确认停用" : "确认恢复"}</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={xuiRecoverOpen} onOpenChange={setXuiRecoverOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>同步V2套餐到3x-ui？</AlertDialogTitle><AlertDialogDescription>将按当前V2套餐的额度、到期时间、在线IP数量和入站组更新或补建3x-ui客户端，不清空已有流量。</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel disabled={xuiRecoverSaving}>取消</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "同步中..." : "立即同步"}</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      {user.accountStatus === "disabled" ? <Alert variant="warning"><AlertCircle /><AlertDescription>该用户已停用</AlertDescription></Alert> : null}
+      <ArcDialog open={trafficResetOpen} onOpenChange={setTrafficResetOpen}>
+        <ArcDialogContent title="确认重置用户流量？" description={`将清零 ${user.userId || user.email || "该用户"} 当前已使用流量，套餐额度、流量包和下次自动重置日期保持不变。操作完成后无法恢复。`}><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={trafficResetSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void resetTraffic() }} disabled={trafficResetSaving}>{trafficResetSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{trafficResetSaving ? "重置中..." : "确认重置流量"}</Button></ArcDialogClose></div></ArcDialogContent>
+      </ArcDialog>
+      <ArcDialog open={accountStatusOpen} onOpenChange={setAccountStatusOpen}>
+        <ArcDialogContent title={user.accountStatus === "active" ? "确认停用账户？" : "确认恢复账户？"} description={user.accountStatus === "active" ? "停用后用户将无法登录，当前登录状态也会失效；订阅链接将返回停用提示，3x-ui 客户端也会停用。" : "恢复后用户可以重新登录账户；有效期内的自研线路 3x-ui 客户端也会恢复，原有订阅和余额保持不变。"}><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={accountStatusSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button variant="primary" onClick={event => { event.preventDefault(); void toggleAccountStatus() }} disabled={accountStatusSaving}>{accountStatusSaving ? <Loader2 className="animate-spin" /> : <Power />}{accountStatusSaving ? "处理中..." : user.accountStatus === "active" ? "确认停用" : "确认恢复"}</Button></ArcDialogClose></div></ArcDialogContent>
+      </ArcDialog>
+      <ArcDialog open={xuiRecoverOpen} onOpenChange={setXuiRecoverOpen}>
+        <ArcDialogContent title="同步V2套餐到3x-ui？" description="将按当前V2套餐的额度、到期时间、在线IP数量和入站组更新或补建3x-ui客户端，不清空已有流量。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={xuiRecoverSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "同步中..." : "立即同步"}</Button></ArcDialogClose></div></ArcDialogContent>
+      </ArcDialog>
+      {user.accountStatus === "disabled" ? <Alert tone="warning" title="该用户已停用" /> : null}
       <div className="grid min-w-0 gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
-        <Card className="self-start xl:sticky xl:top-4">
-          <CardHeader className="relative justify-items-center text-center">
-            <BackButton fallback={`/users${location.search}`} iconOnly size="icon-sm" className="absolute top-4 left-4" />
-            <Avatar className="size-20">
-              <AvatarFallback className="text-xl">{(user.wechatName || user.userId || user.email || "用户").slice(0, 2).toUpperCase()}</AvatarFallback>
-            </Avatar>
-            <CardTitle className="flex items-center justify-center gap-1.5 break-all text-lg">
-              {user.wechatName || user.userId || user.email || "用户"}
-              <AccountVerificationIcon type={userType(user)} />
-            </CardTitle>
-            <CardDescription className="flex flex-wrap justify-center gap-2">
-              <UserStatusBadge user={user} />
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4">
+        <Card className="self-start xl:sticky xl:top-4" title={<>{user.wechatName || user.userId || user.email || "用户"}
+              <AccountVerificationIcon type={userType(user)} /></>} description={<UserStatusBadge user={user} />}><BackButton fallback={`/users${location.search}`} iconOnly size="icon-sm" className="absolute top-4 left-4" /><Avatar name={user.wechatName || user.userId || user.email || "用户"} size="xl" /><div className="grid gap-4">
             <div className="grid grid-cols-2 gap-3">
-              <Card className="gap-2 py-4">
-                <CardContent className="grid justify-items-center gap-1 px-3 text-center">
+              <Card className="gap-2 py-4"><div className="grid justify-items-center gap-1 text-center">
                   <p className="text-lg font-semibold">{purchaseCount}</p>
                   <p className="text-xs text-muted-foreground">购买次数</p>
-                </CardContent>
-              </Card>
-              <Card className="gap-2 py-4">
-                <CardContent className="grid justify-items-center gap-1 px-3 text-center">
+                </div></Card>
+              <Card className="gap-2 py-4"><div className="grid justify-items-center gap-1 text-center">
                   <p className="text-lg font-semibold">{formatMoney(user.actualPaid)}</p>
                   <p className="text-xs text-muted-foreground">总消费金额</p>
-                </CardContent>
-              </Card>
+                </div></Card>
             </div>
             <Separator />
             <div className="grid gap-3 [&>div]:grid-cols-[5rem_minmax(0,1fr)] [&>div]:items-start [&>div]:gap-3 [&>div>div]:text-right [&>div>div]:text-sm [&>div>div]:font-normal [&>div>p]:text-sm">
@@ -980,32 +891,30 @@ export function UserDetailPage() {
               <Info label="用户类型" value={userTypeLabels[userType(user)]} />
               <Info label="钱包余额" value={walletBalance === null ? "-" : formatMoney(walletBalance)} />
             </div>
-          </CardContent>
-          {user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : (
-            <CardFooter className="grid gap-2">
-              {user.accountStatus === "active" && user.accountId ? <Button variant="outline" className="w-full" onClick={openManualPaymentDialog}><Banknote />人工收款</Button> : null}
+          </div>{user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : (
+            <div className="mt-4 flex items-center gap-2 grid gap-2">
+              {user.accountStatus === "active" && user.accountId ? <Button variant="secondary" className="w-full" onClick={openManualPaymentDialog}><Banknote />人工收款</Button> : null}
               {user.registeredOnly ? null : <>
-                <Button variant="outline" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
-                {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={() => setXuiOpen(true)}><Network />切换到自研线路</Button>}
-                {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => void openCustomInbounds()}><Network />管理个人定制入站</Button> : null}
-                {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={openPlanDialog}><ArrowRightLeft />更改套餐</Button> : null}
-                {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="outline" className="w-full" onClick={() => setTrafficResetOpen(true)}><RotateCcw />重置流量</Button> : null}
-                {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={() => { setTrafficGiftError(""); setTrafficGiftOpen(true) }}><Gift />单向赠送流量</Button> : null}
-                {user.lineType === "self_hosted" ? <Button variant="outline" className="w-full" onClick={() => setXuiRecoverOpen(true)} disabled={xuiRecoverSaving}><RefreshCw />同步V2套餐到3x-ui</Button> : null}
-                {user.lineType === "self_hosted" ? null : <Button variant="outline" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
-                <Button variant="outline" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
+                <Button variant="secondary" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
+                {user.lineType === "self_hosted" ? null : <Button variant="secondary" className="w-full" onClick={() => setXuiOpen(true)}><Network />切换到自研线路</Button>}
+                {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="secondary" className="w-full" onClick={() => void openCustomInbounds()}><Network />管理个人定制入站</Button> : null}
+                {user.lineType === "self_hosted" ? <Button variant="secondary" className="w-full" onClick={openPlanDialog}><ArrowRightLeft />更改套餐</Button> : null}
+                {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="secondary" className="w-full" onClick={() => setTrafficResetOpen(true)}><RotateCcw />重置流量</Button> : null}
+                {user.lineType === "self_hosted" ? <Button variant="secondary" className="w-full" onClick={() => { setTrafficGiftError(""); setTrafficGiftOpen(true) }}><Gift />单向赠送流量</Button> : null}
+                {user.lineType === "self_hosted" ? <Button variant="secondary" className="w-full" onClick={() => setXuiRecoverOpen(true)} disabled={xuiRecoverSaving}><RefreshCw />同步V2套餐到3x-ui</Button> : null}
+                {user.lineType === "self_hosted" ? null : <Button variant="secondary" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
+                <Button variant="secondary" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
               </>}
               {user.accountStatus === "active" ? <>
-                {user.registeredOnly ? null : <Button variant="outline" className="w-full" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button>}
-                <Button variant="destructive" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />停用账户</Button>
+                {user.registeredOnly ? null : <Button variant="secondary" className="w-full" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button>}
+                <Button variant="danger" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />停用账户</Button>
               </> : user.accountStatus === "disabled" ? (
-                <Button variant="outline" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />恢复账户</Button>
+                <Button variant="secondary" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />恢复账户</Button>
               ) : (
-                <Button variant="outline" className="w-full" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button>
+                <Button variant="secondary" className="w-full" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button>
               )}
-            </CardFooter>
-          )}
-        </Card>
+            </div>
+          )}</Card>
 
         <Tabs defaultValue="overview" className="min-w-0 gap-4">
           <TabsList className="grid w-full grid-cols-2 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-4">
@@ -1015,26 +924,13 @@ export function UserDetailPage() {
             <TabsTrigger value="referral" className="h-9">邀请返利</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="grid min-w-0 gap-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>当前套餐</CardTitle>
-                <CardDescription>{user.registeredOnly ? "尚未开通订阅" : productName}</CardDescription>
-                <CardAction><UserStatusBadge user={user} /></CardAction>
-              </CardHeader>
-              <CardContent className="grid gap-4 sm:grid-cols-2">
+            <Card title="当前套餐" description={user.registeredOnly ? "尚未开通订阅" : productName} headerAction={<UserStatusBadge user={user} />}><div className="grid gap-4 sm:grid-cols-2">
                 <Info label="当前到期" value={formatUserExpiry(user)} />
                 <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
                 <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
                 <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
-              </CardContent>
-            </Card>
-            {user.lineType === "self_hosted" ? <Card>
-              <CardHeader>
-                <CardTitle>倍率流量</CardTitle>
-                <CardDescription>按节点倍率折算用户流量；节点倍率修改仅影响之后产生的流量</CardDescription>
-                <CardAction><Badge variant={!weightedTraffic ? "secondary" : weightedTraffic.depleted ? "destructive" : "success"}>{!weightedTraffic ? "未同步" : weightedTraffic.depleted ? "已耗尽" : "正常"}</Badge></CardAction>
-              </CardHeader>
-              <CardContent className="grid gap-4">
+              </div></Card>
+            {user.lineType === "self_hosted" ? <Card title="倍率流量" description="按节点倍率折算用户流量；节点倍率修改仅影响之后产生的流量" headerAction={<Badge tone={!weightedTraffic ? "neutral" : weightedTraffic.depleted ? "danger" : "success"}>{!weightedTraffic ? "未同步" : weightedTraffic.depleted ? "已耗尽" : "正常"}</Badge>}><div className="grid gap-4">
                 {weightedTraffic ? <>
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Info label="原始流量" value={formatBytes(weightedTraffic.rawUsedBytes)} />
@@ -1043,77 +939,46 @@ export function UserDetailPage() {
                   </div>
                   {weightedTraffic.totalBytes ? <TrafficProgress remaining={weightedTraffic.remainingBytes} total={weightedTraffic.totalBytes} /> : null}
                   <Separator />
-                  {weightedTraffic.nodes.length ? <Table>
-                    <TableHeader><TableRow><TableHead>节点</TableHead><TableHead>原始流量</TableHead><TableHead>倍率</TableHead><TableHead className="text-right">折算流量</TableHead></TableRow></TableHeader>
-                    <TableBody>{weightedTraffic.nodes.map(node => <TableRow key={node.key}><TableCell className="font-medium">{node.name}</TableCell><TableCell>{formatBytes(node.rawBytes)}</TableCell><TableCell>× {node.multiplier}</TableCell><TableCell className="text-right font-medium">{formatBytes(node.weightedBytes)}</TableCell></TableRow>)}</TableBody>
-                  </Table> : <EmptyState title="暂无节点流量明细" />}
+                  {weightedTraffic.nodes.length ? <SimpleTable caption="节点列表" columns={["节点", "原始流量", "倍率", "折算流量"]} rows={weightedTraffic.nodes} rowKey={(node) => node.key} cells={(node) => [<span className="font-medium">{node.name}</span>, <>{formatBytes(node.rawBytes)}</>, <>× {node.multiplier}</>, <span className="text-right font-medium">{formatBytes(node.weightedBytes)}</span>]} /> : <EmptyState title="暂无节点流量明细" />}
                   <p className="text-xs text-muted-foreground">最后同步：{weightedTraffic.lastSyncedAt ? formatDateTime(weightedTraffic.lastSyncedAt) : "-"}</p>
                 </> : <EmptyState title="暂无倍率流量数据" description="完成首次 3x-ui 流量同步后显示节点明细。" />}
-              </CardContent>
-            </Card> : null}
+              </div></Card> : null}
             {user.poolCompatibility ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>推荐适配度</CardTitle>
-                  <CardDescription className="break-all">
-                    {poolDisplayName(currentPool)}
-                  </CardDescription>
-                  <CardAction>
-                    <Badge variant={user.poolCompatibility.status === "high" ? "success" : user.poolCompatibility.status === "usable" ? "secondary" : user.poolCompatibility.status === "incompatible" ? "destructive" : "warning"}>
+              <Card title="推荐适配度" description={poolDisplayName(currentPool)} headerAction={<Badge tone={user.poolCompatibility.status === "high" ? "success" : user.poolCompatibility.status === "usable" ? "neutral" : user.poolCompatibility.status === "incompatible" ? "danger" : "warning"}>
                       {user.poolCompatibility.statusText}
-                    </Badge>
-                  </CardAction>
-                </CardHeader>
-                <CardContent className="grid gap-4">
+                    </Badge>}><div className="grid gap-4">
                   {user.poolCompatibility.status !== "high" ? (
-                    <Alert variant={user.poolCompatibility.status === "incompatible" ? "error" : user.poolCompatibility.status === "adjust" ? "warning" : "default"}>
-                      <AlertCircle />
-                      <AlertTitle>具体原因</AlertTitle>
-                      <AlertDescription>
+                    <Alert tone={user.poolCompatibility.status === "incompatible" ? "danger" : user.poolCompatibility.status === "adjust" ? "warning" : "info"} title="具体原因">
                         <ul className="list-disc space-y-1 pl-4">
                           {user.poolCompatibility.reasons.map(reason => <li key={reason}>{reason}</li>)}
                         </ul>
-                      </AlertDescription>
-                    </Alert>
+                      </Alert>
                   ) : null}
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Info label="当前池 URL" value={currentPool?.url ? <UrlCell value={currentPool.url} /> : "-"} />
-                    <Info label="供应商评级" value={user.poolCompatibility.rating ? <Badge variant="outline">{user.poolCompatibility.rating} 级</Badge> : "未评级"} />
+                    <Info label="供应商评级" value={user.poolCompatibility.rating ? <Badge>{user.poolCompatibility.rating} 级</Badge> : "未评级"} />
                     <Info label="套餐匹配" value={user.isSuperAccount ? "超级账户可跨等级使用" : user.poolCompatibility.groupAllowed ? `${user.activeGroup?.toUpperCase() || "当前"} 套餐可用` : "不支持当前套餐"} />
                     <Info label="到期匹配" value={formatPoolExpiryDifference(user.poolCompatibility.expiryDiffDays)} />
                     <Info label="容量" value={`${user.poolCompatibility.customerCount ?? 0} / ${user.poolCompatibility.maxUsers ?? 15} 人`} />
                     <Info label="绑定方式" value={user.poolCompatibility.binding?.type === "manual" ? `手动换池${user.poolCompatibility.binding.at ? ` · ${formatDateTime(user.poolCompatibility.binding.at)}` : ""}` : "系统绑定"} />
                   </div>
                   {user.poolCompatibility.recommendedPool ? (
-                    <Item variant="muted">
-                      <ItemContent>
-                        <ItemTitle>当前更优选择</ItemTitle>
-                        <ItemDescription className="line-clamp-none break-all">
-                          {user.poolCompatibility.recommendedPool.label} · {user.poolCompatibility.recommendedPool.rating || "未评级"} 级 · {formatPoolExpiryDifference(user.poolCompatibility.recommendedPool.expiryDiffDays)}
-                        </ItemDescription>
-                      </ItemContent>
-                    </Item>
+                    <ArcCard title="当前更优选择" description={`${user.poolCompatibility.recommendedPool.label} · ${user.poolCompatibility.recommendedPool.rating || "未评级"} 级 · ${formatPoolExpiryDifference(user.poolCompatibility.recommendedPool.expiryDiffDays)}`} />
                   ) : null}
-                </CardContent>
-              </Card>
+                </div></Card>
             ) : null}
-            <Card>
-              <CardHeader><CardTitle>3x-ui 信息</CardTitle></CardHeader>
-              <CardContent className="grid gap-4 sm:grid-cols-2">
-                <Info label="迁移状态" value={<Badge variant={migrationStatus.variant}>{migrationStatus.label}</Badge>} />
+            <Card title="3x-ui 信息"><div className="grid gap-4 sm:grid-cols-2">
+                <Info label="迁移状态" value={<Badge tone={migrationStatus.variant}>{migrationStatus.label}</Badge>} />
                 <Info label="迁移方式" value={xuiMigrationSource(user)} />
                 <Info label="客户端" value={user.xuiClientEmail || "-"} />
                 <Info label="客户端状态" value={user.xuiClientPresent === false ? "客户端缺失" : user.xuiClientPresent === true ? "正常" : "等待检查"} />
                 <Info label="迁移时间" value={user.xuiMigratedAt ? formatDateTime(user.xuiMigratedAt) : "-"} />
                 {user.xuiMigrationError ? <Info label="迁移错误" value={user.xuiMigrationError} /> : null}
-              </CardContent>
-            </Card>
+              </div></Card>
           </TabsContent>
           <TabsContent value="catalog-v2" className="grid min-w-0 gap-4">
             {user.v2ProductSnapshot ? <>
-              <Card>
-                <CardHeader><CardTitle>当前 V2 商品</CardTitle><CardDescription>用户迁移后生效的商品绑定快照。</CardDescription><CardAction><Badge variant="success">已迁移</Badge></CardAction></CardHeader>
-                <CardContent className="grid gap-4 sm:grid-cols-2">
+              <Card title="当前 V2 商品" description="用户迁移后生效的商品绑定快照。" headerAction={<Badge tone="success">已迁移</Badge>}><div className="grid gap-4 sm:grid-cols-2">
                   <Info label="商品名称" value={user.v2ProductSnapshot.name} />
                   <Info label="商品 ID" value={user.v2ProductId || user.v2ProductSnapshot.productId} />
                   <Info label="商品类型" value={user.v2ProductSnapshot.productType === "recurring_plan" ? "周期性套餐" : "不限时套餐"} />
@@ -1122,49 +987,25 @@ export function UserDetailPage() {
                   <Info label="流量额度" value={user.v2ProductSnapshot.trafficBytes === null ? "不限流量" : formatBytes(user.v2ProductSnapshot.trafficBytes)} />
                   <Info label="在线IP数量" value={user.v2ProductSnapshot.deviceLimit === null ? "-" : `${user.v2ProductSnapshot.deviceLimit}`} />
                   <Info label="线路权限组" value={user.v2LineGroupId || "-"} />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader><CardTitle>迁移记录</CardTitle><CardDescription>旧商品绑定仍保留，可用于核对和回滚。</CardDescription></CardHeader>
-                <CardContent className="grid gap-4 sm:grid-cols-2">
+                </div></Card>
+              <Card title="迁移记录" description="旧商品绑定仍保留，可用于核对和回滚。"><div className="grid gap-4 sm:grid-cols-2">
                   <Info label="迁移批次" value={user.v2MigrationId || "-"} />
                   <Info label="迁移时间" value={user.v2MigratedAt ? formatDateTime(user.v2MigratedAt) : "-"} />
                   <Info label="旧商品 ID" value={user.legacyProductBinding?.productId || "-"} />
                   <Info label="旧周期标识" value={user.legacyProductBinding?.optionId || "-"} />
-                </CardContent>
-              </Card>
+                </div></Card>
             </> : <EmptyState title="尚未迁移到 V2 商品" description="完成 V2 商品映射迁移后，此处会显示新的商品绑定与原商品信息。" />}
           </TabsContent>
           <TabsContent value="bills" className="grid min-w-0 gap-4">
             <UserBillsCard bills={userBills} />
-            <Card className="gap-0 overflow-hidden py-0">
-              <CardHeader className="border-b py-6"><CardTitle>用户日志</CardTitle><CardDescription>共 {user.userLogs?.length || 0} 条</CardDescription></CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader><TableRow><TableHead className="px-6">时间</TableHead><TableHead>类型</TableHead><TableHead>状态</TableHead><TableHead>内容</TableHead><TableHead className="px-6 text-right">操作</TableHead></TableRow></TableHeader>
-                  <TableBody>{user.userLogs?.length ? user.userLogs.map(log => <TableRow key={log.id}><TableCell className="px-6 text-muted-foreground">{formatDateTime(log.at)}</TableCell><TableCell><Badge variant="secondary">{log.reasonText || log.reason || "用户日志"}</Badge></TableCell><TableCell><Badge variant={["failed", "blocked", "no_usable_pool"].includes(log.status || "") ? "destructive" : "outline"}>{log.statusText || log.status || "已记录"}</Badge></TableCell><TableCell className="min-w-64 whitespace-normal text-muted-foreground">{log.message || [log.fromSubscriptionLabel, log.toSubscriptionLabel].filter(Boolean).join(" → ") || "-"}</TableCell><TableCell className="px-6 text-right">{latestPlanEvent?.id === log.id && log.reason === "plan-changed" && log.details?.rollbackState ? <Button type="button" variant="outline" size="sm" onClick={() => setPlanRollbackId(log.id)}><RotateCcw />撤销变更</Button> : null}</TableCell></TableRow>) : <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">暂无用户日志</TableCell></TableRow>}</TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            <Card className="gap-0 overflow-hidden py-0" title="用户日志" description={`共 ${user.userLogs?.length || 0} 条`}><SimpleTable caption="时间列表" columns={["时间", "类型", "状态", "内容", "操作"]} rows={user.userLogs} rowKey={(log) => log.id} cells={(log) => [<span className="text-muted-foreground">{formatDateTime(log.at)}</span>, <Badge>{log.reasonText || log.reason || "用户日志"}</Badge>, <Badge tone={["failed", "blocked", "no_usable_pool"].includes(log.status || "") ? "danger" : "neutral"}>{log.statusText || log.status || "已记录"}</Badge>, <span className="whitespace-normal text-muted-foreground">{log.message || [log.fromSubscriptionLabel, log.toSubscriptionLabel].filter(Boolean).join(" → ") || "-"}</span>, <span className="text-right">{latestPlanEvent?.id === log.id && log.reason === "plan-changed" && log.details?.rollbackState ? <Button type="button" variant="secondary" size="sm" onClick={() => setPlanRollbackId(log.id)}><RotateCcw />撤销变更</Button> : null}</span>]} emptyMessage="暂无用户日志" /></Card>
           </TabsContent>
           <TabsContent value="referral" className="grid min-w-0 gap-4">
-            <Card>
-              <CardHeader className="gap-6"><CardTitle>邀请返利设置</CardTitle><Separator /></CardHeader>
-              <CardContent>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="referral-rate">收到返利比例（%）</Label><Input id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /></div><div className="flex items-center gap-2 self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} /><Label htmlFor="recurring-referral">享受循环返利</Label></div><Button className="sm:w-fit" onClick={() => void saveReferralSettings()} disabled={referralSaving}>{referralSaving ? <Loader2 className="animate-spin" /> : null}{referralSaving ? "保存中..." : "保存返利设置"}</Button></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</CardContent>
-            </Card>
-            {referralDetailsError ? <Alert variant="error"><AlertCircle /><AlertDescription>{referralDetailsError}</AlertDescription></Alert> : null}
-            <Card className="gap-0 overflow-hidden py-0">
-              <CardHeader className="border-b py-6"><CardTitle>邀请用户</CardTitle><CardDescription>{referralDetails ? `共 ${referralDetails.invitedUsers.length} 人` : "正在加载"}</CardDescription></CardHeader>
-              <CardContent className="p-0"><Table><TableHeader><TableRow><TableHead className="px-6">邮箱</TableHead><TableHead>状态</TableHead><TableHead>订单数</TableHead><TableHead>消费金额</TableHead><TableHead className="px-6">注册时间</TableHead></TableRow></TableHeader><TableBody>{referralDetails?.invitedUsers.length ? referralDetails.invitedUsers.map(item => <TableRow key={item.id}><TableCell className="px-6 font-medium">{item.email}</TableCell><TableCell><Badge variant={item.status === "active" ? "success" : item.status === "disabled" ? "destructive" : "secondary"}>{item.status === "active" ? "正常" : item.status === "disabled" ? "已停用" : item.status === "invited" ? "待认领" : item.status}</Badge></TableCell><TableCell>{item.orderCount}</TableCell><TableCell>{formatMoney(item.totalPaid)}</TableCell><TableCell className="px-6 text-muted-foreground">{formatDateTime(item.createdAt)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">暂无邀请用户</TableCell></TableRow>}</TableBody></Table></CardContent>
-            </Card>
-            <Card className="gap-0 overflow-hidden py-0">
-              <CardHeader className="border-b py-6"><CardTitle>邀请账单</CardTitle></CardHeader>
-              <CardContent className="p-0"><Table><TableHeader><TableRow><TableHead className="px-6">订单</TableHead><TableHead>邀请用户</TableHead><TableHead>套餐</TableHead><TableHead>金额</TableHead><TableHead>状态</TableHead><TableHead className="px-6">时间</TableHead></TableRow></TableHeader><TableBody>{referralDetails?.orders.length ? referralDetails.orders.map(item => <TableRow key={item.id}><TableCell className="px-6"><Button asChild variant="link" size="sm" className="h-auto p-0"><Link to={`/orders/${item.id}`}>{item.number}</Link></Button></TableCell><TableCell>{item.inviteeEmail}</TableCell><TableCell>{item.planName}</TableCell><TableCell>{formatMoney(item.amount)}</TableCell><TableCell><Badge variant={item.status === "paid" ? "success" : item.status === "reversed" ? "destructive" : "secondary"}>{item.status === "paid" ? "已支付" : item.status === "pending" ? "待支付" : item.status === "reversed" ? "已撤销" : item.status}</Badge></TableCell><TableCell className="px-6 text-muted-foreground">{formatDateTime(item.createdAt)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">暂无邀请账单</TableCell></TableRow>}</TableBody></Table></CardContent>
-            </Card>
-            <Card className="gap-0 overflow-hidden py-0">
-              <CardHeader className="border-b py-6"><CardTitle>返利明细</CardTitle></CardHeader>
-              <CardContent className="p-0"><Table><TableHeader><TableRow><TableHead className="px-6">来源订单</TableHead><TableHead>邀请用户</TableHead><TableHead>返利基数</TableHead><TableHead>比例</TableHead><TableHead>返利金额</TableHead><TableHead>状态</TableHead><TableHead className="px-6">到账时间</TableHead></TableRow></TableHeader><TableBody>{referralDetails?.rewards.length ? referralDetails.rewards.map(item => <TableRow key={item.id}><TableCell className="px-6"><Button asChild variant="link" size="sm" className="h-auto p-0"><Link to={`/orders/${item.sourceOrderId}`}>{item.orderNumber}</Link></Button></TableCell><TableCell>{item.inviteeEmail}</TableCell><TableCell>{formatMoney(item.baseAmount)}</TableCell><TableCell>{item.rate}%</TableCell><TableCell className="font-medium">{formatMoney(item.rewardAmount)}</TableCell><TableCell><Badge variant={item.status === "available" ? "success" : item.status === "pending" ? "secondary" : "destructive"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "审核中" : item.status === "rejected" ? "已拒绝" : item.status}</Badge></TableCell><TableCell className="px-6 text-muted-foreground">{formatDateTime(item.availableAt)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">暂无返利记录</TableCell></TableRow>}</TableBody></Table></CardContent>
-            </Card>
+            <Card title="邀请返利设置"><Separator /><>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><Input label="收到返利比例（%）" id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /><div className="self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} label="享受循环返利" /></div><ActionButton className="sm:w-fit" onClick={() => void saveReferralSettings()} label="保存返利设置" pendingLabel="保存中..." pending={referralSaving} /></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</></Card>
+            {referralDetailsError ? <Alert tone="danger" title={referralDetailsError} /> : null}
+            <Card className="gap-0 overflow-hidden py-0" title="邀请用户" description={referralDetails ? `共 ${referralDetails.invitedUsers.length} 人` : "正在加载"}><SimpleTable caption="邮箱列表" columns={["邮箱", "状态", "订单数", "消费金额", "注册时间"]} rows={referralDetails?.invitedUsers} rowKey={(item) => item.id} cells={(item) => [<span className="font-medium">{item.email}</span>, <Badge tone={item.status === "active" ? "success" : item.status === "disabled" ? "danger" : "neutral"}>{item.status === "active" ? "正常" : item.status === "disabled" ? "已停用" : item.status === "invited" ? "待认领" : item.status}</Badge>, <>{item.orderCount}</>, <>{formatMoney(item.totalPaid)}</>, <span className="text-muted-foreground">{formatDateTime(item.createdAt)}</span>]} emptyMessage="暂无邀请用户" /></Card>
+            <Card className="gap-0 overflow-hidden py-0" title="邀请账单"><SimpleTable caption="订单列表" columns={["订单", "邀请用户", "套餐", "金额", "状态", "时间"]} rows={referralDetails?.orders} rowKey={(item) => item.id} cells={(item) => [<Button asChild variant="link" size="sm" className="h-auto p-0"><Link to={`/orders/${item.id}`}>{item.number}</Link></Button>, <>{item.inviteeEmail}</>, <>{item.planName}</>, <>{formatMoney(item.amount)}</>, <Badge tone={item.status === "paid" ? "success" : item.status === "reversed" ? "danger" : "neutral"}>{item.status === "paid" ? "已支付" : item.status === "pending" ? "待支付" : item.status === "reversed" ? "已撤销" : item.status}</Badge>, <span className="text-muted-foreground">{formatDateTime(item.createdAt)}</span>]} emptyMessage="暂无邀请账单" /></Card>
+            <Card className="gap-0 overflow-hidden py-0" title="返利明细"><SimpleTable caption="来源订单列表" columns={["来源订单", "邀请用户", "返利基数", "比例", "返利金额", "状态", "到账时间"]} rows={referralDetails?.rewards} rowKey={(item) => item.id} cells={(item) => [<Button asChild variant="link" size="sm" className="h-auto p-0"><Link to={`/orders/${item.sourceOrderId}`}>{item.orderNumber}</Link></Button>, <>{item.inviteeEmail}</>, <>{formatMoney(item.baseAmount)}</>, <>{item.rate}%</>, <span className="font-medium">{formatMoney(item.rewardAmount)}</span>, <Badge tone={item.status === "available" ? "success" : item.status === "pending" ? "neutral" : "danger"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "审核中" : item.status === "rejected" ? "已拒绝" : item.status}</Badge>, <span className="text-muted-foreground">{formatDateTime(item.availableAt)}</span>]} emptyMessage="暂无返利记录" /></Card>
           </TabsContent>
         </Tabs>
       </div>

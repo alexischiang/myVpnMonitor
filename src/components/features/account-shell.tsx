@@ -1,29 +1,66 @@
 import * as React from "react"
-import { Link, Outlet, useLocation, useNavigate } from "react-router-dom"
-import { Activity, AlertCircle, ArrowRight, BookOpen, CreditCard, Gauge, Gift, LifeBuoy, ReceiptText, UserRound, WalletCards } from "lucide-react"
+import { Outlet, useLocation, useNavigate } from "react-router-dom"
+import { BookOpen, Gift, History, LifeBuoy, ReceiptText, UserRound, WalletCards } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { apiFetch, clearJsonCache, fetchJson, setCachedJson } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import { AppLayout } from "@/components/features/app-layout"
-import { AppSidebar } from "@/components/features/app-sidebar"
 import { UserAlert } from "@/components/features/shared"
 import { DOCS_URL } from "@/lib/docs-site"
+import { cn } from "@/lib/utils"
 import type { UserAlertSetting } from "@/types"
+import { CtaSection } from "@/components/arc/blocks/cta-section/cta-section"
+import { SiteFooter, type SiteFooterLink } from "@/components/arc/blocks/site-footer/site-footer"
+import { SiteHeader, type SiteHeaderItem } from "@/components/arc/blocks/site-header/site-header"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
+import { UserMenu } from "@/components/arc/user-menu/user-menu"
 
-const accountNav = [
-  { title: "总览", url: "/account", icon: Gauge, exact: true },
-  { title: "节点状态", url: "/account/nodes", icon: Activity, nodeAccess: true },
-  { title: "购买服务", url: "/account/plans", icon: CreditCard },
-  { title: "使用文档", url: "/account/docs", href: DOCS_URL, external: true, icon: BookOpen },
-  { title: "工单服务", url: "/account/tickets", icon: LifeBuoy },
-  { title: "账户余额", url: "/account/wallet", icon: WalletCards },
-  { title: "邀请返利", url: "/account/referrals", icon: Gift },
-  { title: "订单记录", url: "/account/orders", icon: ReceiptText },
-  { title: "账户设置", url: "/account/settings", icon: UserRound },
+const ICON = { size: 16, strokeWidth: 1.75, "aria-hidden": true } as const
+
+// The user centre's destinations, grouped for the top bar. A group opens a panel; 总览, 购买服务 and 节点状态 are plain links.
+// Account settings, the theme and signing out live in the account menu at the end of the bar.
+function accountNav(hasActiveNodeAccess: boolean): SiteHeaderItem[] {
+  return [
+    { value: "overview", label: "总览", href: "/account" },
+    { value: "plans", label: "购买服务", href: "/account/plans" },
+    ...(hasActiveNodeAccess ? [{ value: "nodes", label: "节点状态", href: "/account/nodes" }] : []),
+    {
+      value: "billing", label: "账务",
+      links: [
+        { label: "账户余额", description: "充值与余额明细", href: "/account/wallet", icon: <WalletCards {...ICON} /> },
+        { label: "订单记录", description: "所有商品订单", href: "/account/orders", icon: <ReceiptText {...ICON} /> },
+        { label: "邀请返利", description: "邀请链接与返利记录", href: "/account/referrals", icon: <Gift {...ICON} /> },
+      ],
+    },
+    {
+      value: "help", label: "帮助",
+      links: [
+        { label: "使用文档", description: "各平台客户端的使用教程", href: DOCS_URL, external: true, icon: <BookOpen {...ICON} /> },
+        { label: "工单服务", description: "向客服提交问题", href: "/account/tickets", icon: <LifeBuoy {...ICON} /> },
+        { label: "更新日志", description: "新功能、优化与修复记录", href: "/account/changelog", icon: <History {...ICON} /> },
+      ],
+    },
+  ]
+}
+
+// One quiet row of the most common help destinations under every user centre page.
+const footerLinks: SiteFooterLink[] = [
+  { label: "购买服务", href: "/account/plans" },
+  { label: "工单服务", href: "/account/tickets" },
+  { label: "使用文档", href: DOCS_URL, external: true },
 ]
+
+/** The group a path belongs to, so sub-pages such as an order's detail keep their group marked. */
+function currentGroup(pathname: string) {
+  if (pathname === "/account") return "overview"
+  if (/^\/account\/plans(\/|$)/.test(pathname)) return "plans"
+  if (/^\/account\/nodes(\/|$)/.test(pathname)) return "nodes"
+  if (/^\/account\/(wallet|orders|referrals|payment)(\/|$)/.test(pathname)) return "billing"
+  if (/^\/account\/(tickets|docs|changelog)(\/|$)/.test(pathname)) return "help"
+  return ""
+}
+
+// The header sits on the card surface (white in light mode) with a soft shadow instead of Arc's border.
+const solidHeader = "[&>header]:!border-b-transparent [&>header]:!bg-card [&>header]:!shadow-[0_6px_32px_rgb(0_0_0/0.06)]"
 
 export function AccountShell() {
   const navigate = useNavigate()
@@ -34,8 +71,7 @@ export function AccountShell() {
   const [pendingOrderId, setPendingOrderId] = React.useState("")
   const [userAlerts, setUserAlerts] = React.useState<UserAlertSetting[]>([])
   const dark = (theme ?? resolvedTheme) === "dark"
-  const navItems = accountNav.filter(item => !("nodeAccess" in item) || !item.nodeAccess || hasActiveNodeAccess)
-  const current = location.pathname === "/account/design-system/buttons" ? { title: "按钮样式" } : navItems.find(item => item.exact ? location.pathname === item.url : location.pathname.startsWith(item.url)) || navItems[0]
+  const navItems = React.useMemo(() => accountNav(hasActiveNodeAccess), [hasActiveNodeAccess])
 
   React.useEffect(() => {
     fetchJson<{ role: string; email?: string; hasActiveNodeAccess?: boolean }>("/api/auth/me")
@@ -91,15 +127,38 @@ export function AccountShell() {
   }
 
   return (
-    <AppLayout
-      title={current.title}
-      dark={dark}
-      onToggleTheme={() => setTheme(dark ? "light" : "dark")}
-      onLogout={logout}
-      sidebar={<AppSidebar variant="inset" items={navItems} homeUrl="/account" accountName={email || "加载中"} accountDescription="User account" accountUrl="/account/settings" accountLabel="账户设置" onLogout={logout} />}
-    >
-            <div className="grid gap-3 pb-2">{userAlerts.filter(item => item.page === (location.pathname.includes("/plans/checkout") ? "checkout" : location.pathname === "/account" ? "account" : location.pathname === "/account/plans" ? "pricing" : "")).map(item => <UserAlert key={item.id} item={item} />)}{pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <Alert variant="warning"><AlertCircle /><AlertDescription className="flex w-full flex-wrap items-center justify-between gap-4"><span>你有一笔订单等待付款。</span><Button asChild variant="link" size="sm"><Link to={`/account/orders/${encodeURIComponent(pendingOrderId)}`}>去支付<ArrowRight /></Link></Button></AlertDescription></Alert> : null}</div>
-            {email ? <Outlet context={{ email }} /> : <div className="grid gap-4 px-4 lg:px-6"><Skeleton className="h-36" /><Skeleton className="h-72" /></div>}
-    </AppLayout>
+    <div data-account-shell className={cn("relative flex min-h-svh flex-col bg-background", solidHeader)}>
+      <SiteHeader
+        variant="mega"
+        label="用户中心导航"
+        brand={{ name: "NEXORA", href: "/account", mark: <></> }}
+        items={navItems}
+        current={currentGroup(location.pathname)}
+        onNavigate={destination => { if (destination.href?.startsWith("/")) navigate(destination.href) }}
+        endSlot={<UserMenu
+          user={{ name: email ? email.split("@")[0] : "加载中", email }}
+          theme={dark ? "dark" : "light"}
+          onThemeChange={next => setTheme(next === "dark" ? "dark" : "light")}
+          items={[{ label: "账户设置", icon: <UserRound size={16} />, onSelect: () => navigate("/account/settings") }]}
+          onSignOut={logout}
+          align="end"
+        />}
+      />
+      <main className="@container/main relative mx-auto w-full flex-1 max-w-[1200px] p-4 min-[760px]:px-6 md:py-6 [&>div]:!px-0 [&>div]:lg:!px-0">
+            <div className="grid gap-3 pb-2">{userAlerts.filter(item => item.page === (location.pathname.includes("/plans/checkout") ? "checkout" : location.pathname === "/account" ? "account" : location.pathname === "/account/plans" ? "pricing" : "")).map(item => <UserAlert key={item.id} item={item} />)}{pendingOrderId && location.pathname !== `/account/orders/${encodeURIComponent(pendingOrderId)}` ? <CtaSection variant="banner" bare compactAction tone="warning" title="请注意" description="你有一笔订单等待付款。" primaryAction={{ label: "去支付", href: `/account/orders/${encodeURIComponent(pendingOrderId)}` }} onNavigate={action => { if (action.href) navigate(action.href) }} /> : null}</div>
+            {email ? <Outlet context={{ email }} /> : <div className="grid gap-4 px-4 lg:px-6"><Skeleton lines={4} /><Skeleton lines={6} /></div>}
+      </main>
+      <SiteFooter
+        variant="minimal"
+        contained
+        brand={{ name: "NEXORA", href: "/account", mark: <></> }}
+        tagline=""
+        links={footerLinks}
+        newsletter={null}
+        status={{ label: "服务运行正常", tone: "success", static: true }}
+        socials={[{ label: "文档站", href: DOCS_URL, external: true }]}
+        onNavigate={link => { if (link.href?.startsWith("/")) navigate(link.href) }}
+      />
+    </div>
   )
 }

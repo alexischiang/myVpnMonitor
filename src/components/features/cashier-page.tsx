@@ -3,11 +3,11 @@ import { Link, useParams } from "react-router-dom"
 import { Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { fetchJson } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Cashier } from "./cashier"
 import type { PaymentOrder } from "./cashier-types"
+import { Alert } from "@/components/arc/alert/alert"
+import { Button } from "@/components/arc/button/button"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
 
 // Standalone route shell. The authenticated order endpoint enforces ownership;
 // this page deliberately has no dependency on the account/dashboard shell.
@@ -31,7 +31,7 @@ export function CashierPage() {
       <Button variant="ghost" size="icon" className="min-h-11 min-w-11 rounded-full" aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>{resolvedTheme === "dark" ? <Sun /> : <Moon />}</Button>
     </div>
     {order ? <Cashier key={order.id} initialOrder={order} /> : <section className="mx-auto grid max-w-md gap-4" aria-label="加载收银台">
-      {error ? <><Alert variant="warning"><AlertTitle>订单暂时无法加载</AlertTitle><AlertDescription>{error}</AlertDescription></Alert><Button onClick={() => setAttempt(value => value + 1)}>重新加载订单</Button><Button asChild variant="ghost"><Link to="/account/orders">返回我的订单</Link></Button></> : <><Skeleton className="h-32" /><Skeleton className="h-96" /></>}
+      {error ? <><Alert tone="warning" title="订单暂时无法加载">{error}</Alert><Button onClick={() => setAttempt(value => value + 1)}>重新加载订单</Button><Button asChild variant="ghost"><Link to="/account/orders">返回我的订单</Link></Button></> : <><Skeleton lines={4} /><Skeleton lines={6} /></>}
     </section>}
   </main>
 }

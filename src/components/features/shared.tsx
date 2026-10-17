@@ -1,26 +1,33 @@
 import * as React from "react"
-import { Check, CheckCircle, CircleX, Copy, ExternalLink, Info, TriangleAlert } from "lucide-react"
-import { toast } from "sonner"
+import { ExternalLink } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
+import { Progress } from "@/components/arc/progress/progress"
 import type { User, UserAlertSetting } from "@/types"
-import { copyText, formatBytes, statusLabels, userStatus } from "@/utils"
+import { formatBytes, statusLabels, userStatus } from "@/utils"
+import { Alert } from "@/components/arc/alert/alert"
+import { Badge } from "@/components/arc/badge/badge"
+import { Button } from "@/components/arc/button/button"
+import { CopyButton } from "@/components/arc/copy-button/copy-button"
+
+// A compact label/value list for detail sidebars: labels on the left, values right-aligned and truncated, numbers in tabular widths.
+export function InfoList({ items }: { items: { label: string; value: React.ReactNode }[] }) {
+  return <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+    {items.map(item => <React.Fragment key={item.label}><dt className="text-muted-foreground">{item.label}</dt><dd className="min-w-0 truncate text-right font-medium tabular-nums">{item.value}</dd></React.Fragment>)}
+  </dl>
+}
 
 export function PageHeader({ actions }: { title: string; description?: string; actions?: React.ReactNode }) {
   return actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null
 }
 
 export function UserAlert({ item }: { item: UserAlertSetting }) {
-  const Icon = item.variant === "success" ? CheckCircle : item.variant === "warning" ? TriangleAlert : item.variant === "error" ? CircleX : Info
-  return <Alert variant={item.variant}><Icon /><div className="col-start-2 grid min-w-0 gap-1 text-left">{item.title ? <AlertTitle className="col-start-1 w-full line-clamp-none wrap-anywhere text-left font-bold">{item.title}</AlertTitle> : null}{item.message ? <AlertDescription className="col-start-1 w-full !text-current text-left">{item.message}</AlertDescription> : null}</div></Alert>
+  const tone = item.variant === "error" ? "danger" : item.variant === "default" ? "info" : item.variant
+  return <Alert tone={tone} title={item.title || "提示"}>{item.message || null}</Alert>
 }
 
 export function StatusBadge({ status, children, className = "", style }: { status?: string; children?: React.ReactNode; className?: string; style?: React.CSSProperties }) {
-  const variant = status === "ok" ? "success" : status === "expired" || status === "invalid" || status === "error" || status === "depleted" ? "destructive" : status === "warning" || status === "expiring" ? "warning" : "secondary"
-  return <Badge variant={variant} className={`rounded-sm text-[10px] font-semibold ${className}`} style={style}>{children ?? (statusLabels[status || "unknown"] || status || "未知")}</Badge>
+  const tone = status === "ok" ? "success" : status === "expired" || status === "invalid" || status === "error" || status === "depleted" ? "danger" : status === "warning" || status === "expiring" ? "warning" : "neutral"
+  return <Badge tone={tone} className={`rounded-sm text-[10px] font-semibold ${className}`} style={style}>{children ?? (statusLabels[status || "unknown"] || status || "未知")}</Badge>
 }
 
 export function UserStatusBadge({ user }: { user?: User | null }) {
@@ -43,52 +50,11 @@ export function EmptyState({ title = "暂无数据", description }: { title?: st
   )
 }
 
-// feedback="inline" 时复制结果直接显示在按钮上（带动画），不弹出 Toast
-export function CopyButton({ value, label = "复制", variant = "ghost", size = "sm", className, feedback = "toast", "aria-label": ariaLabel }: { value?: string; label?: string; variant?: React.ComponentProps<typeof Button>["variant"]; size?: React.ComponentProps<typeof Button>["size"]; className?: string; feedback?: "toast" | "inline"; "aria-label"?: string }) {
-  const [result, setResult] = React.useState<"copied" | "failed" | null>(null)
-  const resetTimer = React.useRef<number>()
-
-  React.useEffect(() => () => window.clearTimeout(resetTimer.current), [])
-
-  function showResult(next: "copied" | "failed") {
-    setResult(next)
-    window.clearTimeout(resetTimer.current)
-    resetTimer.current = window.setTimeout(() => setResult(null), 2000)
-  }
-
-  async function copy() {
-    try {
-      await copyText(value || "")
-      if (feedback === "inline") showResult("copied")
-      else toast.success("已复制")
-    } catch {
-      if (feedback === "inline") showResult("failed")
-      else toast.error("复制失败，请长按内容手动复制")
-    }
-  }
-
-  const Icon = result === "copied" ? Check : result === "failed" ? CircleX : Copy
-  return (
-    <Button
-      type="button"
-      variant={result === "copied" ? "success" : result === "failed" ? "destructive" : variant}
-      size={size}
-      className={className}
-      aria-label={result ? undefined : ariaLabel}
-      onClick={() => void copy()}
-      disabled={!value}
-    >
-      <Icon key={result || "idle"} className={result ? "motion-safe:animate-[copy-success_180ms_ease-out]" : undefined} />
-      <span aria-live="polite">{result === "copied" ? "已复制" : result === "failed" ? "复制失败，请长按链接复制" : label}</span>
-    </Button>
-  )
-}
-
 export function UrlCell({ value }: { value?: string }) {
   return (
     <div className="flex max-w-96 items-center gap-2">
       <code className="truncate rounded bg-muted px-1.5 py-0.5 text-xs">{value || "-"}</code>
-      {value && <CopyButton value={value} label="" />}
+      {value && <CopyButton value={value} iconOnly variant="plain" />}
     </div>
   )
 }
@@ -107,7 +73,7 @@ export function TrafficProgress({ remaining, total }: { remaining?: number; tota
 export function ExternalLinkButton({ href, children }: { href?: string; children: React.ReactNode }) {
   if (!href) return null
   return (
-    <Button asChild variant="outline" size="sm">
+    <Button asChild variant="secondary" size="sm">
       <a href={href} target="_blank" rel="noreferrer">
         <ExternalLink />
         {children}

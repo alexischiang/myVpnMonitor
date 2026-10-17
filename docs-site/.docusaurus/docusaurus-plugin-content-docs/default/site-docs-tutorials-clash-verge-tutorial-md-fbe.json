@@ -1,0 +1,27 @@
+{
+  "id": "tutorials/clash-verge-tutorial",
+  "title": "Mac/Windows 教程",
+  "description": "1.下载软件",
+  "source": "@site/docs/tutorials/clash-verge-tutorial.md",
+  "sourceDirName": "tutorials",
+  "slug": "/tutorials/clash-verge-tutorial",
+  "permalink": "/docs/tutorials/clash-verge-tutorial",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 2,
+  "frontMatter": {
+    "title": "Mac/Windows 教程",
+    "sidebar_position": 2
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "iPhone / iPad 教程",
+    "permalink": "/docs/tutorials/ios-nextin-tutorial"
+  },
+  "next": {
+    "title": "Shadowrocket 使用教程",
+    "permalink": "/docs/tutorials/shadowrocket-tutorial"
+  }
+}

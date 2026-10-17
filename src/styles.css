@@ -19,8 +19,8 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--surface-muted);
+  --color-accent-foreground: var(--foreground);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -61,8 +61,8 @@
   --color-orange-1100: color-mix(in oklch, var(--color-orange-600) 34%, black);
   --color-bento-yellow: #fed230;
   --color-bento-green: #58e057;
-  /* Darker green for progress graphics on light cards (3:1 against white). */
-  --color-bento-green-strong: #2fa92e;
+  /* Dark green behind white text on bento badges (4.5:1 against white). */
+  --color-bento-green-strong: #228822;
   --color-usage-20: #72c238;
   --color-usage-60: #ff9e07;
   --color-usage-100: #ff594c;
@@ -93,94 +93,91 @@
   --border: oklch(0.145 0 0 / 15%);
   --input: oklch(0.145 0 0 / 15%);
   --ring: oklch(0.145 0 0 / 40%);
+  --surface: oklch(1 0 0);
+  --surface-raised: oklch(1 0 0);
+  --surface-muted: oklch(0.97 0 0);
+  --text-secondary: oklch(0.35 0 0);
+  --text-muted: oklch(0.45 0 0);
+  --border-strong: oklch(0.145 0 0 / 40%);
+  --accent: oklch(0.205 0 0);
+  --accent-strong: oklch(0.145 0 0);
+  --accent-foreground: oklch(0.985 0 0);
 }
 
+/* Arc UI (src/components/arc/foundation.css) is the only source of colour tokens. It defines --background, --foreground, --border,
+   --accent, --accent-foreground and --series-1 to --series-4 for both themes; the names below are the older shadcn tokens, kept as
+   aliases so components in src/components/ui keep working. Arc's --accent is the brand colour, not a hover surface, so the Tailwind
+   accent colour above points at --surface-muted instead. */
 :root {
   --radius: 0.625rem;
+  /* Arc falls back to Inter for body text; the product uses Geist everywhere. */
+  --font-display: "Geist Variable", sans-serif;
+  --font-body: "Geist Variable", sans-serif;
+  /* Arc sizes its controls for touch (36/44/50px). With a mouse the product keeps the compact scale it had before (32/36/40px),
+     and the corner radius shrinks with it so buttons keep their shape. Touch screens keep Arc's sizes: see the media query below. */
+  --control-height-sm: 2rem;
+  --control-height-md: 2.25rem;
+  --control-height-lg: 2.5rem;
+  --radius-control: 0.875rem;
   /* Height of one BentoGrid row unit; cards span whole units on wide screens. */
   --bento-row: 7.5rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  /* Default surface of overview bento cards (they have no border). */
-  --bento-surface: #f6f6f6;
-  /* Categorical series in fixed order (validated for CVD separation on the card surface); "other" is neutral. */
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --series-4: #eda100;
+  --card: var(--surface);
+  --card-foreground: var(--foreground);
+  /* Default surface of overview bento cards (they have no border): the same card surface as every other card. */
+  --bento-surface: var(--surface);
   --series-5: #e87ba4;
   --series-other: #a3a3a3;
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--foreground);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-foreground);
+  --secondary: var(--surface-muted);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-muted);
+  --muted-foreground: var(--text-secondary);
+  --destructive: var(--danger);
+  --input: var(--border);
+  --ring: var(--border-strong);
+  --chart-1: var(--series-1);
+  --chart-2: var(--series-2);
+  --chart-3: var(--series-3);
+  --chart-4: var(--series-4);
+  --chart-5: var(--series-5);
+  --sidebar: var(--neutral-1);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--accent-foreground);
+  --sidebar-accent: var(--surface-muted);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--border-strong);
+}
+
+@media (pointer: coarse) {
+  :root {
+    --control-height-sm: 2.25rem;
+    --control-height-md: 2.75rem;
+    --control-height-lg: 3.125rem;
+    --radius-control: 1.125rem;
+  }
+}
+
+/* Product palette, overriding Arc's defaults (foundation.css loads first): a light grey page with white cards, and in dark mode a
+   mid-grey page with near-black cards. */
+:root {
+  --background: #f5f5f5;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+}
+:root[data-theme="dark"] {
+  --background: #262626;
+  --surface: #171717;
 }
 
 .dark {
-  --background: #0a0a0a;
-  --foreground: oklch(0.985 0 0);
-  --card: #171717;
-  --card-foreground: oklch(0.985 0 0);
-  /* One step lighter than the #171717 content panel, since bento cards have no border. */
-  --bento-surface: #262626;
-  --series-1: #3987e5;
-  --series-2: #d95926;
-  --series-3: #199e70;
-  --series-4: #c98500;
   --series-5: #d55181;
   --series-other: #737373;
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar: var(--surface);
 }
 
 @keyframes copy-success {

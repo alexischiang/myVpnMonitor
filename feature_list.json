@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-11",
+  "updated_at": "2026-10-17",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -2813,6 +2813,1089 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-11"
+      }
+    },
+    {
+      "id": "arc-ui-migration",
+      "name": "Replace the shadcn component layer with Arc UI",
+      "description": "The base components move from src/components/ui (shadcn) to the free Arc UI components in src/components/arc, following docs/agent/arc-migration.md: Arc tokens become the only colour source, auth pages use the login-centered block, the user centre uses the site-header block with a user menu, list tables use Arc's sortable data table through arc-data-table.tsx, and the old components and data-table.tsx stay in place as the rollback path. Business logic, API calls and copy are unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "No feature file imports a shadcn component except the ones docs/agent/arc-migration.md section 7 lists as kept (field, label, separator, the admin sidebar, the stacked traffic chart, and the legacy data-table.tsx).",
+        "Every route opens in light and dark themes with no console or page errors.",
+        "Payment, wallet, billing and delivery flows pass npm run verify.",
+        "docs/agent/arc-migration.md lists every Arc source extension and the decisions taken where the mapping was ambiguous."
+      ],
+      "verification": [
+        "2026-10-12: npm run verify passed (build, core, payment, wallet and catalog suites); type check against the pre-migration baseline shows no new errors; the isolated browser tour below found no console or page errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/dashboard",
+          "/sales-analytics",
+          "/sales-analytics/profitability",
+          "/xui-monitor",
+          "/xui-logs",
+          "/sync-jobs",
+          "/xui-inbounds",
+          "/users",
+          "/users/detail/:id",
+          "/orders",
+          "/orders/:id",
+          "/tickets",
+          "/tickets/:id",
+          "/deliveries",
+          "/bills",
+          "/pricing-settings",
+          "/pricing-settings/new",
+          "/pricing-settings/:group/:serviceType",
+          "/catalog-v2",
+          "/catalog-v2/products/:id",
+          "/catalog-v2/products/new",
+          "/sales-settings",
+          "/general-settings",
+          "/payment-settings",
+          "/emby",
+          "/subconverter",
+          "/account",
+          "/account/nodes",
+          "/account/plans",
+          "/account/plans/checkout",
+          "/account/orders",
+          "/account/orders/:id",
+          "/account/wallet",
+          "/account/referrals",
+          "/account/tickets",
+          "/account/tickets/new",
+          "/account/tickets/:id",
+          "/account/settings",
+          "/account/design-system/buttons",
+          "/onboarding",
+          "/pricing",
+          "/login",
+          "/register",
+          "/forgot-password",
+          "/reset-password"
+        ],
+        "interactions": [
+          "Opened every route in the light theme and again in the dark theme, as administrator and as a customer, against an isolated copy of the local database.",
+          "Signed in through the login form; triggered the registration form's email, password-length, mismatch and referral-code messages.",
+          "Changed the billing cycle on the checkout page and saw the order summary follow.",
+          "Sorted the user list by email (URL state updated) and opened a row's action menu.",
+          "Toggled the onboarding switch in general settings, saved, and saw the success toast and the public setting change.",
+          "Opened a coupon editor, switched off 长期有效 and opened the date range picker with its presets.",
+          "Stepped forward and back through the onboarding stepper; opened a ticket and saw the conversation thread; followed a detail page breadcrumb back to its list."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-shell-width-align",
+      "name": "Align the user centre body width with its header",
+      "description": "AccountShell main content uses the same 1200px max width and the same 760px side-padding breakpoint as the Arc site-header, so the header and the page content share left and right edges.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "arc-ui-migration"
+      ],
+      "done_criteria": [
+        "At 1280, 1440 and 1920px and at phone width, the header inner content and the main content have equal left and right edges on /account.",
+        "Affected user centre routes open with no console or page errors."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. On /account the header inner content and main content edges matched at 1920 (384-1536), 1440 (144-1296), 1280 (64-1216), 1024 (24-1000), 764 (24-740), 755 (16-739) and 375 (16-359) px, with no horizontal scroll at 375px."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/plans",
+          "/account/wallet",
+          "/account/orders",
+          "/account/referrals",
+          "/account/tickets",
+          "/account/settings"
+        ],
+        "interactions": [
+          "Signed in as a seeded local test customer and measured header and main content edges on /account at 1920, 1440, 1280, 1024, 764, 755 and 375px.",
+          "Opened every other user centre route listed above after sign-in; all API requests returned 200."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-site-footer",
+      "name": "Minimal site footer on user centre pages",
+      "description": "AccountShell ends every user centre page with the Arc site-footer in its minimal variant (brand, 购买服务 / 工单服务 / 使用文档 links, refund note, copyright, a static 服务运行正常 status and a 文档站 link). The footer gains an opt-in contained prop so its content lines up with the site-header column, and in-app links go through the router when onNavigate is given.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-shell-width-align"
+      ],
+      "done_criteria": [
+        "Every /account route shows the minimal footer, pinned to the bottom of the window on short pages.",
+        "The footer content shares left and right edges with the header at desktop and phone widths, and its top border spans the page.",
+        "Footer links to 购买服务 and 工单服务 navigate without a full page reload; 使用文档 opens in a new tab.",
+        "The public pricing page footer is unchanged.",
+        "Affected routes open with no console or page errors."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. Footer content edges matched the header at 1440 (144-1296), 764 (24-740), 755 (16-739) and 375 (16-359) px with a full-width top border and no horizontal scroll; on the short /account/settings page the footer bottom sat at the window bottom (900 of 900). The public /pricing footer kept its original classes, 24px padding and links.",
+        "2026-10-12: Added the footer's bottom row: a static 服务运行正常 status (span with a green dot, not a button) and one 文档站 link (new tab). npm run check passed; checked at 1440px and 375px with no horizontal scroll; /pricing footer unchanged; no new console errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/plans",
+          "/account/plans/checkout?option=v2:cycled-basic:30d",
+          "/account/wallet",
+          "/account/orders",
+          "/account/referrals",
+          "/account/tickets",
+          "/account/tickets/new",
+          "/account/settings",
+          "/pricing"
+        ],
+        "interactions": [
+          "Clicked the footer 工单服务 and 购买服务 links: the path changed with no page reload; 使用文档 has target=_blank.",
+          "Checked the bottom row: 服务运行正常 renders as plain text with the success dot, 文档站 opens the docs site in a new tab.",
+          "Measured footer and header content edges at 1440, 764, 755 and 375px, and checked the footer in light and dark themes.",
+          "Reached checkout through 选择套餐 on /account/plans (quote request 200).",
+          "Opening /account/nodes or a bare /account/plans/checkout URL directly logs a 403 (node-status, the expired test account has no node access) and a 400 (quote without an option); both are existing page behaviour unrelated to the footer, so those direct URLs are not listed as verified routes."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-overview-ticket-cta",
+      "name": "Ticket reminder on the account overview as a CTA banner",
+      "description": "The 发送工单 reminder at the top of /account changes from a warning Alert to the Arc cta-section block in its banner variant (遇到问题？ / 发送工单联系客服吧！ / 发送工单). The block is installed from the uiarc registry and gains bare and onNavigate so it sits in the page column and routes in-app.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-shell-width-align"
+      ],
+      "done_criteria": [
+        "The overview shows the banner where the Alert was, with the same edges as the cards below it.",
+        "发送工单 opens /account/tickets/new without a full page reload.",
+        "The banner reads well in light and dark themes and stacks on phone widths without horizontal scroll.",
+        "No console or page errors on /account."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed; tsc (local 4.3) shows no new errors beyond the existing inline type-import parse limitation. On /account at 1440px the banner spans 144-1296, the same edges as the grid below it; at 375px it stacks (16-359) with no horizontal scroll; dark theme uses the surface colour on the page background."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/tickets/new"
+        ],
+        "interactions": [
+          "Closed the announcement dialog, measured the banner against the overview grid at 1440px and 375px, and checked light and dark themes.",
+          "Clicked 发送工单: the path changed to /account/tickets/new with no page reload and no page errors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-overview-cta-warning-and-nav-split",
+      "name": "Top-level 购买服务 / 节点状态 in the user centre header (ticket banner warning tone later removed)",
+      "description": "The /account ticket CTA banner uses a new opt-in tone=\"warning\" on the Arc cta-section (warning-tinted background and border from the theme token). The header's 服务 group is removed: 购买服务 and 节点状态 (only for users with node access) become top-level links, and the current item follows /account/plans and /account/nodes.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-overview-ticket-cta"
+      ],
+      "done_criteria": [
+        "The ticket banner shows a warning tint in light and dark themes with readable text.",
+        "The header shows 总览, 购买服务, (节点状态), 账务, 帮助; 购买服务 and 节点状态 navigate directly and are marked current on their routes, including /account/plans/checkout.",
+        "The mobile menu lists the same items.",
+        "No console or page errors on the affected routes."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. The banner computes a warning-tinted background and border in light (pale amber) and dark (amber-brown, gold border) themes. Header items read 总览, 购买服务, 账务, 帮助 for the expired test account; with /api/auth/me mocked in the page to hasActiveNodeAccess=true, 节点状态 appears between 购买服务 and 账务 and is aria-current on /account/nodes."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/plans",
+          "/account/plans/checkout?option=v2:cycled-basic:30d",
+          "/account/nodes"
+        ],
+        "interactions": [
+          "Clicked 购买服务 in the header: /account/plans with no page reload, marked current; continued to checkout through 选择套餐 and 购买服务 stayed current.",
+          "Opened the mobile menu at 375px: 总览, 购买服务, 账务, 帮助, with 总览 current.",
+          "Mocked hasActiveNodeAccess in the page to check the 节点状态 item and its current state on /account/nodes (the node-status API still answers 403 for this account; the mock was cleared by reloading).",
+          "Checked the warning banner in light and dark themes at 1440px and 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-overview-cta-compact",
+      "name": "Ticket banner: no warning tone, single-line icon action on small screens",
+      "description": "The /account ticket banner drops the warning tone (the cta-section tone option is removed again) and uses a new opt-in compactAction: below the block's 560px container breakpoint the banner stays on one line and 发送工单 shows only its arrow icon, with the label kept for screen readers.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-overview-cta-warning-and-nav-split"
+      ],
+      "done_criteria": [
+        "The banner uses the neutral surface colour in light and dark themes.",
+        "At phone width the banner is one row and the action is a square icon link with an accessible name of 发送工单.",
+        "At desktop width the action still shows its label and arrow.",
+        "No console or page errors on /account."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. At 375px (touch) the banner is one row (66px tall, flex-direction row) and 发送工单 is a 44x44 arrow link whose label is clipped for screen readers only; at 1440px the link shows 发送工单 with the arrow. The banner background is the neutral surface in light (oklch(1 0 0)) and dark (oklch(0.215 0 0)) themes."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/tickets/new"
+        ],
+        "interactions": [
+          "Measured the banner and its action at 375px and 1440px, and checked light and dark themes.",
+          "Tapped the compact arrow at 375px: /account/tickets/new opened with no page reload and no page errors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "account-surface-and-header-shadow",
+      "name": "User centre card surface and header shadow",
+      "description": "Matching the reference: the user centre page stays white, plain Arc cards and default bento cards use #f6f6f6 (oklch(0.973 0 0)) in the light theme through a scoped --card-surface / --bento-surface on [data-account-shell], and the header carries a soft shadow into the page with no bottom border. Cards with their own colour, the admin side and the dark theme keep their surfaces.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "account-overview-cta-compact"
+      ],
+      "done_criteria": [
+        "In the light theme the user centre page background is white and plain cards and default bento cards are #f6f6f6; inputs inside them stay white.",
+        "Coloured cards such as the yellow plan card are unchanged.",
+        "The header shows a soft shadow onto the page before and after scrolling, with no hairline border.",
+        "The admin dashboard cards keep their previous surface; the dark theme is unchanged.",
+        "No console or page errors on the affected routes."
+      ],
+      "verification": [
+        "2026-10-12: Reference colours sampled from the screenshot: page #ffffff, card panel #f6f6f6, header shadow fading from about #f1f1f1 to white over ~55px. npm run check passed. Light theme: body oklch(1 0 0); plain and default bento cards oklch(0.973 0 0) on /account, /account/settings and /account/tickets; the yellow plan card (rgb(254,210,48)) and the 个人信息 inner panel (explicit --background) unchanged. Header: white, transparent bottom border, shadow 0 6px 32px rgb(0 0 0/.06) both before and after scrolling. /pricing (outside the shell) keeps its white and oklch(0.958) cards; the dark theme card stays on --surface (oklch(0.215))."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/settings",
+          "/account/plans",
+          "/account/wallet",
+          "/account/orders",
+          "/account/referrals",
+          "/account/tickets",
+          "/pricing"
+        ],
+        "interactions": [
+          "Measured card, page and header colours in light theme, scrolled /account past the header threshold and rechecked the header shadow and border.",
+          "Switched to the dark theme and checked the card surface, then restored the default theme.",
+          "Opened /pricing to confirm cards outside the user centre keep their surfaces."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "sales-user-alerts-master-switch",
+      "name": "User alert master switch and alert drawer layout",
+      "description": "销售设置 → Alert 管理 adds a one-click switch (userAlertsEnabled, default on) that hides every configured top alert on the user side while keeping each alert's own settings; /api/public/sales-settings returns no userAlerts when it is off. The alert list shows page/type in Chinese and a 显示中/已隐藏/已停用 badge. The editor drawer is sized per form (md for Alert/FAQ, lg for coupons, xl for Markdown), drops the extra inner padding so fields and actions align, uses tighter field spacing, puts page and type side by side, adds a live preview, uses a switch for the alert status, and separates 删除 from 取消/保存. The Tabs root gets min-w-0 so the tab strip no longer widens the page on phones.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Turning the Alert master switch off saves immediately and the public sales settings return an empty userAlerts list; turning it on restores enabled alerts.",
+        "Individual alerts keep their enabled state while the master switch is off.",
+        "The alert editor drawer has aligned fields and actions, a live preview and no oversized empty width.",
+        "The sales settings page has no horizontal scroll at phone width.",
+        "No console or page errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-12: node test.js passed with new normalizeSalesSettings userAlertsEnabled assertions; npm run verify:fast and npm run check passed. test-payment.js gained public-endpoint assertions for the switch but could not run locally because TEST_DATABASE_URL is not configured. Browser: master switch toggled off and on with the PUT stubbed in-page (the local server points at a remote database) — payloads userAlertsEnabled false then true, badges switched to 已隐藏 and back; alert drawer type change updated the preview and the status switch toggled; coupon drawer checked with the shared layout; at 375px the main container scrollWidth equals clientWidth."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/sales-settings"
+        ],
+        "interactions": [
+          "Opened the Alert 管理 tab and toggled the master switch off and on (save request stubbed in-page), checking switch state, description and badges.",
+          "Opened an existing alert's drawer, changed the type to 错误 and checked the preview, toggled the status switch, then cancelled without saving.",
+          "Opened the 添加 Alert drawer at 375px and the 添加优惠码 drawer at desktop width.",
+          "Reloaded at 375px and confirmed no horizontal overflow in the main container."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "pending-payment-alert-inline",
+      "name": "Pending payment alert on one line with warning tint",
+      "description": "The user centre's pending-payment reminder (not controlled by the Alert master switch) shows 请注意, the message and the 去支付 link on one line with a warning-tinted background. Arc alert gains opt-in inline, tinted and action props; other alerts keep the default layout.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "sales-user-alerts-master-switch"
+      ],
+      "done_criteria": [
+        "The pending-payment alert renders title, message and 去支付 on one line at desktop and 375px widths.",
+        "The alert uses a warning-tinted background and border in light and dark themes.",
+        "Alerts that do not pass the new props are unchanged.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. Browser: with /api/auth/me and /api/account/* stubbed in-page (admin cannot open the user centre and the local server uses a remote database), /account/design-system/buttons showed the alert at 50px high on desktop and 54px at 375px with the message not truncated; light background oklab(0.958 0.005 0.017) with a warning border, dark background oklab(0.277 0.003 0.017). The only console entries were 401s from an admin-session request to a customer endpoint during setup, not from the component."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/design-system/buttons"
+        ],
+        "interactions": [
+          "Stubbed the customer session and a pending order in-page, routed into the user centre and measured the alert's height, background, border and text overflow.",
+          "Repeated at 375px in the dark theme."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "pending-payment-cta-banner",
+      "name": "Pending payment reminder as a warning CTA banner",
+      "description": "The user centre's pending-payment reminder moves from the Arc alert to the cta-section banner (bare, compactAction) used by the 发送工单 CTA, with a new opt-in tone=\"warning\" on the banner. 请注意 / 你有一笔订单等待付款。 / 去支付 stay on one line; 去支付 is the banner's primary pill and routes in-app; below the block's container breakpoint it shows only its arrow.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "pending-payment-alert-inline",
+        "account-overview-cta-compact"
+      ],
+      "done_criteria": [
+        "The pending-payment reminder renders as a warning-tinted cta-section banner on one line at desktop and 375px widths.",
+        "去支付 navigates to the order without a full page reload.",
+        "The 发送工单 banner keeps its neutral surface.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-12: npm run check passed. Browser (customer session and a pending order stubbed in-page; the local server uses a remote database): /account/design-system/buttons showed the banner 54px high on desktop with background oklab(0.958 0.005 0.017) and a warning border, and 66px at 375px in one row with the arrow-only action. Clicking 去支付 routed client-side (no reload) to /account/orders/preview-order, which forwarded to /cashier/preview-order as it does for pending orders. The only console entry was a 404 for /api/orders/preview-order, the made-up order id requested by the cashier page."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/design-system/buttons",
+          "/cashier/preview-order"
+        ],
+        "interactions": [
+          "Stubbed the customer session and a pending order in-page, measured the banner on desktop and at 375px.",
+          "Clicked 去支付 and confirmed in-app navigation without a page reload."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-12"
+      }
+    },
+    {
+      "id": "overview-vip-arc-gauge",
+      "name": "VIP progress on the overview uses the Arc gauge",
+      "description": "The 个人信息 card on /account replaces the local ProgressRing with the Arc gauge (newly installed from the registry). The ring centre shows the percent toward the next VIP tier and the current level is the caption under the ring; 累计消费 and the remaining amount stay below. The gauge source gains an opt-in size prop (max ring width, number scales with it) so the card keeps its bento row height, and its screen-reader summary is in Chinese. progress-ring.tsx is kept as the fallback and is no longer referenced.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-vip-gauge-subscription-announcements"
+      ],
+      "done_criteria": [
+        "The VIP section renders the Arc gauge (role=meter) with the percent toward the next tier and the level as its label.",
+        "The profile card is no taller than its two bento rows require at desktop width and nothing overflows at 375px.",
+        "A max-level account shows 100% and 已达到最高等级; a zero-spend account shows 0%.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run agent:init passed before the change; npm run check passed after it. Browser (customer session and /api/account/* stubbed in-page on the dev server, as the local server has no customer login available): /account showed the gauge at 112px wide with a 22.4px number; the profile card dropped from 307px with the stock 176px ring to 273px, the height set by the neighbouring wallet and invite cards. Checked 55% (VIP 1, spend 320), 100% (VIP 3, 已达到最高等级) and 0% (VIP 0) at 1440px, and 375px in light and dark (arc oklch(0.49 0.19 150) light, oklch(0.78 0.18 150) dark) with no horizontal overflow. No console errors or page exceptions were captured from the overview; one TypeError came from my own incomplete wallet stub when I routed to /account/wallet and is unrelated to the change."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session and overview in-page, routed into the user centre and measured the gauge, number and card heights at 1440px.",
+          "Reloaded with spend 2500 and 0 to check the max-level and zero states.",
+          "Repeated at 375px in the light and dark themes."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "bento-badge-green-tone",
+      "name": "Green bento badges render green with white text",
+      "description": "BentoCardBadge tone=\"green\" (专属折扣 on the profile card, 获取返利 on the invite card) showed the Arc badge's neutral outline because Arc's CSS Modules outrank the Tailwind classes that set the green. The tone is now written as inline style: bento-green-strong background, white text and icon, transparent border, unchanged on hover. The metric-card header rule that colors its label (.top span) no longer reaches into the action slot, which had turned the invite badge's text grey.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-vip-arc-gauge"
+      ],
+      "done_criteria": [
+        "Both green badges on /account have a green background, white text and icon, and no visible border.",
+        "Hovering a green badge does not change its colors.",
+        "Default-tone bento badges are unchanged.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session and overview stubbed in-page on the dev server): on /account at 1440px both tone=green badges computed background rgb(47, 169, 46), text and icon rgb(255, 255, 255) and a transparent border, in the light theme and with the dark theme classes applied; the profile badge kept those values while hovered. Before the metric-card fix the invite badge's inner spans computed oklch(0.46 0 0) from .top span; after it they inherit white. No console errors or page exceptions. Not checked: the default-tone badges on /account/wallet and /account/referrals in the browser (their code path only gained a style passthrough), and 375px."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session and overview in-page, routed into the user centre and read the computed background, text, icon and border colors of both green badges.",
+          "Hovered the 专属折扣 badge and re-read its colors.",
+          "Applied the dark theme classes and re-read the colors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "overview-stat-card-trailing-action",
+      "name": "Overview stat cards: corner action, matching badges, deeper green",
+      "description": "The round link on the 钱包余额 and 邀请好友 cards moves from the title row to the bottom-right corner, as on 节点状态, through a new trailing slot on the Arc metric-card. The metric-card label rule is narrowed from .top span to .top > span so the invite badge keeps the badge's own 12px text and matches the 专属折扣 badge. bento-green-strong is darkened from #2fa92e to #228822 (about 4.5:1 against white).",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "bento-badge-green-tone"
+      ],
+      "done_criteria": [
+        "The wallet and invite cards show their link in the bottom-right corner with the same right inset as the node status card.",
+        "The two green badges have the same height and font size.",
+        "The green badge background is #228822 with white text.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session, overview, node status and traffic stubbed in-page on the dev server): on /account at 1440px the wallet, invite and node-status links were each 13px from the card's right edge; the wallet and invite links sat 17px from the bottom and the node-status link 21px (the bento card has 4px more padding than the compact metric card). Both green badges measured 28px high with 12px text (the invite badge was 14px before) and background rgb(34, 136, 34) with white text. The invite card is 125px high, down from 137px. At 375px the links are 44x44 with the same insets and there is no horizontal overflow. No console errors or page exceptions. Not checked: dark theme for this change."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session with an active self-hosted plan, routed into the user centre and measured the link insets on the wallet, invite and node-status cards.",
+          "Read the height, font size and colors of both green badges.",
+          "Repeated the measurements at 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "overview-gradient-hero-transparent-header",
+      "name": "Overview gradient band with a header that is transparent at the top",
+      "description": "On /account the user-centre shell paints Arc's soft brand gradient (--arc-gradient-soft) as a 28rem band behind the top of the page, fading into the page background. The site header is transparent while the page is at the top and returns to its solid white surface with the soft shadow once the page scrolls or a menu opens, using the header's own data-scrolled state. Other user-centre routes keep the always-solid header.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-stat-card-trailing-action"
+      ],
+      "done_criteria": [
+        "At the top of /account the header background is transparent with no shadow and the gradient shows behind it.",
+        "After scrolling the header is solid with its shadow; scrolling back to the top makes it transparent again.",
+        "Other /account/* routes keep the solid header at the top and have no gradient.",
+        "No script errors on the affected routes."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session and overview stubbed in-page on the dev server): on /account at 1440px the header computed a transparent background and no shadow at scrollY 0, oklch(1 0 0) with the shadow at scrollY 248, and transparent again back at the top; the band was 448px high with linear-gradient(135deg, oklch(0.975 0.016 300), oklch(0.98 0.016 65)) and a bottom fade mask. With the dark theme classes applied the band used the dark gradient and the scrolled header was oklch(0.19 0 0). /account/orders had no band and a solid header at the top. At 375px the header was transparent at the top with no horizontal overflow. No console errors or page exceptions. Not checked: the header with a mega menu panel open over the gradient."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/orders"
+        ],
+        "interactions": [
+          "Stubbed the customer session and overview in-page, routed to /account and read the header background and shadow at the top, after scrolling 300px and back at the top.",
+          "Applied the dark theme classes and repeated the top and scrolled readings.",
+          "Routed to /account/orders and read the header at the top.",
+          "Repeated the top reading at 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "overview-gradient-taller-transparent-cta",
+      "name": "Taller overview gradient and a transparent 发送工单 banner",
+      "description": "The overview gradient band grows from 28rem to 40rem. The 发送工单 CTA banner on the overview drops its white fill so the gradient shows through and gets a slightly darker border, through a new opt-in transparent prop on the cta-section banner. The warning-toned pending-payment banner is unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-gradient-hero-transparent-header"
+      ],
+      "done_criteria": [
+        "The gradient band on /account is 640px high.",
+        "The 发送工单 banner has a transparent background and a border darker than --border in both themes.",
+        "The pending-payment banner keeps its warning fill and border.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session, overview and a pending order stubbed in-page on the dev server): on /account at 1440px the band measured 640px; the 发送工单 banner computed background rgba(0, 0, 0, 0) and border oklab(0.8775 0 0) in the light theme (the default --border is 0.935) and oklab(0.345 0 0) with the dark theme classes applied; the pending-payment banner kept its warning background and border. No console errors or page exceptions. Not checked: 375px for this change.",
+        "2026-10-13 (follow-up): the first pass only cleared the banner element; the section wrapper behind it still painted var(--background), which showed as white corners and made the banner look unchanged. transparent now also clears the section. npm run check passed. Browser: every element from the banner up to the shell computed background rgba(0, 0, 0, 0) in the light theme and with the dark theme classes applied; no console errors or page exceptions."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session, overview and a pending order in-page, routed to /account and read the gradient band height and both banners' background and border colors.",
+          "Applied the dark theme classes and re-read the banner colors.",
+          "After the follow-up fix, walked the ancestors of the 发送工单 banner up to the shell and read each background in both themes."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "user-menu-avatar-solid-fill",
+      "name": "User menu initials avatar with a solid fill",
+      "description": "The initials avatar in the user-centre header (Arc user-menu) is filled with the foreground color and uses the background color for the letter, so it stands out on the transparent header over the overview gradient and on the solid header, in both themes. It was surface-muted with secondary text.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-gradient-hero-transparent-header"
+      ],
+      "done_criteria": [
+        "The avatar is dark with a white letter in the light theme and light with a dark letter in the dark theme.",
+        "No script errors on the affected route."
+      ],
+      "verification": [
+        "2026-10-13: npm run check passed. Browser (customer session and overview stubbed in-page on the dev server): on /account at 1440px the avatar computed background oklch(0.15 0 0) with letter oklch(1 0 0) in the light theme, and oklch(0.96 0 0) with letter oklch(0.19 0 0) with the dark theme classes applied; 32px wide in both. No console errors or page exceptions. Not checked: the avatar inside the opened menu panel, and 375px."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account"
+        ],
+        "interactions": [
+          "Stubbed the customer session and overview in-page, routed to /account and read the avatar's background and text colors.",
+          "Applied the dark theme classes and re-read them."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-13"
+      }
+    },
+    {
+      "id": "recurring-plan-compare-page",
+      "name": "Recurring plan comparison page with configurable comparison rows",
+      "description": "A test route /account/plans/compare shows recurring plans side by side in the Arc plan-comparison block, now driven by props (plans, periods, rows, labels, N columns). Rows: price header, monthly traffic, online IPs, extra traffic, regions and line tier (from the line group's inbounds), then admin-configured comparison rows (new table catalog_v2_compare_attributes, seeded with streaming / AI unlock / bandwidth / support). Products gain tagline and compare_values; every comparison row appears in every recurring plan's editor and is required for enabled plans.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The comparison rows are managed on /catalog-v2 and every row appears in the recurring plan editor, with derived rows previewed.",
+        "Saving an enabled recurring plan without a value for a row is refused with the row's name.",
+        "/account/plans/compare shows every recurring plan on sale, switches periods, filters to differences, and links the selected plan and period to checkout.",
+        "The existing /account/plans and /pricing pages are unchanged.",
+        "No console errors or page exceptions on the affected routes."
+      ],
+      "verification": [
+        "2026-10-15: npm run check, npm test, npm run verify:fast, npm run verify:harness, node test-catalog-v2.js (local DB round trip for tagline, compare_values and comparison rows) and git diff --check passed. npm run test:payment and test:wallet were not run: no TEST_DATABASE_URL on this machine and the local DB user cannot create a throwaway database (the payment test truncates app_records, so it was not pointed at the dev DB). Browser on the running dev server, logged in as the seeded expired-renew@xela.test: /account/plans/compare at 1024px and 375px showed 5 recurring plans and 9 rows; half-yearly switch showed totals with per-month and saving notes and disabled the plan without that period; show-differences-only filtered 9 to 3 rows; the footer link pointed to /account/plans/checkout?option=v2:cycled-pro:180d; no page-level horizontal overflow and no clipped plan buttons after widening narrow columns to 156px. /account/plans still rendered unchanged. The only console error was the pre-login 401 from /api/auth/me on /login. Not yet checked in the browser: /catalog-v2 comparison-row manager and the recurring plan editor (needs an admin login).",
+        "2026-10-15: Admin browser check (user logged in as admin): /catalog-v2 listed the 4 seeded comparison rows; added a yes/no row IPv6 through the form (fixed the type Select collapsing to its content width by wrapping it in a 160px container, and hidden field labels now use the row name instead of the internal id). /catalog-v2/products/test-standard showed the tagline field, the 5 derived rows previewed (traffic and IPs per period, extra traffic, regions and line tier with an explanation when the inbounds lack them) and all 5 configured rows; saving with no values was refused with 请填写对比项「流媒体解锁」。, saving with all values and a tagline stored them (IPv6 as yes). Lifetime editor shows the tagline but no comparison card; add-on editor shows neither. The IPv6 test row was deleted afterwards. Console: the deliberate 400 and two 401s from earlier login switches; no page exceptions."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans/compare",
+          "/account/plans",
+          "/catalog-v2",
+          "/catalog-v2/products/test-standard",
+          "/catalog-v2/products/lifetime-basic",
+          "/catalog-v2/products/appleid-us"
+        ],
+        "interactions": [
+          "Switched to half-yearly, toggled show differences only, read the footer checkout link, checked 1024px and 375px for clipping and page overflow.",
+          "Added a yes/no comparison row on /catalog-v2, then deleted it.",
+          "Saved test-standard without comparison values (refused with the row name), then with all values and a tagline (saved)."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-15"
+      }
+    },
+    {
+      "id": "catalog-editor-compact-price-input",
+      "name": "Compact CNY price fields in the product editor",
+      "description": "Every price in the V2 product editor (period price, extra-traffic step price, lifetime price, add-on price) uses one PriceInput: Arc MoneyInput with a new size=\"md\" (standard input height and type), CNY only, no quick-add chips and no min-range line. A cleared period price stays empty while retyping instead of snapping to ¥0.00.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "recurring-plan-compare-page"
+      ],
+      "done_criteria": [
+        "Price fields match the 36px height and 14px type of the other inputs.",
+        "No quick-add chips; currency is fixed to CNY.",
+        "Typing a new price after clearing the field stores the typed amount in cents."
+      ],
+      "verification": [
+        "2026-10-15: npm run check passed. Browser (admin): on /catalog-v2/products/test-standard the period and step price fields measured 36px high with 14px text, no quick-add group, CNY shown; cleared the 30-day price and typed 35, saved, API returned priceCents 3500, then restored 3000. Before the fix the cleared field snapped to 0.00 and typing 3 gave 30.00. Lifetime and add-on price fields also measured 36px. The editor's existing other inputs and pricing-settings.tsx (old pricing page, still on the large MoneyInput) were not changed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/catalog-v2/products/test-standard",
+          "/catalog-v2/products/lifetime-basic",
+          "/catalog-v2/products/appleid-us"
+        ],
+        "interactions": [
+          "Measured price field height and text size.",
+          "Cleared and retyped the 30-day price, saved, read priceCents back, restored it."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-15"
+      }
+    },
+    {
+      "id": "pricing-selector-segmented-control",
+      "name": "Pricing page selectors use Arc SegmentedControl",
+      "description": "The billing-period and plan-type selectors on /pricing and /account/plans were Arc Tabs with shadcn trigger classes and a hand-made sliding highlight. They have no panels, so they now use Arc SegmentedControl (aria-pressed buttons, built-in gliding highlight), with the 限量 badge passed as the lifetime option accessory.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "No Tabs or hand-made highlight span remain on the pricing page.",
+        "Choosing a period updates prices; choosing 不限时套餐 hides the period selector and shows lifetime prices.",
+        "Selectors fit a 375px viewport without horizontal page scroll."
+      ],
+      "verification": [
+        "2026-10-16: npm run check passed. Browser on the running Vite dev server: /pricing desktop, clicked 年付 (cards showed / 360天) then 不限时套餐 (period group removed, cards showed / 不限时); 375px mobile: document width 375, both groups centred and not scrolling. /account/plans redirected to login in this browser, so the in-account view was not checked while signed in; it renders the same 套餐类型 control.",
+        "2026-10-16: The plan-type switch had no highlight animation because the plan section was keyed by mode, so React remounted it and its selectors on every switch (group node isConnected=false after click). Gave the section a stable key; after the fix the group stays connected and the highlight starts from the previous option (transform matrix(0.63,0,0,1,-155.9,0) 50ms after click) in both directions.",
+        "2026-10-16: Recurring plan cards no longer repeat 周期性套餐 above the description (the selector already says it); lifetime cards keep their 固定流量不限时长 line. Browser: on /pricing the main text contains 周期性套餐 once (the selector button), and the lifetime view still shows the line on each card; no 4xx responses in this page load."
+      ],
+      "browser_verification": {
+        "routes": ["/pricing"],
+        "interactions": [
+          "Selected 年付 and read the price unit.",
+          "Selected 不限时套餐 and confirmed the period selector hides.",
+          "Measured selector widths at 375px.",
+          "Switched plan type both ways and confirmed the selector is not remounted and its highlight animates."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "ticket-chat-thread-replies",
+      "name": "Ticket conversations fully on Arc ChatThread with image replies",
+      "description": "Both ticket detail pages send replies through ChatThread's own composer instead of the separate reply form. Replies can carry up to 3 screenshots (PNG/JPEG/WebP/GIF, 8MB each); the account and admin reply endpoints accept attachments through a shared ticketReplyMessage helper, and text may be empty when images are attached. Each side sees its own messages on the trailing side. Pending replies show 发送中, failures show 发送失败 with retry; closed tickets hide the composer.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Customer and admin reply from the ChatThread composer; ReplyComposer is removed.",
+        "Replies can include up to 3 images on both sides; image-only replies are accepted.",
+        "A failed send stays in the thread with a retry that delivers it once.",
+        "Closed tickets show no composer."
+      ],
+      "verification": [
+        "2026-10-16: test.js covers ticketReplyMessage (image-only reply, text-only reply without attachments key, empty reply rejected, foreign URL rejected, 4 images rejected). npm run check and npm run verify:fast passed.",
+        "2026-10-16: Browser against an isolated server on the test database (port 3100, integrations blanked). Customer page: text reply via Enter showed 发送中 then 已发送; image-only reply saved an empty message with one /uploads/markdown attachment that loaded; forced one reply request to fail, saw 发送失败 and 重试, retry saved exactly one copy. Admin page: customer messages on the left, admin reply on the right, status became pending_user; admin image-only reply uploaded through /api/markdown/images. After resolving, the admin page showed no composer and the closed notice.",
+        "2026-10-16: First run logged net::ERR_FILE_NOT_FOUND after an image reply because the local blob preview was revoked while the sent copy was still fading out. Previews are now released on unmount; repeated customer and admin image replies in a fresh tab logged no console errors. Test accounts, tickets and the four uploaded test images were removed afterwards.",
+        "2026-10-16: Fixed 提交工单 doing nothing on /account/tickets/new. The button sits outside the form and was linked only by form=create-ticket, but Arc ActionButton defaults to type=button, so it never submitted. Reproduced on the isolated test-database server: valid subject and description, click sent no request and the page stayed. Added type=submit; after rebuilding, an empty form reached the server and showed 工单主题至少需要 4 个字符 (expected 400), and a valid form created the ticket and opened its detail page; a fresh tab logged no console errors. Test account and tickets were removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/tickets/new",
+          "/account/tickets/:id",
+          "/tickets/:id"
+        ],
+        "interactions": [
+          "Sent a text reply with Enter from the customer composer.",
+          "Sent image-only and text-plus-image replies through the attach input on both sides.",
+          "Forced a failed send and retried it.",
+          "Opened a resolved ticket and confirmed the composer is hidden.",
+          "Submitted the create-ticket form empty and filled from the 提交工单 button."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "account-password-save-submit",
+      "name": "Account password form submits from 保存密码",
+      "description": "On /account/settings the 保存密码 button is an Arc ActionButton inside the change-password form, but ActionButton defaults to type=button, so neither clicking it nor pressing Enter submitted the form. It now has type=submit.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Clicking 保存密码 or pressing Enter in the form runs its submit handler.",
+        "Mismatched confirmation shows 两次输入的密码不一致 without a request.",
+        "A valid change calls PUT /api/auth/password and returns to /login."
+      ],
+      "verification": [
+        "2026-10-16: Reproduced on an isolated server on the test database: with all three password fields filled, clicking 保存密码 and pressing Enter sent no request. Added type=submit and rebuilt (npm run check passed). Mismatched confirmation showed 两次输入的密码不一致 and sent nothing; a valid change submitted by Enter returned 200 from PUT /api/auth/password and landed on /login, and the account record's updatedAt moved past createdAt. The only console error was the expected 401 from GET /api/auth/me after the session was ended. A repo-wide grep found no other ActionButton without onClick, onAction or type=submit. Test account removed afterwards."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/settings"
+        ],
+        "interactions": [
+          "Clicked 保存密码 with a mismatched confirmation.",
+          "Pressed Enter in the confirm field with a valid new password."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "ticket-thread-polish-and-card-surface",
+      "name": "White cards off the overview; ticket thread lightbox, reactions and frame",
+      "description": "User-centre cards keep the light grey surface only on the overview (/account); other user-centre pages use the default card surface (white in light mode). Arc ChatThread gains an in-page image lightbox (close button, overlay click or Escape; modified clicks still open a new tab) and hides the reaction picker for an empty list. Ticket threads enable the six reactions, saved per side through new reaction endpoints, and render ChatThread directly with its own border, rounded-4xl corners and white background instead of inside a Card.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "ticket-chat-thread-replies"
+      ],
+      "done_criteria": [
+        "Cards on non-overview user-centre pages are white in light mode; the overview keeps its grey cards.",
+        "Clicking a thread image enlarges it in the page; the close button, overlay click and Escape each close it, and no new tab opens.",
+        "The reaction picker offers the six emoji; reactions persist per side and each side sees the other's.",
+        "Resolved tickets show existing reactions but no picker, and the server rejects new reactions.",
+        "The ticket conversation is ChatThread itself with its own frame, not wrapped in a Card."
+      ],
+      "verification": [
+        "2026-10-16: test.js covers toggleTicketReaction (add per side, remove, drop empty entries, reject unknown emoji and missing message). npm run check and npm run verify:fast passed.",
+        "2026-10-16: Browser against an isolated server on the test database. /account: shell has data-account-overview and --card-surface oklch(97.3% 0 0). /account/tickets: no overview flag, --card-surface unset, the 我的工单 card computed background oklch(1 0 0). /account/tickets/:id: ChatThread root has 1px border, 26px radius, white background, 640px height and no Card ancestor. Clicking the screenshot opened a dialog titled shot.png with the image at its natural 400px and focus on 关闭图片; the close button, a click on the overlay corner and Escape each closed it; the URL and tab list were unchanged. Picker listed 👍 ❤️ 😂 🎉 👀 🙏; choosing 👍 saved {\"👍\":[\"user\"]} and survived a reload. /tickets/:id (admin): showed 👍 1 not pressed; clicking it saved [\"user\",\"admin\"] and showed 👍 2 including you. After resolving, the page had no 添加回应 button or composer, still showed 👍 2, and a direct reaction POST returned 400 已结束工单不能添加回应 (the only console error, from that probe). Test account, ticket and uploaded image were removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/tickets",
+          "/account/tickets/:id",
+          "/tickets/:id"
+        ],
+        "interactions": [
+          "Compared the card surface on the overview and the ticket list.",
+          "Opened the enlarged screenshot and closed it with the button, the overlay and Escape.",
+          "Added 👍 from the customer side and reloaded.",
+          "Added the admin's 👍 to the same message.",
+          "Opened a resolved ticket and checked the picker and composer are hidden."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "ticket-thread-header",
+      "name": "Ticket thread title row inside the ChatThread frame",
+      "description": "Arc ChatThread gains a header slot. Ticket threads use it for a title row: avatar-group for the customer and NEXORA 团队, the ticket subject, the participants, and at the end the admin's 标记已解决 button (moved from the page header; status badge once resolved) or the ticket status for the customer. The Arc demo's Go offline control is demo chrome, not part of the component, and is not reproduced.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "ticket-thread-polish-and-card-surface"
+      ],
+      "done_criteria": [
+        "Both ticket detail pages show the title row inside the thread frame, above the messages.",
+        "The admin resolve button appears once, in the title row, and still opens the confirmation and resolves the ticket.",
+        "Long subjects and emails truncate at phone width without horizontal scroll."
+      ],
+      "verification": [
+        "2026-10-16: Confirmed from https://uiarc.dev/r/chat-thread.json and the component docs that the screenshot's header (avatars, CSV export limit, Go offline) is not in the chat-thread source or API. npm run check passed.",
+        "2026-10-16: Browser against an isolated server on the test database. /account/tickets/:id: header is the first child of the ChatThread root, 61px with a 1px bottom divider, avatar group labelled 对话成员 with the customer email and NEXORA 团队, subject, participants and 待客服回复. /tickets/:id: exactly one 标记已解决 button, inside the header; it opened the existing confirmation, and confirming resolved the ticket: the header showed 已解决, the button and composer were gone and the closed notice appeared. At 375px the document stayed 375 wide and the header text truncated. Console had no errors. Test account and ticket removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/tickets/:id",
+          "/tickets/:id"
+        ],
+        "interactions": [
+          "Read the title row on the customer page.",
+          "Resolved the ticket from the title-row button through the confirmation dialog.",
+          "Checked the title row at 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "admin-ticket-sidebar-compact",
+      "name": "Compact admin ticket sidebar",
+      "description": "The admin ticket detail sidebar no longer nests cards inside the customer and related-order cards. Each card shows a compact label/value list (new shared InfoList), traffic as a list row with the plain Arc Progress bar and sync time, and a small secondary button to the user or order detail.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "No cards nested inside the customer or related-order card.",
+        "Traffic shows used / total with a plain progress bar when the quota is known; unlimited and unsynced traffic show text only.",
+        "Values such as the expiry date are no longer cut off; no horizontal scroll at 375px."
+      ],
+      "verification": [
+        "2026-10-16: npm run check passed. Browser on the running dev server, read-only (no clicks that write): /tickets/T260924-6968 sidebar has 0 nested cards; lists read 流量使用 159 GB / 200 GB, 当前套餐 PRO 套餐 · 季付 90天, 设备连接 1 / 3, 有效期 2026/12/07, and the order list 套餐 / 订单号 / 金额 / 状态; progressbar labelled 已使用流量 80% with 同步于 text; sidebar height 570px (was about 866px). At 375px the document stayed 375 wide with no element past the edge. A fresh tab logged no console errors and both API calls returned 200. An earlier tab showed ReferenceErrors from Vite hot-reloading the file between edits, before the imports were fixed; they did not recur.",
+        "2026-10-16: The customer ticket page's 工单信息 card now uses the same InfoList instead of nested cards: 当前状态 (badge), 创建时间 (back after the conversation card was removed), 最后更新, and with a related order 关联订单 / 套餐 / 金额 plus a small 查看订单详情 button. npm run check passed. Browser against an isolated server on the test database: without an order the card had 0 nested cards and the three rows; after linking a test order (inserted into the test database, server restarted to reload it) it showed all six rows and the button linked to /account/orders/<id>. 375px had no overflow and the console had no errors. Test account, ticket and order removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/tickets/:id",
+          "/account/tickets/:id"
+        ],
+        "interactions": [
+          "Read the customer and related-order cards on a ticket with a linked user, traffic and order.",
+          "Checked the sidebar at 375px.",
+          "Read the customer 工单信息 card with and without a related order."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "ticket-detail-status-badges",
+      "name": "Tickets: ticket status and reply status badges on detail and list pages",
+      "description": "Ticket detail pages show two badges only. Next to the big title: the ticket status, 进行中 (warning) or 已解决 (success). At the end of the ChatThread title row: whose turn it is from the viewer's side, 待您回复 (info) or 待客户回复 / 待客服回复 (neutral), hidden once resolved. On the admin page the 标记已解决 button sits between the title and the status badge. The customer 工单信息 card drops its 当前状态 row. Ticket list pages keep the three-state badge.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "ticket-thread-header"
+      ],
+      "done_criteria": [
+        "Each detail page shows only the title status badge and the reply status badge.",
+        "Reply status reads from the viewer's side on both pages and flips after a reply.",
+        "Admin 标记已解决 sits between the title and the status badge and still resolves the ticket.",
+        "A resolved ticket shows 已解决 and no reply badge or resolve button."
+      ],
+      "verification": [
+        "2026-10-16: npm run check passed. Browser against an isolated server on the test database. New ticket: customer page badges were 进行中 and 待客服回复 (thread title row), 工单信息 rows 创建时间 / 最后更新 only; admin page showed 标签验证, then 标记已解决, then 进行中, with 待您回复 in the thread. After the admin replied from the composer, the admin saw 待客户回复 and the customer saw 待您回复. Resolving from the title-row button through the confirmation left 已解决 as the only ticket badge, removed the button and the reply badge. Console had no errors. Test account and ticket removed.",
+        "2026-10-16: Ticket list pages switched too: the old three-state badge (待客服回复 / 待用户回复 / 已解决) is removed; each row and mobile card shows 进行中 or 已解决, plus the viewer-side reply badge while open. The customer tab and admin filter label 已结束 became 已解决. npm run check passed. Browser against an isolated server on the test database with one open and one resolved ticket: /account/tickets rows read 进行中 待客服回复 and 已解决, tabs 全部 / 进行中 / 已解决, and the 已解决 tab (?status=ended) showed only the resolved ticket; 375px cards showed both badges with no horizontal scroll. /tickets?status=all rows read 进行中 待您回复 and 已解决, and the filter offered 全部状态 / 进行中 / 已解决. Console had no errors. Test account and tickets removed.",
+        "2026-10-16: Title-row badges moved to the right and 待您回复 highlighted. Arc page-header gained statusAlign=\"end\" (title row stretches, status slot gets margin-left auto); both ticket detail pages use it. 待您回复 switched from info to danger, because info follows this project's near-black --accent and rendered grey. npm run check passed. Browser: dev server, read-only, /tickets/T260924-6968: the status slot (标记已解决 + 进行中) ended at the header's right edge (x 1330 = row right), 待您回复 had the danger class and red text; at 375px the slot wrapped to its own line, still right-aligned, no horizontal scroll; console clean. Isolated test database, customer ticket after an admin reply: 进行中 at the right edge, the customer's 待您回复 red, console clean. Test account and ticket removed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/tickets/:id",
+          "/tickets/:id",
+          "/account/tickets",
+          "/tickets"
+        ],
+        "interactions": [
+          "Read badges on both pages for an open ticket waiting on support.",
+          "Sent an admin reply and re-read both pages.",
+          "Resolved the ticket from the button beside the title.",
+          "Read list badges for an open and a resolved ticket on both list pages, switched the customer tab to 已解决 and opened the admin status filter.",
+          "Measured the title-row status slot against the header edge on both detail pages, desktop and 375px."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "theme-palette-grey-page",
+      "name": "Theme: grey page background with white cards (light) and #262626 page with #171717 cards (dark)",
+      "description": "Light mode: page background #f5f5f5, cards and the user-centre header white (header keeps its shadow), the overview gradient band removed. Dark mode: page background #262626, cards #171717. Set as global tokens in src/styles.css over Arc's foundation; bento cards use the same card surface.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Light page #f5f5f5, cards #ffffff, user-centre header white with shadow, no gradient on the overview.",
+        "Dark page #262626, cards #171717."
+      ],
+      "verification": [
+        "2026-10-17: npm run check passed. Browser on the dev server (Vite 5173), light and dark: admin /dashboard computed --background #f5f5f5 / #262626 and --surface #ffffff / #171717; /account as the seeded expired-renew@xela.test account: shell background rgb(245,245,245) / rgb(38,38,38), header rgb(255,255,255) with the 0 6px 32px shadow / rgb(23,23,23), no gradient band; /account/plans cards white on grey. All API requests 200; the only console errors were 401s from /api/auth/me on the logged-out login page before signing in."
+      ],
+      "browser_verification": {
+        "routes": ["/dashboard", "/account", "/account/plans", "/login"],
+        "interactions": [
+          "Switched between light and dark themes and read computed page, card and header colours.",
+          "Closed the announcement dialog on the overview."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "changelog",
+      "name": "Changelog: customer feed page, overview timeline card and admin publishing",
+      "description": "Release notes stored in changelog_entries (title, content, kind → changelog_tags.id, published_at). Tags live in changelog_tags (label, colour key, sort order; new/improved/fixed seeded once) and are added, renamed, recoloured and deleted in a 标签管理 dialog opened from the 管理标签 button on the 发布更新 card (colour picked from swatches; save and add are icon buttons); a tag in use cannot be deleted (409, foreign key). Admin /changelog publishes, edits and deletes entries (title, tag, content; the first content line is the summary, later lines details). Customers see /account/changelog on Arc's Changelog feed block at full width with the list growing with its entries (page scroll, month bar sticky under the header, tag chips from data) and a 更新日志 card at the end of the overview on Arc's Timeline (latest 6, tag-coloured markers). Public read API: GET /api/public/changelog → { tags, entries }. Deleting an entry or a tag asks for confirmation in an Arc dialog (ConfirmDialog), not window.confirm.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Admin can publish, edit and delete an entry with a title, tag and content.",
+        "/account/changelog lists every entry by month with tag filters and month navigation.",
+        "The overview shows the latest entries on a timeline that expands to the details and links to the full page.",
+        "Help menu in the user centre and the admin sidebar link to the new pages.",
+        "The customer feed fills the content width and its height follows the number of entries.",
+        "Admin can add, rename, recolour and delete tags; tags in use cannot be deleted.",
+        "Tag management opens in a dialog from the 发布更新 card; colours are picked from swatches; save and add are icon-only.",
+        "Deleting an entry or a tag is confirmed in an Arc dialog."
+      ],
+      "verification": [
+        "2026-10-17: npm run check passed; npm run verify:fast passed (normalizeChangelogEntry/publicChangelogEntry unit tests in test.js). Browser on the dev server (Vite 5173, local dev DB): admin /changelog published one entry through the form (toast, list count 1), 14 more sample entries posted through the admin API with random dates from 2026-07-08 to 2026-10-17, edited 新加坡节点扩容 to 新加坡节点扩容至 2Gbps through the edit button (API returned the new title, kind improved kept, publishedAt unchanged), opened and cancelled an edit. As the seeded expired-renew@xela.test account: /account overview card showed day groups 今天 / 10月7日星期三 with Chinese relative times, a row expanded to its two details, 查看全部 opened /account/changelog; the feed showed 15 条更新 with counts 新功能 7 / 优化 4 / 修复 4, the 修复 filter showed 4 / 15, the 8月 month button scrolled to August. Dark mode at 375px: both pages without horizontal scroll (scrollWidth 375). Console after a clean reload had no errors; earlier createRoot/removeChild errors came from Vite hot-reloading main.tsx during editing and did not recur.",
+        "2026-10-17: Feed width and tag management. npm run check and npm run verify:fast passed (normalizeChangelogTag tests added). Dev server restart migrated the local DB: changelog_tags seeded with 新功能/优化/修复, kind CHECK replaced by a foreign key. Admin /changelog: added a tag through the form (安全公告, blue default), renamed it to 安全通告 and saved (API label updated), deleted it while unused (200), publishing with the deleted tag was refused with 所选标签不存在，请刷新后重新选择。, re-added it, set colour danger, published 修复订阅链接泄露风险 with it through the form; DELETE then returned 409 有 1 条更新正在使用该标签 and the row's delete button was disabled. Customer /account/changelog: feed 961px = main content width, inner list 2345px tall with no inner scroll, chip 安全通告 1 in red; scrolling the page to 0/600/1200/1700/2200 showed 10月/10月/9月/8月/7月 with the month bar stuck at 65px (header height); 7月 jump scrolled the window to the July group; 375px: scrollWidth 375, bar stuck at 65px. Overview timeline shows a red dot for the 安全通告 entry. Console after a clean reload: only the deliberate 400 and 409 responses; earlier removeChild/items.map errors came from hot reload while changelog.tsx was rewritten under an open page.",
+        "2026-10-17: Tag dialog and confirm dialogs. npm run check passed. Admin /changelog after a clean reload: 管理标签 in the 发布更新 card header opened the 标签管理 dialog (size lg) listing every tag with a swatch-only colour select, entry count, check (save) and trash icon buttons; the colour menu listed nine swatches; the swatch sits centred in the trigger (centre 282.4 = trigger centre 282.4 after switching .withIcon to flex). Added 临时标签 with the icon-only add button (toast 标签已添加), its delete opened a nested confirm dialog 删除标签「临时标签」？, confirming removed it from the API and closed only the confirm. Entry 临时测试更新 (created via the admin API): delete → confirm 删除更新「临时测试更新」？; 取消 kept the entry; confirming deleted it and removed the row. Console after the reload: no errors."
+      ],
+      "browser_verification": {
+        "routes": ["/changelog", "/account", "/account/changelog"],
+        "interactions": [
+          "Opened 标签管理 from the 发布更新 card and opened a swatch colour menu.",
+          "Added a tag with the icon-only add button and deleted it through the confirm dialog.",
+          "Cancelled and then confirmed deleting an entry through the confirm dialog."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "arc-confirm-dialog",
+      "name": "Dialogs follow Arc's own layout; deletes confirm in an Arc dialog instead of window.confirm",
+      "description": "ConfirmDialog (src/components/features/confirm-dialog.tsx, on Arc Dialog) replaces every window.confirm: changelog entries and tags, V2 addon categories, compare attributes and products (catalog-v2.tsx), and V2 line groups (xui-inbounds.tsx). The delete button opens the dialog; the existing remove runs on confirm with the button loading; a failed request is toasted and keeps the dialog open. Dialog action rows follow Arc's dialog demo (uiarc.dev/components/dialog): buttons sit in the body's 24px padding, right-aligned with an 8px gap and no extra top margin; the confirming button is the solid primary button (danger is kept for page-level delete triggers). The old mt-6 from the shadcn footer pattern is gone from 35 rows: first-child rows lost it, rows in a gap-spaced grid rely on the gap, rows after content in a plain block use mt-4. The user-form wizard footer bar and the inbound drawer keep their own layout.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["changelog"],
+      "done_criteria": [
+        "No window.confirm remains in src.",
+        "Every delete opens an Arc confirm dialog; cancel keeps the record, confirm deletes it.",
+        "Dialog action rows match Arc's dialog demo: no empty band under the header, confirm action is primary."
+      ],
+      "verification": [
+        "2026-10-17: npm run check passed; grep finds no window.confirm call in src. Browser on the dev server after a clean reload (admin): /catalog-v2 compare attribute 流媒体解锁 delete opened 删除对比项「流媒体解锁」？ with the original warning text, 取消 kept it (API still lists it); a throwaway addon category 临时测试分类 (created via API) was deleted through 删除分类「临时测试分类」？ (toast 分类已删除, gone from the API and the list); /catalog-v2/products/cycled-basic 删除 opened 删除商品「BASIC 套餐」？, 取消 kept the product and stayed on the page; /xui-inbounds 编辑 basic → 删除权限组 opened 删除权限组「basic」？ over the editor, 取消 closed only the confirm and the group still exists. Changelog entry and tag deletes were checked in the changelog feature. Console after the reload: no errors.",
+        "2026-10-17: Arc dialog layout. Measured Arc's live demo (Review changes → Publish workspace): header 24px padding + 1px divider, body 24px padding, actions flex end gap 8px with no top margin, confirm button solid. npm run check passed. Browser after a clean reload: 删除标签「asd」？ shows 取消 and a solid dark 删除 directly under the divider with no empty band (cancelled, tag kept); /users 批量赠送时长 actions sit 15px below the last field (form row-gap 16px) instead of 40px; user-centre announcement dialog shows 我知道了 under the content with mt-4. Console after the reload: no errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/changelog",
+          "/users",
+          "/account",
+          "/catalog-v2",
+          "/catalog-v2/products/:id",
+          "/xui-inbounds"
+        ],
+        "interactions": [
+          "Opened and cancelled the tag delete confirm.",
+          "Opened the batch gift form dialog and measured the action row spacing.",
+          "Opened the user-centre announcement dialog.",
+          "Earlier: cancelled compare attribute, product and line group deletes; confirmed deleting a throwaway addon category."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "ui-fixes-tables-cashier-checkout",
+      "name": "Admin tables fit their columns; roomier cashier; checkout without flicker or add-ons; default overview CTA",
+      "description": "Admin list tables forced min-width = columns x 150px (simple tables 130px), so at a 1440px screen Orders (1200px) and Users (1800px) pushed 金额/状态/操作 etc. off the right edge behind a scrollbar at the bottom of the list. Arc sortable-data-table now measures each column's unwrapped and narrowest width when it locks widths: the table fills its container when the content fits, wide text columns wrap first (short columns keep their width, KEEP_COLUMN 110px) when it is a little too wide, and only a table that still cannot fit keeps its natural widths and scrolls. Cashier: amount block and sections get vertical rhythm (gap-6/gap-5, pt-3 above the amount, summary p-5, payment gap-4, action gaps 12px), card max-w-lg, separator dropped. Checkout: quote reloads no longer disable the cycle cards, slider, wallet checkbox, coupon and submit buttons (that flash was the flicker); stale quote responses are ignored and submit waits for the in-flight quote. The add-ons card is removed (orders send addOns: []); the coupon input takes the rest of the row beside 验证. Overview 遇到问题 CTA drops the transparent prop and is back to Arc's default banner surface and border.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "At 1440x900 the Orders and catalog tables show every column without horizontal scrolling; data rows are intact.",
+        "Cashier sections are no longer cramped.",
+        "Switching billing cycle or moving the traffic slider does not toggle any disabled state, and the price updates.",
+        "Checkout has no add-ons card; the coupon input spans the row.",
+        "The overview top CTA uses the default banner background and border."
+      ],
+      "verification": [
+        "2026-10-17: npm run check and npm run verify:fast passed; git diff --check clean on touched files. Browser on an isolated server (copy of the dev DB in schema arc_verify, Vite on :5180) at 1440x900: /orders table 979px in a 979px scroller with all 8 columns (was 1200px, 金额/状态/操作 hidden); /catalog-v2 both tables 979/979; /users 1649px natural width, scrolls with unwrapped cells (12 columns cannot fit); /sync-jobs and /xui-logs tables fill 1027px with rows. Checkout /account/plans/checkout?option=v2:test-standard:30d: a MutationObserver on disabled/aria-disabled/data-disabled recorded no changes while selecting 90 天 and stepping the slider twice; 待付金额 updated to ¥144.20; no 附加服务 card; coupon input fills the row. Submitted a test order and checked /cashier/:id spacing. /account CTA banner: white surface with the default border in light mode, the surface colour in dark mode, no data-transparent."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/orders",
+          "/users",
+          "/catalog-v2",
+          "/sync-jobs",
+          "/xui-logs",
+          "/dashboard",
+          "/account/plans/checkout",
+          "/cashier/:id",
+          "/account"
+        ],
+        "interactions": [
+          "Measured table and scroller widths at 1440x900 on each admin table route.",
+          "Selected the 90-day cycle and stepped the traffic slider while watching disabled attributes.",
+          "Submitted a test order and viewed the cashier.",
+          "Viewed the overview CTA in light and dark themes."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "admin-dashboard-card-layout",
+      "name": "Admin dashboard cards sized to their content, consistent headers and typography",
+      "description": "The /dashboard rows are a 12-column grid from xl (2 columns on tablets, stacked on phones) and each card spans what its content needs: 4 KPI cards (3 each); 收入趋势 (8) beside a column of compact one-number cards 待交付服务 / 待处理工单 / 当前在线人数 (4, equal rows, matching the chart height); 今日节点使用流量 and 今日用户流量 Top 5 (6 + 6); 日收入 and 用户增长 (6 + 6); 到期提醒 (8) beside 服务监控 (4). Before, the two pending cards took a full row at half width each for one number, the online count was a 1/3 card stretched to the six-row node list, and 到期提醒 spanned the full width for five short rows. Card headers are uniform (Arc Card title, then description, actions in headerAction) where 服务监控 and 今日节点使用流量 used to print the description above a hand-made heading; the online count is a compact MetricCard with loading, failure and not-configured states; both traffic rankings share one TrafficRanking list (rank, truncated name, tabular-nums bytes, bar); 到期提醒 sorts by expiry and says how many are expiring; latencies and dates use tabular-nums. Arc line-chart gains `integer` so 用户增长 shows whole-number ticks only.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "At 1440px every dashboard row ends on one line and no card is stretched far beyond its content.",
+        "All card headers show title then description, with actions beside the title.",
+        "用户增长 shows no repeated tick labels.",
+        "Tablet and phone widths lay out without horizontal overflow."
+      ],
+      "verification": [
+        "2026-10-17: npm run check and npm run verify:fast passed. Browser on an isolated server (dev DB copy in schema arc_verify, Vite :5180), /dashboard at 1440x900: 收入趋势 709x418 beside three 346x129 compact cards (待交付服务, 待处理工单, 当前在线人数) ending on the same line; with /api/xui-presence stubbed in the page (6 nodes, 5 users, 37 online), 今日节点使用流量 and 今日用户流量 Top 5 are 528x376 each; 日收入 / 用户增长 528x438; 到期提醒 709x383 beside 服务监控 346x383. Without the stub the online card shows 3x-ui 尚未配置. 1024px: KPIs 2x2, chart full width, three compact cards in one row. 375px: all cards 325px wide, scrollWidth 375. Clicked 立即刷新 and 刷新; console in a fresh tab had no errors on /dashboard and /users."
+      ],
+      "browser_verification": {
+        "routes": ["/dashboard", "/users"],
+        "interactions": [
+          "Measured every card at 1440, 1024 and 375 px.",
+          "Stubbed 3x-ui presence data in the page to view both traffic rankings filled.",
+          "Clicked 立即刷新 and the service monitor 刷新."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "account-overview-node-status-polish",
+      "name": "Subscription link field, node status layout, footer tagline and a traffic-pack button when traffic runs out",
+      "description": "Overview 订阅链接: Arc's input stylesheet outranked border-0/rounded-4xl, so the field kept its own 1px grey border and 14px radius inside the rainbow wrapper; wrapper and input are now full pills and the input's border is removed with important utilities, leaving the 2px gradient as the only outline. /account/nodes: three compact MetricCards (可用节点 with the current plan, 当前在线 with the offline count, 待解锁 with a 查看套餐 action) replace a card of nested cards; 节点列表 is one divided list instead of a card per node, each row with status dot, truncated name and access badge, then status word (coloured), latency (tabular-nums, previously never shown) and a fixed unlock column; the description adds the last check time; on phones the status row sits under the name. Footers: the 所有套餐一经支付不支持退款 tagline is gone from the user-centre and /pricing footers; Arc site-footer minimal drops the '. ' separator when the tagline is empty. Traffic used up: the plan card showed nothing in its action slot (home IP only shows for active status) and the meter badge read 即将用完; a depleted plan now shows 流量已用完，购买流量包 linking to /account/plans#addons, the plans page scrolls to the add-ons for that hash (ScrollToTop skips URLs with a hash), and usage-meter shows 已用完 when nothing is left.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The subscription field shows only the gradient outline, without an inner border or mismatched corners.",
+        "Node rows show status and latency in aligned columns; no nested cards.",
+        "No page footer shows the no-refund tagline.",
+        "With traffic used up, the overview shows a traffic pack button that lands on the add-ons."
+      ],
+      "verification": [
+        "2026-10-17: npm run check and npm run verify:fast passed. Browser on an isolated server (dev DB copy in schema arc_verify, one copied account given a test password), 1440x900: #subscription-url computed border 0 and a full radius inside the gradient pill. /account/nodes with node-status stubbed in the page (8 nodes: online, offline, maintenance, locked, dedicated): rows aligned with 在线/离线/维护中 and 38-210 ms; at 375px no horizontal overflow. Footer copyright on /account and /pricing reads © 2026 NEXORA. With self-hosted traffic stubbed as depleted (100/100 GB): before, no traffic-pack entry and badge 即将用完; after, button 流量已用完，购买流量包 and badge 已用完; clicking it opened /account/plans#addons with 附加服务 at the top (100G 流量包 listed); a direct load of that URL also lands there. Fresh-tab console on /account, /account/nodes, /account/plans#addons and /pricing: no errors."
+      ],
+      "browser_verification": {
+        "routes": ["/account", "/account/nodes", "/account/plans#addons", "/pricing"],
+        "interactions": [
+          "Inspected the subscription field's computed border and radius.",
+          "Viewed node status with stubbed node data at 1440 and 375 px.",
+          "Viewed the overview with stubbed depleted traffic and clicked 流量已用完，购买流量包."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
       }
     }
   ]

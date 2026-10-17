@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-11
-- Current Objective: 提醒设置新增：待交付提醒管理员（Telegram/邮件）与流量用尽邮件提醒用户（默认开，只对新用尽的用户发）
+- Last Updated: 2026-10-17
+- Current Objective: 订阅链接边框、节点状态排版、去掉页脚退款文案、流量用完时的购买流量包入口
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -412,8 +412,78 @@
 
 - 2026-10-11: 流量用尽邮件改为只在用户本轮新达到额度时发送，上线或开启开关时已用尽的用户不补发；npm run verify、npm run verify:harness、git diff --check 通过
 
+- 2026-10-11: npm run verify 通过；类型检查相对迁移前基线无新增错误；隔离环境巡检管理端 20 个、用户端 10 个路由及认证页、价格页，无控制台错误
+
+- 2026-10-12: npm run verify 通过；类型检查相对迁移前基线无新增错误；隔离环境下 45 个路由在浅色和深色各打开一遍，无控制台错误
+
+- 2026-10-12: npm run check 与 verify:harness 通过；/account 在 375–1920px 下顶栏与主体左右边缘一致，用户中心各路由无控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；footer 与顶栏在 375–1440px 下左右对齐，短页面贴底，站内链接无整页刷新，浅色/深色均正常
+
+- 2026-10-12: npm run check、verify:harness 通过；footer 底行在 1440/375px 正常显示，无新的控制台错误
+
+- 2026-10-12: npm run check 通过；/account/settings 与 /account/orders 在 1440px 下页面内容与顶栏对齐（144–1296），main 上内边距 24px，无新的控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；banner 与下方网格对齐，发送工单走前端路由，浅色/深色与手机宽度正常，无新控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；banner 浅色/深色警告色正常；顶栏与移动端菜单项正确，购买服务与节点状态 current 状态正确，无新控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；375px 下 banner 单行、箭头按钮 44x44；1440px 保留文字；浅色/深色为中性底色；无新控制台错误
+
+- 2026-10-12: npm run check、verify:harness 通过；浅色主题页面白底、普通卡片 #f6f6f6、顶栏柔和阴影无边线；/pricing 与深色主题未受影响；无新控制台错误
+
+- 2026-10-12: node test.js、npm run verify:fast、npm run check、npm run verify:harness 通过；/sales-settings 浏览器验证无新控制台错误
+
+- 2026-10-12: npm run check、verify:fast 通过；用户中心桌面/375px/深色主题下单行显示
+
+- 2026-10-12: npm run check、verify:fast 通过；桌面/375px 单行显示，去支付站内跳转
+
+- 2026-10-13: npm run agent:init、npm run check、verify:harness、git diff --check 通过；/account 在 1440px 与 375px、浅色与深色、0%/55%/100% 三种进度下浏览器验证，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 两个绿色徽标在浅色、深色与悬停下均为绿底白字无边框，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 在 1440px 与 375px 浏览器验证按钮位置、徽标尺寸与颜色，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 顶部透明、滚动后恢复，浅色、深色与 375px 浏览器验证，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 渐变 640px、banner 透明底与加深边框在浅色和深色下浏览器验证，无控制台错误
+
+- 2026-10-13: npm run check、verify:harness、git diff --check 通过；/account 头像在浅色和深色下浏览器验证，无控制台错误
+
+- 2026-10-15: check、npm test、verify:fast、verify:harness、test-catalog-v2 通过；客户端对比页桌面与 375px 浏览器验证通过
+
+- 2026-10-15: check、npm test、verify:fast、verify:harness、test-catalog-v2 通过；客户端对比页与后台对比项/商品编辑页浏览器验证通过
+
+- 2026-10-16: npm run check、verify:harness 通过；/pricing 桌面与 375px 浏览器检查无控制台错误
+
+- 2026-10-16: test.js 新增 ticketReplyMessage 用例；check、verify:fast、verify:harness 通过；隔离测试库上用户端与管理端文字/图片/失败重试/已解决状态浏览器检查无控制台错误
+
+- 2026-10-16: 复现：填好表单点击无请求；加 type=submit 后空表单显示服务端校验、有效表单创建工单并跳转；新标签页无控制台错误；check、verify:harness 通过
+
+- 2026-10-16: 复现点击与回车均无请求；加 type=submit 后不一致提示正常、有效修改 PUT /api/auth/password 200 并跳转 /login；check、verify:harness 通过
+
+- 2026-10-16: test.js 新增 toggleTicketReaction 用例；check、verify:fast、verify:harness 通过；隔离测试库浏览器检查卡片底色、图片放大三种关闭方式、双方回应与已解决状态
+
+- 2026-10-16: check、verify:harness 通过；隔离测试库浏览器检查用户端/管理端标题行、标记已解决流程、375px 截断，无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；开发服务器只读浏览器检查 T260924-6968 侧栏、375px 无溢出、新标签页无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；隔离测试库浏览器检查有无关联订单两种情况、375px 无溢出、无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；隔离测试库浏览器检查新建/管理员回复/已解决三个阶段两端标签，无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；隔离测试库浏览器检查用户端/管理端列表（进行中+回复状态、已解决）、已解决标签页与筛选、375px，无控制台错误
+
+- 2026-10-16: check、verify:harness 通过；开发服务器只读与隔离测试库浏览器检查两端标签靠右、待您回复红色、375px，无控制台错误
+
+- 2026-10-17: npm run check、verify:fast、verify:harness、git diff --check 通过；隔离服务器 1440x900 浏览器验证 /orders /catalog-v2 列全部可见、结账无 disabled 闪烁、收银台与 /account CTA，console_errors/page_errors 为空
+
+- 2026-10-17: npm run check、verify:fast、verify:harness、git diff --check 通过；/dashboard 1440/1024/375 浏览器验证，console_errors/page_errors 为空
+
+- 2026-10-17: npm run check、verify:fast、verify:harness、git diff --check 通过；/account /account/nodes /account/plans#addons /pricing 浏览器验证，console_errors/page_errors 为空
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `notifier.js`, `server.js`, `src/components/features/general-settings.tsx`, `src/types.ts`, `test-notifier.js`, `test-payment.js`, `test.js`
+- Files: `PROGRESS.md`, `database.js`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/components/arc/blocks/site-footer/site-footer.tsx`, `src/components/arc/line-chart/line-chart.tsx`, `src/components/arc/select/select.module.css`, `src/components/arc/select/select.tsx`, `src/components/arc/sortable-data-table/sortable-data-table.module.css`, `src/components/arc/sortable-data-table/sortable-data-table.tsx`, `src/components/arc/timeline/timeline.tsx`, `src/components/arc/usage-meter/usage-meter.tsx`, `src/components/features/account-node-status.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/arc-data-table.tsx`, `src/components/features/bills.tsx`, `src/components/features/cashier-card.tsx`, `src/components/features/cashier.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/chart-area-interactive.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/online-payment.tsx`, `src/components/features/order-summary.tsx`, `src/components/features/payment-settings.tsx`, `src/components/features/pricing-settings.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/simple-form.tsx`, `src/components/features/simple-table.tsx`, `src/components/features/ticket-pages.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `src/styles.css`, `test.js`, `src/components/arc/blocks/changelog-feed/`, `src/components/features/changelog-admin.tsx`, `src/components/features/changelog.tsx`, `src/components/features/confirm-dialog.tsx`
 - Known risks: none
-- Recommended Next Step: 保存提示遮挡保存按钮的问题待单独处理
+- Recommended Next Step: 无进行中功能；建议在开发服务器用真实 3x-ui 数据复核 /account/nodes

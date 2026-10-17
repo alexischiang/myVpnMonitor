@@ -1,10 +1,9 @@
 import type { ReactNode } from "react"
 import { Check, X } from "lucide-react"
 
-import { CardContent } from "@/components/ui/card"
-import { Item } from "@/components/ui/item"
 import { BentoCard, type BentoCardProps } from "@/components/features/bento-card"
 import { cn } from "@/lib/utils"
+import { Card } from "@/components/arc/card/card"
 
 export type PlanOfferSpec = {
   label: ReactNode
@@ -34,7 +33,7 @@ type PlanOfferCardProps = Pick<BentoCardProps, "tone" | "className"> & {
 /** Purchasable offer in the bento card style of the account overview, sized by its parent grid. */
 export function PlanOfferCard({ title, description, price, priceUnit, priceExtra, specs = [], featuresTitle, features = [], action, tone, className }: PlanOfferCardProps) {
   return <BentoCard span={null} rowSpan={null} tone={tone} title={title} className={cn("min-w-0", className)}>
-    <CardContent className="flex flex-1 flex-col gap-5">
+    <div className="flex flex-1 flex-col gap-5">
       {description ? <div className="-mt-2 text-sm text-muted-foreground">{description}</div> : null}
       <section aria-label="价格" className="flex flex-wrap items-baseline gap-2">
         <strong className="text-4xl font-semibold tracking-tight tabular-nums">{price}</strong>
@@ -42,10 +41,7 @@ export function PlanOfferCard({ title, description, price, priceUnit, priceExtra
         {priceExtra}
       </section>
       {specs.length ? <dl className="grid grid-cols-2 gap-2">
-        {specs.map((spec, index) => <Item key={index} className="grid content-start gap-1 rounded-2xl bg-background p-3">
-          <dt className="text-xs text-muted-foreground">{spec.label}</dt>
-          <dd className="truncate text-xl font-semibold tabular-nums">{spec.value}</dd>
-        </Item>)}
+        {specs.map((spec, index) => <Card key={index} className="grid content-start gap-1 rounded-2xl bg-background p-3"><dt className="text-xs text-muted-foreground">{spec.label}</dt><dd className="truncate text-xl font-semibold tabular-nums">{spec.value}</dd></Card>)}
       </dl> : null}
       {features.length ? <section aria-label={typeof featuresTitle === "string" ? featuresTitle : "套餐内容"} className="grid gap-3 text-sm">
         {featuresTitle ? <h3 className="font-semibold">{featuresTitle}</h3> : null}
@@ -56,6 +52,6 @@ export function PlanOfferCard({ title, description, price, priceUnit, priceExtra
         })}
       </section> : null}
       <div className="mt-auto grid pt-2 [&>*]:w-full">{action}</div>
-    </CardContent>
+    </div>
   </BentoCard>
 }

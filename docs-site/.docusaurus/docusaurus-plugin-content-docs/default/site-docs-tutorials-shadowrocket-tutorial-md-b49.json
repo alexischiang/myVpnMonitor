@@ -1,0 +1,28 @@
+{
+  "id": "tutorials/shadowrocket-tutorial",
+  "title": "Shadowrocket 使用教程",
+  "description": "在 iPhone 或 iPad 上安装 Shadowrocket、导入订阅并连接节点。",
+  "source": "@site/docs/tutorials/shadowrocket-tutorial.md",
+  "sourceDirName": "tutorials",
+  "slug": "/tutorials/shadowrocket-tutorial",
+  "permalink": "/docs/tutorials/shadowrocket-tutorial",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 2,
+  "frontMatter": {
+    "title": "Shadowrocket 使用教程",
+    "sidebar_position": 2,
+    "description": "在 iPhone 或 iPad 上安装 Shadowrocket、导入订阅并连接节点。"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Mac/Windows 教程",
+    "permalink": "/docs/tutorials/clash-verge-tutorial"
+  },
+  "next": {
+    "title": "安卓Android 教程",
+    "permalink": "/docs/tutorials/and-flclash-tutorial"
+  }
+}

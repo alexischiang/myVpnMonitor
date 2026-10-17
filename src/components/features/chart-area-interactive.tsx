@@ -1,42 +1,10 @@
 import * as React from "react"
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, XAxis, YAxis } from "recharts"
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  ChartConfig,
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart"
+import { BarChart } from "@/components/arc/bar-chart/bar-chart"
+import { LineChart } from "@/components/arc/line-chart/line-chart"
 import type { Bill, User } from "@/types"
 import { formatMoney } from "@/utils"
-
-const monthlyIncomeConfig = {
-  income: {
-    label: "收入",
-    color: "var(--chart-1)",
-  },
-} satisfies ChartConfig
-
-const dailyIncomeConfig = {
-  income: {
-    label: "日收入",
-    color: "var(--chart-2)",
-  },
-} satisfies ChartConfig
-
-const userGrowthConfig = {
-  newUsers: {
-    label: "新增用户",
-    color: "var(--chart-1)",
-  },
-} satisfies ChartConfig
+import { Card } from "@/components/arc/card/card"
 
 function dateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
@@ -126,70 +94,19 @@ function formatAxisCount(value: number) {
   return `${Math.round(value)}`
 }
 
-function formatMoneyLabel(value: unknown) {
-  return formatAxisMoney(Number(value) || 0)
-}
-
-function formatCountLabel(value: unknown) {
-  return formatAxisCount(Number(value) || 0)
-}
-
 export function ChartAreaInteractive({ bills }: { bills: Bill[] }) {
   const data = React.useMemo(() => buildMonthlyIncomeData(bills), [bills])
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>收入趋势</CardTitle>
-        <CardDescription>
-          最近 6 个月有效账单收入
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={monthlyIncomeConfig} className="aspect-auto h-64">
-          <AreaChart data={data}>
-            <defs>
-              <linearGradient id="fillIncome" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="var(--color-income)" stopOpacity={0.8} />
-                <stop offset="95%" stopColor="var(--color-income)" stopOpacity={0.1} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid vertical={false} />
-            <XAxis
-              dataKey="label"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-            />
-            <YAxis
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={formatAxisMoney}
-              width={72}
-            />
-            <ChartTooltip
-              cursor={false}
-              content={<ChartTooltipContent indicator="dot" />}
-            />
-            <Area
-              dataKey="income"
-              type="natural"
-              fill="url(#fillIncome)"
-              stroke="var(--color-income)"
-              stackId="a"
-            >
-              <LabelList
-                dataKey="income"
-                position="top"
-                offset={8}
-                formatter={formatMoneyLabel}
-                fill="var(--foreground)"
-              />
-            </Area>
-          </AreaChart>
-        </ChartContainer>
-      </CardContent>
+    <Card title="收入趋势" description="最近 6 个月有效账单收入">
+      <LineChart
+        label="月收入"
+        height={256}
+        data={data.map(item => ({ key: item.month, label: item.label, axisLabel: item.label, values: { income: item.income } }))}
+        series={[{ key: "income", label: "收入" }]}
+        formatValue={value => formatMoney(value)}
+        formatTick={formatAxisMoney}
+      />
     </Card>
   )
 }
@@ -198,46 +115,16 @@ export function DailyIncomeChart({ bills }: { bills: Bill[] }) {
   const data = React.useMemo(() => buildDailyIncomeData(bills), [bills])
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>日收入</CardTitle>
-        <CardDescription>
-          最近 14 天有效账单收入
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={dailyIncomeConfig} className="aspect-auto h-64">
-          <BarChart data={data}>
-            <CartesianGrid vertical={false} />
-            <XAxis
-              dataKey="label"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-            />
-            <YAxis
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={formatAxisMoney}
-              width={72}
-            />
-            <ChartTooltip
-              cursor={false}
-              content={<ChartTooltipContent indicator="dot" />}
-            />
-            <Bar dataKey="income" fill="var(--color-income)" radius={4}>
-              <LabelList
-                dataKey="income"
-                position="top"
-                offset={8}
-                formatter={formatMoneyLabel}
-                fill="var(--foreground)"
-              />
-            </Bar>
-          </BarChart>
-        </ChartContainer>
-      </CardContent>
+    <Card title="日收入" description="最近 14 天有效账单收入">
+      <BarChart
+        label="日收入"
+        period="最近 14 天"
+        averageLabel="日均收入"
+        valueLabel="当日收入"
+        height={200}
+        data={data.map(item => ({ key: item.day, label: item.label, axisLabel: item.label, value: item.income }))}
+        formatValue={value => formatMoney(value)}
+      />
     </Card>
   )
 }
@@ -246,53 +133,16 @@ export function UserGrowthChart({ users }: { users: User[] }) {
   const data = React.useMemo(() => buildUserGrowthData(users), [users])
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>用户增长</CardTitle>
-        <CardDescription>
-          最近 14 天新增用户数
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={userGrowthConfig} className="aspect-auto h-64">
-          <LineChart data={data}>
-            <CartesianGrid vertical={false} />
-            <XAxis
-              dataKey="label"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-            />
-            <YAxis
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={formatAxisCount}
-              width={40}
-              allowDecimals={false}
-            />
-            <ChartTooltip
-              cursor={false}
-              content={<ChartTooltipContent indicator="dot" />}
-            />
-            <Line
-              dataKey="newUsers"
-              type="monotone"
-              stroke="var(--color-newUsers)"
-              strokeWidth={2}
-              dot
-            >
-              <LabelList
-                dataKey="newUsers"
-                position="top"
-                offset={8}
-                formatter={formatCountLabel}
-                fill="var(--foreground)"
-              />
-            </Line>
-          </LineChart>
-        </ChartContainer>
-      </CardContent>
+    <Card title="用户增长" description="最近 14 天新增用户数">
+      <LineChart
+        label="新增用户"
+        height={256}
+        data={data.map(item => ({ key: item.day, label: item.label, axisLabel: item.label, values: { newUsers: item.newUsers } }))}
+        series={[{ key: "newUsers", label: "新增用户" }]}
+        formatValue={value => formatAxisCount(value)}
+        formatTick={formatAxisCount}
+        integer
+      />
     </Card>
   )
 }

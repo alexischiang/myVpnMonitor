@@ -1,0 +1,73 @@
+.button { position: relative; display: inline-flex; min-height: var(--control-height-md); align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid transparent; border-radius: var(--radius-control); padding: 0 var(--space-4); font: inherit; font-size: var(--text-sm); font-weight: 500; line-height: var(--leading-body); white-space: nowrap; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
+.button:disabled { cursor: not-allowed; opacity: .52; }
+.button[aria-busy="true"] { cursor: progress; }
+/* Anchors of floating layers never scale: Radix opens on pointerdown and would measure a shrunken trigger. */
+.button:is([aria-haspopup]:not([aria-haspopup="false"]), [data-state], [role="combobox"]) { transform: none !important; }
+/* The slot's width follows the incoming label on a spring. The label stays centered and may overflow evenly while the slot catches up;
+   the outgoing label pops out of flow against the slot itself, so it keeps its place instead of following the new content box. */
+.labelSlot { position: relative; display: inline-flex; min-width: 0; align-items: center; justify-content: center; transition: opacity var(--duration-fast) var(--ease-standard); }
+.labelSlot[data-morphing] { clip-path: inset(-50% calc(var(--space-3) * -1)); }
+.labelContent { display: inline-flex; flex: none; align-items: center; }
+.labelPhase { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); white-space: nowrap; }
+.labelPhase svg { flex: none; }
+.primary { color: var(--background); background: var(--foreground); border-color: var(--foreground); }
+.secondary { color: var(--foreground); background: var(--surface); border-color: var(--border); }
+.ghost { color: var(--text-secondary); background: transparent; border-color: transparent; }
+.danger { color: var(--danger); background: var(--surface); border-color: var(--border); }
+/* A disabled outlined button keeps its shape and fades only its label, so it still reads as a button that is off, not as plain text. */
+.secondary:disabled, .danger:disabled { opacity: 1; color: var(--text-muted); background: var(--surface-muted); border-color: var(--border); }
+.danger:disabled { color: color-mix(in oklab, var(--danger) 55%, var(--surface-muted)); }
+.ghost:disabled { opacity: 1; color: var(--text-muted); }
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover:not(:disabled) { opacity: .91; box-shadow: var(--shadow-resting); }
+  .secondary:hover:not(:disabled) { background: var(--surface-muted); box-shadow: var(--shadow-resting); }
+  .ghost:hover:not(:disabled) { color: var(--foreground); background: var(--surface-muted); }
+  .danger:hover:not(:disabled) { border-color: var(--danger); background: var(--surface-muted); }
+}
+/* Color feedback on press, so touch and menu triggers (which never scale) still answer the finger. */
+.primary:active:not(:disabled) { opacity: .84; }
+.secondary:active:not(:disabled), .ghost:active:not(:disabled) { color: var(--foreground); background: var(--surface-muted); }
+.danger:active:not(:disabled) { border-color: var(--danger); background: var(--surface-muted); }
+/* XELA extension: link, success and orange variants, and square icon sizes. */
+.link { min-height: 0; padding: 0; color: var(--foreground); background: transparent; border-color: transparent; border-radius: var(--space-1); text-underline-offset: 4px; }
+.success { color: var(--background); background: var(--success); border-color: var(--success); }
+.orange { color: #fff; background: #ff592c; border-color: #ff592c; }
+@media (hover: hover) and (pointer: fine) {
+  .link:hover:not(:disabled) { text-decoration: underline; }
+  .success:hover:not(:disabled), .orange:hover:not(:disabled) { opacity: .91; box-shadow: var(--shadow-resting); }
+}
+.success:active:not(:disabled), .orange:active:not(:disabled) { opacity: .84; }
+.icon { width: var(--control-height-md); padding: 0; }
+.iconSm { width: var(--control-height-sm); min-height: var(--control-height-sm); padding: 0; }
+a.button { text-decoration: none; }
+a.link:hover { text-decoration: underline; }
+.button[aria-disabled="true"]:is(a) { pointer-events: none; opacity: .52; }
+.sm { min-height: var(--control-height-sm); padding-inline: var(--space-3); font-size: var(--text-sm); }
+.md { min-height: var(--control-height-md); }
+.lg { min-height: var(--control-height-lg); padding-inline: var(--space-5); font-size: var(--text-sm); }
+.loader { position: absolute; left: 50%; top: 50%; display: grid; width: var(--space-4); height: var(--space-4); margin: calc(var(--space-4) / -2); }
+.spinner { border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+.loadingLabel { opacity: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .button { transition: none; } .labelSlot { transition: opacity var(--duration-instant) linear; } .spinner { animation-duration: .01ms; animation-iteration-count: 1; } }
+
+/* XELA extension: the softer orange variants (tokens come from the orange scale in src/styles.css). */
+.orangeSoft { color: var(--color-orange-1100); background: var(--color-orange-200); border-color: transparent; }
+.orangeOutline { color: var(--color-orange-1000); background: transparent; border-color: var(--color-orange-700); }
+.orangeGhost { color: var(--color-orange-1000); background: transparent; border-color: transparent; }
+.orangeLink { min-height: 0; padding: 0; color: var(--color-orange-900); background: transparent; border-color: transparent; border-radius: var(--space-1); text-underline-offset: 4px; }
+:root[data-theme="dark"] .orangeSoft { color: var(--color-orange-100); background: var(--color-orange-1100); }
+:root[data-theme="dark"] .orangeOutline { color: var(--color-orange-300); border-color: var(--color-orange-500); }
+:root[data-theme="dark"] .orangeGhost { color: var(--color-orange-300); }
+:root[data-theme="dark"] .orangeLink { color: var(--color-orange-400); }
+@media (hover: hover) and (pointer: fine) {
+  .orangeSoft:hover:not(:disabled) { background: var(--color-orange-300); }
+  .orangeOutline:hover:not(:disabled), .orangeGhost:hover:not(:disabled) { background: var(--color-orange-100); }
+  :root[data-theme="dark"] .orangeSoft:hover:not(:disabled) { background: var(--color-orange-1000); }
+  :root[data-theme="dark"] :is(.orangeOutline, .orangeGhost):hover:not(:disabled) { background: var(--color-orange-1100); }
+  .orangeLink:hover:not(:disabled) { text-decoration: underline; }
+}
+
+/* XELA extension: icons passed in without a size class take the size that fits the control (lucide icons default to 24px). */
+.button svg:not([class*="size-"]) { width: 1rem; height: 1rem; flex: none; }
+.button:is(.sm, .iconSm) svg:not([class*="size-"]) { width: .875rem; height: .875rem; }
