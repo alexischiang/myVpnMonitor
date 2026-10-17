@@ -232,7 +232,6 @@ export function DataTable<TData, TValue>({
             rows={arcRows}
             columns={arcColumns}
             rowKey="__id"
-            minWidth={visibleColumns.length * 150}
             caption={searchPlaceholder === "搜索..." ? "数据表" : searchPlaceholder.replace(/^搜索/, "").replace(/[.…]+$/, "") || "数据表"}
             defaultSort={sorting[0] ? { key: sorting[0].id, direction: sorting[0].desc ? "desc" : "asc" } : undefined}
             onSortChange={sort => setSorting([{ id: sort.key, desc: sort.direction === "desc" }])}

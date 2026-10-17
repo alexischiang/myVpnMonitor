@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-16",
+  "updated_at": "2026-10-17",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -3705,6 +3705,197 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-16"
+      }
+    },
+    {
+      "id": "theme-palette-grey-page",
+      "name": "Theme: grey page background with white cards (light) and #262626 page with #171717 cards (dark)",
+      "description": "Light mode: page background #f5f5f5, cards and the user-centre header white (header keeps its shadow), the overview gradient band removed. Dark mode: page background #262626, cards #171717. Set as global tokens in src/styles.css over Arc's foundation; bento cards use the same card surface.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Light page #f5f5f5, cards #ffffff, user-centre header white with shadow, no gradient on the overview.",
+        "Dark page #262626, cards #171717."
+      ],
+      "verification": [
+        "2026-10-17: npm run check passed. Browser on the dev server (Vite 5173), light and dark: admin /dashboard computed --background #f5f5f5 / #262626 and --surface #ffffff / #171717; /account as the seeded expired-renew@xela.test account: shell background rgb(245,245,245) / rgb(38,38,38), header rgb(255,255,255) with the 0 6px 32px shadow / rgb(23,23,23), no gradient band; /account/plans cards white on grey. All API requests 200; the only console errors were 401s from /api/auth/me on the logged-out login page before signing in."
+      ],
+      "browser_verification": {
+        "routes": ["/dashboard", "/account", "/account/plans", "/login"],
+        "interactions": [
+          "Switched between light and dark themes and read computed page, card and header colours.",
+          "Closed the announcement dialog on the overview."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "changelog",
+      "name": "Changelog: customer feed page, overview timeline card and admin publishing",
+      "description": "Release notes stored in changelog_entries (title, content, kind → changelog_tags.id, published_at). Tags live in changelog_tags (label, colour key, sort order; new/improved/fixed seeded once) and are added, renamed, recoloured and deleted in a 标签管理 dialog opened from the 管理标签 button on the 发布更新 card (colour picked from swatches; save and add are icon buttons); a tag in use cannot be deleted (409, foreign key). Admin /changelog publishes, edits and deletes entries (title, tag, content; the first content line is the summary, later lines details). Customers see /account/changelog on Arc's Changelog feed block at full width with the list growing with its entries (page scroll, month bar sticky under the header, tag chips from data) and a 更新日志 card at the end of the overview on Arc's Timeline (latest 6, tag-coloured markers). Public read API: GET /api/public/changelog → { tags, entries }. Deleting an entry or a tag asks for confirmation in an Arc dialog (ConfirmDialog), not window.confirm.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Admin can publish, edit and delete an entry with a title, tag and content.",
+        "/account/changelog lists every entry by month with tag filters and month navigation.",
+        "The overview shows the latest entries on a timeline that expands to the details and links to the full page.",
+        "Help menu in the user centre and the admin sidebar link to the new pages.",
+        "The customer feed fills the content width and its height follows the number of entries.",
+        "Admin can add, rename, recolour and delete tags; tags in use cannot be deleted.",
+        "Tag management opens in a dialog from the 发布更新 card; colours are picked from swatches; save and add are icon-only.",
+        "Deleting an entry or a tag is confirmed in an Arc dialog."
+      ],
+      "verification": [
+        "2026-10-17: npm run check passed; npm run verify:fast passed (normalizeChangelogEntry/publicChangelogEntry unit tests in test.js). Browser on the dev server (Vite 5173, local dev DB): admin /changelog published one entry through the form (toast, list count 1), 14 more sample entries posted through the admin API with random dates from 2026-07-08 to 2026-10-17, edited 新加坡节点扩容 to 新加坡节点扩容至 2Gbps through the edit button (API returned the new title, kind improved kept, publishedAt unchanged), opened and cancelled an edit. As the seeded expired-renew@xela.test account: /account overview card showed day groups 今天 / 10月7日星期三 with Chinese relative times, a row expanded to its two details, 查看全部 opened /account/changelog; the feed showed 15 条更新 with counts 新功能 7 / 优化 4 / 修复 4, the 修复 filter showed 4 / 15, the 8月 month button scrolled to August. Dark mode at 375px: both pages without horizontal scroll (scrollWidth 375). Console after a clean reload had no errors; earlier createRoot/removeChild errors came from Vite hot-reloading main.tsx during editing and did not recur.",
+        "2026-10-17: Feed width and tag management. npm run check and npm run verify:fast passed (normalizeChangelogTag tests added). Dev server restart migrated the local DB: changelog_tags seeded with 新功能/优化/修复, kind CHECK replaced by a foreign key. Admin /changelog: added a tag through the form (安全公告, blue default), renamed it to 安全通告 and saved (API label updated), deleted it while unused (200), publishing with the deleted tag was refused with 所选标签不存在，请刷新后重新选择。, re-added it, set colour danger, published 修复订阅链接泄露风险 with it through the form; DELETE then returned 409 有 1 条更新正在使用该标签 and the row's delete button was disabled. Customer /account/changelog: feed 961px = main content width, inner list 2345px tall with no inner scroll, chip 安全通告 1 in red; scrolling the page to 0/600/1200/1700/2200 showed 10月/10月/9月/8月/7月 with the month bar stuck at 65px (header height); 7月 jump scrolled the window to the July group; 375px: scrollWidth 375, bar stuck at 65px. Overview timeline shows a red dot for the 安全通告 entry. Console after a clean reload: only the deliberate 400 and 409 responses; earlier removeChild/items.map errors came from hot reload while changelog.tsx was rewritten under an open page.",
+        "2026-10-17: Tag dialog and confirm dialogs. npm run check passed. Admin /changelog after a clean reload: 管理标签 in the 发布更新 card header opened the 标签管理 dialog (size lg) listing every tag with a swatch-only colour select, entry count, check (save) and trash icon buttons; the colour menu listed nine swatches; the swatch sits centred in the trigger (centre 282.4 = trigger centre 282.4 after switching .withIcon to flex). Added 临时标签 with the icon-only add button (toast 标签已添加), its delete opened a nested confirm dialog 删除标签「临时标签」？, confirming removed it from the API and closed only the confirm. Entry 临时测试更新 (created via the admin API): delete → confirm 删除更新「临时测试更新」？; 取消 kept the entry; confirming deleted it and removed the row. Console after the reload: no errors."
+      ],
+      "browser_verification": {
+        "routes": ["/changelog", "/account", "/account/changelog"],
+        "interactions": [
+          "Opened 标签管理 from the 发布更新 card and opened a swatch colour menu.",
+          "Added a tag with the icon-only add button and deleted it through the confirm dialog.",
+          "Cancelled and then confirmed deleting an entry through the confirm dialog."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "arc-confirm-dialog",
+      "name": "Dialogs follow Arc's own layout; deletes confirm in an Arc dialog instead of window.confirm",
+      "description": "ConfirmDialog (src/components/features/confirm-dialog.tsx, on Arc Dialog) replaces every window.confirm: changelog entries and tags, V2 addon categories, compare attributes and products (catalog-v2.tsx), and V2 line groups (xui-inbounds.tsx). The delete button opens the dialog; the existing remove runs on confirm with the button loading; a failed request is toasted and keeps the dialog open. Dialog action rows follow Arc's dialog demo (uiarc.dev/components/dialog): buttons sit in the body's 24px padding, right-aligned with an 8px gap and no extra top margin; the confirming button is the solid primary button (danger is kept for page-level delete triggers). The old mt-6 from the shadcn footer pattern is gone from 35 rows: first-child rows lost it, rows in a gap-spaced grid rely on the gap, rows after content in a plain block use mt-4. The user-form wizard footer bar and the inbound drawer keep their own layout.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": ["changelog"],
+      "done_criteria": [
+        "No window.confirm remains in src.",
+        "Every delete opens an Arc confirm dialog; cancel keeps the record, confirm deletes it.",
+        "Dialog action rows match Arc's dialog demo: no empty band under the header, confirm action is primary."
+      ],
+      "verification": [
+        "2026-10-17: npm run check passed; grep finds no window.confirm call in src. Browser on the dev server after a clean reload (admin): /catalog-v2 compare attribute 流媒体解锁 delete opened 删除对比项「流媒体解锁」？ with the original warning text, 取消 kept it (API still lists it); a throwaway addon category 临时测试分类 (created via API) was deleted through 删除分类「临时测试分类」？ (toast 分类已删除, gone from the API and the list); /catalog-v2/products/cycled-basic 删除 opened 删除商品「BASIC 套餐」？, 取消 kept the product and stayed on the page; /xui-inbounds 编辑 basic → 删除权限组 opened 删除权限组「basic」？ over the editor, 取消 closed only the confirm and the group still exists. Changelog entry and tag deletes were checked in the changelog feature. Console after the reload: no errors.",
+        "2026-10-17: Arc dialog layout. Measured Arc's live demo (Review changes → Publish workspace): header 24px padding + 1px divider, body 24px padding, actions flex end gap 8px with no top margin, confirm button solid. npm run check passed. Browser after a clean reload: 删除标签「asd」？ shows 取消 and a solid dark 删除 directly under the divider with no empty band (cancelled, tag kept); /users 批量赠送时长 actions sit 15px below the last field (form row-gap 16px) instead of 40px; user-centre announcement dialog shows 我知道了 under the content with mt-4. Console after the reload: no errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/changelog",
+          "/users",
+          "/account",
+          "/catalog-v2",
+          "/catalog-v2/products/:id",
+          "/xui-inbounds"
+        ],
+        "interactions": [
+          "Opened and cancelled the tag delete confirm.",
+          "Opened the batch gift form dialog and measured the action row spacing.",
+          "Opened the user-centre announcement dialog.",
+          "Earlier: cancelled compare attribute, product and line group deletes; confirmed deleting a throwaway addon category."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "ui-fixes-tables-cashier-checkout",
+      "name": "Admin tables fit their columns; roomier cashier; checkout without flicker or add-ons; default overview CTA",
+      "description": "Admin list tables forced min-width = columns x 150px (simple tables 130px), so at a 1440px screen Orders (1200px) and Users (1800px) pushed 金额/状态/操作 etc. off the right edge behind a scrollbar at the bottom of the list. Arc sortable-data-table now measures each column's unwrapped and narrowest width when it locks widths: the table fills its container when the content fits, wide text columns wrap first (short columns keep their width, KEEP_COLUMN 110px) when it is a little too wide, and only a table that still cannot fit keeps its natural widths and scrolls. Cashier: amount block and sections get vertical rhythm (gap-6/gap-5, pt-3 above the amount, summary p-5, payment gap-4, action gaps 12px), card max-w-lg, separator dropped. Checkout: quote reloads no longer disable the cycle cards, slider, wallet checkbox, coupon and submit buttons (that flash was the flicker); stale quote responses are ignored and submit waits for the in-flight quote. The add-ons card is removed (orders send addOns: []); the coupon input takes the rest of the row beside 验证. Overview 遇到问题 CTA drops the transparent prop and is back to Arc's default banner surface and border.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "At 1440x900 the Orders and catalog tables show every column without horizontal scrolling; data rows are intact.",
+        "Cashier sections are no longer cramped.",
+        "Switching billing cycle or moving the traffic slider does not toggle any disabled state, and the price updates.",
+        "Checkout has no add-ons card; the coupon input spans the row.",
+        "The overview top CTA uses the default banner background and border."
+      ],
+      "verification": [
+        "2026-10-17: npm run check and npm run verify:fast passed; git diff --check clean on touched files. Browser on an isolated server (copy of the dev DB in schema arc_verify, Vite on :5180) at 1440x900: /orders table 979px in a 979px scroller with all 8 columns (was 1200px, 金额/状态/操作 hidden); /catalog-v2 both tables 979/979; /users 1649px natural width, scrolls with unwrapped cells (12 columns cannot fit); /sync-jobs and /xui-logs tables fill 1027px with rows. Checkout /account/plans/checkout?option=v2:test-standard:30d: a MutationObserver on disabled/aria-disabled/data-disabled recorded no changes while selecting 90 天 and stepping the slider twice; 待付金额 updated to ¥144.20; no 附加服务 card; coupon input fills the row. Submitted a test order and checked /cashier/:id spacing. /account CTA banner: white surface with the default border in light mode, the surface colour in dark mode, no data-transparent."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/orders",
+          "/users",
+          "/catalog-v2",
+          "/sync-jobs",
+          "/xui-logs",
+          "/dashboard",
+          "/account/plans/checkout",
+          "/cashier/:id",
+          "/account"
+        ],
+        "interactions": [
+          "Measured table and scroller widths at 1440x900 on each admin table route.",
+          "Selected the 90-day cycle and stepped the traffic slider while watching disabled attributes.",
+          "Submitted a test order and viewed the cashier.",
+          "Viewed the overview CTA in light and dark themes."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "admin-dashboard-card-layout",
+      "name": "Admin dashboard cards sized to their content, consistent headers and typography",
+      "description": "The /dashboard rows are a 12-column grid from xl (2 columns on tablets, stacked on phones) and each card spans what its content needs: 4 KPI cards (3 each); 收入趋势 (8) beside a column of compact one-number cards 待交付服务 / 待处理工单 / 当前在线人数 (4, equal rows, matching the chart height); 今日节点使用流量 and 今日用户流量 Top 5 (6 + 6); 日收入 and 用户增长 (6 + 6); 到期提醒 (8) beside 服务监控 (4). Before, the two pending cards took a full row at half width each for one number, the online count was a 1/3 card stretched to the six-row node list, and 到期提醒 spanned the full width for five short rows. Card headers are uniform (Arc Card title, then description, actions in headerAction) where 服务监控 and 今日节点使用流量 used to print the description above a hand-made heading; the online count is a compact MetricCard with loading, failure and not-configured states; both traffic rankings share one TrafficRanking list (rank, truncated name, tabular-nums bytes, bar); 到期提醒 sorts by expiry and says how many are expiring; latencies and dates use tabular-nums. Arc line-chart gains `integer` so 用户增长 shows whole-number ticks only.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "At 1440px every dashboard row ends on one line and no card is stretched far beyond its content.",
+        "All card headers show title then description, with actions beside the title.",
+        "用户增长 shows no repeated tick labels.",
+        "Tablet and phone widths lay out without horizontal overflow."
+      ],
+      "verification": [
+        "2026-10-17: npm run check and npm run verify:fast passed. Browser on an isolated server (dev DB copy in schema arc_verify, Vite :5180), /dashboard at 1440x900: 收入趋势 709x418 beside three 346x129 compact cards (待交付服务, 待处理工单, 当前在线人数) ending on the same line; with /api/xui-presence stubbed in the page (6 nodes, 5 users, 37 online), 今日节点使用流量 and 今日用户流量 Top 5 are 528x376 each; 日收入 / 用户增长 528x438; 到期提醒 709x383 beside 服务监控 346x383. Without the stub the online card shows 3x-ui 尚未配置. 1024px: KPIs 2x2, chart full width, three compact cards in one row. 375px: all cards 325px wide, scrollWidth 375. Clicked 立即刷新 and 刷新; console in a fresh tab had no errors on /dashboard and /users."
+      ],
+      "browser_verification": {
+        "routes": ["/dashboard", "/users"],
+        "interactions": [
+          "Measured every card at 1440, 1024 and 375 px.",
+          "Stubbed 3x-ui presence data in the page to view both traffic rankings filled.",
+          "Clicked 立即刷新 and the service monitor 刷新."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "account-overview-node-status-polish",
+      "name": "Subscription link field, node status layout, footer tagline and a traffic-pack button when traffic runs out",
+      "description": "Overview 订阅链接: Arc's input stylesheet outranked border-0/rounded-4xl, so the field kept its own 1px grey border and 14px radius inside the rainbow wrapper; wrapper and input are now full pills and the input's border is removed with important utilities, leaving the 2px gradient as the only outline. /account/nodes: three compact MetricCards (可用节点 with the current plan, 当前在线 with the offline count, 待解锁 with a 查看套餐 action) replace a card of nested cards; 节点列表 is one divided list instead of a card per node, each row with status dot, truncated name and access badge, then status word (coloured), latency (tabular-nums, previously never shown) and a fixed unlock column; the description adds the last check time; on phones the status row sits under the name. Footers: the 所有套餐一经支付不支持退款 tagline is gone from the user-centre and /pricing footers; Arc site-footer minimal drops the '. ' separator when the tagline is empty. Traffic used up: the plan card showed nothing in its action slot (home IP only shows for active status) and the meter badge read 即将用完; a depleted plan now shows 流量已用完，购买流量包 linking to /account/plans#addons, the plans page scrolls to the add-ons for that hash (ScrollToTop skips URLs with a hash), and usage-meter shows 已用完 when nothing is left.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The subscription field shows only the gradient outline, without an inner border or mismatched corners.",
+        "Node rows show status and latency in aligned columns; no nested cards.",
+        "No page footer shows the no-refund tagline.",
+        "With traffic used up, the overview shows a traffic pack button that lands on the add-ons."
+      ],
+      "verification": [
+        "2026-10-17: npm run check and npm run verify:fast passed. Browser on an isolated server (dev DB copy in schema arc_verify, one copied account given a test password), 1440x900: #subscription-url computed border 0 and a full radius inside the gradient pill. /account/nodes with node-status stubbed in the page (8 nodes: online, offline, maintenance, locked, dedicated): rows aligned with 在线/离线/维护中 and 38-210 ms; at 375px no horizontal overflow. Footer copyright on /account and /pricing reads © 2026 NEXORA. With self-hosted traffic stubbed as depleted (100/100 GB): before, no traffic-pack entry and badge 即将用完; after, button 流量已用完，购买流量包 and badge 已用完; clicking it opened /account/plans#addons with 附加服务 at the top (100G 流量包 listed); a direct load of that URL also lands there. Fresh-tab console on /account, /account/nodes, /account/plans#addons and /pricing: no errors."
+      ],
+      "browser_verification": {
+        "routes": ["/account", "/account/nodes", "/account/plans#addons", "/pricing"],
+        "interactions": [
+          "Inspected the subscription field's computed border and radius.",
+          "Viewed node status with stubbed node data at 1440 and 375 px.",
+          "Viewed the overview with stubbed depleted traffic and clicked 流量已用完，购买流量包."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-17"
       }
     }
   ]

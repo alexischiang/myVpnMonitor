@@ -161,7 +161,7 @@ export function SimpleFormDialog({
               )
             })}
           </FieldGroup>
-          <div className="mt-6 flex flex-wrap justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
               取消
             </Button>

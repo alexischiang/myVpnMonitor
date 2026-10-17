@@ -55,7 +55,7 @@ export interface TimelineProps {
 }
 
 type Row = TimelineEvent & { time: number; day: string };
-type Group = { day: string; label: string; rows: Row[] };
+type Group = { day: string; label: string; today: boolean; rows: Row[] };
 
 const HOUR = 3_600_000;
 const enter = [...motionTokens.ease.enter] as [number, number, number, number];
@@ -106,12 +106,13 @@ function dayKey(time: number, timeZone: string) {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+// XELA extension: relative times, day labels, counts and announcements are Chinese.
 function relative(time: number, now: number) {
   const minutes = Math.max(0, Math.floor((now - time) / 60_000));
-  if (minutes < 1) return { short: "Now", long: "just now" };
-  if (minutes < 60) return { short: `${minutes}m`, long: `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago` };
+  if (minutes < 1) return { short: "刚刚", long: "刚刚" };
+  if (minutes < 60) return { short: `${minutes} 分钟前`, long: `${minutes} 分钟前` };
   const hours = Math.floor(minutes / 60);
-  return { short: `${hours}h`, long: `${hours} ${hours === 1 ? "hour" : "hours"} ago` };
+  return { short: `${hours} 小时前`, long: `${hours} 小时前` };
 }
 
 /** A day's section. A new day opens from nothing and pushes the older days down; it clips only while it grows. */
@@ -182,7 +183,7 @@ export function Timeline({ events, now, label, timeZone = "UTC", locale = "en-US
   const [known, setKnown] = useState(() => ({ ids, set: new Set(events.map(event => event.id)), fresh: new Set<string>(), announcement: "" }));
   if (known.ids !== ids) {
     const added = events.filter(event => !known.set.has(event.id));
-    setKnown({ ids, set: new Set(events.map(event => event.id)), fresh: new Set([...known.fresh, ...added.map(event => event.id)]), announcement: added.length ? `New update: ${added.map(event => [event.actor, event.title].filter(Boolean).join(" ")).join(". ")}` : known.announcement });
+    setKnown({ ids, set: new Set(events.map(event => event.id)), fresh: new Set([...known.fresh, ...added.map(event => event.id)]), announcement: added.length ? `新的动态：${added.map(event => [event.actor, event.title].filter(Boolean).join(" ")).join("；")}` : known.announcement });
   }
   // The bottom edge feathers while more updates wait below, and clears once the end is in view.
   const trackRef = useRef<HTMLDivElement>(null);
@@ -215,7 +216,7 @@ export function Timeline({ events, now, label, timeZone = "UTC", locale = "en-US
       const day = dayKey(event.time, timeZone);
       byDay.set(day, [...(byDay.get(day) ?? []), { ...event, day }]);
     });
-    return [...byDay].map(([day, rows]) => ({ day, rows, label: day === today ? "Today" : day === yesterday ? "Yesterday" : heading.format(new Date(rows[0]!.time)) }));
+    return [...byDay].map(([day, rows]) => ({ day, rows, today: day === today, label: day === today ? "今天" : day === yesterday ? "昨天" : heading.format(new Date(rows[0]!.time)) }));
   }, [events, now, timeZone, locale]);
   const formats = useMemo(() => ({
     clock: new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", timeZone }),
@@ -254,16 +255,16 @@ export function Timeline({ events, now, label, timeZone = "UTC", locale = "en-US
           {groups.map(group => <DaySection key={group.day} id={`${id}-${group.day}`} fresh={!initialDays.has(group.day)} reduced={reduced}>
             <div className={styles.day} role="heading" aria-level={headingLevel} id={`${id}-${group.day}`}>
               <span>{group.label}</span>
-              <span className={styles.count} aria-hidden="true"><RollingCount value={group.rows.length} reduced={reduced} /> {group.rows.length === 1 ? "update" : "updates"}</span>
-              <span className={styles.srOnly}>{`, ${group.rows.length} ${group.rows.length === 1 ? "update" : "updates"}`}</span>
+              <span className={styles.count} aria-hidden="true"><RollingCount value={group.rows.length} reduced={reduced} /> 条动态</span>
+              <span className={styles.srOnly}>{`，${group.rows.length} 条动态`}</span>
             </div>
             <ol className={styles.list}>
               <AnimatePresence>
                 {group.rows.map((row, index) => {
-                  const today = group.label === "Today" && now - row.time < 12 * HOUR;
+                  const today = group.today && now - row.time < 12 * HOUR;
                   const time = today ? relative(row.time, now) : { short: formats.clock.format(new Date(row.time)), long: "" };
                   return <TimelineRow key={row.id} row={row} last={index === group.rows.length - 1} expanded={expanded.has(row.id)} onToggle={() => toggle(row.id)}
-                    timeLabel={time.short} timeFull={today ? `${time.long}, ${formats.full.format(new Date(row.time))}` : formats.full.format(new Date(row.time))} />;
+                    timeLabel={time.short} timeFull={today ? `${time.long}，${formats.full.format(new Date(row.time))}` : formats.full.format(new Date(row.time))} />;
                 })}
               </AnimatePresence>
             </ol>

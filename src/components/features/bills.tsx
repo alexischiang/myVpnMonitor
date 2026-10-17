@@ -311,25 +311,25 @@ export function OrderDetailPage() {
         {status === "pending" ? <>
           <Button size="sm" disabled={markingPaid} onClick={() => setMarkPaidOpen(true)}><BadgeCheck />已人工收款</Button>
           <Dialog open={markPaidOpen} onOpenChange={setMarkPaidOpen}>
-            <DialogContent title="确认已收到转账？" description={`客户 ${order.email}，套餐 ${order.optionLabel}。本次需要线下收取 ${formatMoney(order.amount)}。已预留的余额将另行结算，确认后按原订单发放服务。请勿在尚未到账时操作。`}><Textarea label="收款备注" id="manual-collection-note" value={manualNote} onChange={event => setManualNote(event.target.value)} maxLength={500} placeholder="例如收款方式、转账流水号或核对说明" disabled={markingPaid} /><div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={markingPaid}>取消</Button></DialogClose><DialogClose asChild><Button disabled={markingPaid} onClick={event => { event.preventDefault(); void markOrderPaid() }}>{markingPaid ? <Loader2 className="animate-spin" /> : null}确认已收款</Button></DialogClose></div></DialogContent>
+            <DialogContent title="确认已收到转账？" description={`客户 ${order.email}，套餐 ${order.optionLabel}。本次需要线下收取 ${formatMoney(order.amount)}。已预留的余额将另行结算，确认后按原订单发放服务。请勿在尚未到账时操作。`}><Textarea label="收款备注" id="manual-collection-note" value={manualNote} onChange={event => setManualNote(event.target.value)} maxLength={500} placeholder="例如收款方式、转账流水号或核对说明" disabled={markingPaid} /><div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={markingPaid}>取消</Button></DialogClose><DialogClose asChild><Button disabled={markingPaid} onClick={event => { event.preventDefault(); void markOrderPaid() }}>{markingPaid ? <Loader2 className="animate-spin" /> : null}确认已收款</Button></DialogClose></div></DialogContent>
           </Dialog>
         </> : null}
         {order.reversible ? <>
           <Button variant="danger" size="sm" disabled={reversing || retrying} onClick={() => setReverseOpen(true)}><Undo2 />{reversing ? "正在撤销" : "撤销订单"}</Button>
           <Dialog open={reverseOpen} onOpenChange={setReverseOpen}>
-            <DialogContent title="确认撤销此订单？" description="系统会撤销该订单产生的套餐变更、钱包与 VIP 流水、账单、邀请返利和优惠券占用。第三方实付款不会自动退回，仍需按实际情况人工退款。此操作不能在后台恢复。"><div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={reversing}>取消</Button></DialogClose><Button variant="danger" asChild><DialogClose asChild><Button disabled={reversing} onClick={() => void reverseOrder()}>确认撤销</Button></DialogClose></Button></div></DialogContent>
+            <DialogContent title="确认撤销此订单？" description="系统会撤销该订单产生的套餐变更、钱包与 VIP 流水、账单、邀请返利和优惠券占用。第三方实付款不会自动退回，仍需按实际情况人工退款。此操作不能在后台恢复。"><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={reversing}>取消</Button></DialogClose><Button variant="primary" asChild><DialogClose asChild><Button disabled={reversing} onClick={() => void reverseOrder()}>确认撤销</Button></DialogClose></Button></div></DialogContent>
           </Dialog>
         </> : null}
         {status === "unfulfilled" ? <>
           <ActionButton variant="danger" size="sm" onClick={() => setRetryOpen(true)} label="重新发放" pendingLabel="正在发放" pending={retrying} arrow={false} />
           <Dialog open={retryOpen} onOpenChange={setRetryOpen}>
-          <DialogContent title="确认重新发放套餐？" description="系统会按原订单重新执行套餐发放。已经结算的钱包和 VIP 流水不会重复记账。"><div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary">取消</Button></DialogClose><DialogClose asChild><Button onClick={() => void retryFulfillment()}>确认发放</Button></DialogClose></div></DialogContent>
+          <DialogContent title="确认重新发放套餐？" description="系统会按原订单重新执行套餐发放。已经结算的钱包和 VIP 流水不会重复记账。"><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary">取消</Button></DialogClose><DialogClose asChild><Button onClick={() => void retryFulfillment()}>确认发放</Button></DialogClose></div></DialogContent>
           </Dialog>
         </> : null}
         {order.bindingNeedsRepair ? <>
           <ActionButton variant="secondary" size="sm" onClick={() => setRepairOpen(true)} label="补关联" pendingLabel="补关联中..." pending={repairing} />
           <Dialog open={repairOpen} onOpenChange={setRepairOpen}>
-            <DialogContent title="补关联此订单的V2套餐？" description={`将核对 ${order.email} 的最新套餐订单，并按该订单的已交付账单补齐用户套餐绑定和权益，立即同步3x-ui。不会重复收款或生成账单；存在后续套餐或权益变更时将拒绝覆盖。`}><div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={repairing}>取消</Button></DialogClose><DialogClose asChild><Button disabled={repairing} onClick={event => { event.preventDefault(); void repairBinding() }}>{repairing ? <Loader2 className="animate-spin" /> : <Link2 />}{repairing ? "补关联中..." : "确认补关联"}</Button></DialogClose></div></DialogContent>
+            <DialogContent title="补关联此订单的V2套餐？" description={`将核对 ${order.email} 的最新套餐订单，并按该订单的已交付账单补齐用户套餐绑定和权益，立即同步3x-ui。不会重复收款或生成账单；存在后续套餐或权益变更时将拒绝覆盖。`}><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={repairing}>取消</Button></DialogClose><DialogClose asChild><Button disabled={repairing} onClick={event => { event.preventDefault(); void repairBinding() }}>{repairing ? <Loader2 className="animate-spin" /> : <Link2 />}{repairing ? "补关联中..." : "确认补关联"}</Button></DialogClose></div></DialogContent>
           </Dialog>
         </> : null}
         <BackButton fallback="/orders" size="sm" />

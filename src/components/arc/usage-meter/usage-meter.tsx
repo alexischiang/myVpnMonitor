@@ -285,7 +285,8 @@ export function UsageMeter({ label, segments, limit, unit = "", decimals = 1, fr
   const headline = ready ? (activeItem ? activeItem.value : total) : 0;
   const share = activeItem ? Math.round((activeItem.value / limit) * 100) : 0;
   const caption = !activeItem ? `${unit}，共 ${limitText}` : activeItem.id === "free" ? `${unit}${status === "over" ? " 超出" : " 剩余"}` : `${unit} ${activeItem.label} · 占配额 ${share}%`;
-  const badge = status === "over" ? `超出 ${format(over)}` : status === "near" ? "即将用完" : `剩余 ${format(free)}`;
+  // XELA extension: a quota used exactly to the limit reads 已用完 rather than 即将用完.
+  const badge = status === "over" ? `超出 ${format(over)}` : status === "near" ? free <= 0 ? "已用完" : "即将用完" : `剩余 ${format(free)}`;
   const summary = `${label}：已用 ${format(total)}，共 ${limitText}。${segments.map(segment => `${segment.label} ${format(segment.value)}`).join("，")}。${status === "over" ? `超出配额 ${format(over)}。` : `剩余 ${format(free)}${status === "near" ? "，即将用完" : ""}。`}`;
   // Status changes are announced, and so is a growing overage; routine changes inside a status stay quiet.
   const notice = status === "over" ? `over:${over}` : status;

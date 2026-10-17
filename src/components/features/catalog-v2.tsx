@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
 import { DataTableCard, FilterSelect } from "@/components/features/data-table-card"
 import { EmptyState, PageHeader } from "@/components/features/shared"
+import { ConfirmDialog } from "@/components/features/confirm-dialog"
 import { cn } from "@/lib/utils"
 import type { AddonHandler, CatalogV2AddonCategory, CatalogV2CompareAttribute, CatalogV2LineGroup, CatalogV2Period, CatalogV2Product } from "@/types"
 import { builtInCompareRows, compareTrafficLabel, networkLevelSummary, regionsSummary, trafficCustomizationSummary } from "@/components/features/plan-compare-rows"
@@ -72,6 +73,7 @@ function AddonCategoryManager({ categories, onChange }: { categories: CatalogV2A
   const [drafts, setDrafts] = React.useState<Record<string, { name: string; sortOrder: number }>>({})
   const [newName, setNewName] = React.useState("")
   const [busyId, setBusyId] = React.useState("")
+  const [deleting, setDeleting] = React.useState<CatalogV2AddonCategory | null>(null)
   const draftOf = (category: CatalogV2AddonCategory) => drafts[category.id] || { name: category.name, sortOrder: category.sortOrder }
   const sorted = (list: CatalogV2AddonCategory[]) => [...list].sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id))
   async function create(event: React.FormEvent) {
@@ -93,23 +95,24 @@ function AddonCategoryManager({ categories, onChange }: { categories: CatalogV2A
       toast({ type: "success", title: "分类已保存" })
     } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "保存分类失败" }) } finally { setBusyId("") }
   }
+  // Runs from the confirm dialog; a failure is reported and rethrown so the dialog stays open.
   async function remove(category: CatalogV2AddonCategory) {
-    if (!window.confirm(category.productCount ? `删除分类 ${category.name}？其中 ${category.productCount} 个商品会变为未分类。` : `删除分类 ${category.name}？`)) return
     setBusyId(category.id)
     try {
       await deleteJson(`/api/catalog-v2/addon-categories/${encodeURIComponent(category.id)}`)
       onChange(categories.filter(item => item.id !== category.id))
       toast({ type: "success", title: "分类已删除" })
-    } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "删除分类失败" }) } finally { setBusyId("") }
+    } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "删除分类失败" }); throw error } finally { setBusyId("") }
   }
   return <Card title="附加服务分类" description="用户端按分类分组展示附加服务，排序数字越小越靠前；删除分类后，其中的商品会变为未分类。"><div className="grid gap-4">
     {categories.length ? <div className="grid gap-3">{categories.map(category => {
       const draft = draftOf(category)
       const changed = draft.name !== category.name || draft.sortOrder !== category.sortOrder
       const update = (patch: Partial<typeof draft>) => setDrafts(current => ({ ...current, [category.id]: { ...draft, ...patch } }))
-      return <ArcCard key={category.id} className="flex-wrap" description={category.productCount ? `${category.productCount} 个商品` : "暂无商品"} headerAction={<><ActionButton variant="secondary" onClick={() => void save(category)} disabled={!changed || !draft.name.trim() || busyId === category.id} aria-label={`保存分类 ${category.name}`} label="保存分类" pending={busyId === category.id} /><Button variant="danger" size="icon" onClick={() => void remove(category)} disabled={busyId === category.id} aria-label={`删除分类 ${category.name}`}><Trash2 /></Button></>}><div className="flex flex-wrap items-center gap-2"><Input label={`${category.name} 分类名称`} hideLabel className="min-w-0 flex-1 basis-40" value={draft.name} maxLength={40} onChange={event => update({ name: event.target.value })} /><Input label={`${category.name} 排序`} hideLabel className="w-24 tabular-nums" type="number" min="0" value={draft.sortOrder} onChange={event => update({ sortOrder: Number(event.target.value) })} /></div></ArcCard>
+      return <ArcCard key={category.id} className="flex-wrap" description={category.productCount ? `${category.productCount} 个商品` : "暂无商品"} headerAction={<><ActionButton variant="secondary" onClick={() => void save(category)} disabled={!changed || !draft.name.trim() || busyId === category.id} aria-label={`保存分类 ${category.name}`} label="保存分类" pending={busyId === category.id} /><Button variant="danger" size="icon" onClick={() => setDeleting(category)} disabled={busyId === category.id} aria-label={`删除分类 ${category.name}`}><Trash2 /></Button></>}><div className="flex flex-wrap items-center gap-2"><Input label={`${category.name} 分类名称`} hideLabel className="min-w-0 flex-1 basis-40" value={draft.name} maxLength={40} onChange={event => update({ name: event.target.value })} /><Input label={`${category.name} 排序`} hideLabel className="w-24 tabular-nums" type="number" min="0" value={draft.sortOrder} onChange={event => update({ sortOrder: Number(event.target.value) })} /></div></ArcCard>
     })}</div> : <EmptyState title="尚未创建分类" description="创建分类后，可在附加服务商品中选择所属分类。" />}
     <form className="flex flex-wrap items-end gap-2" onSubmit={event => void create(event)}><div className="flex-1 basis-56"><Input label="新分类名称" id="addon-category-name" value={newName} maxLength={40} onChange={event => setNewName(event.target.value)} placeholder="例如：流量加油包" /></div><ActionButton type="submit" disabled={!newName.trim() || busyId === "new"} label="添加分类" pending={busyId === "new"} /></form>
+    <ConfirmDialog open={deleting !== null} onOpenChange={open => { if (!open) setDeleting(null) }} title={`删除分类「${deleting?.name ?? ""}」？`} description={deleting?.productCount ? `其中 ${deleting.productCount} 个商品会变为未分类。` : "删除后不能恢复。"} onConfirm={() => deleting ? remove(deleting) : undefined} />
   </div></Card>
 }
 
@@ -123,6 +126,7 @@ function CompareAttributeManager({ attributes, onChange }: { attributes: Catalog
   const [drafts, setDrafts] = React.useState<Record<string, CompareAttributeDraft>>({})
   const [newDraft, setNewDraft] = React.useState(emptyDraft)
   const [busyId, setBusyId] = React.useState("")
+  const [deletingAttribute, setDeletingAttribute] = React.useState<CatalogV2CompareAttribute | null>(null)
   const draftOf = (attribute: CatalogV2CompareAttribute): CompareAttributeDraft => drafts[attribute.id] || { label: attribute.label, kind: attribute.kind, options: attribute.options.join("、"), sortOrder: attribute.sortOrder }
   const payloadOf = (draft: CompareAttributeDraft) => ({ label: draft.label, kind: draft.kind, options: draft.kind === "choice" ? splitCompareOptions(draft.options) : [], sortOrder: draft.sortOrder })
   const sorted = (list: CatalogV2CompareAttribute[]) => [...list].sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id))
@@ -145,14 +149,14 @@ function CompareAttributeManager({ attributes, onChange }: { attributes: Catalog
       toast({ type: "success", title: "对比项已保存" })
     } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "保存对比项失败" }) } finally { setBusyId("") }
   }
+  // Runs from the confirm dialog; a failure is reported and rethrown so the dialog stays open.
   async function remove(attribute: CatalogV2CompareAttribute) {
-    if (!window.confirm(`删除对比项 ${attribute.label}？对比页将不再显示这一行，商品里已填写的值会在下次保存时清除。`)) return
     setBusyId(attribute.id)
     try {
       await deleteJson(`/api/catalog-v2/compare-attributes/${encodeURIComponent(attribute.id)}`)
       onChange(attributes.filter(item => item.id !== attribute.id))
       toast({ type: "success", title: "对比项已删除" })
-    } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "删除对比项失败" }) } finally { setBusyId("") }
+    } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "删除对比项失败" }); throw error } finally { setBusyId("") }
   }
   // name is the row's current label, used for the visually hidden field labels on existing rows; the new-row form shows its labels.
   const draftFields = (draft: CompareAttributeDraft, update: (patch: Partial<CompareAttributeDraft>) => void, prefix: string, name?: string) => <>
@@ -166,12 +170,13 @@ function CompareAttributeManager({ attributes, onChange }: { attributes: Catalog
       const draft = draftOf(attribute)
       const changed = JSON.stringify(payloadOf(draft)) !== JSON.stringify(payloadOf({ label: attribute.label, kind: attribute.kind, options: attribute.options.join("、"), sortOrder: attribute.sortOrder }))
       const update = (patch: Partial<CompareAttributeDraft>) => setDrafts(current => ({ ...current, [attribute.id]: { ...draft, ...patch } }))
-      return <ArcCard key={attribute.id} className="flex-wrap" description={compareKindLabels[attribute.kind]} headerAction={<><ActionButton variant="secondary" onClick={() => void save(attribute)} disabled={!changed || !draft.label.trim() || busyId === attribute.id} aria-label={`保存对比项 ${attribute.label}`} label="保存对比项" pending={busyId === attribute.id} /><Button variant="danger" size="icon" onClick={() => void remove(attribute)} disabled={busyId === attribute.id} aria-label={`删除对比项 ${attribute.label}`}><Trash2 /></Button></>}><div className="flex flex-wrap items-center gap-2">
+      return <ArcCard key={attribute.id} className="flex-wrap" description={compareKindLabels[attribute.kind]} headerAction={<><ActionButton variant="secondary" onClick={() => void save(attribute)} disabled={!changed || !draft.label.trim() || busyId === attribute.id} aria-label={`保存对比项 ${attribute.label}`} label="保存对比项" pending={busyId === attribute.id} /><Button variant="danger" size="icon" onClick={() => setDeletingAttribute(attribute)} disabled={busyId === attribute.id} aria-label={`删除对比项 ${attribute.label}`}><Trash2 /></Button></>}><div className="flex flex-wrap items-center gap-2">
         {draftFields(draft, update, `compare-${attribute.id}`, attribute.label)}
         <Input label={`${attribute.label} 排序`} hideLabel className="w-24 tabular-nums" type="number" min="0" value={draft.sortOrder} onChange={event => update({ sortOrder: Number(event.target.value) })} />
       </div></ArcCard>
     })}</div> : <EmptyState title="尚未配置对比项" description="添加后，对比页会在自动生成的行之后显示这些行。" />}
     <form className="flex flex-wrap items-end gap-2" onSubmit={event => void create(event)}>{draftFields(newDraft, patch => setNewDraft(current => ({ ...current, ...patch })), "compare-new")}<ActionButton type="submit" disabled={!newDraft.label.trim() || (newDraft.kind === "choice" && splitCompareOptions(newDraft.options).length < 2) || busyId === "new"} label="添加对比项" pending={busyId === "new"} /></form>
+    <ConfirmDialog open={deletingAttribute !== null} onOpenChange={open => { if (!open) setDeletingAttribute(null) }} title={`删除对比项「${deletingAttribute?.label ?? ""}」？`} description="对比页将不再显示这一行，商品里已填写的值会在下次保存时清除。" onConfirm={() => deletingAttribute ? remove(deletingAttribute) : undefined} />
   </div></Card>
 }
 
@@ -372,6 +377,7 @@ export function CatalogV2ProductDetailPage() {
   const [addonCategories, setAddonCategories] = React.useState<CatalogV2AddonCategory[]>([])
   const [compareAttributes, setCompareAttributes] = React.useState<CatalogV2CompareAttribute[]>([])
   const [saving, setSaving] = React.useState(false)
+  const [confirmDelete, setConfirmDelete] = React.useState(false)
   const [error, setError] = React.useState("")
   React.useEffect(() => { Promise.all([fetchJson<CatalogV2Product[]>("/api/catalog-v2/products"), fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups"), fetchJson<CatalogV2AddonCategory[]>("/api/catalog-v2/addon-categories"), fetchJson<CatalogV2CompareAttribute[]>("/api/catalog-v2/compare-attributes")]).then(([products, lineGroups, categories, attributes]) => { setGroups(lineGroups); setAddonCategories(categories); setCompareAttributes(attributes); if (!isNew) setProduct(products.find(item => item.id === id) || null) }).catch(error => setError(error.message)) }, [id, isNew])
   function update(patch: Partial<CatalogV2Product>) { setProduct(current => current ? { ...current, ...patch } : current) }
@@ -384,7 +390,8 @@ export function CatalogV2ProductDetailPage() {
       if (isNew) navigate(`/catalog-v2/products/${encodeURIComponent(saved.id)}`, { replace: true }); else setProduct(saved)
     } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "保存失败" }) } finally { setSaving(false) }
   }
-  async function remove() { if (!product || isNew || !window.confirm(`确认删除 ${product.name}？`)) return; setSaving(true); try { await deleteJson(`/api/catalog-v2/products/${encodeURIComponent(id)}`); navigate("/catalog-v2", { replace: true }); toast({ type: "success", title: "商品已删除" }) } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "删除失败" }) } finally { setSaving(false) } }
+  // Runs from the confirm dialog; a failure is reported and rethrown so the dialog stays open.
+  async function remove() { if (!product || isNew) return; setSaving(true); try { await deleteJson(`/api/catalog-v2/products/${encodeURIComponent(id)}`); navigate("/catalog-v2", { replace: true }); toast({ type: "success", title: "商品已删除" }) } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "删除失败" }); throw error } finally { setSaving(false) } }
   if (error) return <div className="px-4 lg:px-6"><Alert tone="danger" title={error} /></div>
   if (!product) return <div className="px-4 lg:px-6"><EmptyState title="商品不存在" description="返回新版商品录入重新选择。" /></div>
   const updatePeriod = (index: number, value: CatalogV2Period) => update({ periods: product.periods.map((period, current) => current === index ? value : period) })
@@ -393,7 +400,7 @@ export function CatalogV2ProductDetailPage() {
       breadcrumbs={[{ label: "商品管理", href: "/catalog-v2", onClick: event => { event.preventDefault(); navigate("/catalog-v2") } }, { label: isNew ? "新建 V2 商品" : product.name }]}
       title={isNew ? "新建 V2 商品" : product.name}
       description="保存后会直接用于商城、支付交付和 3x-ui 权限同步。"
-      actions={<><Button variant="secondary" asChild><Link to="/catalog-v2"><ArrowLeft />返回</Link></Button>{isNew ? null : <Button variant="danger" onClick={() => void remove()} disabled={saving}><Trash2 />删除</Button>}<ActionButton onClick={() => void save()} label="保存商品" pending={saving} /></>}
+      actions={<><Button variant="secondary" asChild><Link to="/catalog-v2"><ArrowLeft />返回</Link></Button>{isNew ? null : <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={saving}><Trash2 />删除</Button>}<ActionButton onClick={() => void save()} label="保存商品" pending={saving} /></>}
     />
     <Card title="基础信息" description="商品 ID 创建后不可修改，只允许小写字母、数字和短横线。"><div className="grid gap-6">
       <div className="grid items-start gap-4 md:grid-cols-2">
@@ -433,5 +440,6 @@ export function CatalogV2ProductDetailPage() {
     </div></Card> : null}
     {product.type === "addon" ? <AddonFields product={product} update={update} categories={addonCategories} /> : null}
     <FeatureFields product={product} update={update} />
+    <ConfirmDialog open={confirmDelete} onOpenChange={setConfirmDelete} title={`删除商品「${product.name}」？`} description="删除后不能恢复。" onConfirm={remove} />
   </div>
 }

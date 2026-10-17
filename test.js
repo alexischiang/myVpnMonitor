@@ -69,6 +69,9 @@ const {
   normalizeCatalogV2AddonCategory,
   normalizeCatalogV2CompareAttribute,
   normalizeCatalogV2CompareValues,
+  normalizeChangelogEntry,
+  normalizeChangelogTag,
+  publicChangelogEntry,
   normalizeCheckoutSettings,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
@@ -139,6 +142,22 @@ assert.throws(() => normalizeCatalogV2Product({ ...catalogV2Product, periods: [{
   assert.deepStrictEqual(normalizeCatalogV2CompareAttribute({ id: "ipv6", label: "IPv6", kind: "boolean", options: ["a", "b"] }).options, []);
   assert.throws(() => normalizeCatalogV2CompareAttribute({ label: "X", kind: "choice", options: ["only"] }), /2-10 个选项/);
   assert.throws(() => normalizeCatalogV2CompareAttribute({ label: "", kind: "text" }), /名称不能为空/);
+  const changelog = normalizeChangelogEntry({ title: " 新增节点 ", content: "香港节点上线\r\n\r\n- 延迟更低\n• 支持流媒体 ", kind: "new" });
+  assert.match(changelog.id, /^cl-[0-9a-f]{12}$/);
+  assert.strictEqual(changelog.title, "新增节点");
+  assert.strictEqual(changelog.content, "香港节点上线\n- 延迟更低\n• 支持流媒体");
+  assert.deepStrictEqual(publicChangelogEntry({ ...changelog, publishedAt: "2026-10-01T00:00:00.000Z" }), { id: changelog.id, title: "新增节点", kind: "new", summary: "香港节点上线", details: ["延迟更低", "支持流媒体"], publishedAt: "2026-10-01T00:00:00.000Z" });
+  assert.strictEqual(normalizeChangelogEntry({ title: "X", content: "Y", kind: "tag-1a2b" }).kind, "tag-1a2b");
+  assert.throws(() => normalizeChangelogEntry({ title: "X", content: "Y", kind: "Bad Tag" }), /请选择更新标签/);
+  assert.throws(() => normalizeChangelogEntry({ title: "X", content: "Y" }), /请选择更新标签/);
+  const tag = normalizeChangelogTag({ label: " 安全公告 ", color: "danger" });
+  assert.match(tag.id, /^tag-[0-9a-f]{8}$/);
+  assert.deepStrictEqual({ label: tag.label, color: tag.color, sortOrder: tag.sortOrder }, { label: "安全公告", color: "danger", sortOrder: null });
+  assert.strictEqual(normalizeChangelogTag({ id: "new", label: "新功能", color: "accent", sortOrder: "10" }).sortOrder, 10);
+  assert.throws(() => normalizeChangelogTag({ label: "X", color: "pink" }), /请选择标签颜色/);
+  assert.throws(() => normalizeChangelogTag({ label: " ", color: "blue" }), /标签名称不能为空/);
+  assert.throws(() => normalizeChangelogEntry({ title: "", content: "Y", kind: "new" }), /标题不能为空/);
+  assert.throws(() => normalizeChangelogEntry({ title: "X", content: " \n ", kind: "fixed" }), /内容不能为空/);
   const { resolveCompareValues, lineGroupCoverage } = require("./commerce/catalog-v2");
   const attributes = [{ id: "streaming", label: "流媒体解锁", kind: "choice", options: ["基础", "全部"] }, { id: "ipv6", label: "IPv6", kind: "boolean", options: [] }];
   assert.deepStrictEqual(resolveCompareValues({ type: "recurring_plan", isEnabled: true, compareValues: { streaming: "全部", ipv6: "yes", removed: "x" } }, attributes), { streaming: "全部", ipv6: "yes" });

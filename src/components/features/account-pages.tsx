@@ -22,6 +22,7 @@ import { MarkdownContent } from "@/components/features/markdown-content"
 import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { EmptyState } from "@/components/features/shared"
 import { CopyButton } from "@/components/arc/copy-button/copy-button"
+import { ChangelogTimelineCard } from "@/components/features/changelog"
 import { nextVipTier, vipLevelLabel, type VipTier } from "@/components/features/vip-badge"
 import { DOCS_URL } from "@/lib/docs-site"
 import { cn } from "@/lib/utils"
@@ -256,7 +257,9 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
         {subscription ? subscription.duration === "lifetime" ? <p className="text-3xl font-semibold">永久有效</p> : <p className="flex items-baseline gap-2"><strong className="text-3xl font-semibold tabular-nums">{remainingDays ?? "-"}</strong><span className="text-sm">天后到期</span></p>
           : <p className="max-w-80 text-sm">{renewalUrl ? `套餐已于 ${formatDate(account.subscription?.expiresAt)} 到期，续费后恢复使用。` : "开通套餐后，这里会显示到期时间、流量配额和在线IP数量。"}</p>}
-        {subscription ? canBuyHomeIp ? <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans/checkout?product=home-ip"><span className="sm:hidden">定制家宽IP</span><span className="hidden sm:inline">AI被降智？定制纯净家宽 IP{Number.isFinite(homeIpStartingPrice) ? ` · ${formatMoney(homeIpStartingPrice)} 起` : ""}</span><ArrowUpRight className="size-5 text-white" strokeWidth={2.5} aria-hidden /></Link></BentoButton> : null
+        {/* Traffic used up: the plan is still active, so the next step is a traffic pack, not a renewal. */}
+        {subscription && status === "depleted" ? <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans#addons"><PackagePlus />流量已用完，购买流量包</Link></BentoButton>
+          : subscription ? canBuyHomeIp ? <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans/checkout?product=home-ip"><span className="sm:hidden">定制家宽IP</span><span className="hidden sm:inline">AI被降智？定制纯净家宽 IP{Number.isFinite(homeIpStartingPrice) ? ` · ${formatMoney(homeIpStartingPrice)} 起` : ""}</span><ArrowUpRight className="size-5 text-white" strokeWidth={2.5} aria-hidden /></Link></BentoButton> : null
           : renewalUrl ? <BentoButton asChild size="lg" className="ml-auto"><Link to={renewalUrl}><RefreshCw />续费</Link></BentoButton>
           : <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans"><PackagePlus />购买服务</Link></BentoButton>}
       </div>
@@ -283,7 +286,8 @@ function TrafficUsageCard({ plan, trafficError, nextResetAt, span, rowSpan }: { 
 function SubscriptionLinkCard({ subscriptionUrl, onImportClient, span, rowSpan }: { subscriptionUrl: string; onImportClient: (client: ImportClient) => void; span: BentoSpan; rowSpan: BentoRowSpan }) {
   return <BentoCard span={span} rowSpan={rowSpan} title="订阅链接">
     <Field>
-        <span className="block rounded-4xl bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input label="订阅地址" hideLabel id="subscription-url" className="h-11 rounded-4xl border-0 bg-background px-4 font-semibold shadow-none dark:bg-background" readOnly value={subscriptionUrl} /></span>
+        {/* The gradient wrapper is the field's only outline: Arc's input stylesheet outranks plain utilities, so its own border and radius are overridden here. */}
+        <span className="block rounded-full bg-[linear-gradient(90deg,var(--chart-1),var(--chart-2),var(--chart-3),var(--chart-4),var(--chart-5))] p-0.5"><Input label="订阅地址" hideLabel id="subscription-url" className="!h-11 !rounded-full !border-0 !bg-background px-4 font-semibold" readOnly value={subscriptionUrl} /></span>
         <div className="grid gap-2 sm:flex sm:flex-wrap [&_[data-slot=button]]:w-full sm:[&_[data-slot=button]]:w-auto">
           <CopySubscription value={subscriptionUrl} />
           <BentoButton asChild variant="secondary"><a href={DOCS_URL} target="_blank" rel="noopener noreferrer"><BookOpen />使用教程</a></BentoButton>
@@ -399,7 +403,7 @@ export function AccountOverviewPage() {
   return (
     <>
       <div className="grid gap-4">
-        <CtaSection variant="banner" bare compactAction transparent title="遇到问题？" description="发送工单联系客服吧！" primaryAction={{ label: "发送工单", href: "/account/tickets/new" }} onNavigate={action => { if (action.href) navigate(action.href) }} />
+        <CtaSection variant="banner" bare compactAction title="遇到问题？" description="发送工单联系客服吧！" primaryAction={{ label: "发送工单", href: "/account/tickets/new" }} onNavigate={action => { if (action.href) navigate(action.href) }} />
         <BentoGrid>
           <section className={cn(bentoSpanClass(SHOW_PROMO_SLOT ? 5 : 8, 2), "flex min-w-0 flex-col justify-center gap-6 py-4")} aria-labelledby="account-greeting">
             <h2 id="account-greeting" className="grid gap-1 text-3xl font-semibold tracking-tight wrap-anywhere lg:text-4xl"><span>What's up,</span><span>{emailLocal}{emailDomain ? <><wbr />@{emailDomain}</> : null}{"\u00a0"}!</span></h2>
@@ -439,17 +443,18 @@ export function AccountOverviewPage() {
             </div>
           </BentoCard> : null}
           {hasTrafficDetails ? selfHostedTraffic ? <React.Suspense fallback={<Skeleton lines={1} className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} />}><AccountTrafficChart span={8} rowSpan={3} usage={selfHostedTraffic.nodeUsage} /></React.Suspense> : <Skeleton lines={1} className={cn(bentoSpanClass(8, 3), "h-72 rounded-4xl xl:h-auto")} /> : null}
+          <ChangelogTimelineCard span={8} rowSpan={2} />
         </BentoGrid>
       </div>
       <Dialog open={announcementOpen} onOpenChange={changeAnnouncementOpen}>
-        <DialogContent title={selectedAnnouncement?.title || "公告"} description={formatDateTime(selectedAnnouncement?.publishedAt)}>{selectedAnnouncement ? <MarkdownContent content={selectedAnnouncement.content} /> : null}<div className="mt-6 flex flex-wrap justify-end gap-2">
+        <DialogContent title={selectedAnnouncement?.title || "公告"} description={formatDateTime(selectedAnnouncement?.publishedAt)}>{selectedAnnouncement ? <MarkdownContent content={selectedAnnouncement.content} /> : null}<div className="mt-4 flex flex-wrap justify-end gap-2">
             {reminderDialog ? <label className="flex items-center gap-2 text-sm sm:mr-auto"><Checkbox checked={muteToday} onCheckedChange={checked => setMuteToday(checked === true)} />今日不再提醒</label> : null}
             <DialogClose asChild><Button variant={reminderDialog && !selectedAnnouncement?.url ? "primary" : "secondary"}>{reminderDialog ? "我知道了" : "关闭"}</Button></DialogClose>
             {selectedAnnouncement?.url ? <Button asChild><a href={selectedAnnouncement.url} target="_blank" rel="noopener noreferrer">阅读全文<ExternalLink /></a></Button> : null}
           </div></DialogContent>
       </Dialog>
       <Dialog open={importClient !== null} onOpenChange={open => { if (!open) setImportClient(null) }}>
-        <DialogContent title={`导入 ${importConfig?.name}`} description={`⚠️请先关闭${importConfig?.app || "客户端"}的连接开关。`}><div className="mt-6 flex flex-wrap justify-end gap-2">
+        <DialogContent title={`导入 ${importConfig?.name}`} description={`⚠️请先关闭${importConfig?.app || "客户端"}的连接开关。`}><div className="flex flex-wrap justify-end gap-2">
             <DialogClose asChild><Button variant="secondary">取消</Button></DialogClose>
             <DialogClose asChild><Button onClick={() => { window.location.href = importUrl }}>导入 {importConfig?.name}</Button></DialogClose>
           </div></DialogContent>

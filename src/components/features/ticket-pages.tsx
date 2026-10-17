@@ -334,7 +334,7 @@ export function AdminTicketDetailPage() {
           </div></Card> : null}
         </section>
       </section>
-      <Dialog open={resolveOpen} onOpenChange={setResolveOpen}><DialogContent title="将工单标记为已解决？" description="结束后不能继续回复或重新打开，请确认问题已经处理完成。"><div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary">继续处理</Button></DialogClose><DialogClose asChild><Button onClick={() => void resolve()}>标记已解决</Button></DialogClose></div></DialogContent></Dialog>
+      <Dialog open={resolveOpen} onOpenChange={setResolveOpen}><DialogContent title="将工单标记为已解决？" description="结束后不能继续回复或重新打开，请确认问题已经处理完成。"><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary">继续处理</Button></DialogClose><DialogClose asChild><Button onClick={() => void resolve()}>标记已解决</Button></DialogClose></div></DialogContent></Dialog>
     </section>
   )
 }

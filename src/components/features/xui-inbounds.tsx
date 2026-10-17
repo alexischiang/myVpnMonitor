@@ -8,6 +8,7 @@ import { deleteJson, fetchJson, fetchJsonSteps, postJson, putJson } from "@/api"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
 import { DataTableCard } from "@/components/features/data-table-card"
 import { PageHeader } from "@/components/features/shared"
+import { ConfirmDialog } from "@/components/features/confirm-dialog"
 import { StepProgress, type ProgressStep, type StepStatus } from "@/components/features/step-progress"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import type { CatalogV2LineGroup, XuiInboundManagement, XuiInboundSettings } from "@/types"
@@ -64,6 +65,7 @@ export function XuiInboundsPage() {
   const [groupOpen, setGroupOpen] = React.useState(false)
   const [groupDraft, setGroupDraft] = React.useState<CatalogV2LineGroup>(emptyLineGroup)
   const [groupOriginal, setGroupOriginal] = React.useState<CatalogV2LineGroup | null>(null)
+  const [confirmGroupDelete, setConfirmGroupDelete] = React.useState(false)
   const [groupSearch, setGroupSearch] = React.useState("")
   const [groupNodeFilter, setGroupNodeFilter] = React.useState("all")
   const [groupSaveSteps, setGroupSaveSteps] = React.useState<ProgressStep[] | null>(null)
@@ -204,8 +206,9 @@ export function XuiInboundsPage() {
     }
   }
 
+  // Runs from the confirm dialog; a failure is reported and rethrown so the dialog stays open.
   async function removeGroup() {
-    if (!groupOriginal || !window.confirm(`确认删除 ${groupOriginal.name}？`)) return
+    if (!groupOriginal) return
     setSaving(true)
     try {
       await deleteJson(`/api/catalog-v2/line-groups/${encodeURIComponent(groupOriginal.id)}`)
@@ -214,6 +217,7 @@ export function XuiInboundsPage() {
       toast({ type: "success", title: "V2 权限组已删除" })
     } catch (removeError) {
       toast({ type: "error", title: removeError instanceof Error ? removeError.message : "删除失败" })
+      throw removeError
     } finally {
       setSaving(false)
     }
@@ -301,7 +305,7 @@ export function XuiInboundsPage() {
             </div>
           </div><div className="grid gap-4">
             {groupSaveSteps ? <StepProgress steps={groupSaveSteps} label="保存权限组进度" /> : null}
-            <div className="mt-6 flex flex-wrap justify-end gap-2">{groupOriginal ? <Button variant="danger" onClick={() => void removeGroup()} disabled={saving}><Trash2 />删除权限组</Button> : null}<Button variant="secondary" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><ActionButton onClick={() => void saveGroupSettings()} disabled={saving || !groupSettingsChanged} label="保存权限组" pending={saving} /></div>
+            <div className="flex flex-wrap justify-end gap-2">{groupOriginal ? <><Button variant="danger" onClick={() => setConfirmGroupDelete(true)} disabled={saving}><Trash2 />删除权限组</Button><ConfirmDialog open={confirmGroupDelete} onOpenChange={setConfirmGroupDelete} title={`删除权限组「${groupOriginal.name}」？`} description="删除后不能恢复。" onConfirm={removeGroup} /></> : null}<Button variant="secondary" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><ActionButton onClick={() => void saveGroupSettings()} disabled={saving || !groupSettingsChanged} label="保存权限组" pending={saving} /></div>
           </div></DialogContent>
       </Dialog>
 

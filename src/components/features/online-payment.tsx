@@ -59,7 +59,7 @@ export function OnlinePayment({ invoice, disabled, onUpdated, onBusy }: {
   }
 
   if (loading) return <Skeleton lines={4} className="w-full" />
-  return <section aria-label="付款方式" className="grid gap-3">
+  return <section aria-label="付款方式" className="grid gap-4">
     {error || invoice.paymentError ? <Alert tone="warning" title="付款暂未完成">{error || invoice.paymentError}</Alert> : null}
     {!platforms.length ? <><p className="text-sm text-muted-foreground">当前没有可用的线上付款渠道。订单已提交，你可以联系客服完成付款。</p><Button variant="secondary" className="min-h-11" onClick={() => void loadPlatforms()}>重新加载付款方式</Button></> : <>
       {platforms.length > 1 ? <Select label="支付平台" value={platformId} disabled={disabled || busy} onValueChange={id => { setPlatformId(id); setMethod(platforms.find(item => item.id === id)?.methods.alipay ? "100" : "200") }} className="min-h-11 w-full" options={[...platforms.map(item => ({ value: item.id, label: item.name }))]} /> : null}

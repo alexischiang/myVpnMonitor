@@ -322,6 +322,42 @@ class PostgresDataStore {
             ('support', '客服支持', 'choice', '["在线客服","优先客服"]'::jsonb, 40);
         END IF;
       END $$;
+      -- Release notes shown on the customer changelog page and the overview card. The first line of content is the summary,
+      -- every following line one detail.
+      CREATE TABLE IF NOT EXISTS changelog_entries (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL,
+        published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS changelog_entries_published_at_idx ON changelog_entries (published_at DESC);
+      -- Tags (an entry's kind) are managed by the admin. The three defaults are seeded only when the table is first created,
+      -- so tags the admin deletes stay deleted; a tag still used by an entry cannot be deleted.
+      DO $$ BEGIN
+        IF to_regclass('changelog_tags') IS NULL THEN
+          CREATE TABLE changelog_tags (
+            id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9-]{1,63}$'),
+            label TEXT NOT NULL,
+            color TEXT NOT NULL DEFAULT 'accent',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+          INSERT INTO changelog_tags (id, label, color, sort_order) VALUES
+            ('new', '新功能', 'accent', 10),
+            ('improved', '优化', 'muted', 20),
+            ('fixed', '修复', 'success', 30);
+        END IF;
+      END $$;
+      ALTER TABLE changelog_entries DROP CONSTRAINT IF EXISTS changelog_entries_kind_check;
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'changelog_entries_kind_fkey') THEN
+          ALTER TABLE changelog_entries ADD CONSTRAINT changelog_entries_kind_fkey FOREIGN KEY (kind) REFERENCES changelog_tags (id) ON DELETE RESTRICT;
+        END IF;
+      END $$;
       `), "catalog v2 init");
     } catch (error) {
       if (this.pool === pool) this.pool = null;
@@ -1051,6 +1087,54 @@ class PostgresDataStore {
   // Values stored on products under a deleted row are left in place; reads ignore unknown rows and the next product save drops them.
   async deleteCatalogV2CompareAttribute(id) {
     return withPgRetry(() => this.pool.query("DELETE FROM catalog_v2_compare_attributes WHERE id=$1", [id]), `delete catalog v2 compare attribute ${id}`);
+  }
+
+  async listChangelogEntries({ limit = 200 } = {}) {
+    const result = await withPgRetry(() => this.pool.query("SELECT * FROM changelog_entries ORDER BY published_at DESC, id DESC LIMIT $1", [limit]), "list changelog entries");
+    return result.rows.map(row => this.changelogEntryRow(row));
+  }
+
+  changelogEntryRow(row) {
+    return { id: row.id, title: row.title, content: row.content, kind: row.kind, publishedAt: row.published_at, createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  async upsertChangelogEntry(entry, { create = false } = {}) {
+    const query = create
+      ? "INSERT INTO changelog_entries (id, title, content, kind, published_at) VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, NOW())) RETURNING *"
+      : "UPDATE changelog_entries SET title=$2, content=$3, kind=$4, published_at=COALESCE($5::timestamptz, published_at), updated_at=NOW() WHERE id=$1 RETURNING *";
+    const result = await withPgRetry(() => this.pool.query(query, [entry.id, entry.title, entry.content, entry.kind, entry.publishedAt || null]), `save changelog entry ${entry.id}`);
+    return result.rows[0] ? this.changelogEntryRow(result.rows[0]) : null;
+  }
+
+  async deleteChangelogEntry(id) {
+    return withPgRetry(() => this.pool.query("DELETE FROM changelog_entries WHERE id=$1", [id]), `delete changelog entry ${id}`);
+  }
+
+  async listChangelogTags() {
+    const result = await withPgRetry(() => this.pool.query("SELECT t.*, (SELECT COUNT(*)::int FROM changelog_entries e WHERE e.kind = t.id) AS entry_count FROM changelog_tags t ORDER BY sort_order, id"), "list changelog tags");
+    return result.rows.map(row => this.changelogTagRow(row));
+  }
+
+  changelogTagRow(row) {
+    return { id: row.id, label: row.label, color: row.color, sortOrder: row.sort_order, entryCount: Number(row.entry_count || 0), createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  async upsertChangelogTag(tag, { create = false } = {}) {
+    const query = create
+      ? "INSERT INTO changelog_tags (id, label, color, sort_order) VALUES ($1, $2, $3, COALESCE($4, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM changelog_tags))) RETURNING *"
+      : "UPDATE changelog_tags SET label=$2, color=$3, sort_order=COALESCE($4, sort_order), updated_at=NOW() WHERE id=$1 RETURNING *";
+    const result = await withPgRetry(() => this.pool.query(query, [tag.id, tag.label, tag.color, tag.sortOrder ?? null]), `save changelog tag ${tag.id}`);
+    if (!result.rows[0]) return null;
+    const count = await this.pool.query("SELECT COUNT(*)::int AS entry_count FROM changelog_entries WHERE kind=$1", [tag.id]);
+    return this.changelogTagRow({ ...result.rows[0], entry_count: count.rows[0].entry_count });
+  }
+
+  // Refuses (rowCount 0, inUse > 0) while entries still use the tag; the foreign key backs this up.
+  async deleteChangelogTag(id) {
+    const count = await this.pool.query("SELECT COUNT(*)::int AS entry_count FROM changelog_entries WHERE kind=$1", [id]);
+    if (count.rows[0].entry_count > 0) return { rowCount: 0, inUse: count.rows[0].entry_count };
+    const result = await withPgRetry(() => this.pool.query("DELETE FROM changelog_tags WHERE id=$1", [id]), `delete changelog tag ${id}`);
+    return { rowCount: result.rowCount, inUse: 0 };
   }
 
   async listCatalogV2Products() {

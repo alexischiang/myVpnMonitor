@@ -202,7 +202,8 @@ export const SiteFooter = forwardRef<HTMLElement, SiteFooterProps>(function Site
         <nav aria-label="页脚"><ul className={styles.inline}>{rowLinks.map(link => <li key={link.label}><FooterLink link={link} onNavigate={onNavigate} /></li>)}</ul></nav>
       </div>
       <div className={styles.minimalRow}>
-        <span className={styles.copyright}>© {year} {brand.name}. {tagline}</span>
+        {/* XELA extension: an empty tagline leaves just the copyright, without a dangling separator. */}
+        <span className={styles.copyright}>© {year} {brand.name}{tagline ? `. ${tagline}` : ""}</span>
         <div className={styles.bottomEnd}>{statusNode}{socialNode}</div>
       </div>
       </div>

@@ -123,8 +123,8 @@
   --bento-row: 7.5rem;
   --card: var(--surface);
   --card-foreground: var(--foreground);
-  /* Default surface of overview bento cards (they have no border). */
-  --bento-surface: var(--neutral-3);
+  /* Default surface of overview bento cards (they have no border): the same card surface as every other card. */
+  --bento-surface: var(--surface);
   --series-5: #e87ba4;
   --series-other: #a3a3a3;
   --popover: var(--surface-raised);
@@ -162,22 +162,19 @@
   }
 }
 
-/* User centre: default bento cards sit on a light grey panel (#f6f6f6) against the white page. Plain cards take that grey only on the
-   overview; every other user-centre page keeps the default card surface (white in light mode). Dark theme keeps the shared surfaces. */
-[data-account-shell] {
-  --bento-surface: oklch(0.973 0 0);
+/* Product palette, overriding Arc's defaults (foundation.css loads first): a light grey page with white cards, and in dark mode a
+   mid-grey page with near-black cards. */
+:root {
+  --background: #f5f5f5;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
 }
-[data-account-shell][data-account-overview] {
-  --card-surface: oklch(0.973 0 0);
-}
-.dark [data-account-shell] {
-  --card-surface: var(--surface);
-  --bento-surface: var(--surface-muted);
+:root[data-theme="dark"] {
+  --background: #262626;
+  --surface: #171717;
 }
 
 .dark {
-  /* One step lighter than the content panel, since bento cards have no border. */
-  --bento-surface: var(--surface-muted);
   --series-5: #d55181;
   --series-other: #737373;
   --sidebar: var(--surface);

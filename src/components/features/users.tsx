@@ -444,11 +444,11 @@ export function UsersPage() {
               <Checkbox id="batch-allow-disabled" checked={batchAllowDisabled} onCheckedChange={checked => { setBatchAllowDisabled(checked === true); setBatchGiftPreview(null) }} label="使用未启用池" />
               {batchGiftPreview ? <FieldDescription>符合条件 {batchGiftPreview.eligibleCount} 人，可执行 {batchGiftPreview.readyCount} 人。{batchGiftPreview.unavailableCount ? "部分用户没有可用订阅池，将保留原订阅池并只增加时长。" : ""}</FieldDescription> : null}
             </FieldGroup>
-            <div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary">取消</Button></DialogClose>{batchGiftPreview ? <ActionButton type="submit" label="确认批量赠送" pendingLabel="赠送中..." pending={batchGiftSaving} /> : <ActionButton type="button" onClick={() => void previewBatchGift()} disabled={batchGiftLoading || !batchGiftDays} label="预览范围" pendingLabel="计算中..." pending={batchGiftLoading} />}</div>
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary">取消</Button></DialogClose>{batchGiftPreview ? <ActionButton type="submit" label="确认批量赠送" pendingLabel="赠送中..." pending={batchGiftSaving} /> : <ActionButton type="button" onClick={() => void previewBatchGift()} disabled={batchGiftLoading || !batchGiftDays} label="预览范围" pendingLabel="计算中..." pending={batchGiftLoading} />}</div>
           </form></DialogContent>
       </Dialog>
       <ArcDialog open={Boolean(deleteUser)} onOpenChange={open => { if (!open) setDeleteUser(null) }}>
-        <ArcDialogContent title="确认删除用户？" description="删除后无法恢复，相关用户记录也将不再显示。"><div className="mt-6 flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={deleting}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button variant="danger" onClick={() => void confirmRemove()} disabled={deleting}>{deleting ? <Loader2 className="animate-spin" /> : null}确认删除</Button></ArcDialogClose></div></ArcDialogContent>
+        <ArcDialogContent title="确认删除用户？" description="删除后无法恢复，相关用户记录也将不再显示。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={deleting}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button variant="primary" onClick={() => void confirmRemove()} disabled={deleting}>{deleting ? <Loader2 className="animate-spin" /> : null}确认删除</Button></ArcDialogClose></div></ArcDialogContent>
       </ArcDialog>
       <Dialog open={Boolean(poolUser)} onOpenChange={open => { if (!open) setPoolUser(null) }}>
         <DialogContent title="手动换池" description={`为 ${poolUser?.userId || poolUser?.email || "当前用户"} 选择新的订阅池。`} size="lg"><form className="grid gap-4" onSubmit={changePool} noValidate>
@@ -458,7 +458,7 @@ export function UsersPage() {
                   <dt className="text-muted-foreground">池到期</dt><dd>{currentPool ? formatDate(currentPool.metrics?.expireAt) : "-"}</dd>
                 </dl></Card>
             <SubscriptionPoolSelect id="manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={poolUser?.isSuperAccount ? undefined : poolUser?.activeGroup} />
-            <div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary">取消</Button></DialogClose><ActionButton type="submit" disabled={poolSaving || !poolId || poolId === poolUser?.subscriptionId} label="确认换池" pending={poolSaving} /></div>
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary">取消</Button></DialogClose><ActionButton type="submit" disabled={poolSaving || !poolId || poolId === poolUser?.subscriptionId} label="确认换池" pending={poolSaving} /></div>
           </form></DialogContent>
       </Dialog>
       <Dialog open={Boolean(giftUser)} onOpenChange={open => { if (!open) setGiftUser(null) }}>
@@ -474,7 +474,7 @@ export function UsersPage() {
               {giftExpiresAt ? <Input label="赠送后到期日" id="gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /> : null}
               {giftExpiresAt ? <SubscriptionPoolSelect id="gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={giftUser?.isSuperAccount ? undefined : giftUser?.activeGroup} description={giftMessage} /> : null}
             </FieldGroup>
-            <div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary">取消</Button></DialogClose>{giftExpiresAt ? <ActionButton type="submit" disabled={giftSaving || !giftPoolId} label="确认赠送" pendingLabel="赠送中..." pending={giftSaving} /> : <ActionButton type="button" onClick={previewGift} label="推荐订阅池" pendingLabel="计算中..." pending={giftPreviewing} />}</div>
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary">取消</Button></DialogClose>{giftExpiresAt ? <ActionButton type="submit" disabled={giftSaving || !giftPoolId} label="确认赠送" pendingLabel="赠送中..." pending={giftSaving} /> : <ActionButton type="button" onClick={previewGift} label="推荐订阅池" pendingLabel="计算中..." pending={giftPreviewing} />}</div>
           </form></DialogContent>
       </Dialog>
     </div>

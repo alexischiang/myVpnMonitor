@@ -197,13 +197,13 @@ export function PaymentSettingsPage() {
                   <Input label="支付完成返回地址" id="payment-return-url" type="url" value={draft.returnUrl} onChange={event => setDraft({ ...draft, returnUrl: event.target.value })} placeholder="留空时根据 PUBLIC_BASE_URL 自动生成" />
                 </div></Card> : null}
             </FieldGroup>
-            <div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={saving}>取消</Button></DialogClose><ActionButton type="submit" label="保存平台" pendingLabel="保存中..." pending={saving} /></div>
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={saving}>取消</Button></DialogClose><ActionButton type="submit" label="保存平台" pendingLabel="保存中..." pending={saving} /></div>
           </form> : null}
         </DialogContent>
       </Dialog>
 
       <Dialog open={Boolean(deleting)} onOpenChange={open => !open && setDeleting(null)}>
-        <DialogContent title="删除支付平台？" description={`将删除“${deleting?.name}”的配置。已有订单仍保留记录，但删除后无法再通过该平台主动查单。`}><div className="mt-6 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary">取消</Button></DialogClose><DialogClose asChild><Button onClick={() => void remove()}>确认删除</Button></DialogClose></div></DialogContent>
+        <DialogContent title="删除支付平台？" description={`将删除“${deleting?.name}”的配置。已有订单仍保留记录，但删除后无法再通过该平台主动查单。`}><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary">取消</Button></DialogClose><DialogClose asChild><Button onClick={() => void remove()}>确认删除</Button></DialogClose></div></DialogContent>
       </Dialog>
     </div>
   )

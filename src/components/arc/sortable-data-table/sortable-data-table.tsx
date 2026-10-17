@@ -39,10 +39,14 @@ export type SortableDataTableProps<T extends Record<string, unknown>> = {
   onSelectionChange?: (keys: string[]) => void;
   /** Noun for the count line, as in "6 projects". */
   itemName?: { one: string; other: string };
-  /** XELA extension: the narrowest the table may get before it scrolls sideways, for lists with many columns. */
+  /** XELA extension: the narrowest the table may get before it scrolls sideways. By default it is the measured content width (see below). */
   minWidth?: number;
 };
 
+/** XELA extension: the widest a column counts when the table measures its natural width; longer text wraps inside it. */
+const MAX_NATURAL_COLUMN = 320;
+/** XELA extension: columns at most this wide keep their natural width while a table squeezes; wider ones give up space down to it. */
+const KEEP_COLUMN = 110;
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 const isEmpty = (value: unknown) => value == null || value === "";
 const comparable = (value: unknown) => value instanceof Date ? value.getTime() : value;
@@ -158,17 +162,50 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
 
   // Measure the natural column widths once, then hold them with a fixed layout so nothing reflows while rows move.
   const signature = [selectable ? "select" : "", ...columns.map(column => column.key)].join("\u0000");
-  const [locked, setLocked] = useState<{ signature: string; widths: Record<string, number> } | null>(null);
+  // XELA extension: each column is measured unwrapped (capped at MAX_NATURAL_COLUMN so long text still wraps) and at its narrowest
+  // (content that cannot wrap, such as a link button). The table fills its container when the content fits; when it is too wide, columns
+  // give up space down to their floor, max(narrowest, min(unwrapped, KEEP_COLUMN)), so short values such as amounts and dates keep their
+  // width while long text wraps; a table that would not fit even then keeps its unwrapped widths and scrolls sideways.
+  const [locked, setLocked] = useState<{ signature: string; widths: Record<string, { natural: number; floor: number }>; natural: number } | null>(null);
   const widths = locked?.signature === signature ? locked.widths : null;
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [available, setAvailable] = useState(0);
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const update = () => setAvailable(scroller.clientWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, []);
+  const fitted = useMemo(() => {
+    if (!widths || !locked) return null;
+    const entries = Object.entries(widths);
+    const room = entries.reduce((sum, [, size]) => sum + size.natural - size.floor, 0);
+    // A table that cannot fit even at its floors keeps its unwrapped widths and scrolls, instead of wrapping for nothing.
+    const deficit = Math.max(0, locked.natural - available);
+    const shrink = deficit <= room ? deficit : 0;
+    const sizes = Object.fromEntries(entries.map(([key, size]) => [key, size.natural - (room ? shrink * (size.natural - size.floor) / room : 0)]));
+    return { target: Math.max(minWidth ?? 0, locked.natural - shrink), sizes };
+  }, [available, locked, minWidth, widths]);
   useLayoutEffect(() => {
     const table = tableRef.current;
     if (!table || widths) return;
     const measure = () => {
-      const total = table.getBoundingClientRect().width;
-      if (!total || getComputedStyle(table).display !== "table") return false;
-      const next: Record<string, number> = {};
-      table.querySelectorAll<HTMLElement>("thead th[data-key]").forEach(cell => { next[cell.dataset.key ?? ""] = cell.getBoundingClientRect().width / total * 100; });
-      setLocked({ signature, widths: next });
+      if (!table.getBoundingClientRect().width || getComputedStyle(table).display !== "table") return false;
+      const { width, minWidth: inlineMinWidth } = table.style;
+      const cells = [...table.querySelectorAll<HTMLElement>("thead th")];
+      const widthsAt = (layout: string) => { table.style.width = layout; return cells.map(cell => cell.getBoundingClientRect().width); };
+      table.style.minWidth = "0";
+      const unwrapped = widthsAt("max-content");
+      const narrowest = widthsAt("min-content");
+      table.style.width = width;
+      table.style.minWidth = inlineMinWidth;
+      const sizes = cells.map((cell, index) => cell.dataset.key === undefined ? unwrapped[index]! : Math.max(narrowest[index]!, Math.min(unwrapped[index]!, MAX_NATURAL_COLUMN)));
+      const next: Record<string, { natural: number; floor: number }> = {};
+      cells.forEach((cell, index) => { if (cell.dataset.key !== undefined) next[cell.dataset.key] = { natural: sizes[index]!, floor: Math.max(narrowest[index]!, Math.min(sizes[index]!, KEEP_COLUMN)) }; });
+      setLocked({ signature, widths: next, natural: Math.ceil(sizes.reduce((sum, size) => sum + size, 0)) });
       return true;
     };
     if (measure()) return;
@@ -271,13 +308,13 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
   }
 
   return <div className={styles.wrapper} onKeyDown={onKeyDown}>
-    <div className={styles.scroller}>
+    <div ref={scrollerRef} className={styles.scroller}>
       {band ? <span className={styles.band} style={{ left: band.left, width: band.width }} aria-hidden="true" /> : null}
-      <table ref={tableRef} role="table" className={styles.table} style={minWidth ? { minWidth } : undefined} data-fixed={widths ? "" : undefined} data-selectable={selectable || undefined}>
+      <table ref={tableRef} role="table" className={styles.table} style={fitted ? { minWidth: fitted.target } : minWidth ? { minWidth } : undefined} data-fixed={widths ? "" : undefined} data-selectable={selectable || undefined}>
         <caption>{caption}</caption>
         <colgroup>
           {selectable ? <col className={styles.selectCol} /> : null}
-          {columns.map((column, index) => <col key={column.key} style={{ width: column.width !== undefined ? (typeof column.width === "number" ? `${column.width}px` : column.width) : widths && index > 0 ? `${widths[column.key]}%` : undefined }} />)}
+          {columns.map(column => <col key={column.key} style={{ width: column.width !== undefined ? (typeof column.width === "number" ? `${column.width}px` : column.width) : fitted ? `${fitted.sizes[column.key]}px` : undefined }} />)}
         </colgroup>
         <thead role="rowgroup"><tr role="row">
           {selectable ? <th scope="col" role="columnheader" className={styles.selectCell}><SelectBox inputRef={selectAllRef} checked={allSelected} mixed={selectedCount > 0 && !allSelected} label="选择全部行" nav="head" reduced={reduced} onToggle={() => commit(allSelected ? new Set() : new Set(keys))} /></th> : null}

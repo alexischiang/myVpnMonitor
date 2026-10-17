@@ -158,6 +158,41 @@ function normalizeCatalogV2CompareAttribute(input = {}) {
   return { id: input.id ? normalizeCatalogV2Id(input.id, "对比项标识") : `cmp-${crypto.randomBytes(4).toString("hex")}`, label, kind, options, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "对比项排序" }) };
 }
 
+// Colour keys a changelog tag can take; the frontend maps each one to a theme token.
+const CHANGELOG_TAG_COLORS = ["accent", "muted", "success", "warning", "danger", "blue", "purple", "orange", "teal"];
+
+function normalizeChangelogTag(input = {}) {
+  const label = String(input.label || "").trim().slice(0, 12);
+  if (!label) throw new Error("标签名称不能为空。");
+  const color = CHANGELOG_TAG_COLORS.includes(input.color) ? input.color : "";
+  if (!color) throw new Error("请选择标签颜色。");
+  const sortOrder = input.sortOrder === undefined || input.sortOrder === null || input.sortOrder === "" ? null : catalogV2Integer(input.sortOrder, { label: "标签排序" });
+  return { id: input.id ? normalizeCatalogV2Id(input.id, "标签标识") : `tag-${crypto.randomBytes(4).toString("hex")}`, label, color, sortOrder };
+}
+
+// Content is plain text: the first non-empty line is the summary, each later line one detail (a leading "-" or "•" is dropped).
+function normalizeChangelogEntry(input = {}) {
+  const title = String(input.title || "").trim().slice(0, 80);
+  if (!title) throw new Error("更新标题不能为空。");
+  const content = String(input.content || "").replace(/\r\n?/g, "\n").split("\n").map(line => line.trim()).filter(Boolean).join("\n").slice(0, 4000);
+  if (!content) throw new Error("更新内容不能为空。");
+  // Whether the tag exists is checked by the route against the tag table.
+  const kind = typeof input.kind === "string" && CATALOG_V2_ID_PATTERN.test(input.kind) ? input.kind : "";
+  if (!kind) throw new Error("请选择更新标签。");
+  const publishedAt = input.publishedAt ? new Date(input.publishedAt) : null;
+  if (publishedAt && Number.isNaN(publishedAt.getTime())) throw new Error("发布时间无效。");
+  return { id: input.id ? String(input.id) : `cl-${crypto.randomBytes(6).toString("hex")}`, title, content, kind, publishedAt: publishedAt ? publishedAt.toISOString() : "" };
+}
+
+async function assertChangelogTagExists(id) {
+  if (!(await dataStore.listChangelogTags()).some(tag => tag.id === id)) throw new Error("所选标签不存在，请刷新后重新选择。");
+}
+
+function publicChangelogEntry(entry) {
+  const [summary = "", ...details] = String(entry.content || "").split("\n").map(line => line.replace(/^[-•·*]\s*/, "").trim()).filter(Boolean);
+  return { id: entry.id, title: entry.title, kind: entry.kind, summary, details, publishedAt: entry.publishedAt };
+}
+
 function normalizeCatalogV2CompareValues(value) {
   return Object.fromEntries(Object.entries(value && typeof value === "object" && !Array.isArray(value) ? value : {})
     .filter(([key]) => CATALOG_V2_ID_PATTERN.test(key))
@@ -9325,6 +9360,13 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (pathname === "/api/public/changelog" && req.method === "GET") {
+    const limit = Math.min(Math.max(Number(new URL(req.url, "http://localhost").searchParams.get("limit")) || 200, 1), 200);
+    const [entries, tags] = await Promise.all([dataStore.listChangelogEntries({ limit }), dataStore.listChangelogTags()]);
+    sendJson(res, 200, { tags: tags.map(({ id, label, color }) => ({ id, label, color })), entries: entries.map(publicChangelogEntry) });
+    return;
+  }
+
   const publicReferralMatch = pathname.match(/^\/api\/public\/referrals\/(\d{6})$/);
   if (publicReferralMatch && req.method === "GET") {
     await loadLatestData();
@@ -10811,6 +10853,78 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  if (pathname === "/api/changelog" && req.method === "GET") {
+    sendJson(res, 200, await dataStore.listChangelogEntries());
+    return;
+  }
+
+  if (pathname === "/api/changelog" && req.method === "POST") {
+    try {
+      const entry = normalizeChangelogEntry({ ...(await readJson(req)), id: undefined });
+      await assertChangelogTagExists(entry.kind);
+      sendJson(res, 201, await dataStore.upsertChangelogEntry(entry, { create: true }));
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
+    return;
+  }
+
+  if (pathname === "/api/changelog-tags" && req.method === "GET") {
+    sendJson(res, 200, await dataStore.listChangelogTags());
+    return;
+  }
+
+  if (pathname === "/api/changelog-tags" && req.method === "POST") {
+    try {
+      const tag = normalizeChangelogTag({ ...(await readJson(req)), id: undefined });
+      sendJson(res, 201, await dataStore.upsertChangelogTag(tag, { create: true }));
+    } catch (error) { sendJson(res, 400, { error: error.message }); }
+    return;
+  }
+
+  const changelogTagMatch = pathname.match(/^\/api\/changelog-tags\/([^/]+)$/);
+  if (changelogTagMatch) {
+    const id = decodeURIComponent(changelogTagMatch[1]);
+    if (req.method === "PUT") {
+      try {
+        const tag = await dataStore.upsertChangelogTag(normalizeChangelogTag({ ...(await readJson(req)), id }));
+        if (!tag) { sendJson(res, 404, { error: "标签不存在。" }); return; }
+        sendJson(res, 200, tag);
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+    if (req.method === "DELETE") {
+      try {
+        const result = await dataStore.deleteChangelogTag(id);
+        if (result.inUse) { sendJson(res, 409, { error: `有 ${result.inUse} 条更新正在使用该标签，请先修改这些更新的标签。` }); return; }
+        if (!result.rowCount) { sendJson(res, 404, { error: "标签不存在。" }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+  }
+
+  const changelogMatch = pathname.match(/^\/api\/changelog\/([^/]+)$/);
+  if (changelogMatch) {
+    const id = decodeURIComponent(changelogMatch[1]);
+    if (req.method === "PUT") {
+      try {
+        const normalized = normalizeChangelogEntry({ ...(await readJson(req)), id });
+        await assertChangelogTagExists(normalized.kind);
+        const entry = await dataStore.upsertChangelogEntry(normalized);
+        if (!entry) { sendJson(res, 404, { error: "更新记录不存在。" }); return; }
+        sendJson(res, 200, entry);
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+    if (req.method === "DELETE") {
+      try {
+        const result = await dataStore.deleteChangelogEntry(id);
+        if (!result.rowCount) { sendJson(res, 404, { error: "更新记录不存在。" }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+  }
+
   if (pathname === "/api/catalog-v2/products" && req.method === "GET") {
     sendJson(res, 200, await dataStore.listCatalogV2Products());
     return;
@@ -12087,6 +12201,9 @@ module.exports = Object.assign(requestHandler, {
   normalizeCatalogV2AddonCategory,
   normalizeCatalogV2CompareAttribute,
   normalizeCatalogV2CompareValues,
+  normalizeChangelogEntry,
+  normalizeChangelogTag,
+  publicChangelogEntry,
   normalizeCheckoutSettings,
   releaseExpiredCustomNodes,
   deliverAddonOrder,

@@ -136,7 +136,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 
 | 本地（用量） | Arc | 传参要点 |
 |---|---|---|
-| `alert-dialog`（16） | `dialog` | 使用普通 Dialog，破坏性操作用 `danger` 按钮 |
+| `alert-dialog`（16） | `dialog` | 使用普通 Dialog（确认/删除用 `features/confirm-dialog`）。按 Arc 自己的示例：操作按钮直接放在 body 里，右对齐 `flex flex-wrap justify-end gap-2`，不加额外上边距（body 已有内边距；前面有内容时由父级 gap 或 `mt-4` 隔开）；确认按钮用 `primary`，`danger` 只用于页面上触发删除的按钮 |
 | `dialog`（20） | `dialog` | `<DialogContent title description>`，`title` 必填，没有 Header/Footer 子组件 |
 | `progress`（9） | `progress`；流量配额用 `usage-meter` | `progress`: `value`、`max`、`label`、`showValue`。`usage-meter`: `label`、`segments[{id,label,value}]`、`limit`、`unit`、`decimals`、`freeLabel`、`overLabel`、`warnAt`。不限流量见 5.1 |
 | `select`（50） | `select`；长列表用 `combobox` | `label` 必填，`options[{value,label,disabled}]`，选项只能是纯文本 |
@@ -254,7 +254,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `password-field` | `error`；默认文案改中文 |
 | `password-strength` | 默认文案和规则标签改中文 |
 | `dropdown-menu` | `trigger`（自定义触发元素）、`align` |
-| `sortable-data-table` | `minWidth`（列多时横向滚动）；播报和标签文案改中文 |
+| `sortable-data-table` | `minWidth`（可选的最小宽度）；锁定列宽时按列测量不换行宽度与最窄宽度：内容放得下就铺满容器，略宽时长文本列先收窄换行（短值列保留，见 `KEEP_COLUMN`），收窄后仍放不下才横向滚动；手机布局的 `min-width` 用 `!important` 覆盖内联值；播报和标签文案改中文 |
 | `progress`、`skeleton`、`alert`、`pagination`、`copy-button`、`toast-stack`、`user-menu` | 内置文案改中文 |
 | `user-menu` | 去掉「跟随系统」主题选项（产品只有浅色和深色） |
 | `lib/use-copy-feedback` | 改用应用自己的 `copyText`（微信内置浏览器拒绝 Clipboard API 时回退到选区复制） |
@@ -269,7 +269,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `blocks/faq-section`、`blocks/site-footer` | 默认文案改中文 |
 | `card`（补充） | 背景先读 `--card-surface`（缺省回落到 `--surface`），用户端外壳借此只在总览页（`[data-account-overview]`）把普通卡片设为浅灰，其它用户端页面保持默认白底，不影响共用的 `--surface` |
 | `blocks/cta-section` | 新安装（只取 block 本身，`lib/media.ts` 沿用项目已有版本）；`bare`：banner 去掉自带的居中列和留白，放进页面已有的内容列；`onNavigate`：`/` 开头的 `href` 动作走前端路由；`compactAction`：banner 在窄宽度下保持一行，链接动作只显示箭头图标（文案保留给读屏）；关闭按钮读屏文案改中文 |
-| `blocks/site-footer`（补充） | `contained`：内容收进与 `site-header` 相同的 1200px 列和左右留白（窄于 760px 时 16px），上边框仍通栏；传了 `onNavigate` 时站内链接（`/` 开头）走前端路由，不再整页刷新；`status.static` 把状态显示为纯文本（不渲染成无动作的按钮）；社交链接列表的读屏标签改中文 |
+| `blocks/site-footer`（补充） | `contained`：内容收进与 `site-header` 相同的 1200px 列和左右留白（窄于 760px 时 16px），上边框仍通栏；传了 `onNavigate` 时站内链接（`/` 开头）走前端路由，不再整页刷新；`status.static` 把状态显示为纯文本（不渲染成无动作的按钮）；社交链接列表的读屏标签改中文；`minimal` 版式下 `tagline` 为空时版权行不再带多余的「. 」 |
 | `button`、`badge`、`tabs`、`segmented-control`、`card` | 没有写尺寸类的图标按控件给定尺寸（按钮和标签页 16px，小号按钮 14px，徽标 12px，卡片标题 18px）；带 `size-*` 类的图标不受影响 |
 | 控件尺寸（`src/styles.css`） | 鼠标设备下 `--control-height-sm/md/lg` 为 32/36/40px、`--radius-control` 为 14px；触屏保持 Arc 的 36/44/50px 和 18px |
 | `card`（补充） | `fill`：卡片被网格行拉伸时内容区撑满高度，正文可以贴底 |
@@ -284,6 +284,11 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `blocks/plan-comparison` | 演示常量改为属性（不传时仍显示原演示）：`plans`（任意数量，列数由 `--plan-count` 驱动；`tagline`、`badge`；`prices` 按周期给出 `amount`、`unit`、`note`，缺省表示该周期未开放，按钮禁用）、`periods`（周期切换，只有一个周期时隐藏）、`rows`（值为 `true`/`false`/`null`/文字；所有套餐取值相同即视为共用行，供「只看差异」过滤，可用 `shared` 覆盖）；周期与选中项可受控（`period`/`onPeriodChange`、`selected`/`onSelectedChange`）；`currency`、`footer`、`action`（页脚操作，如购买按钮）、`labels`（全部文案）；价格支持两位小数；列放不下时矩阵横向滚动（宽屏每列至少 168px，窄屏至少 156px） |
 | `chat-thread` | 点击消息里的图片在当前页放大查看（Radix Dialog：关闭按钮、点遮罩或 Esc 关闭；带修饰键或中键点击仍按链接在新标签页打开）；新增文案 `closeImage`；`reactions` 为空数组时不显示添加回应按钮；`header`：消息列表上方的标题行（与输入框一样用细分隔线隔开） |
 | `blocks/page-header`（补充） | `statusAlign`：`"end"` 时标题行撑满整行，`status` 插槽（徽标、页面级按钮）靠右；默认 `"inline"` 保持紧跟标题 |
+| `blocks/changelog-feed` | 手动安装（只复制 block 的 tsx 和 css，`copy-button`、`lib/media` 沿用已有版本，避免覆盖其扩展）；`next/image` 改为普通 `img`；`version` 改为可选，为空时不显示版本号；`subscribe`（`false` 隐藏订阅控件，产品没有邮件列表）；`emptyNote`（没有任何条目时的结尾文案）；`kinds`（筛选类型由数据传入：`{ id, label, color?, tick? }`，`ChangelogKind` 改为任意字符串，带 `color` 的类型用行内 CSS 变量着色）；`fill`（撑满容器宽度，不再限制 920px）；`autoHeight` + `stickyTop`（列表随条目增高、由页面滚动，月份栏吸顶在页面顶栏下方，月份跟踪和跳转改用窗口滚动）；类型标签和全部内置文案改中文 |
+| `select`（补充） | 选项可带 `icon`（如颜色色块），在下拉列表和触发器里显示在文字前；`iconOnly`：只显示图标，文字保留给读屏（更新日志标签的颜色选择） |
+| `timeline` | 相对时间、「今天/昨天」日期标题、条数和新条目播报改中文；判断「今天」改用日期而不是标题文字 |
+| `line-chart` | `integer`：计数类数据只用整数刻度（避免 0.25 步长四舍五入后出现重复的「1 1 1」标签） |
+| `usage-meter` | 用量正好等于配额时角标显示「已用完」而不是「即将用完」 |
 
 ## 7. 进度
 

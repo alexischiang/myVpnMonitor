@@ -34,5 +34,5 @@ export function SimpleTable<T>({ caption, columns, rows, rowKey, cells, emptyMes
     sortable: false,
     render: (_value, row) => cellsById.get(row.__id)?.[index] ?? null,
   }))
-  return <SortableDataTable rows={arcRows} columns={arcColumns} rowKey="__id" caption={caption} emptyMessage={emptyMessage} minWidth={minWidth ?? (columns.length > 5 ? columns.length * 130 : undefined)} />
+  return <SortableDataTable rows={arcRows} columns={arcColumns} rowKey="__id" caption={caption} emptyMessage={emptyMessage} minWidth={minWidth} />
 }

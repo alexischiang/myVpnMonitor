@@ -43,6 +43,8 @@ export interface LineChartProps {
   formatValue?: (value: number, series: LineChartSeries) => string;
   /** Formats the value axis. Defaults to a compact number, such as 1.2K. */
   formatTick?: (value: number) => string;
+  /** XELA extension: counts that are whole numbers get whole-number gridlines only (no 0.25 steps that round to repeated labels). */
+  integer?: boolean;
   /** Controlled hidden series keys. */
   hiddenSeries?: string[];
   defaultHiddenSeries?: string[];
@@ -85,11 +87,12 @@ const colorOf = (series: LineChartSeries, index: number) => series.color ?? PALE
 const clean = (value: number) => Number(value.toPrecision(12));
 
 /** Clean gridlines: the smallest step of 1, 2, 2.5, or 5 that covers the data in four rows or fewer, from zero unless the data dips below it. */
-function niceScale(low: number, high: number) {
+function niceScale(low: number, high: number, integer = false) {
   const lo = Math.min(0, low), hi = Math.max(high, lo + 1);
   const span = hi - lo, magnitude = 10 ** Math.floor(Math.log10(span / 4));
   for (const factor of [1, 2, 2.5, 5, 10]) {
     const step = factor * magnitude, bottom = Math.floor(lo / step) * step, top = Math.ceil(hi / step) * step;
+    if (integer && !Number.isInteger(clean(step))) continue;
     if ((top - bottom) / step <= 4 + 1e-9) {
       const ticks: number[] = [];
       for (let value = bottom; value <= top + step / 2; value += step) ticks.push(clean(value));
@@ -173,7 +176,7 @@ function axisPicks(data: LineChartDatum[], width: number) {
   return labeled.reverse().filter((_, rank) => rank % stride === 0).reverse();
 }
 
-export function LineChart({ data, series, label, unit = "", height = 220, formatValue, formatTick = value => compact.format(value), hiddenSeries, defaultHiddenSeries, onHiddenSeriesChange, onActiveChange, loading = false, emptyLabel = "该范围内暂无数据", legend, categoryLabel = "日期", curve = "smooth", ref, className }: LineChartProps) {
+export function LineChart({ data, series, label, unit = "", height = 220, formatValue, formatTick = value => compact.format(value), hiddenSeries, defaultHiddenSeries, onHiddenSeriesChange, onActiveChange, loading = false, emptyLabel = "该范围内暂无数据", legend, categoryLabel = "日期", curve = "smooth", integer = false, ref, className }: LineChartProps) {
   const reduced = useReducedMotionSafe();
   const figure = useRef<HTMLElement>(null);
   const plot = useRef<HTMLDivElement>(null);
@@ -206,7 +209,7 @@ export function LineChart({ data, series, label, unit = "", height = 220, format
   const targets = useMemo(() => new Map(series.map(line => [line.key, curveFor(data.map(item => item.values[line.key] ?? 0), curve === "smooth")])), [signature]); // eslint-disable-line react-hooks/exhaustive-deps
   let low = Infinity, high = -Infinity;
   for (const line of visible) for (const item of data) { const value = item.values[line.key] ?? 0; low = Math.min(low, value); high = Math.max(high, value); }
-  const range = Number.isFinite(low) ? niceScale(low, high) : null;
+  const range = Number.isFinite(low) ? niceScale(low, high, integer) : null;
   const [steady, setSteady] = useState(() => range ?? niceScale(0, 100));
   if (range && (range.min !== steady.min || range.max !== steady.max)) setSteady(range);
   const scale = { min: useMotionValue(steady.min), max: useMotionValue(steady.max) };

@@ -242,7 +242,7 @@ export function XuiMonitorPage() {
               <FieldLabel htmlFor={`settings-token-${settingsNode.id}`}>节点 API Token <Badge tone={settingsNode.trafficConfigured ? "success" : "neutral"}>{settingsNode.trafficConfigured ? "已配置" : "未配置"}</Badge></FieldLabel>
               <PasswordField label={settingsNode.trafficConfigured ? "留空保持现有 Token" : "输入该节点的 API Token"} hideLabel id={`settings-token-${settingsNode.id}`} autoComplete="new-password" placeholder={settingsNode.trafficConfigured ? "留空保持现有 Token" : "输入该节点的 API Token"} value={nodeTokens[settingsNode.guid] ?? ""} onChange={event => setNodeTokens(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
             </Field>
-            <div className="mt-6 flex flex-wrap justify-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <Button type="button" variant="secondary" onClick={() => setSettingsGuid("")} disabled={savingGuid === settingsNode.guid}>取消</Button>
               <ActionButton type="submit" disabled={savingGuid === settingsNode.guid || !nodeSettingsChanged(settingsNode)} label="保存设置" pending={savingGuid === settingsNode.guid} />
             </div>

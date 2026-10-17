@@ -53,6 +53,8 @@ const AccountShell = lazy(() => import("@/components/features/account-shell").th
 const AccountOnboardingPage = lazy(() => import("@/components/features/account-onboarding").then(module => ({ default: module.AccountOnboardingPage })))
 const AccountNodeStatusPage = lazy(() => import("@/components/features/account-node-status").then(module => ({ default: module.AccountNodeStatusPage })))
 const OrangeButtonShowcasePage = lazy(() => import("@/components/features/orange-button-showcase").then(module => ({ default: module.OrangeButtonShowcasePage })))
+const ChangelogAdminPage = lazy(() => import("@/components/features/changelog-admin").then(module => ({ default: module.ChangelogAdminPage })))
+const AccountChangelogPage = lazy(() => import("@/components/features/changelog").then(module => ({ default: module.AccountChangelogPage })))
 const AccountDocsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountDocsPage })))
 const AccountOrderDetailPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrderDetailPage })))
 const AccountOrdersPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrdersPage })))
@@ -79,11 +81,13 @@ function ProtectedApp() {
 }
 
 function ScrollToTop() {
-  const { pathname, search } = useLocation()
+  const { pathname, search, hash } = useLocation()
   useEffect(() => {
+    // A link to an anchor (such as /account/plans#addons) lets the page scroll to it instead.
+    if (hash) return
     const frame = window.requestAnimationFrame(() => document.scrollingElement?.scrollTo({ top: 0, left: 0 }))
     return () => window.cancelAnimationFrame(frame)
-  }, [pathname, search])
+  }, [hash, pathname, search])
   return null
 }
 
@@ -139,6 +143,7 @@ function App() {
               <Route path="nodes" element={<AccountNodeStatusPage />} />
               <Route path="subscription" element={<Navigate to="/account" replace />} />
               <Route path="docs" element={<AccountDocsPage />} />
+              <Route path="changelog" element={<AccountChangelogPage />} />
               <Route path="plans" element={<PricingPage />} />
               <Route path="design-system/buttons" element={<OrangeButtonShowcasePage />} />
               {/* Test route for the plan comparison layout; the plans page itself is unchanged. */}
@@ -171,6 +176,7 @@ function App() {
               <Route path="orders/:id" element={<OrderDetailPage />} />
               <Route path="tickets" element={<AdminTicketsPage />} />
               <Route path="tickets/:id" element={<AdminTicketDetailPage />} />
+              <Route path="changelog" element={<ChangelogAdminPage />} />
               <Route path="deliveries" element={<ServiceDeliveriesPage />} />
               <Route path="bills" element={<Navigate to="/orders" replace />} />
               <Route path="pricing-settings" element={<PricingSettingsPage />} />

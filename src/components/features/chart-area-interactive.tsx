@@ -141,6 +141,7 @@ export function UserGrowthChart({ users }: { users: User[] }) {
         series={[{ key: "newUsers", label: "新增用户" }]}
         formatValue={value => formatAxisCount(value)}
         formatTick={formatAxisCount}
+        integer
       />
     </Card>
   )

@@ -67,7 +67,8 @@
 @media (max-width: 620px) {
   .scroller { overflow: visible; }
   .band { display: none; }
-  .table { display: block; width: 100%; min-width: 0; max-width: 100%; }
+  /* XELA extension: !important beats the measured inline min-width the desktop layout sets. */
+  .table { display: block; width: 100%; min-width: 0 !important; max-width: 100%; }
   .table thead { display: block; }
   /* The header becomes a strip of sort controls, so sorting stays one tap away on a phone. */
   .table thead tr { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }

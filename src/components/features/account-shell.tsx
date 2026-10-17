@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
-import { BookOpen, Gift, LifeBuoy, ReceiptText, UserRound, WalletCards } from "lucide-react"
+import { BookOpen, Gift, History, LifeBuoy, ReceiptText, UserRound, WalletCards } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { apiFetch, clearJsonCache, fetchJson, setCachedJson } from "@/api"
@@ -36,6 +36,7 @@ function accountNav(hasActiveNodeAccess: boolean): SiteHeaderItem[] {
       links: [
         { label: "使用文档", description: "各平台客户端的使用教程", href: DOCS_URL, external: true, icon: <BookOpen {...ICON} /> },
         { label: "工单服务", description: "向客服提交问题", href: "/account/tickets", icon: <LifeBuoy {...ICON} /> },
+        { label: "更新日志", description: "新功能、优化与修复记录", href: "/account/changelog", icon: <History {...ICON} /> },
       ],
     },
   ]
@@ -54,13 +55,12 @@ function currentGroup(pathname: string) {
   if (/^\/account\/plans(\/|$)/.test(pathname)) return "plans"
   if (/^\/account\/nodes(\/|$)/.test(pathname)) return "nodes"
   if (/^\/account\/(wallet|orders|referrals|payment)(\/|$)/.test(pathname)) return "billing"
-  if (/^\/account\/(tickets|docs)(\/|$)/.test(pathname)) return "help"
+  if (/^\/account\/(tickets|docs|changelog)(\/|$)/.test(pathname)) return "help"
   return ""
 }
 
-// The header is solid white with a soft shadow instead of Arc's border; on the overview only after scrolling (or while a menu is open).
-const solidHeader = "[&>header]:!border-b-transparent [&>header]:!bg-background [&>header]:!shadow-[0_6px_32px_rgb(0_0_0/0.06)]"
-const solidHeaderWhenScrolled = "[&>header[data-scrolled]]:!border-b-transparent [&>header[data-scrolled]]:!bg-background [&>header[data-scrolled]]:!shadow-[0_6px_32px_rgb(0_0_0/0.06)]"
+// The header sits on the card surface (white in light mode) with a soft shadow instead of Arc's border.
+const solidHeader = "[&>header]:!border-b-transparent [&>header]:!bg-card [&>header]:!shadow-[0_6px_32px_rgb(0_0_0/0.06)]"
 
 export function AccountShell() {
   const navigate = useNavigate()
@@ -126,11 +126,8 @@ export function AccountShell() {
     navigate("/login", { replace: true })
   }
 
-  // The overview has a gradient band behind its top: the header stays transparent over it and turns solid once the page scrolls.
-  const overview = location.pathname === "/account"
   return (
-    <div data-account-shell data-account-overview={overview || undefined} className={cn("relative flex min-h-svh flex-col bg-background", overview ? solidHeaderWhenScrolled : solidHeader)}>
-      {overview ? <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-160 bg-(image:--arc-gradient-soft) mask-b-from-50%" /> : null}
+    <div data-account-shell className={cn("relative flex min-h-svh flex-col bg-background", solidHeader)}>
       <SiteHeader
         variant="mega"
         label="用户中心导航"
@@ -155,7 +152,7 @@ export function AccountShell() {
         variant="minimal"
         contained
         brand={{ name: "NEXORA", href: "/account", mark: <></> }}
-        tagline="所有套餐一经支付不支持退款"
+        tagline=""
         links={footerLinks}
         newsletter={null}
         status={{ label: "服务运行正常", tone: "success", static: true }}
