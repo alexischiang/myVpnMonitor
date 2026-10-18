@@ -41,6 +41,7 @@
   /* Pointer focus draws no ring (product decision). --focus-ring is the halo a few fields drew for any input method, so it stays transparent.
      Keyboard focus uses the outline at the end of this file; tune it with --focus-outline, --focus-outline-width and --focus-outline-offset. */
   --focus-ring: transparent;
+  --info: oklch(56% .16 245);
   --success: oklch(49% .19 150);
   --warning: oklch(58% .18 75);
   --danger: oklch(54% .21 25);
@@ -105,6 +106,7 @@
   --control-thumb-on: oklch(19% 0 0);
   --control-fill: oklch(62% 0 0);
   --control-thumb-shadow: 0 0 0 .5px oklch(0% 0 0 / .3), 0 1px 2px oklch(0% 0 0 / .35), 0 2px 6px oklch(0% 0 0 / .2);
+  --info: oklch(76% .13 245);
   --success: oklch(78% .18 150);
   --warning: oklch(83% .17 80);
   --danger: oklch(76% .2 25);

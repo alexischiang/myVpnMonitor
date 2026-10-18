@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { lazy, Suspense, useEffect, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
@@ -12,6 +13,12 @@ import { DataProvider } from "@/components/features/data-provider"
 import { AppShell } from "@/components/features/app-shell"
 import { RequestProgress } from "@/components/features/request-progress"
 import { isWechatBrowser, OPEN_IN_BROWSER_PATH } from "@/utils"
+import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill"
+import twemojiCountryFlagsUrl from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url"
+
+// Windows has no flag emoji, so Chromium there draws a node name's 🇭🇰 as the letters "HK". Where emoji render but flags do not,
+// this registers a self-hosted Twemoji flags font limited to the flag code points; the font stacks in styles.css list it first.
+polyfillCountryFlagEmojis("Twemoji Country Flags", twemojiCountryFlagsUrl)
 
 window.addEventListener("vite:preloadError", event => {
   event.preventDefault()

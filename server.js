@@ -318,7 +318,7 @@ function userHasV2RecurringPlan(user) {
   return Boolean(user && !isUserExpired(user) && user.v2ProductSnapshot?.productType === "recurring_plan");
 }
 
-async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) {
+async function catalogV2Quote(payload, account, { allowUnlisted = false, wallet = null } = {}) {
   const products = await dataStore.listCatalogV2Products();
   const selected = resolveCatalogV2Purchase(products, catalogV2Selection(payload), {
     allowUnlisted,
@@ -332,7 +332,7 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) 
   if (coupon) validateCouponUsage(coupon, selected, account.id);
   const originalCents = Math.round(selected.originalAmount * 100);
   const discountCents = Math.round(originalCents * (Number(coupon?.percent) || 0) / 100);
-  const vipLevel = vipLevelForSpend((await walletForAccount(account)).vipSpendCents / 100);
+  const vipLevel = vipLevelForSpend((wallet || await quoteWalletForAccount(account)).vipSpendCents / 100);
   const vipPercent = (product.vipDiscount ?? isPlan) ? vipDiscountPercent(vipLevel) : 0;
   const afterCouponCents = originalCents - discountCents;
   const subtotalCents = Math.round(afterCouponCents * (100 - vipPercent) / 100);
@@ -344,8 +344,8 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) 
     : selected.unlimited ? "无限流量" : selected.trafficBytes == null ? "" : `${Number((selected.trafficBytes / 1024 ** 3).toFixed(2))} GB`;
   const cycles = product.type === "recurring_plan" ? product.periods.filter(period => period.isEnabled).map(period => {
     const quote = resolveCatalogV2Purchase(products, { productId: product.id, periodId: period.id }, { allowUnlisted, hasRecurringPlan: true });
-    return { optionId: quote.optionId, label: quote.optionLabel, amount: quote.originalAmount, devices: quote.devices, durationDays: quote.durationDays };
-  }) : [{ optionId: selected.optionId, label: selected.optionLabel, amount: selected.originalAmount, devices: selected.devices, durationDays: selected.durationDays }];
+    return { optionId: quote.optionId, label: quote.optionLabel, amount: quote.originalAmount, devices: quote.devices, durationDays: quote.durationDays, trafficGb: quote.trafficGb };
+  }) : [{ optionId: selected.optionId, label: selected.optionLabel, amount: selected.originalAmount, devices: selected.devices, durationDays: selected.durationDays, trafficGb: selected.trafficGb }];
   return {
     ...selected,
     title: product.description || product.name,
@@ -359,6 +359,8 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false } = {}) 
     // V2 traffic tiers add a fixed step to the period's base traffic rather than multiplying it.
     trafficStepGb: product.trafficCustomization.enabled ? Number(((product.trafficCustomization.stepBytes || 0) / 1024 ** 3).toFixed(2)) : 0,
     trafficMaxTier: product.trafficCustomization.enabled ? product.trafficCustomization.maxSteps + 1 : 1,
+    // Price of one step per 30 days, so the checkout page can preview a tier or cycle change before the new quote arrives.
+    trafficStepPrice: product.trafficCustomization.enabled ? Number(product.trafficCustomization.stepPriceCents || 0) / 100 : 0,
     trafficTierMarkupPercent: 0,
     discountAmount: discountCents / 100,
     discountPercent: Number(coupon?.percent) || 0,
@@ -2003,6 +2005,11 @@ async function walletForAccount(account) {
   return dataStore.getWallet(account.id, initialWalletVipCents(account));
 }
 
+// Quotes only display balances, so they read without the locking transaction getWallet runs.
+async function quoteWalletForAccount(account) {
+  return dataStore.peekWallet(account.id, initialWalletVipCents(account));
+}
+
 function publicWallet(wallet) {
   const realCashCents = wallet.cashCents + wallet.referralCents;
   const virtualCashCents = wallet.giftCents;
@@ -2312,9 +2319,9 @@ function rejectLegacyPlanOption() {
 }
 
 async function paymentQuoteForAccount(payload, account, { allowUnlisted = false } = {}) {
-  const wallet = await walletForAccount(account);
+  const wallet = await quoteWalletForAccount(account);
   const selection = catalogV2Selection(payload);
-  const quote = selection.productId ? await catalogV2Quote(payload, account, { allowUnlisted })
+  const quote = selection.productId ? await catalogV2Quote(payload, account, { allowUnlisted, wallet })
     : payload.product === "traffic_pack" ? trafficPackQuote(account)
     : payload.product === "home_ip" ? homeIpQuote(account, payload.optionId)
     : rejectLegacyPlanOption();

@@ -16,6 +16,8 @@ async function main() {
   const accountId = `wallet-test-${crypto.randomUUID()}`;
   await store.init();
   try {
+    // Quotes peek before any wallet row exists: the initial VIP spend shows and no row is created.
+    assert.deepStrictEqual([(await store.peekWallet(accountId, 125)).vipSpendCents, (await store.pool.query("SELECT 1 FROM wallet_accounts WHERE account_id = $1", [accountId])).rowCount], [125, 0]);
     let wallet = await store.getWallet(accountId, 125);
     assert.strictEqual(wallet.vipSpendCents, 125);
 
@@ -34,7 +36,15 @@ async function main() {
     wallet = await store.settleWalletPurchase({ id: crypto.randomUUID(), accountId, orderId: "purchase-1", vipDeltaCents: 200, description: "重复回调", initialVipCents: 125 });
     assert.deepStrictEqual([wallet.cashCents, wallet.giftCents, wallet.referralCents, wallet.vipSpendCents], [500, 0, 0, 1325]);
 
+    await store.reserveWallet({ accountId, orderId: "live-1", amountCents: 100, expiresAt: new Date(Date.now() + 60000), initialVipCents: 125 });
     await store.reserveWallet({ accountId, orderId: "expired-1", amountCents: 300, expiresAt: new Date(Date.now() - 1000), initialVipCents: 125 });
+    // A peek leaves the expired hold pending but already counts its balance as available, matching what getWallet returns.
+    const peeked = await store.peekWallet(accountId, 125);
+    assert.strictEqual((await store.pool.query("SELECT status FROM wallet_holds WHERE order_id = 'expired-1'")).rows[0].status, "pending");
+    wallet = await store.getWallet(accountId, 125);
+    assert.deepStrictEqual(peeked, wallet);
+    assert.strictEqual(wallet.cashHeldCents, 100);
+    await store.pool.query("UPDATE wallet_holds SET expires_at = NOW() - INTERVAL '1 second' WHERE order_id = 'live-1'");
     wallet = await store.getWallet(accountId, 125);
     assert.strictEqual(wallet.cashHeldCents, 0);
     console.log("Wallet checks passed: recharge VIP, gift-referral-cash holds, settlement, expiry release, and idempotency.");

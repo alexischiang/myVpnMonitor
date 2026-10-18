@@ -1,27 +1,35 @@
 import type { LucideIcon } from "lucide-react"
-import type { ReactNode } from "react"
+import type { CSSProperties, ReactNode } from "react"
 
-import { cn } from "@/lib/utils"
 import { Badge } from "@/components/arc/badge/badge"
 
-const noticeBadgeStyles = {
-  info: "bg-sky-500/10 text-sky-700 dark:bg-sky-400/10 dark:text-sky-300",
-  warning: "bg-amber-500/10 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300",
-  success: "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300",
-  error: "bg-red-500/10 text-red-700 dark:bg-red-400/10 dark:text-red-300",
+// One status color per variant, from the Arc foundation tokens (light and dark).
+const noticeBadgeColors = {
+  info: "var(--info)",
+  warning: "var(--warning)",
+  success: "var(--success)",
+  error: "var(--danger)",
 }
 
 type NoticeBadgeProps = {
   icon: LucideIcon
   label: ReactNode
-  variant?: keyof typeof noticeBadgeStyles
+  variant?: keyof typeof noticeBadgeColors
+  /** sm for dense desktop spots, md (default) for general hints, lg for standalone notices; heights and text step up on phones (see .notice-badge in styles.css). */
+  size?: "sm" | "md" | "lg"
 }
 
-export function NoticeBadge({ icon: Icon, label, variant = "info" }: NoticeBadgeProps) {
+// A borderless pill on a solid tint of the variant color, with text and icon in that color. Arc's badge module outranks
+// utility classes and recolors on hover, so the colors are set inline: its variables, plus background, which also keeps the
+// hover from changing it. Size, spacing and vertical centering come from .notice-badge in styles.css.
+export function NoticeBadge({ icon: Icon, label, variant = "info", size = "md" }: NoticeBadgeProps) {
+  const color = noticeBadgeColors[variant]
+  const background = `color-mix(in oklab, ${color} 14%, var(--surface))`
+  const style = { "--badge-color": color, "--badge-foreground": color, "--badge-background": background, "--badge-border": "transparent", background } as CSSProperties
   return (
-    <Badge className={cn("min-h-7 rounded-full border-0 px-2.5 py-1", noticeBadgeStyles[variant])}>
+    <Badge className="notice-badge" data-variant={variant} data-size={size} style={style}>
       <Icon aria-hidden="true" />
-      {label}
+      <span className="notice-badge-label">{label}</span>
     </Badge>
   )
 }
