@@ -670,6 +670,17 @@ const aliasedCentralTrafficPromise = xuiTrafficFromNodes(
 });
 // Local/master node traffic IS trusted, and a client mirrored across several local inbounds
 // must be counted once (max per node), not summed: up+down = 300, not 600.
+// A node the central panel reports offline is skipped without a request, so the sync lock is not
+// held for the full timeout; the result is a skip, not a zero reading.
+const offlineNodeTrafficPromise = xuiTrafficFromNodes(
+  { panelGuid: "local" },
+  [{ id: 20, guid: "offline-node", address: "127.0.0.1", port: 9, status: "offline", enable: true }],
+  [],
+  { "offline-node": sealedNodeToken }
+).then(({ traffic, nodeResults }) => {
+  assert.deepStrictEqual(traffic, {});
+  assert.deepStrictEqual(nodeResults["offline-node"], { configured: true, error: "节点离线，本轮跳过用量采集。", source: "" });
+});
 const localMirrorTrafficPromise = xuiTrafficFromNodes(
   { panelGuid: "local" },
   [],
@@ -899,6 +910,7 @@ Promise.all([
   centralTrafficPromise,
   aliasedCentralTrafficPromise,
   localMirrorTrafficPromise,
+  offlineNodeTrafficPromise,
   (async () => {
     const originalFetch = global.fetch;
     const calls = [];

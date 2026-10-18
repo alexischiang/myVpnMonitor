@@ -12,13 +12,15 @@ function loadLocalEnv({ override = false } = {}) {
     if (separatorIndex === -1) continue;
     const key = trimmed.slice(0, separatorIndex).trim();
     const value = trimmed.slice(separatorIndex + 1).trim().replace(/^["']|["']$/g, "");
-    if (key && (override || process.env[key] === undefined)) process.env[key] = value;
+    // An empty value counts as unset: pm2 can resurrect a process with a key saved as "", which would otherwise hide .env.
+    if (key && (override || process.env[key] === undefined || process.env[key] === "")) process.env[key] = value;
   }
 }
 
 function xuiDatabaseUrl() {
   if (process.env.XUI_DATABASE_URL) return process.env.XUI_DATABASE_URL;
-  return process.env.LOCAL_DATABASE_URL || "";
+  // Same fallback order as the deploy workflow, so the service still starts when only DATABASE_URL is set.
+  return process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL || "";
 }
 
 module.exports = { loadLocalEnv, xuiDatabaseUrl };

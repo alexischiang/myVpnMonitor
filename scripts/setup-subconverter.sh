@@ -16,10 +16,23 @@ case "$OS-$ARCH" in
   *) echo "Unsupported platform: $OS-$ARCH"; exit 1 ;;
 esac
 
-# Check if already running
+PM2_NAME="subconverter"
+
+if ! command -v pm2 &>/dev/null; then
+  echo "pm2 is required (npm install -g pm2)."
+  exit 1
+fi
+
+# Check if already running. Only a pm2-managed instance survives a host reboot, so an instance
+# started outside pm2 (the old nohup setup) has to be stopped before pm2 can take over the port.
 if curl -s --noproxy '*' --max-time 2 http://127.0.0.1:25500/version &>/dev/null; then
-  echo "subconverter already running"
-  exit 0
+  if pm2 describe "$PM2_NAME" &>/dev/null; then
+    pm2 save
+    echo "subconverter already running under pm2"
+    exit 0
+  fi
+  echo "subconverter is running outside pm2 on port 25500; stop it (e.g. pkill -x subconverter) and rerun this script."
+  exit 1
 fi
 
 # Download if not installed
@@ -47,13 +60,17 @@ fi
 
 # Start
 echo "Starting subconverter..."
-cd "$INSTALL_DIR"
-nohup ./subconverter > /tmp/subconverter.log 2>&1 &
+if pm2 describe "$PM2_NAME" &>/dev/null; then
+  pm2 restart "$PM2_NAME"
+else
+  pm2 start "$INSTALL_DIR/subconverter" --name "$PM2_NAME" --cwd "$INSTALL_DIR" --interpreter none
+fi
 sleep 2
 
 if curl -s --noproxy '*' --max-time 3 http://127.0.0.1:25500/version &>/dev/null; then
+  pm2 save
   echo "subconverter started: $(curl -s --noproxy '*' http://127.0.0.1:25500/version)"
 else
-  echo "Failed to start. Check /tmp/subconverter.log"
+  echo "Failed to start. Check: pm2 logs $PM2_NAME --lines 50 --nostream"
   exit 1
 fi

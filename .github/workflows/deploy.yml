@@ -83,6 +83,15 @@ jobs:
               export REDIS_URL="${REDIS_URL:-${redis_env:-redis://127.0.0.1:6379}}"
               xui_database_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_DATABASE_URL || process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL || '')")
               export XUI_DATABASE_URL="${XUI_DATABASE_URL:-$xui_database_url}"
+              # Persist the derived values in .env: pm2 resurrect after a host reboot only restores the env of the
+              # last `pm2 save`, so values that exist only in this shell are lost and nexora falls back to local storage.
+              touch .env
+              [ -z "$(tail -c 1 .env)" ] || echo >> .env
+              for key in XUI_SERVICE_URL XUI_SERVICE_TOKEN REDIS_URL XUI_DATABASE_URL; do
+                if [ -n "$(printenv "$key")" ] && ! grep -q "^${key}=" .env; then
+                  printf '%s=%s\n' "$key" "$(printenv "$key")" >> .env
+                fi
+              done
               if [ "$REDIS_URL" = "redis://127.0.0.1:6379" ] && ( ! command -v redis-cli > /dev/null 2>&1 || ! redis-cli ping > /dev/null 2>&1 ); then
                 if ! command -v redis-server > /dev/null 2>&1 && command -v sudo > /dev/null 2>&1 && command -v apt-get > /dev/null 2>&1; then
                   sudo apt-get update -y && sudo apt-get install -y redis-server
@@ -120,6 +129,7 @@ jobs:
             pm2 restart nexora --update-env
             for attempt in $(seq 1 12); do
               if curl --fail --silent --max-time 5 http://127.0.0.1:3000/api/health | grep -q '"ok":true'; then
+                pm2 save
                 exit 0
               fi
               sleep 5
