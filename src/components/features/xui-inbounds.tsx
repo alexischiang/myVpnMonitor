@@ -1,6 +1,7 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { useSearchParams } from "react-router-dom"
+import { useClearSearchParams } from "@/hooks/use-search-param-state"
 import { CircleMinus, CirclePlus, Loader2, Pencil, Plus, RefreshCw, Save, Server, Trash2 } from "lucide-react"
 import { toast } from "@/components/features/toast"
 
@@ -21,6 +22,7 @@ import { Dialog, DialogContent } from "@/components/arc/dialog/dialog"
 import { Drawer, DrawerContent } from "@/components/arc/drawer/drawer"
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
 import { Input } from "@/components/arc/input/input"
+import { SearchField } from "@/components/arc/search-field/search-field"
 import { Select } from "@/components/arc/select/select"
 import { Switch } from "@/components/arc/switch/switch"
 import { Card as ArcCard } from "@/components/arc/card/card"
@@ -58,6 +60,7 @@ function InboundProbeBadge({ inbound }: { inbound: XuiInbound }) {
 
 export function XuiInboundsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const clearFilters = useClearSearchParams(["type", "node", "level", "region", "plan", "status"])
   const [data, setData] = React.useState<XuiInboundManagement | null>(null)
   const [lineGroups, setLineGroups] = React.useState<CatalogV2LineGroup[]>([])
   const [editingKey, setEditingKey] = React.useState("")
@@ -276,36 +279,36 @@ export function XuiInboundsPage() {
         {lineGroups.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{lineGroups.map(group => <Card key={group.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="text-lg font-medium truncate">{group.name}</h3><p className="text-sm text-muted-foreground truncate">{group.id}</p></div>{group.isEnabled ? <Badge tone="success">启用</Badge> : <Badge>停用</Badge>}</div><div className="flex items-end justify-between gap-3"><div className="text-sm text-muted-foreground"><span className="tabular-nums">{group.inboundKeys.length}</span> 个入站 · <span className="tabular-nums">{group.productCount || 0}</span> 个商品</div><Button variant="secondary" size="sm" onClick={() => openGroupSettings(group)}><Pencil />编辑</Button></div></Card>)}</div> : <Card title="尚未创建 V2 权限组" description="新建权限组后即可为 V2 套餐选择可用入站。"></Card>}
       </section>
 
-      <DataTableCard filters={<>
-        <Select label="入站类型" value={typeFilter} onValueChange={value => updateSearchParam("type", value, "package")} id="inbound-type-filter" className="w-full" options={[{ value: "package", label: "套餐节点" }, { value: "custom", label: "定制节点" }, { value: "all", label: "全部类型" }]} />
-        <Select label="节点" value={nodeFilter} onValueChange={value => updateSearchParam("node", value)} id="inbound-node-filter" className="w-full" options={[{ value: "all", label: "全部节点" }, ...nodeOptions.map(option => ({ value: option.value, label: option.label }))]} />
-        <Select label="网络级别" value={levelFilter} onValueChange={value => updateSearchParam("level", value)} id="inbound-level-filter" className="w-full" options={[{ value: "all", label: "全部级别" }, ...networkLevels.map(level => ({ value: level.value, label: level.label })), { value: "unset", label: "未设置" }]} />
-        <Select label="地区" value={regionFilter} onValueChange={value => updateSearchParam("region", value)} id="inbound-region-filter" className="w-full" options={[{ value: "all", label: "全部地区" }, ...regionOptions.map(region => ({ value: region, label: region })), { value: "unset", label: "未设置" }]} />
-        <Select label="V2 权限组" value={planFilter} onValueChange={value => updateSearchParam("plan", value)} id="inbound-plan-filter" className="w-full" options={[{ value: "all", label: "全部权限组" }, ...lineGroups.map(group => ({ value: group.id, label: group.name })), { value: "unassigned", label: "未分配" }]} />
-        <Select label="状态" value={statusFilter} onValueChange={value => updateSearchParam("status", value)} id="inbound-status-filter" className="w-full" options={[{ value: "all", label: "全部状态" }, { value: "enabled", label: "启用" }, { value: "disabled", label: "停用" }]} />
-      </>}><DataTable columns={columns} data={sortedInbounds} searchKey="inbound" initialSearchValue={searchQuery} onSearchChange={value => updateSearchParam("q", value, "")} searchPlaceholder="搜索节点、入站、地区或协议" emptyTitle="暂无入站" emptyDescription="没有符合当前筛选条件的入站" pageSize={30} frame="card" columnLayout="content" renderMobileItem={renderMobileInbound} toolbar={<ActionButton variant="secondary" size="sm" onClick={() => void refresh(true)} disabled={loading || saving} label="刷新" pending={loading} />} /></DataTableCard>
+      <DataTableCard><DataTable filters={[
+        { id: "type", label: "入站类型", value: typeFilter, defaultValue: "package", onChange: value => updateSearchParam("type", value, "package"), options: [{ value: "package", label: "套餐节点" }, { value: "custom", label: "定制节点" }, { value: "all", label: "全部类型" }] },
+        { id: "node", label: "节点", value: nodeFilter, onChange: value => updateSearchParam("node", value), options: [{ value: "all", label: "全部节点" }, ...nodeOptions.map(option => ({ value: option.value, label: option.label }))] },
+        { id: "level", label: "网络级别", value: levelFilter, onChange: value => updateSearchParam("level", value), options: [{ value: "all", label: "全部级别" }, ...networkLevels.map(level => ({ value: level.value, label: level.label })), { value: "unset", label: "未设置" }] },
+        { id: "region", label: "地区", value: regionFilter, onChange: value => updateSearchParam("region", value), options: [{ value: "all", label: "全部地区" }, ...regionOptions.map(region => ({ value: region, label: region })), { value: "unset", label: "未设置" }] },
+        { id: "plan", label: "V2 权限组", value: planFilter, onChange: value => updateSearchParam("plan", value), options: [{ value: "all", label: "全部权限组" }, ...lineGroups.map(group => ({ value: group.id, label: group.name })), { value: "unassigned", label: "未分配" }] },
+        { id: "status", label: "状态", value: statusFilter, onChange: value => updateSearchParam("status", value), options: [{ value: "all", label: "全部状态" }, { value: "enabled", label: "启用" }, { value: "disabled", label: "停用" }] },
+      ]} onClearFilters={clearFilters} columns={columns} data={sortedInbounds} searchKey="inbound" initialSearchValue={searchQuery} onSearchChange={value => updateSearchParam("q", value, "")} searchPlaceholder="搜索节点、入站、地区或协议" emptyTitle="暂无入站" emptyDescription="没有符合当前筛选条件的入站" pageSize={30} frame="card" columnLayout="content" renderMobileItem={renderMobileInbound} toolbar={<ActionButton variant="secondary" icon={<RefreshCw />} collapse onClick={() => void refresh(true)} disabled={loading || saving} label="刷新" pending={loading} />} /></DataTableCard>
 
       <Dialog open={groupOpen} onOpenChange={open => { if (!saving) setGroupOpen(open) }}>
-        <DialogContent title={groupOriginal ? `编辑 ${groupOriginal.name}` : "新建 V2 权限组"} description="设置权限组信息和可用入站；定制节点不参与套餐分组。" size="full" className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_auto_auto_minmax(0,1fr)_auto] overflow-hidden"><div className="grid gap-3 sm:grid-cols-4">
+        <DialogContent title={groupOriginal ? `编辑 ${groupOriginal.name}` : "新建 V2 权限组"} description="设置权限组信息和可用入站；定制节点不参与套餐分组。" size="full"><div className="grid gap-3 sm:grid-cols-4">
             <Input label="权限组 ID" id="line-group-id" value={groupDraft.id} disabled={Boolean(groupOriginal)} onChange={event => setGroupDraft(current => ({ ...current, id: event.target.value.toLowerCase() }))} placeholder="pro" />
             <Input label="名称" id="line-group-name" value={groupDraft.name} onChange={event => setGroupDraft(current => ({ ...current, name: event.target.value }))} placeholder="PRO" />
             <NumberField label="排序" id="line-group-order" value={groupDraft.sortOrder} onValueChange={next => setGroupDraft(current => ({ ...current, sortOrder: next }))} locale="zh-CN" min={0} />
             <Field orientation="horizontal" className="justify-between"><FieldContent><FieldLabel htmlFor="line-group-enabled">启用权限组</FieldLabel><FieldDescription>可供 V2 商品选择</FieldDescription></FieldContent><Switch id="line-group-enabled" checked={groupDraft.isEnabled} onCheckedChange={isEnabled => setGroupDraft(current => ({ ...current, isEnabled }))} /></Field>
           </div><div className="grid gap-3 sm:grid-cols-2">
-            <Input label="搜索入站" id="group-inbound-search" value={groupSearch} onChange={event => setGroupSearch(event.target.value)} placeholder="节点、入站、地区或协议" />
+            <SearchField label="搜索入站" id="group-inbound-search" value={groupSearch} onValueChange={setGroupSearch} placeholder="节点、入站、地区或协议" />
             <Select label="节点" value={groupNodeFilter} onValueChange={setGroupNodeFilter} id="group-node-filter" className="w-full" options={[{ value: "all", label: "全部节点" }, ...nodeOptions.map(option => ({ value: option.value, label: option.label }))]} />
-          </div><div className="grid min-h-0 gap-3 overflow-auto sm:grid-cols-2 sm:overflow-hidden">
-            <div className="min-h-0 overflow-auto rounded-md border">
+          </div><div className="grid gap-3 sm:grid-cols-2">
+            <div className="max-h-96 overflow-auto rounded-md border">
               <div className="border-b px-4 py-3"><h3 className="font-semibold">可用入站 ({availableInbounds.length})</h3></div>
                 <SimpleTable<XuiInbound> caption="入站列表" columns={["入站", "线路", "操作"]} rows={availableInbounds} rowKey={(inbound) => inbound.key} cells={(inbound) => [<div className="grid"><span className="flex flex-wrap items-center gap-2 font-medium">{inbound.name}{inbound.enabled ? null : <Badge>停用</Badge>}</span><span className="text-xs text-muted-foreground">{inbound.nodeName}{inbound.tag ? ` · ${inbound.tag}` : ""}</span></div>, <>{inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</>, <span className="text-right"><Button variant="danger" size="icon" onClick={() => setGroupInboundAvailability(inbound.key, false)} aria-label={`剔除 ${inbound.name}`} title={`剔除 ${inbound.name}`}><CircleMinus /></Button></span>]} emptyMessage="没有符合筛选条件的可用入站" />
             </div>
-            <div className="min-h-0 overflow-auto rounded-md border">
+            <div className="max-h-96 overflow-auto rounded-md border">
               <div className="border-b px-4 py-3"><h3 className="font-semibold">不可用入站 ({unavailableInbounds.length})</h3></div>
                 <SimpleTable<XuiInbound> caption="入站列表" columns={["入站", "线路", "操作"]} rows={unavailableInbounds} rowKey={(inbound) => inbound.key} cells={(inbound) => [<div className="grid"><span className="flex flex-wrap items-center gap-2 font-medium">{inbound.name}{inbound.enabled ? null : <Badge>停用</Badge>}</span><span className="text-xs text-muted-foreground">{inbound.nodeName}{inbound.tag ? ` · ${inbound.tag}` : ""}</span></div>, <>{inbound.protocol.toUpperCase()} / {inbound.port ?? "-"}</>, <span className="text-right"><Button variant="success" size="icon" className="bg-emerald-600/10 text-emerald-600 hover:bg-emerald-600/20 focus-visible:ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-400 dark:hover:bg-emerald-400/20 dark:focus-visible:ring-emerald-400/40" onClick={() => setGroupInboundAvailability(inbound.key, true)} aria-label={`新增 ${inbound.name}`} title={`新增 ${inbound.name}`}><CirclePlus /></Button></span>]} emptyMessage="没有符合筛选条件的不可用入站" />
             </div>
           </div><div className="grid gap-4">
             {groupSaveSteps ? <StepProgress steps={groupSaveSteps} label="保存权限组进度" /> : null}
-            <div className="flex flex-wrap justify-end gap-2">{groupOriginal ? <><Button variant="danger" onClick={() => setConfirmGroupDelete(true)} disabled={saving}><Trash2 />删除权限组</Button><ConfirmDialog open={confirmGroupDelete} onOpenChange={setConfirmGroupDelete} title={`删除权限组「${groupOriginal.name}」？`} description="删除后不能恢复。" onConfirm={removeGroup} /></> : null}<Button variant="secondary" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><ActionButton onClick={() => void saveGroupSettings()} disabled={saving || !groupSettingsChanged} label="保存权限组" pending={saving} /></div>
+            <div className="flex flex-wrap justify-end gap-2">{groupOriginal ? <><Button variant="danger" className="mr-auto" onClick={() => setConfirmGroupDelete(true)} disabled={saving}><Trash2 />删除权限组</Button><ConfirmDialog open={confirmGroupDelete} onOpenChange={setConfirmGroupDelete} title={`删除权限组「${groupOriginal.name}」？`} description="删除后不能恢复。" onConfirm={removeGroup} /></> : null}<Button variant="secondary" onClick={() => setGroupOpen(false)} disabled={saving}>取消</Button><ActionButton icon={<Save />} onClick={() => void saveGroupSettings()} disabled={saving || !groupSettingsChanged} label="保存权限组" pending={saving} /></div>
           </div></DialogContent>
       </Dialog>
 
@@ -315,7 +318,7 @@ export function XuiInboundsPage() {
             <Select label="入站类型" description="定制节点只能由管理员单独授权，不参与套餐分组的客户端批量分配。" value={draft.inboundType} onValueChange={(value: "package" | "custom") => setDraft(current => ({ ...current, inboundType: value }))} id="inbound-type" className="w-full" options={[{ value: "package", label: "套餐节点" }, { value: "custom", label: "定制节点" }]} />
             <Select label="网络级别" value={draft.networkLevel || "unset"} onValueChange={value => setDraft(current => ({ ...current, networkLevel: value === "unset" ? "" : value }))} className="w-full" options={[{ value: "unset", label: "未设置" }, ...networkLevels.map(level => ({ value: level.value, label: level.label }))]} />
             <Input label="地区" id="inbound-region" value={draft.region} onChange={event => setDraft(current => ({ ...current, region: event.target.value }))} placeholder="例如：香港、美国、台湾" maxLength={64} />
-          </div><div className="mt-6 flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => setEditingKey("")} disabled={saving}>取消</Button><ActionButton onClick={() => void saveEditor()} disabled={saving || !editorChanged} label="保存设置" pending={saving} /></div></DrawerContent>
+          </div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => setEditingKey("")} disabled={saving}>取消</Button><ActionButton icon={<Save />} onClick={() => void saveEditor()} disabled={saving || !editorChanged} label="保存设置" pending={saving} /></div></DrawerContent>
       </Drawer>
     </div>
   )

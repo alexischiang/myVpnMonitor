@@ -51,6 +51,8 @@
 
 /* XELA extension: title row with an action, full-width description and a spaced body for container use. */
 .header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+/* XELA extension: the title may shrink beside the actions, so a long title wraps or truncates instead of pushing them out of the card. */
+.header > .title { min-width: 0; }
 .headerAction { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .descriptionWide { max-width: none; }
 .body { margin-top: var(--space-4); }

@@ -18,6 +18,8 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   loading?: boolean;
   /** Renders the single child element (a link, for example) with the button styles instead of a button. No press or label motion. */
   asChild?: boolean;
+  /** XELA extension: below 640px only the icon shows; the text stays for screen readers. For buttons that have an icon. */
+  collapse?: boolean;
 }
 
 /** Icon buttons press a little deeper, wide buttons a little less, so every size reads as the same push. */
@@ -82,7 +84,7 @@ function LabelPhase({ children, icon, reduced, ref }: { children: ReactNode; ico
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { className, variant = "primary", size = "md", loading = false, asChild = false, disabled, children, onClick, ...props },
+  { className, variant = "primary", size = "md", loading = false, asChild = false, collapse = false, disabled, children, onClick, ...props },
   ref,
 ) {
   const reduceMotion = useReducedMotion() ?? false;
@@ -99,7 +101,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const popup = props["aria-haspopup"];
   const anchorsLayer = (popup !== undefined && popup !== false && popup !== "false") || props.role === "combobox" || (props as Record<string, unknown>)["data-state"] !== undefined;
   const inert = disabled || loading || props["aria-disabled"] === true || props["aria-disabled"] === "true";
-  const classes = [styles.button, styles[variant.replace(/-(\w)/, (_match, letter: string) => letter.toUpperCase())], styles[size === "icon-sm" ? "iconSm" : size], className].filter(Boolean).join(" ");
+  const classes = [styles.button, styles[variant.replace(/-(\w)/, (_match, letter: string) => letter.toUpperCase())], styles[size === "icon-sm" ? "iconSm" : size], collapse && styles.collapse, className].filter(Boolean).join(" ");
   if (asChild) return <Slot.Root ref={ref as Ref<HTMLElement>} className={classes} aria-disabled={disabled || undefined} onClick={onClick as never} {...(props as object)}>{children}</Slot.Root>;
 
   return (

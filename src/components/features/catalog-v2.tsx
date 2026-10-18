@@ -8,7 +8,8 @@ import { deleteJson, fetchJson, postJson, putJson } from "@/api"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Separator } from "@/components/ui/separator"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
-import { DataTableCard, FilterSelect } from "@/components/features/data-table-card"
+import { DataTableCard } from "@/components/features/data-table-card"
+import { type ListFilter } from "@/components/features/list-filters"
 import { EmptyState, PageHeader } from "@/components/features/shared"
 import { ConfirmDialog } from "@/components/features/confirm-dialog"
 import { cn } from "@/lib/utils"
@@ -214,6 +215,15 @@ const statusOptions = [{ value: ALL, label: "全部状态" }, { value: "enabled"
 const saleOptions = [{ value: ALL, label: "全部渠道" }, { value: "sale", label: "对外销售" }, { value: "admin", label: "仅管理员授予" }]
 const vipOptions = [{ value: ALL, label: "全部" }, { value: "yes", label: "享受" }, { value: "no", label: "不享受" }]
 
+// The status, sales channel and VIP filters both product tables share.
+function commonFilters<K extends "status" | "sale" | "vip">(filters: Record<K, string>, setFilter: (key: K) => (value: string) => void): ListFilter[] {
+  return [
+    { id: "status", label: "状态", value: filters.status, onChange: setFilter("status" as K), options: statusOptions },
+    { id: "sale", label: "销售渠道", value: filters.sale, onChange: setFilter("sale" as K), options: saleOptions },
+    { id: "vip", label: "VIP 折扣", value: filters.vip, onChange: setFilter("vip" as K), options: vipOptions },
+  ]
+}
+
 function matchesCommonFilters(product: CatalogV2Product, filters: { status: string; sale: string; vip: string }) {
   return (filters.status === ALL || (filters.status === "enabled") === product.isEnabled)
     && (filters.sale === ALL || (filters.sale === "sale") === product.isForSale)
@@ -274,13 +284,11 @@ function PlanProductsTable({ products, groups }: { products: CatalogV2Product[];
   }, [])
   return <section className="grid gap-3" aria-labelledby="catalog-v2-plans-title">
     <h2 id="catalog-v2-plans-title" className="font-semibold">套餐</h2>
-    <DataTableCard filters={<>
-      <FilterSelect id="plan-type-filter" label="类型" value={filters.type} onValueChange={setFilter("type")} options={[{ value: ALL, label: "全部类型" }, { value: "recurring_plan", label: typeLabels.recurring_plan }, { value: "lifetime_plan", label: typeLabels.lifetime_plan }]} />
-      <FilterSelect id="plan-group-filter" label="线路权限组" value={filters.group} onValueChange={setFilter("group")} options={[{ value: ALL, label: "全部权限组" }, ...groups.map(group => ({ value: group.id, label: group.name }))]} />
-      <FilterSelect id="plan-status-filter" label="状态" value={filters.status} onValueChange={setFilter("status")} options={statusOptions} />
-      <FilterSelect id="plan-sale-filter" label="销售渠道" value={filters.sale} onValueChange={setFilter("sale")} options={saleOptions} />
-      <FilterSelect id="plan-vip-filter" label="VIP 折扣" value={filters.vip} onValueChange={setFilter("vip")} options={vipOptions} />
-    </>}><DataTable columns={columns} data={rows} searchKey="name" stateKey="plans" searchPlaceholder="搜索套餐名称或 ID" emptyTitle="暂无套餐" emptyDescription="没有符合当前筛选条件的套餐" frame="card" columnLayout="content" renderMobileItem={product => <ProductMobileItem product={product} details={`${typeLabels[product.type]} · ${productPriceLabel(product)}`} />} /></DataTableCard>
+    <DataTableCard><DataTable filters={[
+      { id: "type", label: "类型", value: filters.type, onChange: setFilter("type"), options: [{ value: ALL, label: "全部类型" }, { value: "recurring_plan", label: typeLabels.recurring_plan }, { value: "lifetime_plan", label: typeLabels.lifetime_plan }] },
+      { id: "group", label: "线路权限组", value: filters.group, onChange: setFilter("group"), options: [{ value: ALL, label: "全部权限组" }, ...groups.map(group => ({ value: group.id, label: group.name }))] },
+      ...commonFilters(filters, setFilter),
+    ]} columns={columns} data={rows} searchKey="name" stateKey="plans" searchPlaceholder="搜索套餐名称或 ID" emptyTitle="暂无套餐" emptyDescription="没有符合当前筛选条件的套餐" frame="card" columnLayout="content" renderMobileItem={product => <ProductMobileItem product={product} details={`${typeLabels[product.type]} · ${productPriceLabel(product)}`} />} /></DataTableCard>
   </section>
 }
 
@@ -297,13 +305,11 @@ function AddonProductsTable({ products, categories }: { products: CatalogV2Produ
   ], [categoryName])
   return <section className="grid gap-3" aria-labelledby="catalog-v2-addons-title">
     <h2 id="catalog-v2-addons-title" className="font-semibold">附加服务</h2>
-    <DataTableCard filters={<>
-      <FilterSelect id="addon-category-filter" label="分类" value={filters.category} onValueChange={setFilter("category")} options={[{ value: ALL, label: "全部分类" }, ...categories.map(category => ({ value: category.id, label: category.name })), { value: NO_ADDON_CATEGORY, label: "未分类" }]} />
-      <FilterSelect id="addon-handler-filter" label="服务类型" value={filters.handler} onValueChange={setFilter("handler")} options={[{ value: ALL, label: "全部服务类型" }, ...Object.entries(addonHandlerOptions).map(([value, item]) => ({ value, label: item.label }))]} />
-      <FilterSelect id="addon-status-filter" label="状态" value={filters.status} onValueChange={setFilter("status")} options={statusOptions} />
-      <FilterSelect id="addon-sale-filter" label="销售渠道" value={filters.sale} onValueChange={setFilter("sale")} options={saleOptions} />
-      <FilterSelect id="addon-vip-filter" label="VIP 折扣" value={filters.vip} onValueChange={setFilter("vip")} options={vipOptions} />
-    </>}><DataTable columns={columns} data={rows} searchKey="name" stateKey="addons" searchPlaceholder="搜索附加服务名称或 ID" emptyTitle="暂无附加服务" emptyDescription="没有符合当前筛选条件的附加服务" frame="card" columnLayout="content" renderMobileItem={product => <ProductMobileItem product={product} details={`${categoryName(product.addonCategoryId)} · ${productPriceLabel(product)}`} />} /></DataTableCard>
+    <DataTableCard><DataTable filters={[
+      { id: "category", label: "分类", value: filters.category, onChange: setFilter("category"), options: [{ value: ALL, label: "全部分类" }, ...categories.map(category => ({ value: category.id, label: category.name })), { value: NO_ADDON_CATEGORY, label: "未分类" }] },
+      { id: "handler", label: "服务类型", value: filters.handler, onChange: setFilter("handler"), options: [{ value: ALL, label: "全部服务类型" }, ...Object.entries(addonHandlerOptions).map(([value, item]) => ({ value, label: item.label }))] },
+      ...commonFilters(filters, setFilter),
+    ]} columns={columns} data={rows} searchKey="name" stateKey="addons" searchPlaceholder="搜索附加服务名称或 ID" emptyTitle="暂无附加服务" emptyDescription="没有符合当前筛选条件的附加服务" frame="card" columnLayout="content" renderMobileItem={product => <ProductMobileItem product={product} details={`${categoryName(product.addonCategoryId)} · ${productPriceLabel(product)}`} />} /></DataTableCard>
   </section>
 }
 

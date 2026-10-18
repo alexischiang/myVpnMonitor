@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom"
+import { Eye } from "lucide-react"
 
-import { Separator } from "@/components/ui/separator"
-import { Badge, type BadgeTone } from "@/components/arc/badge/badge"
+import { formatDateTime } from "@/utils"
+import { type BadgeTone } from "@/components/arc/badge/badge"
 import { Button } from "@/components/arc/button/button"
 import { Card } from "@/components/arc/card/card"
+import { statusSurface } from "@/components/features/status-surface"
 
 type OrderMobileItemProps = {
   amount: string
@@ -17,22 +19,30 @@ type OrderMobileItemProps = {
   statusVariant?: BadgeTone
 }
 
-const orderDateFormatter = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })
-const orderTimeFormatter = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false })
-
+/**
+ * One order as a phone card: what was bought and its amount as the title line, the customer and date below it, then the order
+ * number beside an icon-only link to the order. The status is the border colour, and stays in the text for screen readers.
+ */
 export function OrderMobileItem({ amount, createdAt, customer, customerUrl, detailUrl, orderNumber, product, status, statusVariant }: OrderMobileItemProps) {
-  const date = new Date(createdAt)
   return (
-    <Card className="items-stretch py-3"><header className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground min-w-0 truncate font-mono text-xs">#{orderNumber}</p>
-          <Badge tone={statusVariant}>{status}</Badge>
-        </header><section className="grid min-w-0 gap-1">
-          {customer ? customerUrl ? <Button asChild variant="link" size="sm" className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs font-normal"><Link to={customerUrl}>{customer}</Link></Button> : <p className="text-sm text-muted-foreground text-xs text-foreground">{customer}</p> : null}
-          <div className="text-sm font-medium w-full whitespace-normal text-xs leading-normal font-normal">{product}</div>
-          <p className="text-sm text-muted-foreground text-xs leading-tight">{orderDateFormatter.format(date)} · {orderTimeFormatter.format(date)}</p>
-        </section><Separator /><footer className="flex min-w-0 items-center justify-between gap-3">
-          <div className="text-sm font-medium shrink-0 text-sm font-semibold">{amount}</div>
-          <Button asChild variant="secondary" size="sm" className="font-normal"><Link to={detailUrl}>查看详情</Link></Button>
-        </footer></Card>
+    <Card className="items-stretch py-3" style={statusSurface(statusVariant)}><div className="grid min-w-0 gap-1.5">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <p className="min-w-0 text-sm font-medium">{product}</p>
+        <p className="shrink-0 text-sm font-semibold tabular-nums">{amount}</p>
+      </div>
+      <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
+        {customer ? customerUrl
+          ? <Link to={customerUrl} className="min-w-0 truncate underline-offset-2 hover:text-foreground hover:underline">{customer}</Link>
+          : <p className="min-w-0 truncate">{customer}</p> : <span />}
+        <p className="shrink-0 tabular-nums">{formatDateTime(createdAt)}</p>
+      </div>
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="min-w-0 truncate font-mono text-xs text-muted-foreground">#{orderNumber}</p>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="sr-only">状态：{status}</span>
+          <Button asChild variant="secondary" size="sm" collapse><Link to={detailUrl}><Eye />查看详情</Link></Button>
+        </div>
+      </div>
+    </div></Card>
   )
 }

@@ -71,3 +71,12 @@ a.link:hover { text-decoration: underline; }
 /* XELA extension: icons passed in without a size class take the size that fits the control (lucide icons default to 24px). */
 .button svg:not([class*="size-"]) { width: 1rem; height: 1rem; flex: none; }
 .button:is(.sm, .iconSm) svg:not([class*="size-"]) { width: .875rem; height: .875rem; }
+/* XELA extension: collapse shows only the icon below 640px. The text is kept at zero size so it still names the button. */
+@media (max-width: 639.98px) {
+  .collapse { width: var(--control-height-md); padding-inline: 0; }
+  .collapse.sm { width: var(--control-height-sm); }
+  .collapse.lg { width: var(--control-height-lg); }
+  .collapse .labelPhase { gap: 0; font-size: 0; }
+  /* asChild renders the icon and text straight inside the link. */
+  .collapse:not(button) { gap: 0; font-size: 0; }
+}

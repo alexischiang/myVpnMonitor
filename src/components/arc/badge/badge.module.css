@@ -53,3 +53,8 @@
 
 /* XELA extension: icons passed in without a size class take the size that fits the control (lucide icons default to 24px). */
 .badge.badge svg:not([class*="size-"]) { width: .75rem; height: .75rem; flex: none; }
+/* XELA extension: badges step down with the phone type scale. */
+@media (max-width: 639.98px) {
+  .badge { min-height: 22px; padding: 0 8px; font-size: 11px; }
+  .badge.sm { min-height: 20px; padding: 0 6px; font-size: 10px; }
+}

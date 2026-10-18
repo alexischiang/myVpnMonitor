@@ -20,6 +20,12 @@ export interface FilterMenuProps {
   label?: string;
   /** The trigger edge the panel lines up with. It flips or shifts when the viewport, or a clipping ancestor, has no room. */
   align?: "start" | "end";
+  /** XELA extension: "md" matches a text field beside the trigger. */
+  size?: "sm" | "md";
+  /** XELA extension: the trigger icon, in place of the plus. */
+  icon?: ReactNode;
+  /** XELA extension: below 640px only the icon shows; the label still names the trigger. */
+  collapse?: boolean;
 }
 export interface FilterToolbarProps {
   filters: FilterChip[];
@@ -124,12 +130,12 @@ function useReflowGlide(list: RefObject<HTMLElement | null>, armed: RefObject<nu
 }
 
 function describeChange(before: FilterChip[], after: FilterChip[]) {
-  const text = (filter: FilterChip) => filter.value ? `${filter.label}: ${filter.value}` : filter.label;
+  const text = (filter: FilterChip) => filter.value ? `${filter.label}：${filter.value}` : filter.label;
   const removed = before.filter(old => !after.some(filter => filter.id === old.id));
-  if (!after.length && removed.length > 1) return "All filters cleared";
+  if (!after.length && removed.length > 1) return "已清除全部筛选";
   const added = after.filter(filter => !before.some(old => old.id === filter.id));
   const changed = after.filter(filter => before.some(old => old.id === filter.id && old.value !== filter.value));
-  return [...added.map(filter => `Added ${text(filter)}`), ...changed.map(filter => `${filter.label} changed to ${filter.value ?? "any"}`), ...removed.map(filter => `Removed ${text(filter)}`)].join(". ");
+  return [...added.map(filter => `已添加 ${text(filter)}`), ...changed.map(filter => `${filter.label} 改为 ${filter.value ?? "任意"}`), ...removed.map(filter => `已移除 ${text(filter)}`)].join(". ");
 }
 
 type Row = { key: string; label: string; icon?: ReactNode; meta?: ReactNode; checked?: boolean; drill?: boolean };
@@ -214,7 +220,7 @@ function roomFor(node: HTMLElement) {
 
 /** An Add filter button that grows into its own menu: pick a field, then a value. The shape springs between the
  *  button and the panel, and the panel renders in place, so keep its ancestors free of overflow clipping. */
-export function FilterMenu({ fields, onSelect, active = [], label = "Add filter", align = "end" }: FilterMenuProps) {
+export function FilterMenu({ fields, onSelect, active = [], label = "筛选", align = "end", size = "sm", icon, collapse = false }: FilterMenuProps) {
   const reduced = useReducedMotion() ?? false;
   const id = useId(), panelId = `${id}panel`, titleId = `${id}title`;
   const root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
@@ -356,14 +362,14 @@ export function FilterMenu({ fields, onSelect, active = [], label = "Add filter"
     exit: (dir: number) => reduced ? { opacity: 0, transition: still } : { opacity: 0, x: dir * -18, filter: blur(motionTokens.blur.subtle), transition: leave },
   };
 
-  return <div ref={root} className={styles.menu} data-state={phase} data-y={up ? "up" : "down"}
+  return <div ref={root} className={styles.menu} data-state={phase} data-y={up ? "up" : "down"} data-size={size} data-collapse={collapse || undefined}
     onKeyDown={event => { if (event.key === "Escape" && phaseRef.current === "open") { event.preventDefault(); event.stopPropagation(); closeMenu("keyboard"); } }}
     onBlur={event => { const next = event.relatedTarget as Node | null; if (phaseRef.current === "open" && next && !root.current?.contains(next)) closeMenu(false); }}>
-    <button ref={trigger} type="button" className={styles.trigger} data-filter-trigger="" aria-haspopup="dialog" aria-expanded={open} aria-controls={panelId} tabIndex={open ? -1 : undefined}
+    <button ref={trigger} type="button" className={styles.trigger} data-filter-trigger="" aria-haspopup="dialog" aria-label={collapse ? label : undefined} aria-expanded={open} aria-controls={panelId} tabIndex={open ? -1 : undefined}
       onClick={event => { if (phaseRef.current !== "open") openMenu(event.detail === 0 ? "first" : "panel"); }}
       onKeyDown={event => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); openMenu(event.key === "ArrowDown" ? "first" : "last"); } }}>
       <motion.span className={styles.face} style={faceStyle}>
-        <Plus size={15} strokeWidth={1.8} aria-hidden="true" />{label}
+        {icon ?? <Plus size={15} strokeWidth={1.8} aria-hidden="true" />}<span className={styles.faceLabel}>{label}</span>
       </motion.span>
     </button>
     <motion.div className={styles.surface} style={{ left, width, height }}>
@@ -371,7 +377,7 @@ export function FilterMenu({ fields, onSelect, active = [], label = "Add filter"
         <motion.div style={contentStyle}>
           <div className={styles.head}>
             <AnimatePresence initial={false}>
-              {field ? <motion.button key="back" type="button" className={styles.back} aria-label="Back to fields" onClick={event => goBack(event.detail === 0)}
+              {field ? <motion.button key="back" type="button" className={styles.back} aria-label="返回筛选项" onClick={event => goBack(event.detail === 0)}
                 initial={reduced ? { opacity: 0, width: 28, marginRight: 2 } : { opacity: 0, width: 0, marginRight: 0, scale: .6 }} animate={{ opacity: 1, width: 28, marginRight: 2, scale: 1 }}
                 exit={reduced ? { opacity: 0, transition: still } : { opacity: 0, width: 0, marginRight: 0, scale: .6, transition: { ...motionTokens.spring.snappy, opacity: leave } }}
                 transition={reduced ? fade : { ...motionTokens.spring.snappy, opacity: enter }}><ChevronLeft size={16} strokeWidth={1.8} aria-hidden="true" /></motion.button> : null}
@@ -395,7 +401,7 @@ export function FilterMenu({ fields, onSelect, active = [], label = "Add filter"
   </div>;
 }
 
-export function FilterToolbar({ filters, onRemove, onClearAll, children, label = "Active filters", addFilter }: FilterToolbarProps) {
+export function FilterToolbar({ filters, onRemove, onClearAll, children, label = "已选筛选", addFilter }: FilterToolbarProps) {
   const reduced = useReducedMotion() ?? false;
   const root = useRef<HTMLDivElement>(null), list = useRef<HTMLDivElement>(null);
   const armed = useRef(0), pendingFocus = useRef<number | null>(null);
@@ -439,11 +445,11 @@ export function FilterToolbar({ filters, onRemove, onClearAll, children, label =
     <motion.div className={styles.frame} style={{ height: frameHeight }}>
       <div ref={list} className={styles.chips}>
         <AnimatePresence initial={false}>
-          {filters.map((filter, index) => <motion.span className={styles.slot} key={filter.id} {...slot(8)}><motion.span className={styles.chip} {...chip}><span className={styles.chipLabel}>{filter.label}{filter.value ? <span className={styles.value}><span className={styles.separator}> · </span><MorphText text={filter.value} /></span> : null}</span><button type="button" data-chip-remove={filter.id} aria-label={`Remove ${filter.label}${filter.value ? `: ${filter.value}` : ""}`} onClick={event => { if (document.activeElement === event.currentTarget) pendingFocus.current = index; onRemove(filter.id); }}><X size={14} strokeWidth={1.8} aria-hidden="true" /></button></motion.span></motion.span>)}
+          {filters.map((filter, index) => <motion.span className={styles.slot} key={filter.id} {...slot(8)}><motion.span className={styles.chip} {...chip}><span className={styles.chipLabel}>{filter.label}{filter.value ? <span className={styles.value}><span className={styles.separator}> · </span><MorphText text={filter.value} /></span> : null}</span><button type="button" data-chip-remove={filter.id} aria-label={`移除 ${filter.label}${filter.value ? `：${filter.value}` : ""}`} onClick={event => { if (document.activeElement === event.currentTarget) pendingFocus.current = index; onRemove(filter.id); }}><X size={14} strokeWidth={1.8} aria-hidden="true" /></button></motion.span></motion.span>)}
         </AnimatePresence>
         {/* The empty note sits over the leading edge instead of in the flow, so it fades in where the chips were rather than riding their collapsing slots across the row. */}
         <AnimatePresence initial={false}>
-          {filters.length ? null : <motion.span key="empty" className={styles.empty} {...emptyText}>No filters applied</motion.span>}
+          {filters.length ? null : <motion.span key="empty" className={styles.empty} {...emptyText}>未设置筛选</motion.span>}
         </AnimatePresence>
       </div>
     </motion.div>
@@ -451,7 +457,7 @@ export function FilterToolbar({ filters, onRemove, onClearAll, children, label =
       {addFilter ? <FilterMenu fields={addFilter.fields} onSelect={addFilter.onAdd} active={filters} label={addFilter.label} align={addFilter.align} /> : null}
       {children}
       <AnimatePresence initial={false}>
-        {filters.length > 0 ? <motion.span key="clear" className={styles.slot} {...slot(12)}><button className={styles.clear} type="button" onClick={() => { pendingFocus.current = -1; onClearAll?.(); }}><motion.span className={styles.clearText} {...text}>Clear all</motion.span></button></motion.span> : null}
+        {filters.length > 0 ? <motion.span key="clear" className={styles.slot} {...slot(12)}><button className={styles.clear} type="button" onClick={() => { pendingFocus.current = -1; onClearAll?.(); }}><motion.span className={styles.clearText} {...text}>清除全部</motion.span></button></motion.span> : null}
       </AnimatePresence>
     </div>
     <span className={styles.srOnly} role="status">{message}</span>

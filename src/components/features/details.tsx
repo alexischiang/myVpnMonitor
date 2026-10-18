@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { AlertCircle, ArrowRightLeft, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, UserCog } from "lucide-react"
+import { AlertCircle, ArrowRightLeft, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, Settings2, UserCog } from "lucide-react"
 import { toast } from "@/components/features/toast"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -24,6 +24,7 @@ import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Alert } from "@/components/arc/alert/alert"
 import { Badge } from "@/components/arc/badge/badge"
 import { Button } from "@/components/arc/button/button"
+import { DropdownMenu } from "@/components/arc/dropdown-menu/dropdown-menu"
 import { Card } from "@/components/arc/card/card"
 import { Dialog as ArcDialog, DialogClose as ArcDialogClose, DialogContent as ArcDialogContent } from "@/components/arc/dialog/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs"
@@ -872,16 +873,10 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
       {user.accountStatus === "disabled" ? <Alert tone="warning" title="该用户已停用" /> : null}
       <div className="grid min-w-0 gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
         <Card className="self-start xl:sticky xl:top-4" title={<>{user.wechatName || user.userId || user.email || "用户"}
-              <AccountVerificationIcon type={userType(user)} /></>} description={<UserStatusBadge user={user} />}><BackButton fallback={`/users${location.search}`} iconOnly size="icon-sm" className="absolute top-4 left-4" /><Avatar name={user.wechatName || user.userId || user.email || "用户"} size="xl" /><div className="grid gap-4">
+              <AccountVerificationIcon type={userType(user)} /></>} description={<UserStatusBadge user={user} />} headerAction={<BackButton fallback={`/users${location.search}`} iconOnly size="icon-sm" />}><div className="hidden justify-center xl:flex"><Avatar name={user.wechatName || user.userId || user.email || "用户"} size="xl" /></div><div className="grid gap-4">
             <div className="grid grid-cols-2 gap-3">
-              <Card className="gap-2 py-4"><div className="grid justify-items-center gap-1 text-center">
-                  <p className="text-lg font-semibold">{purchaseCount}</p>
-                  <p className="text-xs text-muted-foreground">购买次数</p>
-                </div></Card>
-              <Card className="gap-2 py-4"><div className="grid justify-items-center gap-1 text-center">
-                  <p className="text-lg font-semibold">{formatMoney(user.actualPaid)}</p>
-                  <p className="text-xs text-muted-foreground">总消费金额</p>
-                </div></Card>
+              <div className="grid gap-0.5 rounded-xl bg-muted px-3 py-2"><p className="text-xs text-muted-foreground">购买次数</p><p className="text-lg font-semibold tabular-nums">{purchaseCount}</p></div>
+              <div className="grid gap-0.5 rounded-xl bg-muted px-3 py-2"><p className="text-xs text-muted-foreground">总消费金额</p><p className="text-lg font-semibold tabular-nums">{formatMoney(user.actualPaid)}</p></div>
             </div>
             <Separator />
             <div className="grid gap-3 [&>div]:grid-cols-[5rem_minmax(0,1fr)] [&>div]:items-start [&>div]:gap-3 [&>div>div]:text-right [&>div>div]:text-sm [&>div>div]:font-normal [&>div>p]:text-sm">
@@ -891,30 +886,29 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               <Info label="用户类型" value={userTypeLabels[userType(user)]} />
               <Info label="钱包余额" value={walletBalance === null ? "-" : formatMoney(walletBalance)} />
             </div>
-          </div>{user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : (
-            <div className="mt-4 flex items-center gap-2 grid gap-2">
-              {user.accountStatus === "active" && user.accountId ? <Button variant="secondary" className="w-full" onClick={openManualPaymentDialog}><Banknote />人工收款</Button> : null}
-              {user.registeredOnly ? null : <>
-                <Button variant="secondary" className="w-full" onClick={openUserTypeDialog}><UserCog />设置用户类型</Button>
-                {user.lineType === "self_hosted" ? null : <Button variant="secondary" className="w-full" onClick={() => setXuiOpen(true)}><Network />切换到自研线路</Button>}
-                {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="secondary" className="w-full" onClick={() => void openCustomInbounds()}><Network />管理个人定制入站</Button> : null}
-                {user.lineType === "self_hosted" ? <Button variant="secondary" className="w-full" onClick={openPlanDialog}><ArrowRightLeft />更改套餐</Button> : null}
-                {user.lineType === "self_hosted" && user.xuiClientEmail ? <Button variant="secondary" className="w-full" onClick={() => setTrafficResetOpen(true)}><RotateCcw />重置流量</Button> : null}
-                {user.lineType === "self_hosted" ? <Button variant="secondary" className="w-full" onClick={() => { setTrafficGiftError(""); setTrafficGiftOpen(true) }}><Gift />单向赠送流量</Button> : null}
-                {user.lineType === "self_hosted" ? <Button variant="secondary" className="w-full" onClick={() => setXuiRecoverOpen(true)} disabled={xuiRecoverSaving}><RefreshCw />同步V2套餐到3x-ui</Button> : null}
-                {user.lineType === "self_hosted" ? null : <Button variant="secondary" className="w-full" onClick={openPoolDialog}><RefreshCw />换池</Button>}
-                <Button variant="secondary" className="w-full" onClick={openGiftDialog}><Gift />赠送时长</Button>
-              </>}
-              {user.accountStatus === "active" ? <>
-                {user.registeredOnly ? null : <Button variant="secondary" className="w-full" onClick={() => { setGiftBalanceError(""); setGiftBalanceOpen(true) }}><Gift />赠送余额</Button>}
-                <Button variant="danger" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />停用账户</Button>
-              </> : user.accountStatus === "disabled" ? (
-                <Button variant="secondary" className="w-full" onClick={() => setAccountStatusOpen(true)}><Power />恢复账户</Button>
-              ) : (
-                <Button variant="secondary" className="w-full" onClick={() => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) }}><MailCheck />{user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件"}</Button>
-              )}
-            </div>
-          )}</Card>
+          </div>{user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : <ProfileActions items={[
+            ...(user.accountStatus === "active" && user.accountId ? [{ label: "人工收款", icon: <Banknote />, onSelect: openManualPaymentDialog }] : []),
+            ...(user.registeredOnly ? [] : [
+              { label: "设置用户类型", icon: <UserCog />, onSelect: openUserTypeDialog },
+              ...(user.lineType === "self_hosted" ? [] : [{ label: "切换到自研线路", icon: <Network />, onSelect: () => setXuiOpen(true) }]),
+              ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "管理个人定制入站", icon: <Network />, onSelect: () => void openCustomInbounds() }] : []),
+              ...(user.lineType === "self_hosted" ? [{ label: "更改套餐", icon: <ArrowRightLeft />, onSelect: openPlanDialog }] : []),
+              ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "重置流量", icon: <RotateCcw />, onSelect: () => setTrafficResetOpen(true) }] : []),
+              ...(user.lineType === "self_hosted" ? [
+                { label: "单向赠送流量", icon: <Gift />, onSelect: () => { setTrafficGiftError(""); setTrafficGiftOpen(true) } },
+                { label: "同步V2套餐到3x-ui", icon: <RefreshCw />, onSelect: () => setXuiRecoverOpen(true), disabled: xuiRecoverSaving },
+              ] : [{ label: "换池", icon: <RefreshCw />, onSelect: openPoolDialog }]),
+              { label: "赠送时长", icon: <Gift />, onSelect: openGiftDialog },
+            ]),
+            ...(user.accountStatus === "active" ? [
+              ...(user.registeredOnly ? [] : [{ label: "赠送余额", icon: <Gift />, onSelect: () => { setGiftBalanceError(""); setGiftBalanceOpen(true) } }]),
+              { label: "停用账户", icon: <Power />, onSelect: () => setAccountStatusOpen(true), destructive: true },
+            ] : user.accountStatus === "disabled" ? [
+              { label: "恢复账户", icon: <Power />, onSelect: () => setAccountStatusOpen(true) },
+            ] : [
+              { label: user.accountStatus === "invited" ? "重新发送认领邮件" : "发送账户认领邮件", icon: <MailCheck />, onSelect: () => { setInviteEmail([user.email, user.imessage, user.userId].find(value => value?.includes("@")) || ""); setInviteEmailError(""); setInviteOpen(true) } },
+            ]),
+          ]} />}</Card>
 
         <Tabs defaultValue="overview" className="min-w-0 gap-4">
           <TabsList className="grid w-full grid-cols-2 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-4">
@@ -1013,11 +1007,22 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
   )
 }
 
+type ProfileAction = { label: string; icon: React.ReactNode; onSelect: () => void; destructive?: boolean; disabled?: boolean }
+
+/** The profile card's actions: one menu on phones (a column of a dozen buttons would fill the screen), buttons from md up. */
+function ProfileActions({ items }: { items: ProfileAction[] }) {
+  if (!items.length) return null
+  return <div className="mt-4">
+    <div className="md:hidden"><DropdownMenu label="管理用户" align="start" trigger={<Button variant="secondary" className="w-full"><Settings2 />管理用户</Button>} items={items.map((item, index) => ({ ...item, separatorBefore: Boolean(item.destructive && index) }))} /></div>
+    <div className="hidden gap-2 md:grid">{items.map(item => <Button key={item.label} variant={item.destructive ? "danger" : "secondary"} className="w-full" onClick={item.onSelect} disabled={item.disabled}>{item.icon}{item.label}</Button>)}</div>
+  </div>
+}
+
 function Info({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="grid min-w-0 gap-1">
+    <div className="grid min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-baseline gap-3 sm:grid-cols-1 sm:gap-1">
       <p className="text-sm text-muted-foreground">{label}</p>
-      <div className="min-w-0 break-words text-sm font-medium">{value}</div>
+      <div className="min-w-0 break-words text-right text-sm font-medium sm:text-left">{value}</div>
     </div>
   )
 }

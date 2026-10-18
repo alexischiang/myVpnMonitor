@@ -10,6 +10,7 @@ import { Alert } from "@/components/arc/alert/alert"
 import { Badge } from "@/components/arc/badge/badge"
 import { Button } from "@/components/arc/button/button"
 import { Card } from "@/components/arc/card/card"
+import { Tooltip } from "@/components/arc/tooltip/tooltip"
 import { Drawer, DrawerContent } from "@/components/arc/drawer/drawer"
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
 import { Card as ArcCard } from "@/components/arc/card/card"
@@ -102,18 +103,24 @@ function panelSteps(run: SyncJobRun) {
   return Array.isArray(run.summary.steps) ? run.summary.steps as PanelSyncStep[] : []
 }
 
+/** A date and time that may break between the day and the time, never inside either. */
+function DateTimeText({ value }: { value: string }) {
+  const [day, ...time] = formatDateTime(value).split(" ")
+  return <><span className="whitespace-nowrap">{day}</span>{time.length ? <> <span className="whitespace-nowrap">{time.join(" ")}</span></> : null}</>
+}
+
 function LastRunText({ job }: { job: SyncJob }) {
-  if (job.running) return <span className="tabular-nums">开始于 {formatDateTime(job.runningSince)}</span>
-  if (job.lastRun) return <span className="tabular-nums">{formatDateTime(job.lastRun.startedAt)} · {triggerLabels[job.lastRun.trigger] || job.lastRun.trigger}</span>
-  if (job.lastCheckedAt) return <span className="tabular-nums">最近检查 {formatDateTime(job.lastCheckedAt)}</span>
+  if (job.running) return <span className="tabular-nums">开始于 <DateTimeText value={job.runningSince} /></span>
+  if (job.lastRun) return <span className="tabular-nums"><DateTimeText value={job.lastRun.startedAt} /> · {triggerLabels[job.lastRun.trigger] || job.lastRun.trigger}</span>
+  if (job.lastCheckedAt) return <span className="tabular-nums">最近检查 <DateTimeText value={job.lastCheckedAt} /></span>
   return <span>-</span>
 }
 
 function JobActions({ job, starting, onRun, onHistory, className }: { job: SyncJob; starting: boolean; onRun: (job: SyncJob) => void; onHistory: (job: SyncJob) => void; className?: string }) {
   const busy = starting || job.running
   return <div className={className}>
-    <ActionButton variant="secondary" className="min-h-11 md:min-h-0" disabled={!job.configured || busy} onClick={() => onRun(job)} label="立即执行" pendingLabel="执行中" pending={busy} />
-    <Button variant="ghost" className="min-h-11 md:min-h-0" onClick={() => onHistory(job)}><History />查看记录</Button>
+    <Tooltip content="查看记录"><Button variant="ghost" size="icon" aria-label={`查看 ${job.name} 的执行记录`} onClick={() => onHistory(job)}><History /></Button></Tooltip>
+    <ActionButton variant="secondary" icon={<Play />} collapse disabled={!job.configured || busy} onClick={() => onRun(job)} label="立即执行" pendingLabel="执行中" pending={busy} />
   </div>
 }
 
@@ -216,20 +223,32 @@ export function SyncJobsPage() {
         <Badge><Clock3 />记录保留 {RETENTION_DAYS} 天</Badge>
         <Badge>{anyRunning ? "有任务执行中，每 5 秒更新" : "每 30 秒自动更新"}</Badge>
       </div>
-      <ActionButton variant="secondary" className="min-h-11 md:min-h-0" onClick={() => void refresh()} label="刷新状态" pending={loading} />
+      <ActionButton variant="secondary" icon={<RefreshCw />} collapse onClick={() => void refresh()} label="刷新状态" pending={loading} />
     </div>
 
     {error ? <div className="px-4 lg:px-6"><Alert tone="danger" title="无法读取同步任务状态">{error}</Alert></div> : null}
     {unconfigured.length ? <div className="px-4 lg:px-6"><Alert title="部分任务未启用">3x-ui 未配置，{unconfigured.map(job => job.name).join("、")}不会定时执行，也无法手动执行。</Alert></div> : null}
 
     {data ? data.modules.map(module => <div key={module.id} className="px-4 lg:px-6">
-      <Card className="gap-0 overflow-hidden py-0" title={module.name} description={`${module.jobs.length} 个任务 · 24 小时内执行 ${module.jobs.reduce((total, job) => total + job.stats24h.total, 0)} 次，异常 ${module.jobs.reduce((total, job) => total + job.stats24h.failed, 0)} 次`}><div className="grid gap-3 gap-0 md:hidden">
-          {module.jobs.map(job => <ArcCard key={job.id} className="flex-wrap rounded-none border-x-0 border-t-0" title={<><JobStatusBadge job={job} /><span>{job.name}</span></>} description={job.description} headerAction={<>
-              <JobActions job={job} starting={startingIds.includes(job.id)} onRun={runJob} onHistory={item => setHistoryJobId(item.id)} className="grid w-full grid-cols-2 gap-2" />
-            </>}><p className="text-sm text-muted-foreground tabular-nums">{intervalLabel(job)} · <LastRunText job={job} />{job.lastRun && !job.running ? ` · 耗时 ${formatDuration(job.lastRun.durationMs)}` : ""}</p><p className="text-sm text-muted-foreground tabular-nums">24 小时：{job.stats24h.total} 次，异常 {job.stats24h.failed} 次</p>{job.lastRun?.error && !job.running ? <p className="text-sm text-muted-foreground line-clamp-none break-all text-destructive">{job.lastRun.error}</p> : null}</ArcCard>)}
-        </div><div className="hidden md:block">
-          <SimpleTable caption="任务列表" columns={["任务", "周期", "状态", "上次执行", "耗时", "24 小时", "操作"]} rows={module.jobs} rowKey={(job) => job.id} cells={(job) => [<span className="max-w-sm whitespace-normal"><p className="font-medium">{job.name}</p>
-                  <p className="text-xs text-muted-foreground">{job.description}</p>
+      <Card className="gap-0 overflow-hidden py-0" title={module.name} description={`${module.jobs.length} 个任务 · 24 小时 ${module.jobs.reduce((total, job) => total + job.stats24h.total, 0)} 次 · 异常 ${module.jobs.reduce((total, job) => total + job.stats24h.failed, 0)} 次`}>{/* Narrow screens list the jobs as rows inside the module card: the name keeps the full width and the actions sit on their own row. */}
+        <ul className="grid divide-y md:hidden">
+          {module.jobs.map(job => <li key={job.id} className="grid gap-2 py-3 first:pt-0 last:pb-0">
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="min-w-0 text-sm font-semibold text-foreground">{job.name}</h3>
+              <JobStatusBadge job={job} />
+            </div>
+            <div className="flex items-end justify-between gap-3">
+              <div className="grid min-w-0 gap-0.5 text-xs text-muted-foreground tabular-nums">
+                <p>{intervalLabel(job)} · {job.running ? `开始于 ${formatDateTime(job.runningSince)}` : job.lastRun ? `${formatDateTime(job.lastRun.startedAt)} · ${formatDuration(job.lastRun.durationMs)}` : "暂无记录"}</p>
+                <p>24 小时 {job.stats24h.total} 次{job.stats24h.failed ? <span className="text-destructive"> · 异常 {job.stats24h.failed} 次</span> : null}</p>
+                {job.lastRun?.error && !job.running ? <p className="line-clamp-2 break-all text-destructive">{job.lastRun.error}</p> : null}
+              </div>
+              <JobActions job={job} starting={startingIds.includes(job.id)} onRun={runJob} onHistory={item => setHistoryJobId(item.id)} className="flex shrink-0 gap-2" />
+            </div>
+          </li>)}
+        </ul><div className="hidden md:block">
+          <SimpleTable caption="任务列表" columns={["任务", "周期", "状态", "上次执行", "耗时", "24 小时", "操作"]} rows={module.jobs} rowKey={(job) => job.id} cells={(job) => [<span className="grid min-w-36 max-w-sm"><p className="font-medium whitespace-nowrap">{job.name}</p>
+                  <p className="text-xs text-muted-foreground max-lg:hidden">{job.description}</p>
                   {job.lastRun?.error && !job.running ? <p className="mt-1 break-all text-xs text-destructive">{job.lastRun.error}</p> : null}</span>, <span className="text-muted-foreground">{intervalLabel(job)}</span>, <JobStatusBadge job={job} />, <span className="text-muted-foreground"><LastRunText job={job} /></span>, <span className="text-right tabular-nums">{job.lastRun && !job.running ? formatDuration(job.lastRun.durationMs) : "-"}</span>, <span className="text-right tabular-nums">{job.stats24h.total} 次{job.stats24h.failed ? <span className="text-destructive"> · 异常 {job.stats24h.failed}</span> : null}</span>, <JobActions job={job} starting={startingIds.includes(job.id)} onRun={runJob} onHistory={item => setHistoryJobId(item.id)} className="flex justify-end gap-2" />]} />
         </div></Card>
     </div>) : null}

@@ -22,6 +22,7 @@ import { Button } from "@/components/arc/button/button"
 import { Card } from "@/components/arc/card/card"
 import { Checkbox } from "@/components/arc/checkbox/checkbox"
 import { DropdownMenu, type DropdownItem } from "@/components/arc/dropdown-menu/dropdown-menu"
+import { ListFilterChips, ListFilterMenu, type ListFilter } from "@/components/features/list-filters"
 import { EmptyState } from "@/components/features/shared"
 import { Pagination } from "@/components/arc/pagination/pagination"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/arc/popover/popover"
@@ -67,6 +68,10 @@ type DataTableProps<TData, TValue> = {
   emptyDescription?: string
   pageSize?: number
   toolbar?: React.ReactNode
+  /** Fixed-option filters: a 筛选 menu beside the search field, and the applied ones as chips below. */
+  filters?: ListFilter[]
+  /** Resets every filter in one update; see ListFilterChips. */
+  onClearFilters?: () => void
   className?: string
   renderMobileItem?: (item: TData) => React.ReactNode
   frame?: "default" | "card"
@@ -101,6 +106,8 @@ export function DataTable<TData, TValue>({
   emptyDescription,
   pageSize = 30,
   toolbar,
+  filters,
+  onClearFilters,
   className,
   renderMobileItem,
   frame = "default",
@@ -192,29 +199,36 @@ export function DataTable<TData, TValue>({
   return (
     <div ref={tableTopRef} className={cn("flex min-w-0 w-full scroll-mt-16 flex-col justify-start gap-4", frame === "card" && "p-4 lg:p-6", className)}>
       <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        {searchableColumn ? (
-          <div className="w-full lg:max-w-sm">
-            <SearchField label={searchPlaceholder} hideLabel placeholder={searchPlaceholder} value={(searchableColumn.getFilterValue() as string) ?? ""} onValueChange={value => {
-              searchableColumn.setFilterValue(value)
-              onSearchChange?.(value)
-            }} />
+        {searchableColumn || filters?.length ? (
+          <div className="flex w-full items-center gap-2 lg:max-w-md">
+            {searchableColumn ? <div className="min-w-0 flex-1">
+              <SearchField label={searchPlaceholder} hideLabel placeholder={searchPlaceholder} value={(searchableColumn.getFilterValue() as string) ?? ""} onValueChange={value => {
+                searchableColumn.setFilterValue(value)
+                onSearchChange?.(value)
+              }} />
+            </div> : null}
+            {filters?.length ? <ListFilterMenu filters={filters} align={searchableColumn ? "end" : "start"} /> : null}
           </div>
         ) : null}
         <div className="flex min-w-0 flex-wrap items-center gap-2 lg:ml-auto lg:justify-end">
-          {toolbar}
           <div className="hidden md:block"><Select label="每页行数" hideLabel value={`${pagination.pageSize}`} onValueChange={value => table.setPageSize(Number(value))} options={ROW_SIZES} /></div>
+          {/* Column choice only applies to the table; phones show cards, so the picker is left out there. Arc button CSS outranks a hidden class on the button itself. */}
           {hideableColumns.length ? (
-            <Popover>
-              <PopoverTrigger asChild><Button variant="secondary" className="hidden md:inline-flex"><Columns3 />自定义列</Button></PopoverTrigger>
+            <div className="hidden md:block"><Popover>
+              <PopoverTrigger asChild><Button variant="secondary"><Columns3 />自定义列</Button></PopoverTrigger>
               <PopoverContent align="end">
                 <div className="grid gap-3">
                   {hideableColumns.map(column => <Checkbox key={column.id} label={String(column.columnDef.meta?.label ?? column.id)} checked={column.getIsVisible()} onCheckedChange={value => column.toggleVisibility(Boolean(value))} />)}
                 </div>
               </PopoverContent>
-            </Popover>
+            </Popover></div>
           ) : null}
+          {/* The page's own actions come last, so its primary action sits at the right edge. */}
+          {toolbar}
         </div>
       </div>
+
+      {filters?.length ? <ListFilterChips filters={filters} onClearAll={onClearFilters} /> : null}
 
       <div className="grid gap-3 md:hidden">
         {pageRows.length ? pageRows.map(row => renderMobileItem ? <React.Fragment key={row.id}>{renderMobileItem(row.original)}</React.Fragment> : (

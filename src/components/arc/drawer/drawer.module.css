@@ -99,3 +99,5 @@
 /* XELA extension: wider side panels. */
 .content.lg { --drawer-size: min(42rem, calc(100vw - var(--space-4))); }
 .content.xl { --drawer-size: min(60rem, calc(100vw - var(--space-4))); }
+/* XELA extension: the sections a dialog holds (fields, a search row, lists, the actions) stack with a gap instead of touching. */
+.body { display: flex; flex-direction: column; gap: var(--space-5); }

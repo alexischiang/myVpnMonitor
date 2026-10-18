@@ -3990,6 +3990,279 @@
         "page_errors": [],
         "checked_at": "2026-10-18"
       }
+    },
+    {
+      "id": "sync-jobs-narrow-layout",
+      "name": "Sync jobs page lists jobs as rows on narrow screens",
+      "description": "Below md, each sync job was a nested Arc card whose header row squeezed the job name beside the two action buttons, breaking names mid-word (3x- / ui 面板同步), and the rounded-none/border overrides were ignored because Arc module CSS outranks layered Tailwind utilities. Jobs are now divided rows inside the module card: status badge and name on one line, description and run info full width, and 立即执行 / 查看记录 on their own two-column row. Failed counts show in the destructive color. The md+ table is unchanged. Rows were then made compact: the name is a semibold title with the status badge at the right, the description is dropped below md, and run info is one xs muted line (interval · last run time · duration) plus a 24-hour count that only shows failures when there are any. Module summaries read N 个任务 · 24 小时 X 次 · 异常 Y 次.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Job names never wrap mid-word beside the actions on narrow screens.",
+        "No card nested inside the module card on narrow screens.",
+        "The desktop table is unchanged.",
+        "On narrow screens the job name reads as a title, distinct from the muted xs body text, and each row omits the description."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed. Browser against a throwaway local API on the test database: /sync-jobs at 375px and at the 564px pane width shows each job as a row with badge and name on one line and actions on their own row; the history drawer opens from 查看记录; at 1280px the table is unchanged. Console had no errors.",
+        "2026-10-18: compact rows. npm run check passed. Browser /sync-jobs at 375px shows semibold names with right-aligned badges and two xs meta lines; the 查看记录 drawer opens and closes; 1280px table unchanged. Console had no errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/sync-jobs"
+        ],
+        "interactions": [
+          "Viewed at 375px and 1280px.",
+          "Opened and closed the 查看记录 history drawer."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "xui-logs-table-layout",
+      "name": "3x-ui access log table reads cleanly on desktop and phone",
+      "description": "The /xui-logs table (Arc sortable-data-table through SimpleTable) broke hosts at hyphens, paths mid-word and request IDs across lines, and showed an INFO badge on every row. Level and result are merged into one 状态 column that shows the level only when it is WARN or ERROR; paths wrap only after a slash; method and host never wrap; request IDs show their first 8 characters with the full ID as a tooltip; 4xx/5xx codes use the destructive color. The hand-made previous/next buttons are replaced by Arc Pagination with a total count. Below md, nested Arc cards are replaced by compact divided rows: method and path as a semibold title with the status badge at the right, one xs muted line of time, host, status and duration, and a two-line clamped error. Follow-up: the hand-made phone list is gone; the same Arc table renders at every width and folds into its built-in phone layout below 620px (request as the title, then status, time, host and response on one line, error clamped to two lines). Request IDs use Arc CopyButton. The search field, 查询 and the Arc 筛选 menu share one row at every width.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Hosts, methods and request IDs do not break mid-word in the desktop table.",
+        "Paths wrap only at slashes.",
+        "Paging uses Arc Pagination.",
+        "Narrow screens show compact rows without nested cards."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed. Browser /xui-logs at 1280px: one-line hosts, merged 状态 column, short request IDs; Arc Pagination moved to page 2 (第 2 / 85 页). At 375px: compact rows, page 3 via Pagination. Fresh loads had no console or page errors.",
+        "2026-10-18: phone layout via Arc table, CopyButton request IDs and one-row search with the Arc filter menu. npm run check passed; /xui-logs at 375px and 1280px: search, 查询 and 筛选 on one row, WARN filter gave 11 rows with a chip, 清除全部 reset it; no console or page errors on fresh loads."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/xui-logs"
+        ],
+        "interactions": [
+          "Viewed at 1280px and 375px.",
+          "Paged to page 2 and page 3 with Arc Pagination.",
+          "Filtered by level WARN with the Arc filter menu and cleared it with 清除全部."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "admin-list-arc-filters-phone-scale",
+      "name": "Admin list filters on the Arc filter menu, and a phone size scale",
+      "description": "Admin list pages put labelled Select grids in a band above the table and a separate search row. Each part was mapped to Arc: the filters now use Arc FilterMenu (a 筛选 trigger in the same row as the search field) and FilterToolbar (applied filters as removable chips with 清除全部), through features/list-filters.tsx and DataTable `filters` / `onClearFilters`. Converted: /users, /orders, /xui-inbounds, /pricing-settings, /catalog-v2 (plans and add-ons), /tickets and /xui-logs; DataTableCard no longer renders a filter band or clips overflow. URL-backed filters clear in one update through useClearSearchParams, because React Router drops all but the last of several same-tick functional updates (reproduced: 清除全部 left ?status=pending on /orders). Below 640px the global tokens step text down one size (xs stays 12px), tighten Arc panel padding to 16/20px and use 32/40/44px controls; Arc and Tailwind text utilities share these variables. Arc extensions: Chinese filter-toolbar strings, no phone sort strip for unsortable tables, and card titles that shrink beside header actions (user cards were pushing the row menu 35px out of the card).",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "xui-logs-table-layout"
+      ],
+      "done_criteria": [
+        "Search and the 筛选 trigger share one row on phone and desktop on every converted page.",
+        "Applied filters show as Arc chips; 清除全部 resets all of them, URL state included.",
+        "Text, spacing and controls are smaller below 640px with primary controls still 44px.",
+        "No page scrolls sideways at 375px."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed (the project has no TypeScript compiler; Vite build is the check). Browser at 375px and 1280px on /users, /orders, /xui-inbounds, /pricing-settings, /catalog-v2, /tickets, /xui-logs and /sync-jobs: search and trigger vertically aligned on one row, filter menu panel inside the viewport, a picked value showed as a chip and updated the URL, 清除全部 with two to three URL filters set left no params, no horizontal overflow. Computed at 375px: text-sm 13px for Arc and Tailwind, buttons 40px, card padding 16px; user card actions inside the card. A scripted pass over all eight pages at both widths recorded no console.error, page errors or unhandled rejections."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users",
+          "/orders",
+          "/xui-inbounds",
+          "/pricing-settings",
+          "/catalog-v2",
+          "/tickets",
+          "/xui-logs",
+          "/sync-jobs"
+        ],
+        "interactions": [
+          "Viewed each route at 375px and 1280px.",
+          "Opened the 筛选 menu, picked a value, checked the chip and URL, then used 清除全部.",
+          "Cleared two or more URL-backed filters at once on /orders, /pricing-settings, /users and /xui-inbounds."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "admin-ui-layout-principles",
+      "name": "Admin pages follow the compact phone, button row and spacing principles",
+      "description": "Applies the user's layout principles (now in docs/agent/ui-rules.md, 排版与按钮组) to the pages reworked in this session. Phones: badges shrink to 22px/11px, and buttons with icons show only the icon (Arc Button/ActionButton `collapse`, FilterMenu `collapse`). Rows: the 筛选 trigger and 查询 match the 36/40px search field (FilterMenu `size=\"md\"`); every control in a toolbar row shares one height; DataTable puts the page's own actions after 每页行数 and 自定义列 so the primary action (新增用户, 新增商品, 查询) is rightmost; sync-job and dialog actions put the key action last and the destructive one at the far left. Spacing: Arc Dialog and Drawer bodies stack their sections with a 20px gap (the inbound group dialog's fields, search, lists and actions were touching, and its grid-rows class targeted a two-child frame), and the access log card spaces its search area from the table. Icons: ActionButton `icon` replaces the generic arrow (refresh, play for 立即执行, save), 筛选 uses the filter icon, 新增用户 the user-plus icon. The inbound dialog search became Arc SearchField.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "admin-list-arc-filters-phone-scale"
+      ],
+      "done_criteria": [
+        "Below 640px badges are smaller and buttons with icons show only the icon.",
+        "Buttons beside a text field are as tall as the field; every control in a row has one height.",
+        "The primary action is the rightmost control in its row.",
+        "Search areas and tables, and dialog sections, are separated by a gap.",
+        "Icon-plus-text buttons use icons that match their text."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed. Measured in the browser: at 375px every control in the search/toolbar rows of /users, /xui-inbounds, /pricing-settings and /xui-logs is 40px, collapsed buttons are 40x40, badges 22px with 11px text, primary last; at 1280px all row controls are 36px with the primary last on /users, /pricing-settings and /xui-logs; search area to table 17-21px; inbound group dialog sections 20px apart at 1245px and on a phone. Scripted pass over /users, /orders, /xui-inbounds (dialog opened and cancelled), /pricing-settings, /catalog-v2, /tickets, /xui-logs and /sync-jobs at 375px and 1280px: filter pick and 清除全部 worked, no horizontal overflow, no console.error, page errors or unhandled rejections."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users",
+          "/orders",
+          "/xui-inbounds",
+          "/pricing-settings",
+          "/catalog-v2",
+          "/tickets",
+          "/xui-logs",
+          "/sync-jobs"
+        ],
+        "interactions": [
+          "Viewed each route at 375px and 1280px and measured control heights and order.",
+          "Used the 筛选 menu and 清除全部 on each list.",
+          "Opened the V2 permission group edit dialog on /xui-inbounds and cancelled it."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "sync-jobs-table-row-height",
+      "name": "Sync jobs table rows fit their content; no description on small screens",
+      "description": "Arc table cells had 52px height and no vertical padding, so the sync job cell (name plus description) filled the row edge to edge. Cells now have 8px vertical padding with 52px as the minimum (Arc extension), so multi-line cells grow while single-line and button rows stay 52px. On /sync-jobs the description wraps and is hidden below 1024px (the phone list already omits it). To keep the table from scrolling sideways at a 1280px viewport: 查看记录 is an icon button with an Arc Tooltip (it was already icon-only on phones), the task column keeps at least 144px, and the last-run time breaks only between day and time.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "admin-ui-layout-principles"
+      ],
+      "done_criteria": [
+        "Sync job rows grow to fit the name and description instead of a fixed height.",
+        "No job description below 1024px.",
+        "The tables do not scroll sideways at 1280px.",
+        "Rows of other Arc tables that hold a single line or a 36px button stay about 52px."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed. Browser /sync-jobs: 1600px rows 60px; 1280px rows 68-108px with every module table fitting its 867px container; 900px description hidden, rows 60px; 375px phone list without description, no horizontal overflow; the history icon button opened the 执行记录 drawer. /payment-settings button rows 52-53px and /xui-logs rows 71px at 1280px. No console errors or page errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/sync-jobs",
+          "/payment-settings",
+          "/xui-logs"
+        ],
+        "interactions": [
+          "Viewed /sync-jobs at 1600px, 1280px, 900px and 375px and measured row heights and table overflow.",
+          "Opened the 执行记录 drawer from the history icon button.",
+          "Measured row heights on /payment-settings and /xui-logs."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "orders-phone-card",
+      "name": "Compact Orders phone cards; no column picker in card mode",
+      "description": "The 自定义列 button showed in DataTable's phone card mode, where it does nothing (a hidden class on the Arc button lost to Arc's module CSS); it now sits in a hidden md:block wrapper like the rows-per-page select. OrderMobileItem was broken into its parts and rebuilt on Arc: product and amount as the title line, customer link and date (shared formatDateTime instead of an English weekday formatter) on the second, order number beside the status Badge and an icon-only 查看详情 (eye icon, Button collapse) on the third. The shadcn Separator and the Arc link Button whose text-xs was overridden are gone; rows use min-w-0 so long emails and order numbers truncate instead of pushing the amount and actions out of the card. The same component renders the customer /account/orders cards (no customer line there). Follow-up: the status Badge is gone; the card border takes the badge's tone colour (success, info, warning or danger mixed 50% with the border token; neutral statuses such as 已取消 keep the plain border), and the status text stays in the card as screen-reader-only text. To make the status easier to tell apart, the border mix went from 50% to 80% of the tone colour and the card gets a 7% wash of the same colour through --card-surface.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "admin-ui-layout-principles"
+      ],
+      "done_criteria": [
+        "No 自定义列 button in card mode below md.",
+        "Order cards show product, amount, customer, date, order number, status and an icon-only detail link without overflowing at 375px.",
+        "Order status shows as the card border colour, with the status text kept for screen readers."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed. Browser /orders at 375px: column picker not rendered visibly, five cards 137px tall with no element past the card edge, full order numbers, no horizontal page overflow; the eye link opened /orders/<id>. No console or page errors. /account/orders could not be viewed with the admin session (it redirects to /dashboard), so the customer-side card was not seen in the browser.",
+        "2026-10-18: badge replaced by border colour. npm run check passed. /orders at 375px: 已取消 cards keep the default border oklch(0.935 0 0), 已完成 cards a green border, and the 已付款未发放套餐 card (?status=unfulfilled) a red border; each card carries 状态：<status> as sr-only text. No warning-tone orders exist locally, so that colour was not seen. No console errors.",
+        "2026-10-18: stronger status colour. npm run check passed. /orders at 375px: 已完成 cards border oklab(0.579 -0.13 0.08) with a light green surface, 已取消 cards unchanged white with the default border, the unfulfilled card a red border and pink surface. No console errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/orders",
+          "/orders/:id"
+        ],
+        "interactions": [
+          "Viewed /orders at 375px and measured card overflow and order number truncation.",
+          "Opened an order from the icon-only detail link.",
+          "Compared card border colours for cancelled, completed and unfulfilled orders."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "users-phone-card",
+      "name": "Compact Users phone cards",
+      "description": "The /users phone card was broken into its parts and rebuilt. Status: the English Active/Expired badge is replaced by the card border and a light wash in the badge's tone (green valid, amber expiring, red expired, plain for not purchased), with the Chinese label kept as screen-reader text; the tone styling is shared with the Orders card through features/status-surface.ts. Layout: line 1 email (or #ID) with the VIP badge and the ... actions menu; line 2 expiry date first, then #ID and line group, with the amount at the right; line 3 online presence with the provider badge at the right. VIP badge text was dark on its dark gradient because Arc's badge colour variables beat text-white; it now sets the badge's own colour variables to white, which fixes it wherever VipBadge appears. Follow-up at the user request: user cards keep the default border and background (only Orders cards use status colours); the status is a small badge with the Chinese label (有效, 即将到期, 已过期, 未购买) at the right of line 3 beside the VIP and provider badges, so the email has the whole first line. Second follow-up at the user request: VIP and status badges sit at the top right of the card, the ... actions menu is removed, and the whole card is a link to /users/detail/<id> (keyboard focus ring on the link). Known gap: copy delivery link, edit and delete (unclaimed users) were only in that menu and are not on the detail page, so on phones they are reachable only from the desktop table.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "orders-phone-card"
+      ],
+      "done_criteria": [
+        "User cards keep the default border and background; status is a Chinese-labelled badge.",
+        "The expiry date is never cut off on a 375px phone.",
+        "The VIP badge text is readable.",
+        "The email is not cut off by badges on line 1.",
+        "Tapping a user card opens the user detail page; badges sit at the top right."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed. Browser /users at 375px: ten cards 88-110px tall (about 130px before), no element past a card edge, valid cards green-bordered and expired cards red-bordered with sr-only 套餐状态 text, line 2 reads 到期 <date> · #ID · line group in full, VIP badge text rgb(255, 255, 255); the ... menu opened with 查看详情 and 赠送时长. Orders cards still use the same colours through the shared helper. No console errors.",
+        "2026-10-18: plain cards. npm run check passed. /users at 375px: ten cards 116px, border oklch(0.935 0 0) and white background on every card, no email truncated, no element past a card edge, 有效/已过期 badges with VIP on line 3. No console errors.",
+        "2026-10-18: card as link. npm run check passed. /users at 375px: ten cards are links with no buttons inside, 78-100px tall, VIP and status badges on line 1 at the right, no element past a card edge; clicking the first card landed on /users/detail/ec639e30-bcb2-4bb0-94ae-0ca6fb25ad5c. No console errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users",
+          "/users/detail/:id"
+        ],
+        "interactions": [
+          "Viewed /users at 375px and measured card heights, overflow, border colours and VIP text colour.",
+          "Tapped a user card and landed on its detail page."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "user-detail-phone-layout",
+      "name": "User detail page phone layout",
+      "description": "The /users/detail/:id page at phone width was 2345px tall: the back button was pinned over the initials avatar, the two stats were cards nested in the profile card, about a dozen full-width action buttons stacked down the page, and every info field put its label above its value. Now the back button is the profile card's header action, the avatar shows only in the xl sidebar layout, the stats are plain muted tiles, the actions come from one list (ProfileActions) that renders as an Arc DropdownMenu 管理用户 on phones (destructive 停用账户 after a divider) and as the existing button column from md up, and Info puts label and value side by side below sm. The page is 1514px tall at 375px.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "users-phone-card"
+      ],
+      "done_criteria": [
+        "No control overlaps another in the profile card on phones.",
+        "Phone users reach every profile action from one 管理用户 menu; md and up keep the button column.",
+        "Info fields read as label and value on one line on phones."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed. Browser /users/detail/ec639e30-bcb2-4bb0-94ae-0ca6fb25ad5c at 375px: page 1514px tall (2345px before), no horizontal overflow, back button in the card header, 管理用户 menu listed 人工收款 through 停用账户 (10 items for this user) and 赠送时长 opened its dialog. At 1280px: button column and avatar shown, menu hidden, info fields stacked. No console errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/:id"
+        ],
+        "interactions": [
+          "Viewed the page at 375px and 1280px.",
+          "Opened the 管理用户 menu and chose 赠送时长, then closed the dialog."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
     }
   ]
 }

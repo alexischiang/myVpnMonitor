@@ -23,3 +23,13 @@
 .orange { color: #fff; background: #ff592c; border-color: #ff592c; }
 .sm { min-height: var(--control-height-sm); padding-inline: var(--space-3); }
 .lg { min-height: var(--control-height-lg); }
+/* XELA extension: a named icon leads the label instead of trailing it like the arrow. */
+.leading .iconSlot { order: -1; }
+.iconSlot svg:not([class*="size-"]) { width: 1rem; height: 1rem; }
+/* XELA extension: collapse shows only the icon below 640px; the visually hidden label still names the button. */
+@media (max-width: 639.98px) {
+  .collapse { width: var(--control-height-md); padding-inline: 0; }
+  .collapse.sm { width: var(--control-height-sm); }
+  .collapse.lg { width: var(--control-height-lg); }
+  .collapse .morph { display: none; }
+}

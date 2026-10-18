@@ -68,3 +68,11 @@
 /* In a column the frame must size from its height, not a zero flex basis, or its spring is ignored and a new line of chips snaps. */
 @media (max-width: 520px) { .toolbar { align-items: stretch; flex-direction: column; } .frame { flex: none; } .actions { justify-content: flex-end; } }
 @media (prefers-reduced-motion: reduce) { .chip button, .clear, .surface, .back { transition: none; } .chip button:active, .clear:active { transform: none; } }
+/* XELA extension: size md lines the trigger up with a text field; collapse keeps only the icon below 640px. */
+.menu[data-size="md"] .trigger { min-height: var(--control-height-md); }
+.face svg:not([class*="size-"]) { width: 1rem; height: 1rem; }
+@media (max-width: 639.98px) {
+  .menu[data-collapse][data-size="md"] .trigger { width: var(--control-height-md); }
+  .menu[data-collapse] .trigger { width: var(--control-height-sm); justify-content: center; padding: 0; }
+  .menu[data-collapse] .faceLabel { display: none; }
+}

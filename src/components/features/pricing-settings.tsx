@@ -13,7 +13,7 @@ import { EmptyState } from "@/components/features/shared"
 import type { PricingRow } from "@/types"
 import { formatMoney } from "@/utils"
 import { BackButton } from "@/components/features/back-button"
-import { useSearchParamState } from "@/hooks/use-search-param-state"
+import { useClearSearchParams, useSearchParamState } from "@/hooks/use-search-param-state"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Badge } from "@/components/arc/badge/badge"
 import { PageHeader as DetailHeader } from "@/components/arc/blocks/page-header/page-header"
@@ -83,6 +83,7 @@ export function PricingSettingsPage() {
   const { pricing } = useData()
   const [category, setCategory] = useSearchParamState("category", "all")
   const [serviceType, setServiceType] = useSearchParamState("type", "all")
+  const clearFilters = useClearSearchParams(["category", "type"])
   const products = React.useMemo(() => productsFromPricing(pricing), [pricing])
   const filteredProducts = React.useMemo(() => products.filter(product => (category === "all" || product.category === category) && (serviceType === "all" || product.serviceType === serviceType)), [category, products, serviceType])
 
@@ -98,7 +99,7 @@ export function PricingSettingsPage() {
 
   const renderMobileProduct = React.useCallback((product: ProductItem) => <ArcCard title={product.name} description={`${product.category} · ${product.serviceType}`} headerAction={<><ProductStatusBadge status={product.status} />{product.group ? <Button asChild variant="ghost" size="icon"><Link to={`/pricing-settings/${encodeURIComponent(product.group)}/${product.service}`} aria-label={`编辑 ${product.name}`}><Eye /></Link></Button> : null}</>}><p className="text-sm text-muted-foreground">{product.billing} · {product.stock === undefined ? "不限库存" : `库存 ${product.stock}`}</p></ArcCard>, [])
 
-  return <div className="grid gap-4 px-4 lg:px-6"><DataTableCard filters={<><Select label="商品分类" value={category} onValueChange={setCategory} id="product-category" className="w-full" options={[{ value: "all", label: "全部商品" }, { value: "套餐服务", label: "套餐服务" }, { value: "附加服务", label: "附加服务" }, { value: "人工定制", label: "人工定制" }]} /><Select label="服务类型" value={serviceType} onValueChange={setServiceType} id="service-type" className="w-full" options={[{ value: "all", label: "全部类型" }, { value: "周期性套餐", label: "周期性套餐" }, { value: "不限时套餐", label: "不限时套餐" }, { value: "附加服务", label: "附加服务" }, { value: "人工定制", label: "人工定制" }]} /></>}><DataTable columns={columns} data={filteredProducts} searchKey="product" searchPlaceholder="搜索商品" emptyTitle="暂无商品" renderMobileItem={renderMobileProduct} frame="card" columnLayout="content" toolbar={<Button asChild><Link to="/pricing-settings/new"><Plus />新增商品</Link></Button>} stateKey="products" /></DataTableCard></div>
+  return <div className="grid gap-4 px-4 lg:px-6"><DataTableCard><DataTable filters={[{ id: "category", label: "商品分类", value: category, onChange: setCategory, options: [{ value: "all", label: "全部商品" }, { value: "套餐服务", label: "套餐服务" }, { value: "附加服务", label: "附加服务" }, { value: "人工定制", label: "人工定制" }] }, { id: "serviceType", label: "服务类型", value: serviceType, onChange: setServiceType, options: [{ value: "all", label: "全部类型" }, { value: "周期性套餐", label: "周期性套餐" }, { value: "不限时套餐", label: "不限时套餐" }, { value: "附加服务", label: "附加服务" }, { value: "人工定制", label: "人工定制" }] }]} onClearFilters={clearFilters} columns={columns} data={filteredProducts} searchKey="product" searchPlaceholder="搜索商品" emptyTitle="暂无商品" renderMobileItem={renderMobileProduct} frame="card" columnLayout="content" toolbar={<Button asChild collapse><Link to="/pricing-settings/new"><Plus />新增商品</Link></Button>} stateKey="products" /></DataTableCard></div>
 }
 
 export function PricingDetailPage() {

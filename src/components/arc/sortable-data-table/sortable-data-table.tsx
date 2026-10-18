@@ -310,7 +310,7 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
   return <div className={styles.wrapper} onKeyDown={onKeyDown}>
     <div ref={scrollerRef} className={styles.scroller}>
       {band ? <span className={styles.band} style={{ left: band.left, width: band.width }} aria-hidden="true" /> : null}
-      <table ref={tableRef} role="table" className={styles.table} style={fitted ? { minWidth: fitted.target } : minWidth ? { minWidth } : undefined} data-fixed={widths ? "" : undefined} data-selectable={selectable || undefined}>
+      <table ref={tableRef} role="table" className={styles.table} style={fitted ? { minWidth: fitted.target } : minWidth ? { minWidth } : undefined} data-fixed={widths ? "" : undefined} data-selectable={selectable || undefined} data-unsortable={!selectable && columns.every(column => column.sortable === false) || undefined}>
         <caption>{caption}</caption>
         <colgroup>
           {selectable ? <col className={styles.selectCol} /> : null}

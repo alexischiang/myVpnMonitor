@@ -10,6 +10,7 @@ import { SimpleTable } from "@/components/features/simple-table"
 import { ChatThread, type ChatDraft, type ChatMessage } from "@/components/arc/chat-thread/chat-thread"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Progress } from "@/components/arc/progress/progress"
+import { ListFilterChips, ListFilterMenu, type ListFilter } from "@/components/features/list-filters"
 import { EmptyState, InfoList } from "@/components/features/shared"
 import { Separator } from "@/components/ui/separator"
 import { formatBytes, formatDate, formatDateTime, formatMoney } from "@/utils"
@@ -273,13 +274,14 @@ export function AdminTicketsPage() {
   React.useEffect(() => { fetchJson<Ticket[]>("/api/tickets").then(setTickets).catch(error => setError(error.message)).finally(() => setLoading(false)) }, [])
   if (loading) return <LoadingPage />
   const needle = query.trim().toLowerCase()
+  const statusFilters: ListFilter[] = [{ id: "status", label: "工单状态", value: status, defaultValue: "active", onChange: value => updateParam("status", value, "active"), options: [{ value: "all", label: "全部状态" }, { value: "active", label: "进行中" }, { value: "ended", label: "已解决" }] }]
   const filtered = tickets.filter(ticket => (status === "all" || (status === "ended" ? ticket.status === "closed" : ticket.status !== "closed")) && (!needle || [ticket.id, ticket.subject, ticket.email].some(value => value.toLowerCase().includes(needle))))
   return (
     <section className="grid gap-4 px-4 lg:px-6">
       <header className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-muted-foreground">进行中工单优先显示等待客服时间最长的记录。</p><Badge tone="warning">进行中 {tickets.filter(ticket => ticket.status !== "closed").length}</Badge></header>
       {error ? <ErrorAlert message={error} /> : null}
       <Card title="工单队列" description="按编号、邮箱或主题查找工单。"><div className="grid gap-4">
-        <section className="flex flex-col gap-3 md:flex-row"><div className="flex-1"><SearchField label="搜索工单" hideLabel value={query} onValueChange={value => updateParam("q", value, "")} placeholder="搜索编号、邮箱或主题" /></div><Select label="筛选工单状态" hideLabel value={status} onValueChange={value => updateParam("status", value, "active")} className="w-full md:w-44" options={[{ value: "all", label: "全部状态" }, { value: "active", label: "进行中" }, { value: "ended", label: "已解决" }]} /></section>
+        <section className="grid gap-3"><div className="flex items-center gap-2 lg:max-w-md"><div className="min-w-0 flex-1"><SearchField label="搜索工单" hideLabel value={query} onValueChange={value => updateParam("q", value, "")} placeholder="搜索编号、邮箱或主题" /></div><ListFilterMenu filters={statusFilters} /></div><ListFilterChips filters={statusFilters} /></section>
         <TicketListTable tickets={filtered} admin empty={needle
           ? <EmptyState scene="search" title={`没有找到“${query.trim()}”`} description="换一个编号、邮箱或主题关键词，或清除搜索后再试。" action={<Button variant="secondary" size="sm" onClick={() => updateParam("q", "", "")}>清除搜索</Button>} />
           : status === "active"
