@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-17
-- Current Objective: 订阅链接边框、节点状态排版、去掉页脚退款文案、流量用完时的购买流量包入口
+- Last Updated: 2026-10-18
+- Current Objective: 修复生产结算卡死：商务锁等待超时、断开请求读取、并发保存丢失、失败发放自动重试
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -482,8 +482,10 @@
 
 - 2026-10-17: npm run check、verify:fast、verify:harness、git diff --check 通过；/account /account/nodes /account/plans#addons /pricing 浏览器验证，console_errors/page_errors 为空
 
+- 2026-10-18: npm run verify 通过；test-payment.js 并发下单场景连续 12 次通过
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/components/arc/blocks/site-footer/site-footer.tsx`, `src/components/arc/line-chart/line-chart.tsx`, `src/components/arc/select/select.module.css`, `src/components/arc/select/select.tsx`, `src/components/arc/sortable-data-table/sortable-data-table.module.css`, `src/components/arc/sortable-data-table/sortable-data-table.tsx`, `src/components/arc/timeline/timeline.tsx`, `src/components/arc/usage-meter/usage-meter.tsx`, `src/components/features/account-node-status.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/account-shell.tsx`, `src/components/features/arc-data-table.tsx`, `src/components/features/bills.tsx`, `src/components/features/cashier-card.tsx`, `src/components/features/cashier.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/chart-area-interactive.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/online-payment.tsx`, `src/components/features/order-summary.tsx`, `src/components/features/payment-settings.tsx`, `src/components/features/pricing-settings.tsx`, `src/components/features/public-pages.tsx`, `src/components/features/simple-form.tsx`, `src/components/features/simple-table.tsx`, `src/components/features/ticket-pages.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `src/styles.css`, `test.js`, `src/components/arc/blocks/changelog-feed/`, `src/components/features/changelog-admin.tsx`, `src/components/features/changelog.tsx`, `src/components/features/confirm-dialog.tsx`
+- Files: `commerce/operation-lock.js`, `database.js`, `notifier.js`, `server.js`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 无进行中功能；建议在开发服务器用真实 3x-ui 数据复核 /account/nodes
+- Recommended Next Step: 部署后观察 [commerce] 日志与 order-fulfillment-retry 任务

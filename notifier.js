@@ -54,7 +54,11 @@ function getTransporter() {
     host: cfg.host,
     port: cfg.port,
     secure: cfg.secure,
-    auth: { user: cfg.from, pass: cfg.pass }
+    auth: { user: cfg.from, pass: cfg.pass },
+    // Payment alerts are awaited inside the commerce lock; nodemailer's defaults allow minutes per message.
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000
   });
   return cachedTransporter;
 }
@@ -155,7 +159,9 @@ async function sendTelegram({ text, chatId, parseMode }) {
   const response = await requestTelegram("sendMessage", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    // Payment alerts are awaited inside the commerce lock, so a stalled Telegram call must not hang it.
+    signal: AbortSignal.timeout(15000)
   });
   if (!response.ok) {
     const body = await response.text();

@@ -905,6 +905,28 @@ assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chr
 
 let migrationRuns = 0;
 Promise.all([
+  // A commerce operation that never finishes makes later callers fail fast with a 503 and skips their work.
+  (async () => {
+    const { createOperationLock } = require("./commerce/operation-lock");
+    const queries = [];
+    const logged = [];
+    const lock = createOperationLock({
+      connect: async () => ({ query: async sql => { queries.push(sql); }, release() {} }),
+      reload: async () => {}, enter() {}, leave() {},
+      waitMs: 50, log: { error: message => logged.push(message), warn() {} }
+    });
+    assert.strictEqual(await lock(async () => "first", "POST /api/orders"), "first");
+    let releaseStuck;
+    const stuck = lock(() => new Promise(resolve => { releaseStuck = resolve; }), "GET /api/payments/callback");
+    let skippedRan = false;
+    await assert.rejects(lock(async () => { skippedRan = true; }, "POST /api/orders"), error => error.statusCode === 503);
+    assert.match(logged[0], /GET \/api\/payments\/callback has held it/);
+    releaseStuck("done");
+    assert.strictEqual(await stuck, "done");
+    assert.strictEqual(await lock(async () => "after", "POST /api/orders"), "after");
+    assert.strictEqual(skippedRan, false, "a caller that gave up must not run later");
+    assert.strictEqual(queries.filter(sql => sql.includes("pg_advisory_lock")).length, queries.filter(sql => sql.includes("pg_advisory_unlock")).length);
+  })(),
   ipInfoPromise,
   invalidIpInfoPromise,
   centralTrafficPromise,

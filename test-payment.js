@@ -63,6 +63,8 @@ async function main() {
     return sendJson(response, 200, { status: 0, result });
   });
   let failProvision = false;
+  // Slows client creation, so a purchase holds the commerce lock long enough for the concurrency checks.
+  let xuiAddDelayMs = 0;
   const xuiClients = new Map();
   const xuiRequests = [];
   // Set to a filter to drop inbounds from the mock inbounds/list (null serves all of them).
@@ -96,6 +98,7 @@ async function main() {
       { id: 3, remark: "停用家宽", protocol: "vless", enable: false, originNodeGuid: "local" }
     ].filter(inbound => !xuiInboundFilter || xuiInboundFilter(inbound)) });
     if (request.url === "/panel/api/clients/add") {
+      if (xuiAddDelayMs) await new Promise(resolve => setTimeout(resolve, xuiAddDelayMs));
       const client = { ...body.client, subId: body.client.subId || crypto.randomUUID(), inboundIds: body.inboundIds || [] };
       xuiClients.set(client.email, client);
       return sendJson(response, 200, { success: true, obj: client });
@@ -212,6 +215,7 @@ async function main() {
       XUI_API_TOKEN: "xui-test-token",
       XUI_READ_ONLY: "false",
       XUI_SUBSCRIPTION_BASE_URL: "https://subscription.test",
+      COMMERCE_LOCK_WAIT_MS: "4000",
       // Never send real mail from tests; .env may hold live mail credentials.
       RESEND_API_KEY: "",
       RESEND_EMAIL_FROM: "",
@@ -1327,7 +1331,7 @@ async function main() {
     const manualProbe = await request("/api/sync-jobs/xui-inbound-probe/run", { method: "POST", cookie: adminCookie, body: {} });
     assert.strictEqual(manualProbe.response.status, 202);
     const syncJobs = await waitForSyncJob("xui-inbound-probe");
-    assert.deepStrictEqual(syncJobs.data.modules.map(module => module.id), ["xui", "traffic", "subscriptions", "referrals", "addons"]);
+    assert.deepStrictEqual(syncJobs.data.modules.map(module => module.id), ["xui", "traffic", "subscriptions", "orders", "referrals", "addons"]);
     assert.deepStrictEqual(syncJobs.data.modules.find(module => module.id === "addons").jobs.map(job => [job.id, job.configured]), [["addon-service-expiry", true]]);
     const probeJob = syncJobs.data.modules[0].jobs.find(job => job.id === "xui-inbound-probe");
     assert.deepStrictEqual([probeJob.configured, probeJob.running, probeJob.lastRun.status, probeJob.lastRun.trigger, probeJob.stats24h.total], [true, false, "success", "manual", 1]);
@@ -1586,6 +1590,111 @@ async function main() {
     } finally {
       Object.assign(notifier, realMailer);
       await database.query("DELETE FROM xui_daily_traffic WHERE email='v2-sync@example.test'");
+    }
+
+    // Many customers buying at once: every order is paid and delivered exactly once, and a slow delivery,
+    // an abandoned request or a 3x-ui outage never blocks the other customers.
+    {
+      async function newBuyer(email) {
+        const registered = await request("/api/auth/register", { method: "POST", body: { email, password: "payment-test-password" } });
+        assert.strictEqual(registered.response.status, 201, registered.text);
+        return { email, cookie: registered.response.headers.get("set-cookie").split(";", 1)[0] };
+      }
+      async function placeOrder(buyer) {
+        const body = { optionId: paymentOptionId, channelCode: "100", confirmReplacement: true, returnUrl: `${origin}/account/payment/result` };
+        const submitted = await request("/api/orders", { method: "POST", cookie: buyer.cookie, body });
+        if (submitted.response.status !== 201) return submitted;
+        return request(`/api/payments/orders/${submitted.data.id}/start`, { method: "POST", cookie: buyer.cookie, body });
+      }
+      const ordersOf = async buyer => (await request("/api/account/orders", { cookie: buyer.cookie })).data;
+      const quoteFor = buyer => request("/api/orders/quote", { method: "POST", cookie: buyer.cookie, body: { optionId: paymentOptionId, useBalance: true, addOns: [], trafficTier: 1 } });
+      async function bought(buyer) {
+        const orders = await ordersOf(buyer);
+        assert.strictEqual(orders.length, 1, `${buyer.email} must have exactly one order`);
+        assert.deepStrictEqual([orders[0].status, orders[0].fulfillmentStatus], ["paid", "fulfilled"], `${buyer.email} must be paid and delivered`);
+        assert.ok(xuiClients.has(buyer.email), `${buyer.email} must have a 3x-ui client`);
+        return orders[0];
+      }
+
+      // Six customers order, start payment and receive duplicated payment callbacks all at the same time.
+      const buyers = await Promise.all(Array.from({ length: 6 }, (_, index) => newBuyer(`concurrent-${index}@example.test`)));
+      const placed = await Promise.all(buyers.map(placeOrder));
+      placed.forEach(item => assert.strictEqual(item.response.status, 200, item.text));
+      await Promise.all(placed.flatMap(item => [callback(item.data, 1, "1.03", true), callback(item.data, 1, "1.03", true)]));
+      const delivered = await Promise.all(buyers.map(bought));
+      const concurrentUsers = await database.query("SELECT data->>'userId' AS email, COUNT(*)::int AS count FROM app_records WHERE collection='users' AND data->>'userId' LIKE 'concurrent-%' GROUP BY 1");
+      assert.deepStrictEqual(concurrentUsers.rows.map(row => row.count), buyers.map(() => 1), "each customer gets exactly one user");
+      const concurrentBills = (await request("/api/bills", { cookie: adminCookie })).data.filter(bill => delivered.some(order => order.id === bill.paymentOrderId));
+      assert.strictEqual(concurrentBills.length, buyers.length, "each paid order gets exactly one bill");
+
+      // A slow delivery holds the commerce lock; quotes still answer and an abandoned order request
+      // (the client gave up, like nginx 499) must not leave the lock held.
+      const [slowBuyer, waitingBuyer] = await Promise.all([newBuyer("slow-delivery@example.test"), newBuyer("abandoned-request@example.test")]);
+      const slowOrder = await placeOrder(slowBuyer);
+      xuiAddDelayMs = 2500;
+      const slowDelivery = callback(slowOrder.data, 1, "1.03", true);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const quoteStartedAt = Date.now();
+      const quoteDuringDelivery = await quoteFor(waitingBuyer);
+      assert.strictEqual(quoteDuringDelivery.response.status, 200, quoteDuringDelivery.text);
+      assert.ok(Date.now() - quoteStartedAt < 2000, "quotes must not wait for a running delivery");
+      const abandon = new AbortController();
+      const abandoned = fetch(`${origin}/api/orders`, {
+        method: "POST", signal: abandon.signal, headers: { "content-type": "application/json", cookie: waitingBuyer.cookie },
+        body: JSON.stringify({ optionId: paymentOptionId, channelCode: "100", confirmReplacement: true })
+      }).catch(error => error);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      abandon.abort();
+      assert.strictEqual((await abandoned).name, "AbortError");
+      await slowDelivery;
+      await bought(slowBuyer);
+      assert.deepStrictEqual(await ordersOf(waitingBuyer), [], "an abandoned request must not create an order");
+      const afterAbandon = await placeOrder(waitingBuyer);
+      assert.strictEqual(afterAbandon.response.status, 200, `the lock must be free after an abandoned request: ${afterAbandon.text}`);
+      await callback(afterAbandon.data, 1, "1.03", true);
+      await bought(waitingBuyer);
+
+      // A delivery slower than the lock wait: other customers get a quick JSON 503 and nothing is created.
+      const [verySlowBuyer, busyBuyer] = await Promise.all([newBuyer("very-slow-delivery@example.test"), newBuyer("busy-checkout@example.test")]);
+      const verySlowOrder = await placeOrder(verySlowBuyer);
+      xuiAddDelayMs = 6000;
+      const verySlowDelivery = callback(verySlowOrder.data, 1, "1.03", true);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const busyStartedAt = Date.now();
+      const busyOrder = await request("/api/orders", { method: "POST", cookie: busyBuyer.cookie, body: { optionId: paymentOptionId, channelCode: "100", confirmReplacement: true } });
+      assert.strictEqual(busyOrder.response.status, 503, busyOrder.text);
+      assert.match(busyOrder.data.error, /系统繁忙/);
+      assert.ok(Date.now() - busyStartedAt < 5500, "a busy checkout must answer within the lock wait");
+      await verySlowDelivery;
+      xuiAddDelayMs = 0;
+      await bought(verySlowBuyer);
+      assert.deepStrictEqual(await ordersOf(busyBuyer), [], "a request rejected as busy must not create an order");
+      const afterBusy = await placeOrder(busyBuyer);
+      assert.strictEqual(afterBusy.response.status, 200, afterBusy.text);
+      await callback(afterBusy.data, 1, "1.03", true);
+      await bought(busyBuyer);
+
+      // 3x-ui is down while customers pay: payments are kept, and the background retry delivers once 3x-ui is back.
+      const outageBuyers = await Promise.all([newBuyer("outage-0@example.test"), newBuyer("outage-1@example.test")]);
+      const outageOrders = await Promise.all(outageBuyers.map(placeOrder));
+      outageOrders.forEach(item => assert.strictEqual(item.response.status, 200, item.text));
+      failProvision = true;
+      await Promise.all(outageOrders.map(item => callback(item.data, 1, "1.03", true)));
+      for (const buyer of outageBuyers) {
+        const [order] = await ordersOf(buyer);
+        assert.deepStrictEqual([order.status, order.fulfillmentStatus], ["paid", "failed"], "a delivery outage must keep the payment");
+      }
+      const outageIds = outageOrders.map(item => item.data.id);
+      const stillDown = await handler.retryFailedFulfillments();
+      assert.deepStrictEqual(outageIds.filter(id => stillDown.failed.some(item => item.orderId === id)), outageIds, "a retry during the outage fails again and is kept for later");
+      failProvision = false;
+      const recovered = await handler.retryFailedFulfillments();
+      assert.ok(!recovered.failed.some(item => outageIds.includes(item.orderId)), JSON.stringify(recovered));
+      for (const buyer of outageBuyers) await bought(buyer);
+      const storedOutageOrders = await database.query("SELECT data FROM app_records WHERE collection='paymentOrders' AND id = ANY($1::text[])", [outageIds]);
+      assert.deepStrictEqual(storedOutageOrders.rows.map(row => row.data.fulfillmentRetryCount), [2, 2], "each background attempt is counted");
+      const again = await handler.retryFailedFulfillments();
+      assert.ok(!again.failed.some(item => outageIds.includes(item.orderId)) && again.retried <= recovered.retried - outageIds.length, "delivered orders are not retried again");
     }
 
     // Runs last: the cron subscription refresh fetches the test pools' upstream URLs, which

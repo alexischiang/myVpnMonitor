@@ -490,6 +490,12 @@ const dataStore = createDataStore({
   databaseUrl: DATABASE_URL,
   ssl: !LOCAL_DATABASE_URL && process.env.DATABASE_SSL === "true"
 });
+// Saves mark the write generation before they commit; moving it again once they finish discards any reload that
+// read the database in between (for example a commerce reload during a registration), which would drop the new rows.
+for (const method of ["saveCollection", "setRecord", "deleteRecord"]) {
+  const write = dataStore?.[method]?.bind(dataStore);
+  if (write) dataStore[method] = async (...args) => { try { return await write(...args); } finally { _writeGen++; } };
+}
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -1255,29 +1261,21 @@ async function sendAccountActionMail({ to, subject, title, url }) {
   });
 }
 
-function readJson(req) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", chunk => {
-      body += chunk;
-      if (body.length > 1_000_000) {
-        req.destroy();
-        reject(new Error("Request body is too large."));
-      }
-    });
-    req.on("end", () => {
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch {
-        reject(new Error("Invalid JSON."));
-      }
-    });
-    req.on("error", reject);
-  });
+async function readJson(req) {
+  const body = await readText(req);
+  try {
+    return body ? JSON.parse(body) : {};
+  } catch {
+    throw new Error("Invalid JSON.");
+  }
 }
 
+// A request whose client went away (for example while it waited for the commerce lock) never emits
+// "end", so the read fails instead of waiting forever and holding the lock.
 function readText(req, limit = 1_000_000) {
   return new Promise((resolve, reject) => {
+    const disconnected = () => Object.assign(new Error("客户端已断开连接。"), { statusCode: 499 });
+    if (req.destroyed && !req.readableEnded) return reject(disconnected());
     let body = "";
     req.on("data", chunk => {
       body += chunk;
@@ -1288,6 +1286,7 @@ function readText(req, limit = 1_000_000) {
     });
     req.on("end", () => resolve(body));
     req.on("error", reject);
+    req.on("close", () => { if (!req.readableEnded) reject(disconnected()); });
   });
 }
 
@@ -2806,6 +2805,49 @@ async function fulfillPaymentOrder(order, req) {
   } finally {
     if (paymentFulfillmentTasks.get(key) === task) paymentFulfillmentTasks.delete(key);
   }
+}
+
+const FULFILLMENT_RETRY_LIMIT = 12;
+const FULFILLMENT_RETRY_WINDOW_DAYS = 7;
+
+function needsFulfillmentRetry(order, now = Date.now()) {
+  return Boolean(order && order.status === "paid" && !order.reversedAt && order.fulfillmentStatus === "failed"
+    && (Number(order.fulfillmentRetryCount) || 0) < FULFILLMENT_RETRY_LIMIT
+    && now - new Date(order.paidAt || order.updatedAt || 0).getTime() < FULFILLMENT_RETRY_WINDOW_DAYS * 86400000);
+}
+
+// Background work has no client request; delivery links use the public site address.
+function systemRequest() {
+  const base = new URL(String(process.env.PUBLIC_BASE_URL || "http://localhost"));
+  return { headers: { host: base.host, "x-forwarded-proto": base.protocol.replace(/:$/, "") }, socket: {} };
+}
+
+// Paid orders whose delivery failed (3x-ui outage, restart mid-delivery) are delivered again without waiting for an admin.
+// Each order gets its own commerce operation, so a failed attempt is never saved along with the next order's changes.
+async function retryFailedFulfillments() {
+  await loadLatestData({ force: true });
+  const summary = { retried: 0, fulfilled: 0, failed: [] };
+  for (const id of paymentOrders.filter(order => needsFulfillmentRetry(order)).map(order => order.id)) {
+    try {
+      await withCommerceOperation(async () => {
+        const order = paymentOrders.find(item => item.id === id);
+        if (!needsFulfillmentRetry(order)) return;
+        summary.retried++;
+        order.fulfillmentRetryCount = (Number(order.fulfillmentRetryCount) || 0) + 1;
+        try {
+          await fulfillPaymentOrder(order, systemRequest());
+          summary.fulfilled++;
+        } catch (error) {
+          Object.assign(order, { fulfillmentStatus: "failed", fulfillmentError: error.message, updatedAt: new Date().toISOString() });
+          await savePaymentOrders();
+          throw error;
+        }
+      }, `job:order-fulfillment-retry ${id}`);
+    } catch (error) {
+      summary.failed.push({ orderId: id, error: error.message });
+    }
+  }
+  return summary;
 }
 
 const paymentReversalTasks = new Map();
@@ -5111,6 +5153,7 @@ const SYNC_JOB_MODULES = [
   { id: "xui", name: "3x-ui" },
   { id: "traffic", name: "流量" },
   { id: "subscriptions", name: "订阅" },
+  { id: "orders", name: "订单" },
   { id: "referrals", name: "钱包与返利" },
   { id: "addons", name: "附加服务" }
 ];
@@ -5155,7 +5198,8 @@ const SYNC_JOBS = [
     id: "addon-service-expiry", module: "addons", name: "定制节点到期解绑", description: "移除已到期节点定制订单授权的个人入站；仍被其他有效订单覆盖的入站保留。未解绑任何入站的轮次不记录。",
     intervalMs: 10 * 60 * 1000, requiresXui: true, recordOnlyWhenChanged: true,
     run: async () => {
-      const summary = await releaseExpiredCustomNodes();
+      // Order and wallet changes go through the commerce lock so they cannot overwrite a concurrent purchase.
+      const summary = await withCommerceOperation(() => releaseExpiredCustomNodes(), "job:addon-service-expiry");
       return { status: summary.failed.length ? "partial" : "success", summary, changed: summary.released + summary.failed.length > 0 };
     }
   },
@@ -5163,8 +5207,16 @@ const SYNC_JOBS = [
     id: "referral-settlement", module: "referrals", name: "邀请返利结算", description: "将到期的待结算返利计入邀请人钱包；未结算任何返利的轮次不记录。",
     intervalMs: 60 * 1000, requiresXui: false, recordOnlyWhenChanged: true,
     run: async () => {
-      const summary = await settleReferralRewards();
+      const summary = await withCommerceOperation(() => settleReferralRewards(), "job:referral-settlement");
       return { status: "success", summary, changed: summary.settled + summary.rejected > 0 };
+    }
+  },
+  {
+    id: "order-fulfillment-retry", module: "orders", name: "失败发放重试", description: `已付款但发放失败的订单（如 3x-ui 暂时不可用）自动重新发放，${FULFILLMENT_RETRY_WINDOW_DAYS} 天内最多重试 ${FULFILLMENT_RETRY_LIMIT} 次；未重试任何订单的轮次不记录。`,
+    intervalMs: 5 * 60 * 1000, requiresXui: false, recordOnlyWhenChanged: true,
+    run: async () => {
+      const summary = await retryFailedFulfillments();
+      return { status: summary.failed.length ? "partial" : "success", summary, changed: summary.retried > 0 };
     }
   }
 ];
@@ -9459,6 +9511,7 @@ async function handleApi(req, res, pathname) {
     const session = requireUser(req, res);
     if (!session) return;
     try {
+      await loadLatestData();
       const payload = await readJson(req);
       const account = accountBySession(session);
       const quote = await paymentQuoteForAccount(payload, account);
@@ -12053,9 +12106,14 @@ const withCommerceOperation = createOperationLock({
   connect: () => dataStore.pool.connect(),
   reload: async () => { await _loadingPromise; await _doLoad({ strict: true }); },
   enter: () => { commerceActive = true; _markWritten(); },
-  leave: () => { commerceActive = false; }
+  leave: () => { commerceActive = false; },
+  // Below the proxy's 60s timeout, so a stalled operation yields a JSON 503 instead of an HTML 504.
+  waitMs: Number(process.env.COMMERCE_LOCK_WAIT_MS || 20000),
+  warnMs: 30000
 });
+// Quotes only read prices and the wallet, and order creation re-checks the price, so they do not wait for the lock.
 function isCommerceRoute(pathname) {
+  if (pathname === "/api/orders/quote" || pathname === "/api/payments/quote") return false;
   return /^\/api\/(orders(?:\/|$)|payments(?:\/|$)|wallet(?:\/|$)|admin\/(orders|manual-payments)(?:\/|$))/.test(pathname);
 }
 
@@ -12072,14 +12130,17 @@ async function requestHandler(req, res) {
     if (relayMatch && req.method === "GET") {
       await handleRelaySubscription(req, res, relayMatch[1]);
     } else if (url.pathname.startsWith("/api/")) {
-      if (isCommerceRoute(url.pathname)) await withCommerceOperation(() => handleApi(req, res, url.pathname));
+      if (isCommerceRoute(url.pathname)) await withCommerceOperation(() => handleApi(req, res, url.pathname), `${req.method} ${url.pathname}`);
       else await handleApi(req, res, url.pathname);
     } else {
       await serveStatic(req, res, url.pathname);
     }
   } catch (error) {
-    console.error("[500]", error);
-    sendJson(res, 500, { error: error.message });
+    // The client is gone, so there is nobody to answer.
+    if (error.statusCode === 499) return;
+    const status = error.statusCode === 503 ? 503 : 500;
+    if (status === 500) console.error("[500]", error);
+    sendJson(res, status, { error: error.message });
   }
 }
 
@@ -12109,6 +12170,8 @@ async function main() {
   setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000);
 
   setInterval(() => scheduleSyncJob("referral-settlement"), 60 * 1000);
+  scheduleSyncJob("order-fulfillment-retry", "startup");
+  setInterval(() => scheduleSyncJob("order-fulfillment-retry"), 5 * 60 * 1000);
   if (XUI_BASE_URL && XUI_API_TOKEN) {
     setInterval(() => scheduleSyncJob("addon-service-expiry"), 10 * 60 * 1000);
     // The first probe waits for the first panel sync to fill the inbound table.
@@ -12221,6 +12284,7 @@ module.exports = Object.assign(requestHandler, {
   publicChangelogEntry,
   normalizeCheckoutSettings,
   releaseExpiredCustomNodes,
+  retryFailedFulfillments,
   deliverAddonOrder,
   xuiActiveInboundKeys,
   probeTcpEndpoint,
