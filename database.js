@@ -762,14 +762,6 @@ class PostgresDataStore {
 
   async saveCollection(collection, rows) {
     return withPgRetry(async () => {
-      const uniqueRows = [];
-      const seenIds = new Set();
-      rows.forEach((row, index) => {
-        const id = row.id || `${collection}-${index}`;
-        if (seenIds.has(id)) return;
-        seenIds.add(id);
-        uniqueRows.push({ id, row });
-      });
       const client = await this.pool.connect();
       try {
         await client.query("BEGIN");
@@ -777,6 +769,16 @@ class PostgresDataStore {
         // concurrent writers can both DELETE the old snapshot and then race to
         // INSERT the same primary keys.
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`app_records:${collection}`]);
+        // Read the rows only once the lock is held: a snapshot taken before waiting could be older than
+        // the one an earlier writer just committed (two registrations at once), and would delete its rows.
+        const uniqueRows = [];
+        const seenIds = new Set();
+        rows.forEach((row, index) => {
+          const id = row.id || `${collection}-${index}`;
+          if (seenIds.has(id)) return;
+          seenIds.add(id);
+          uniqueRows.push({ id, row });
+        });
         await client.query("DELETE FROM app_records WHERE collection = $1", [collection]);
         if (uniqueRows.length) {
           const ids = [];
