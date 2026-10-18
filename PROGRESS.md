@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-18
-- Current Objective: 修复生产结算卡死：商务锁等待超时、断开请求读取、并发保存丢失、失败发放自动重试
+- Last Updated: 2026-10-19
+- Current Objective: 用户端创建工单页：铺满 AccountShell 内容宽度并优化布局
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -484,8 +484,12 @@
 
 - 2026-10-18: npm run verify 通过；test-payment.js 并发下单场景连续 12 次通过
 
+- 2026-10-19: npm run verify、verify:harness、git diff --check 通过；浏览器在报价延迟 2-3 秒时切换周期/流量档位，本地预览与服务器报价一致，控制台无错误
+
+- 2026-10-19: npm run check、verify:harness、git diff --check 通过；/account/tickets/new 在 1440px 和 375px 浏览器验证，无控制台错误
+
 ## Next Session
 
-- Files: `commerce/operation-lock.js`, `database.js`, `notifier.js`, `server.js`, `test-payment.js`, `test.js`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/public-pages.tsx`, `src/components/features/ticket-pages.tsx`, `test-wallet.js`
 - Known risks: none
-- Recommended Next Step: 部署后观察 [commerce] 日志与 order-fulfillment-retry 任务
+- Recommended Next Step: 按需提交两项改动（结算即时价格、工单创建页布局）

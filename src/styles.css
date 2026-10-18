@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "Geist Variable", sans-serif;
+  --font-sans: "Twemoji Country Flags", "Geist Variable", sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -110,9 +110,10 @@
    accent colour above points at --surface-muted instead. */
 :root {
   --radius: 0.625rem;
-  /* Arc falls back to Inter for body text; the product uses Geist everywhere. */
-  --font-display: "Geist Variable", sans-serif;
-  --font-body: "Geist Variable", sans-serif;
+  /* Arc falls back to Inter for body text; the product uses Geist everywhere. "Twemoji Country Flags" only covers flag emoji and is
+     registered only where the system cannot draw flags (main.tsx). */
+  --font-display: "Twemoji Country Flags", "Geist Variable", sans-serif;
+  --font-body: "Twemoji Country Flags", "Geist Variable", sans-serif;
   /* Arc sizes its controls for touch (36/44/50px). With a mouse the product keeps the compact scale it had before (32/36/40px),
      and the corner radius shrinks with it so buttons keep their shape. Touch screens keep Arc's sizes: see the media query below. */
   --control-height-sm: 2rem;
@@ -291,6 +292,74 @@
   .vip-badge-shine {
     animation: none;
   }
+}
+
+/* NoticeBadge (src/components/features/notice-badge.tsx). The Arc badge module is unlayered and outranks utilities, so these
+   selectors carry extra specificity. The badge, its body and its content are all flex rows centered on a fixed height with no
+   border and line-height 1, so the icon and text sit at the same distance from the top and bottom edges.
+   sm: dense desktop spots (table rows, beside headings), the same on phones.
+   md: the default; on phones it grows slightly and keeps 12px text instead of following the badge phone step-down.
+   lg: standalone notices; on phones it grows to 36px with 14px text. */
+.notice-badge.notice-badge[data-size] {
+  --notice-height: 26px;
+  --notice-font: 12px;
+  --notice-icon: 14px;
+  --notice-padding: 10px;
+  --notice-gap: 5px;
+  display: inline-flex;
+  /* Stays a compact pill when placed straight in a grid instead of stretching across it. */
+  justify-self: start;
+  height: var(--notice-height);
+  min-height: 0;
+  align-items: center;
+  border-width: 0;
+  padding: 0 var(--notice-padding);
+  font-size: var(--notice-font);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.notice-badge.notice-badge[data-size="sm"] {
+  --notice-height: 22px;
+  --notice-font: 11px;
+  --notice-icon: 12px;
+  --notice-padding: 8px;
+  --notice-gap: 4px;
+}
+
+.notice-badge.notice-badge[data-size="lg"] {
+  --notice-height: 32px;
+  --notice-font: 13px;
+  --notice-icon: 16px;
+  --notice-padding: 12px;
+  --notice-gap: 6px;
+}
+
+@media (max-width: 639.98px) {
+  .notice-badge.notice-badge[data-size="md"] { --notice-height: 28px; }
+  .notice-badge.notice-badge[data-size="lg"] { --notice-height: 36px; --notice-font: 14px; --notice-padding: 14px; }
+}
+
+.notice-badge[data-size] > span,
+.notice-badge[data-size] > span > span {
+  display: flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.notice-badge[data-size] > span > span { gap: var(--notice-gap); }
+
+/* Center the text on its cap-height-to-baseline band rather than the font's em box, whose top half CJK glyphs fill; without
+   text-box support the label keeps the em-box centering, about half a pixel high. */
+.notice-badge[data-size] .notice-badge-label {
+  display: block;
+  text-box: trim-both cap alphabetic;
+}
+
+.notice-badge.notice-badge[data-size][data-variant] svg {
+  width: var(--notice-icon);
+  height: var(--notice-icon);
+  flex: none;
 }
 
 .markdown-content {

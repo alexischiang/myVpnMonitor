@@ -436,6 +436,30 @@ class PostgresDataStore {
     }, `load wallet ${accountId}`);
   }
 
+  // Same balances as getWallet, but with a plain read: no wallet row is created, nothing is locked, and expired holds are
+  // left out of the held amounts instead of being released. For price quotes, which run on every checkout change.
+  async peekWallet(accountId, initialVipCents = 0) {
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT w.*, COALESCE(h.cash_cents, 0) AS expired_cash_cents, COALESCE(h.gift_cents, 0) AS expired_gift_cents, COALESCE(h.referral_cents, 0) AS expired_referral_cents
+         FROM (SELECT $1::text AS account_id) a
+         LEFT JOIN wallet_accounts w ON w.account_id = a.account_id
+         LEFT JOIN (SELECT account_id, SUM(cash_cents) AS cash_cents, SUM(gift_cents) AS gift_cents, SUM(referral_cents) AS referral_cents
+           FROM wallet_holds WHERE account_id = $1 AND status = 'pending' AND expires_at <= NOW() GROUP BY account_id) h ON h.account_id = a.account_id`,
+        [accountId]
+      ),
+      `peek wallet ${accountId}`
+    );
+    const row = result.rows[0] || {};
+    if (!row.account_id) return this.walletRow({ account_id: accountId, vip_spend_cents: initialVipCents });
+    return this.walletRow({
+      ...row,
+      cash_held_cents: Math.max(Number(row.cash_held_cents || 0) - Number(row.expired_cash_cents), 0),
+      gift_held_cents: Math.max(Number(row.gift_held_cents || 0) - Number(row.expired_gift_cents), 0),
+      referral_held_cents: Math.max(Number(row.referral_held_cents || 0) - Number(row.expired_referral_cents), 0)
+    });
+  }
+
   async listWalletEntries(accountId, limit = 100) {
     const result = await withPgRetry(
       () => this.pool.query(

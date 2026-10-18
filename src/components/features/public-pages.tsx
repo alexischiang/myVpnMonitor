@@ -217,6 +217,57 @@ function trafficCustomizationLabel(quote: CheckoutQuote) {
   return `${formatMoney(quote.trafficCustomizationMonthlyAmount)} × ${Number(months.toFixed(2))} = ${formatMoney(quote.trafficCustomizationAmount)}`
 }
 
+// Recomputes a V2 plan quote for another cycle, traffic tier or balance choice with the same rules as catalogV2Quote and
+// quoteWithWallet on the server, so the page updates at once; the server quote that follows replaces it. Returns null when the
+// quote cannot be previewed (add-ons, traffic packs, home IP, or an unknown cycle).
+function previewCheckoutQuote(quote: CheckoutQuote, { optionId, trafficTier, useBalance, keepCoupon }: { optionId: string; trafficTier: number; useBalance: boolean; keepCoupon: boolean }): CheckoutQuote | null {
+  const cycle = quote.cycles.find(item => item.optionId === optionId)
+  if (!cycle || quote.trafficStepPrice === undefined || quote.purchaseAction === "add_on" || !quote.wallet) return null
+  const steps = cycle.trafficGb == null || (quote.trafficMaxTier || 1) <= 1 ? 0 : Math.min(Math.max(Math.trunc(trafficTier) - 1, 0), (quote.trafficMaxTier || 1) - 1)
+  const stepPriceCents = Math.round(quote.trafficStepPrice * 100)
+  const customizationCents = Math.round(steps * stepPriceCents * (cycle.durationDays || 0) / 30)
+  const originalCents = Math.round(cycle.amount * 100) + customizationCents
+  const discountPercent = keepCoupon ? quote.discountPercent : 0
+  const discountCents = Math.round(originalCents * discountPercent / 100)
+  const afterCouponCents = originalCents - discountCents
+  const subtotalCents = Math.round(afterCouponCents * (100 - quote.vipDiscountPercent) / 100)
+  const taxCents = Math.round(subtotalCents * quote.taxRate / 100)
+  const payableCents = subtotalCents + taxCents
+  const giftCents = useBalance ? Math.min(payableCents, Math.round(quote.wallet.availableGiftBalance * 100)) : 0
+  const referralCents = useBalance ? Math.min(payableCents - giftCents, Math.round(quote.wallet.availableReferralBalance * 100)) : 0
+  const cashCents = useBalance ? Math.min(payableCents - giftCents - referralCents, Math.round(quote.wallet.availableCashBalance * 100)) : 0
+  const trafficGb = cycle.trafficGb == null ? null : cycle.trafficGb + steps * (quote.trafficStepGb || 0)
+  return {
+    ...quote,
+    optionId: cycle.optionId,
+    optionLabel: cycle.label,
+    devices: cycle.devices || 0,
+    durationDays: cycle.durationDays,
+    traffic: trafficGb == null ? quote.traffic : `${Number(trafficGb.toFixed(2))} GB`,
+    trafficTier: steps + 1,
+    trafficBaseGb: cycle.trafficGb == null ? quote.trafficBaseGb : Number(cycle.trafficGb.toFixed(2)),
+    trafficGb: trafficGb ?? undefined,
+    baseAmount: cycle.amount,
+    trafficCustomizationAmount: customizationCents / 100,
+    trafficCustomizationMonthlyAmount: steps * stepPriceCents / 100,
+    originalAmount: originalCents / 100,
+    couponCode: keepCoupon ? quote.couponCode : "",
+    discountPercent,
+    discountAmount: discountCents / 100,
+    vipDiscountAmount: (afterCouponCents - subtotalCents) / 100,
+    subtotal: subtotalCents / 100,
+    taxAmount: taxCents / 100,
+    beforeCreditAmount: payableCents / 100,
+    planAmount: payableCents / 100,
+    payableAmount: payableCents / 100,
+    walletGiftAmount: giftCents / 100,
+    walletReferralAmount: referralCents / 100,
+    walletCashAmount: cashCents / 100,
+    walletAmount: (giftCents + referralCents + cashCents) / 100,
+    amount: (payableCents - giftCents - referralCents - cashCents) / 100,
+  }
+}
+
 type CheckoutQuote = {
   optionId: string
   planName: string
@@ -239,6 +290,7 @@ type CheckoutQuote = {
   trafficStepGb?: number
   trafficGb?: number
   trafficMaxTier?: number
+  trafficStepPrice?: number
   trafficTierMarkupPercent?: number
   discountAmount: number
   vipLevel: string
@@ -254,7 +306,7 @@ type CheckoutQuote = {
   walletCashAmount: number
   walletGiftAmount: number
   walletReferralAmount: number
-  wallet: { availableBalance: number }
+  wallet: { availableBalance: number; availableCashBalance: number; availableGiftBalance: number; availableReferralBalance: number }
   amount: number
   planAmount?: number
   addOnAmount?: number
@@ -262,7 +314,7 @@ type CheckoutQuote = {
   availableAddOns?: Array<{ id: string; name: string; description: string; amount?: number; available: boolean; unavailableReason?: string; options?: Array<{ id: string; label: string; amount: number }> }>
   couponCode: string
   discountPercent: number
-  cycles: Array<{ optionId: string; label: string; amount: number; devices: number; durationDays?: number | null }>
+  cycles: Array<{ optionId: string; label: string; amount: number; devices: number; durationDays?: number | null; trafficGb?: number | null }>
 }
 
 export function CheckoutPage() {
@@ -290,6 +342,16 @@ export function CheckoutPage() {
   // updates the quote, and submitting waits for it.
   const quoteRequestRef = React.useRef(0)
   const quotePendingRef = React.useRef<Promise<void> | null>(null)
+  // The last quote the server returned; a local preview falls back to it when the re-quote fails.
+  const serverQuoteRef = React.useRef<CheckoutQuote | null>(null)
+  const serverUseBalanceRef = React.useRef(true)
+
+  // Shows the locally computed price for a change right away, before the server quote for it arrives.
+  function previewQuote(change: { optionId?: string; trafficTier?: number; useBalance?: boolean; keepCoupon?: boolean }) {
+    if (!quote || standaloneAddOn) return
+    const preview = previewCheckoutQuote(serverQuoteRef.current || quote, { optionId: change.optionId ?? optionId, trafficTier: change.trafficTier ?? trafficTier, useBalance: change.useBalance ?? useBalance, keepCoupon: change.keepCoupon ?? Boolean(quote.couponCode) })
+    if (preview) setQuote(preview)
+  }
 
   function loadQuote(code = "", nextOptionId = optionId, nextUseBalance = useBalance, nextTrafficTier = trafficTier) {
     const request = ++quoteRequestRef.current
@@ -298,12 +360,22 @@ export function CheckoutPage() {
       try {
         const nextQuote = await postJson<CheckoutQuote>("/api/orders/quote", trafficPack ? { product: "traffic_pack", useBalance: nextUseBalance } : homeIp ? { product: "home_ip", optionId: nextOptionId, useBalance: nextUseBalance } : { optionId: nextOptionId, couponCode: code, useBalance: nextUseBalance, addOns: [], trafficTier: nextTrafficTier })
         if (request !== quoteRequestRef.current) return
+        serverQuoteRef.current = nextQuote
+        serverUseBalanceRef.current = nextUseBalance
         setQuote(nextQuote)
         setOptionId(nextQuote.optionId)
         if (code) toast({ type: "success", title: "优惠码已应用" })
       } catch (error) {
         if (request !== quoteRequestRef.current) return
         const message = error instanceof Error ? error.message : "获取结算信息失败"
+        // Undo the preview: show the last price the server confirmed, with the choices it was quoted for.
+        const confirmed = serverQuoteRef.current
+        if (confirmed) {
+          setQuote(confirmed)
+          setOptionId(confirmed.optionId)
+          setTrafficTier(confirmed.trafficTier || 1)
+          setUseBalance(serverUseBalanceRef.current)
+        }
         if (code) setCouponError(message)
         else toast({ type: "error", title: message })
       } finally {
@@ -321,12 +393,19 @@ export function CheckoutPage() {
   function selectCycle(nextOptionId: string) {
     setOptionId(nextOptionId)
     if (quote?.couponCode) setCouponCode("")
+    previewQuote({ optionId: nextOptionId, keepCoupon: false })
     void loadQuote("", nextOptionId)
+  }
+
+  function changeTrafficTier(value: number) {
+    setTrafficTier(value || 1)
+    previewQuote({ trafficTier: value || 1 })
   }
 
   function selectTrafficTier(values: number[]) {
     const nextTier = values[0] || 1
     setTrafficTier(nextTier)
+    previewQuote({ trafficTier: nextTier })
     void loadQuote(quote?.couponCode || "", optionId, useBalance, nextTier)
   }
 
@@ -368,6 +447,7 @@ export function CheckoutPage() {
       // The price changed after this page loaded: show the new quote and let the customer submit again.
       if (error instanceof ApiError && error.status === 409 && error.body.quote) {
         quoteRequestRef.current++
+        serverQuoteRef.current = error.body.quote as CheckoutQuote
         setQuote(error.body.quote as CheckoutQuote)
         toast({ type: "warning", title: error.message })
       } else toast({ type: "error", title: error instanceof Error ? error.message : "提交订单失败" })
@@ -408,7 +488,7 @@ export function CheckoutPage() {
           {buyerInputLabel ? <Card title="下单信息" description="用于人工交付，提交后不可修改，请仔细核对。"><Field data-invalid={Boolean(buyerInputError)}><FieldLabel htmlFor="checkout-buyer-input">{buyerInputLabel}</FieldLabel><Input label="输入" hideLabel id="checkout-buyer-input" required maxLength={200} value={buyerInput} aria-invalid={Boolean(buyerInputError)} aria-describedby={buyerInputError ? "checkout-buyer-input-error" : undefined} onChange={event => { setBuyerInput(event.target.value); setBuyerInputError("") }} disabled={submitting} /><FieldError id="checkout-buyer-input-error">{buyerInputError}</FieldError></Field></Card> : null}
           {isStandaloneAddOn ? null : <Card title={homeIp ? "选择服务地区" : "选择计费周期"} description={homeIp ? "不同地区按后台配置的月费结算，每次服务 30 天。" : "选择适合你的购买周期"}><RadioCards aria-label={homeIp ? "选择服务地区" : "选择计费周期"} value={optionId} onValueChange={selectCycle} layout="grid" minColumnWidth={220} options={quote.cycles.map(cycle => ({ value: cycle.optionId, label: <span className="flex flex-wrap items-center gap-1.5">{quote.unlimited ? <>{cycle.label.replace(/\s*无限流量$/, "")}<Badge className={`${inlinePlanBadgeClass} relative isolate overflow-hidden border-transparent bg-[linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec4899)] bg-clip-padding text-white dark:bg-[linear-gradient(135deg,#0284c7,#7c3aed,#db2777)]`}><span aria-hidden className="premium-shine absolute inset-0" /><span className="relative flex h-full items-center leading-none">无限流量</span></Badge></> : cycle.label}{homeIp ? null : <BillingDiscount monthlyPrice={monthlyPrice} totalPrice={cycle.amount} months={billingMonths(cycle.optionId)} />}</span>, description: <>{formatMoney(cycle.amount)}{cycle.devices ? ` · 在线IP数量：${cycle.devices}` : ""}</> }))} /></Card>}
           {!trafficPack && !quote.lifetime && (quote.trafficMaxTier || 1) > 1 ? <Card title="定制每月流量" description={quote.trafficStepGb ? `每档在套餐默认流量上增加 ${quote.trafficStepGb} GB，价格根据所选流量自动计算。` : "可按套餐默认流量的倍数增加，价格根据所选流量自动计算。"}><div className="grid gap-4">
-              <Slider label="每月流量" min={1} max={quote.trafficMaxTier} step={1} value={trafficTier} onValueChange={value => setTrafficTier(value || 1)} onValueCommit={value => selectTrafficTier([value])} disabled={submitting} />
+              <Slider label="每月流量" min={1} max={quote.trafficMaxTier} step={1} value={trafficTier} onValueChange={changeTrafficTier} onValueCommit={value => selectTrafficTier([value])} disabled={submitting} />
               <ArcCard title={`每月 ${selectedTrafficGb} GB`} description="当前选择" headerAction={<><span className="text-xl font-semibold tabular-nums">{formatMoney(quote.originalAmount)}</span></>} />
             </div></Card> : null}
         </section>
@@ -427,7 +507,7 @@ export function CheckoutPage() {
                 {quote.walletReferralAmount ? <p className="flex justify-between"><span className="text-muted-foreground">返利余额</span><span>-{formatMoney(quote.walletReferralAmount)}</span></p> : null}
                 {quote.walletCashAmount ? <p className="flex justify-between"><span className="text-muted-foreground">充值余额</span><span>-{formatMoney(quote.walletCashAmount)}</span></p> : null}
               </div>
-              {quote.wallet.availableBalance > 0 ? <FieldLabel htmlFor="use-wallet" className="min-h-10 w-full cursor-pointer justify-between rounded-md border bg-muted/40 px-3 py-2.5 transition-colors hover:bg-muted/60 has-[[data-disabled]]:cursor-not-allowed">使用余额抵扣<Checkbox id="use-wallet" checked={useBalance} onCheckedChange={checked => { const enabled = checked === true; setUseBalance(enabled); void loadQuote(quote.couponCode, optionId, enabled) }} disabled={submitting} /></FieldLabel> : null}
+              {quote.wallet.availableBalance > 0 ? <FieldLabel htmlFor="use-wallet" className="min-h-10 w-full cursor-pointer justify-between rounded-md border bg-muted/40 px-3 py-2.5 transition-colors hover:bg-muted/60 has-[[data-disabled]]:cursor-not-allowed">使用余额抵扣<Checkbox id="use-wallet" checked={useBalance} onCheckedChange={checked => { const enabled = checked === true; setUseBalance(enabled); previewQuote({ useBalance: enabled }); void loadQuote(quote.couponCode, optionId, enabled) }} disabled={submitting} /></FieldLabel> : null}
               <Separator />
               <p className="flex justify-between text-base font-semibold"><span>待付金额</span><span>{formatMoney(quote.amount)}</span></p>
               <ActionButton className="min-h-11" onClick={confirmOrder} disabled={submitting} label="提交订单" pendingLabel="正在提交订单…" pending={submitting} />

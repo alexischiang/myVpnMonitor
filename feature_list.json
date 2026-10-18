@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-18",
+  "updated_at": "2026-10-19",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -4262,6 +4262,96 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "checkout-instant-price",
+      "name": "Checkout price updates instantly",
+      "description": "Changing the billing cycle, the monthly traffic tier or the balance option on /account/plans/checkout waited for a full /api/orders/quote round trip before the price moved, and each quote ran two locking wallet transactions (getWallet: INSERT, SELECT FOR UPDATE, expired-hold release, COMMIT) that serialize on the wallet row when the customer clicks quickly. The page now recomputes the quote locally (previewCheckoutQuote, same rules as catalogV2Quote and quoteWithWallet; the quote carries trafficStepPrice and each cycle's trafficGb) and shows it at once, the server quote replaces it, and a failed re-quote restores the last confirmed quote and choices. Quotes read the wallet once through dataStore.peekWallet, a plain read that creates no row, locks nothing and leaves expired holds out of the held amounts; order submission still reserves the wallet in its own locked transaction.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Cycle, traffic tier and balance changes show the new price before the quote request returns, and the server quote that follows shows the same amounts.",
+        "A failed re-quote shows the last confirmed price and selection again.",
+        "/api/orders/quote reads the wallet once without a locking transaction and returns the same balances as getWallet."
+      ],
+      "verification": [
+        "2026-10-19: npm run verify passed (build, core, 3x-ui, payment, wallet, catalog V2). test-wallet.js checks peekWallet creates no wallet row, leaves an expired hold pending and equals getWallet. Browser /account/plans/checkout?option=v2:test-standard:30d with quote responses delayed by 2-3 s: 90 天 showed ¥82.40 within 150 ms and the server returned 82.4; traffic tier 3 on 90 天 showed ¥144.20 (+¥20.00 × 3) and the server returned 144.2 while a stale tier-2 response was ignored; 360 天 showed ¥556.20 and the server returned 556.2; a simulated 400 quote restored 90 天 and ¥144.20. The balance checkbox was not exercised because the test account has no balance. Fresh tab: no console errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans/checkout"
+        ],
+        "interactions": [
+          "Selected the 90 天 and 360 天 billing cycles with quote responses delayed.",
+          "Moved the 每月流量 slider up two steps with the keyboard.",
+          "Selected 360 天 while the quote endpoint returned an error."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-19"
+      }
+    },
+    {
+      "id": "account-ticket-create-layout",
+      "name": "Account ticket creation page layout",
+      "description": "/account/tickets/new was a section capped at max-w-5xl with its own side padding, so it stayed narrower and more inset than the AccountShell content area; the subject input and order select did not line up because only the select had a hint; screenshots stacked as full-width cards without a preview; and the submit button sat alone under a separator. The page root is now a div (AccountShell's main strips its side padding, like the other account pages) without a max width, so it spans the shell's content width. It uses the Arc page-header (breadcrumb 工单服务 › 创建工单, title, description, back button) like the ticket detail page; from xl up the form card sits beside a 提交前请准备 checklist card with a link to the docs. Subject and order fields both carry hints and align; screenshots show as image thumbnails (2 or 3 per row) with a remove button on each and a 已选 n / 3 张 count; 取消 and 提交工单 share a row at the end of the form with the primary action on the right, stacked full width on phones.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The page spans the full AccountShell content width at desktop and phone widths, with no horizontal overflow.",
+        "Selected screenshots show as thumbnails that can each be removed; selection stops at 3.",
+        "Submitting still posts the same fields and shows the server's validation message."
+      ],
+      "verification": [
+        "2026-10-19: npm run check passed. Browser /account/tickets/new at 1440px: page 1152px wide = AccountShell main content width (was capped at max-w-5xl), form 757px beside the 379px checklist card, no horizontal overflow. Added three generated PNGs: three thumbnails with the remove button inside each, 选择截图 disabled at 3, removing one left the others. At 375px: page 343px inside the 16px gutter, no overflow, 提交工单 above 取消 at full width. An empty submit stayed on the page with the server toast 工单主题至少需要 4 个字符。 (the only console entry was that intended 400). A fresh tab with a screenshot added and removed had no console errors.",
+        "2026-10-19: Added NoticeBadge 无法使用时请优先更新订阅 (RefreshCw icon) at the top of the 提交前请准备 card. npm run check passed; browser at 1440px showed it under the card description with its icon and no console errors. NoticeBadge renders grey here and on its other pages because the Arc neutral tone variables override its color classes (pre-existing).",
+        "2026-10-19: NoticeBadge restyled as a borderless pill on a solid tint of its variant color (info blue, warning amber, success green, error red), text and icon in that color, weight 600. The colors are set inline through the Arc badge variables plus background and border, because the badge module outranks utility classes and recolors on hover; a new --info token (light oklch(56% .16 245), dark oklch(76% .13 245)) sits beside --success/--warning/--danger in foundation.css. npm run check passed. Browser /account/tickets/new: the info badge computed background oklab(0.938 -0.009 -0.020), text and icon oklch(0.56 0.16 245), border transparent, weight 600, unchanged on hover; probing all four variants under data-theme light and dark gave four distinct hues each. No console errors. Cashier and online payment badges (warning, error, info) were not opened because the local test accounts have no orders.",
+        "2026-10-19: NoticeBadge gets size sm | md (default) | lg and vertical centering, styled by .notice-badge in src/styles.css (extra specificity over the unlayered Arc badge module): badge, body and content are flex rows on a fixed height with no border and line-height 1, and the label uses text-box: trim-both cap alphabetic. Desktop: sm 22px/11px text/12px icon, md 26px/12px/14px, lg 32px/13px/16px. Below 640px: sm unchanged, md 28px keeping 12px text, lg 36px/14px. npm run check passed. Browser /account/tickets/new with all 12 size and variant clones: icons equidistant from top and bottom in every size (desktop 5/5, 6/6, 8/8 px; phone 5/5, 7/7, 10/10 px), was 6/8 before; CJK text ink within 0.6px of center (was 1px); the cap band of a Latin label centered to 0.1px. The page badge (md) measured 28px at 375px. No console errors.",
+        "2026-10-19: The cashier countdown and closed-order badges (cashier.tsx) and the online payment hint (online-payment.tsx) use size lg. .notice-badge gets justify-self: start so a badge placed straight in a grid (the online payment section) stays a compact pill instead of stretching across it. npm run check passed. Browser on /account/tickets/new with lg clones of the live badge carrying the cashier and payment texts: in a plain grid 480px wide they measured 213, 175 and 123px wide and 32px tall, the same as in a justify-items-start grid. No console errors. /cashier/:id itself was not opened because the local test accounts have no orders.",
+        "2026-10-19: The ticket page notice 无法使用时请优先更新订阅 uses size lg. npm run check passed; a fresh tab on /account/tickets/new measured it at 32px tall with data-size lg and had no console errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/tickets/new"
+        ],
+        "interactions": [
+          "Viewed the page at 1440px and 375px.",
+          "Added three screenshots through the file input and removed them one by one.",
+          "Submitted the empty form and read the validation toast."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-19"
+      }
+    },
+    {
+      "id": "windows-flag-emoji",
+      "name": "Flag emoji on Windows",
+      "description": "Windows has no flag emoji, so Chromium-based browsers there drew the flags in 3x-ui inbound and node names (🇸🇬 新加坡 S01, 🇯🇵 日本 B01, 🇭🇰 香港 B01; 24 of 52 local inbounds) as two letters such as SG, JP, HK; other emoji rendered. src/main.tsx calls polyfillCountryFlagEmojis from country-flag-emoji-polyfill 0.1.10 (MIT, exact version) with the package's TwemojiCountryFlags.woff2 imported through Vite (?url), so the font is served from the app's own origin instead of the package's default jsDelivr URL. The polyfill only acts where emoji render but flags do not, and registers the font with a unicode-range limited to flag code points, so it downloads only when a flag is on screen and no other text changes. --font-sans, --font-display and --font-body in src/styles.css list \"Twemoji Country Flags\" first.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Flag emoji in node and inbound names render as flags in Chromium on Windows.",
+        "Other emoji and all other text keep their fonts; the flag font is served from the app's own origin."
+      ],
+      "verification": [
+        "2026-10-19: Reproduced in the Browser pane (Chromium 152 on Windows): 🇨🇳 rendered as the letters CN while 👍 ❤️ 😂 rendered. After the change, npm run check passed and the build emitted dist/assets/TwemojiCountryFlags-*.woff2. On /account/tickets/new the real inbound names 🇸🇬 新加坡 S01 | Singapore, 🇯🇵 日本 B01 | Tokyo and 🇭🇰 香港 B01 | Kowloon plus 🇺🇸 🇬🇧 🇨🇳 🇹🇼 🇰🇷 rendered as flags, and 👍 ❤️ 😂 🎉 👀 🙏 ✅ ⚠️ were unchanged. The flag font loaded from localhost with unicode-range U+1F1E6-1F1FF, U+1F3F4 and the tag characters. An earlier tab logged React invalid-hook and createRoot errors that mixed the old and new Vite dependency bundles (v=eff2ef91 and v=0daff7a9) after npm install re-optimized dependencies; a fresh tab loaded only v=0daff7a9 and had no console errors. The admin /xui-inbounds page and the customer /account/nodes page were not opened with flag data (no admin session; the test account has no active plan)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/tickets/new"
+        ],
+        "interactions": [
+          "Rendered real inbound names with flag emoji and the six ticket reaction emoji in the page font.",
+          "Reloaded in a fresh tab and checked the flag font face, its unicode-range and the console."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-19"
       }
     }
   ]

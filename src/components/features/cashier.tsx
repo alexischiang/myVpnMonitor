@@ -36,8 +36,8 @@ export function Cashier({ initialOrder }: { initialOrder: PaymentOrder }) {
   const disabled = busy || paymentBusy || seconds === 0
   const displayAmount = formatMoney(pending ? order.amount : order.totalAmount ?? order.amount)
   const statusNotice = pending
-    ? <NoticeBadge icon={Clock3} label={seconds > 0 ? <>请在 <span className="font-medium tabular-nums">{Math.floor(seconds / 60).toString().padStart(2, "0")}:{(seconds % 60).toString().padStart(2, "0")}</span> 内完成付款</> : "订单已到期，正在更新状态…"} variant="warning" />
-    : order.status !== "paid" ? <NoticeBadge icon={CircleX} label="该订单已关闭" variant="error" /> : null
+    ? <NoticeBadge icon={Clock3} label={seconds > 0 ? <>请在 <span className="font-medium tabular-nums">{Math.floor(seconds / 60).toString().padStart(2, "0")}:{(seconds % 60).toString().padStart(2, "0")}</span> 内完成付款</> : "订单已到期，正在更新状态…"} variant="warning" size="lg" />
+    : order.status !== "paid" ? <NoticeBadge icon={CircleX} label="该订单已关闭" variant="error" size="lg" /> : null
   function update(next: PaymentOrder) {
     setOrder(next)
     clearJsonCache()

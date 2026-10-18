@@ -298,6 +298,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `select`（补充） | 选项可带 `icon`（如颜色色块），在下拉列表和触发器里显示在文字前；`iconOnly`：只显示图标，文字保留给读屏（更新日志标签的颜色选择） |
 | `timeline` | 相对时间、「今天/昨天」日期标题、条数和新条目播报改中文；判断「今天」改用日期而不是标题文字 |
 | `line-chart` | `integer`：计数类数据只用整数刻度（避免 0.25 步长四舍五入后出现重复的「1 1 1」标签） |
+| `foundation.css`（补充） | 新增 `--info` 状态色（浅色 `oklch(56% .16 245)`、深色 `oklch(76% .13 245)`），与 `--success`/`--warning`/`--danger` 并列；项目的 `--accent` 接近黑色，不能表示蓝色提示。业务组件 `NoticeBadge` 用它作 info 色 |
 | `usage-meter` | 用量正好等于配额时角标显示「已用完」而不是「即将用完」 |
 | `blocks/empty-states` | 手动安装（只复制 block 的 tsx、css 和 `empty-states-art.ts`，`button`、`lib/motion-tokens` 沿用已有版本）；新增 `EmptyScene` 导出：单个场景插画加标题、说明和操作，不带标签页和演示动作，`scene`（`search` 无结果 / `inbox` 已处理完 / `map` 未找到 / `offline` 加载失败）、`phase`（`idle`/`done`）、`compact`（卡片和表格内的小尺寸插画）变化时插画按原动画形变；对应样式 `.scene*`；场景无障碍标签和演示文案改中文。业务里通过 `features/shared` 的 `EmptyState` 的 `scene` 属性使用 |
 
