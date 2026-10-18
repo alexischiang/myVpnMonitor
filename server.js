@@ -4319,6 +4319,13 @@ async function xuiTrafficFromNodes(status, nodes, centralInbounds, nodeTokens) {
       nodeResults[guid] = { configured: false, error: "缺少节点 API Token，无法采集该节点真实用量。", source: "" };
       return;
     }
+    // The central panel already heartbeats every node. Querying one it reports offline only waits
+    // out the request timeout while the sync lock is held, so skip it like a failed query (previous
+    // ledger value preserved); its counters catch up once it is back online.
+    if (String(node?.status || "").toLowerCase() === "offline") {
+      nodeResults[guid] = { configured: true, error: "节点离线，本轮跳过用量采集。", source: "" };
+      return;
+    }
     try {
       const token = openXuiNodeToken(sealedToken);
       const rows = await xuiRequestAt(xuiNodeBaseUrl(node), token, "/panel/api/inbounds/list");
