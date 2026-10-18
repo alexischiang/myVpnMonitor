@@ -1,9 +1,9 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
-import { ArrowLeft, Check, CheckCircle, LinkIcon, Loader2, PackagePlus, Rocket, ShieldCheck, Tag, TriangleAlert } from "lucide-react"
+import { ArrowLeft, Check, CheckCircle, Gauge, LinkIcon, Loader2, MonitorSmartphone, PackagePlus, Rocket, ShieldCheck, Tag, TriangleAlert } from "lucide-react"
 import { toast } from "@/components/features/toast"
 
-import { clearJsonCache, fetchJson, postJson } from "@/api"
+import { ApiError, clearJsonCache, fetchJson, postJson } from "@/api"
 import { FaqSection } from "@/components/arc/blocks/faq-section/faq-section"
 import { SiteFooter } from "@/components/arc/blocks/site-footer/site-footer"
 import { SiteHeader } from "@/components/arc/blocks/site-header/site-header"
@@ -168,8 +168,8 @@ export function PricingPage() {
                 const displayedPrice = lifetime ? plan.lifetimePrice : plan.prices[periodIndex]
                 const checkoutOption = lifetime ? plan.lifetimeOptionId : plan.optionIds[periodIndex]
                 const specs = [
-                  { label: lifetime ? "固定流量" : "每月流量", value: lifetime ? plan.lifetimeTraffic : plan.traffic },
-                  { label: "在线IP数量", value: (lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]) || "-" },
+                  { label: lifetime ? "固定流量" : "每月流量", value: lifetime ? plan.lifetimeTraffic : plan.traffic.replace(/\/月$/, ""), icon: Gauge, color: "sky" },
+                  { label: "在线IP数量", value: (lifetime ? plan.lifetimeDevices : plan.devices[periodIndex]) || "-", icon: MonitorSmartphone, color: "violet" },
                 ]
                 const features = [
                   ...(lifetime ? plan.lifetimeFeatures || [] : plan.features).map(label => ({ label })),
@@ -178,14 +178,14 @@ export function PricingPage() {
                 return <PlanOfferCard
                   key={plan.id}
                   title={lifetime ? plan.lifetimeName : plan.name}
-                  description={lifetime ? <><span className="block font-medium text-foreground">{plan.lifetimeTitle}</span><span className="mt-1 block">{plan.lifetimeDescription}</span></> : plan.description}
+                  description={lifetime ? plan.lifetimeDescription : plan.description}
                   price={`￥${Number.isFinite(displayedPrice) ? displayedPrice : "—"}`}
                   priceUnit={`/ ${lifetime ? "不限时" : periods[periodIndex].days}`}
                   priceExtra={!lifetime ? <BillingDiscount monthlyPrice={plan.prices[0]} totalPrice={plan.prices[periodIndex]} months={periods[periodIndex].months} /> : null}
                   specs={specs}
                   featuresTitle="套餐内容"
                   features={features}
-                  action={Number.isFinite(displayedPrice) ? <BentoButton asChild>{inAccount ? <Link to={`/account/plans/checkout?option=${checkoutOption}`}>选择套餐</Link> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</BentoButton> : <BentoButton disabled>当前周期未开放</BentoButton>}
+                  action={Number.isFinite(displayedPrice) ? <BentoButton asChild>{inAccount ? <Link to={`/account/plans/checkout?option=${checkoutOption}`}>{lifetime ? "选择套餐" : "选择计费周期"}</Link> : <Link to="/login?returnTo=/account/plans">登录后购买</Link>}</BentoButton> : <BentoButton disabled>当前周期未开放</BentoButton>}
                 />
               })}
               {visiblePlans.length ? null : <EmptyState title="当前暂无可购买套餐" description="请稍后再试或联系客服。" />}
@@ -359,12 +359,18 @@ export function CheckoutPage() {
       const order = await postJson<{ id: string }>("/api/orders", {
         product: trafficPack ? "traffic_pack" : homeIp ? "home_ip" : "plan",
         optionId, couponCode: quote.couponCode, addOns: [], trafficTier, useBalance, confirmReplacement, buyerInput,
+        expectedAmount: quote.payableAmount,
       })
       clearJsonCache()
       window.dispatchEvent(new Event("payment-order-updated"))
       navigate(`/cashier/${encodeURIComponent(order.id)}`)
     } catch (error) {
-      toast({ type: "error", title: error instanceof Error ? error.message : "提交订单失败" })
+      // The price changed after this page loaded: show the new quote and let the customer submit again.
+      if (error instanceof ApiError && error.status === 409 && error.body.quote) {
+        quoteRequestRef.current++
+        setQuote(error.body.quote as CheckoutQuote)
+        toast({ type: "warning", title: error.message })
+      } else toast({ type: "error", title: error instanceof Error ? error.message : "提交订单失败" })
     } finally {
       submissionStartingRef.current = false
       setSubmitting(false)
@@ -377,7 +383,7 @@ export function CheckoutPage() {
   }
 
   if (loading && !quote) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
-  if (!quote) return <EmptyState title={trafficPack ? "流量包不可用" : homeIp ? "家宽 IP 不可用" : "套餐不可用"} description={standaloneAddOn ? "请确认当前有生效中的周期性套餐，并检查商品是否已上架。" : "请返回套餐页重新选择。"} />
+  if (!quote) return <EmptyState scene="map" compact={false} title={trafficPack ? "流量包不可用" : homeIp ? "家宽 IP 不可用" : "套餐不可用"} description={standaloneAddOn ? "请确认当前有生效中的周期性套餐，并检查商品是否已上架。" : "请返回套餐页重新选择。"} />
   const isStandaloneAddOn = standaloneAddOn || quote.purchaseAction === "add_on"
   const monthlyPrice = quote.cycles.find(cycle => cycle.durationDays === 30 || billingMonths(cycle.optionId) === 1 && cycle.optionId.endsWith("-30"))?.amount || quote.originalAmount
   // V2 tiers add trafficStepGb per step; legacy plans have no step and multiply the base traffic.
@@ -450,7 +456,7 @@ export function DeliveryPage() {
       .finally(() => setLoading(false))
   }, [token])
   if (loading) return <main className="grid min-h-svh place-items-center"><Loader2 className="animate-spin" /></main>
-  if (error || !data) return <main className="grid min-h-svh place-items-center"><EmptyState title="订阅不存在或已失效" description={error} /></main>
+  if (error || !data) return <main className="grid min-h-svh place-items-center"><EmptyState scene="map" compact={false} title="订阅不存在或已失效" description={error} /></main>
   return (
     <main className="min-h-svh bg-background p-6 text-foreground">
       <section className="mx-auto grid max-w-3xl gap-4">

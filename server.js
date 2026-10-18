@@ -2980,6 +2980,14 @@ async function submitPurchaseOrder(payload, req, account, manualAmount) {
   const purpose = selected.purpose || (payload.product === "traffic_pack" ? "traffic_pack" : payload.product === "home_ip" ? "addon" : "plan");
   if (selection.productId && manualAmount === undefined) addonServices.assertBuyerInputs(selected.selectedAddOnSnapshots);
   if (manualAmount === undefined && purpose === "plan" && selected.purchaseAction === "replace" && payload.confirmReplacement !== true) throw new Error("请确认新套餐将立即覆盖当前套餐。");
+  // The price is always read fresh here; when it no longer matches what the checkout showed, nothing is created and the
+  // customer gets the new quote to confirm.
+  if (manualAmount === undefined && payload.expectedAmount !== undefined && Math.round(Number(payload.expectedAmount) * 100) !== Math.round(selected.amount * 100)) {
+    const quote = await paymentQuoteForAccount(payload, account);
+    delete quote.paymentPlatforms;
+    delete quote.paymentMethods;
+    throw Object.assign(new Error(`商品价格已更新为 ¥${Number(selected.amount).toFixed(2)}，请确认新价格后再提交订单。`), { statusCode: 409, quote });
+  }
   assertPendingPaymentOrderLimit(account.id);
   const quote = manualAmount === undefined ? selected : { ...selected, amount: manualAmount, subtotal: manualAmount, beforeCreditAmount: manualAmount, taxAmount: 0, discountAmount: 0, vipDiscountPercent: 0, vipDiscountAmount: 0, cashCredit: 0 };
   quote.optionId = String(quote.optionId || payload.optionId || "");
@@ -9428,7 +9436,7 @@ async function handleApi(req, res, pathname) {
       const order = await createPaymentOrder(payload, req, account);
       sendJson(res, 201, publicPaymentOrder(order));
     } catch (error) {
-      sendJson(res, 400, { error: error.message });
+      sendJson(res, error.statusCode === 409 ? 409 : 400, { error: error.message, ...(error.quote ? { quote: error.quote } : {}) });
     }
     return;
   }

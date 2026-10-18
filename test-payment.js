@@ -362,6 +362,13 @@ async function main() {
     assert.strictEqual((await database.query("SELECT status FROM catalog_v2_inventory_reservations WHERE order_id=$1", [v2Order.data.id])).rows[0].status, "reserved");
     await request(`/api/orders/${v2Order.data.id}`, { method: "DELETE", cookie });
     assert.strictEqual((await database.query("SELECT status FROM catalog_v2_inventory_reservations WHERE order_id=$1", [v2Order.data.id])).rows[0].status, "released");
+    // The checkout sends the total it showed; a price changed since then creates nothing and returns the new quote.
+    const stalePrice = await request("/api/orders", { method: "POST", cookie, body: { optionId: `v2:${catalogV2Ids.product}:30d`, useBalance: false, expectedAmount: 0.5 } });
+    assert.deepStrictEqual([stalePrice.response.status, stalePrice.data.quote?.payableAmount], [409, 1.03], stalePrice.text);
+    assert.match(stalePrice.data.error, /商品价格已更新为 ¥1\.03/);
+    const currentPrice = await request("/api/orders", { method: "POST", cookie, body: { optionId: `v2:${catalogV2Ids.product}:30d`, useBalance: false, expectedAmount: 1.03 } });
+    assert.strictEqual(currentPrice.response.status, 201, currentPrice.text);
+    await request(`/api/orders/${currentPrice.data.id}`, { method: "DELETE", cookie });
     xuiRequests.length = 0;
 
     const quote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: paymentOptionId } });

@@ -289,6 +289,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `timeline` | 相对时间、「今天/昨天」日期标题、条数和新条目播报改中文；判断「今天」改用日期而不是标题文字 |
 | `line-chart` | `integer`：计数类数据只用整数刻度（避免 0.25 步长四舍五入后出现重复的「1 1 1」标签） |
 | `usage-meter` | 用量正好等于配额时角标显示「已用完」而不是「即将用完」 |
+| `blocks/empty-states` | 手动安装（只复制 block 的 tsx、css 和 `empty-states-art.ts`，`button`、`lib/motion-tokens` 沿用已有版本）；新增 `EmptyScene` 导出：单个场景插画加标题、说明和操作，不带标签页和演示动作，`scene`（`search` 无结果 / `inbox` 已处理完 / `map` 未找到 / `offline` 加载失败）、`phase`（`idle`/`done`）、`compact`（卡片和表格内的小尺寸插画）变化时插画按原动画形变；对应样式 `.scene*`；场景无障碍标签和演示文案改中文。业务里通过 `features/shared` 的 `EmptyState` 的 `scene` 属性使用 |
 
 ## 7. 进度
 

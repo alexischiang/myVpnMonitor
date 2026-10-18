@@ -393,7 +393,7 @@ export function CatalogV2ProductDetailPage() {
   // Runs from the confirm dialog; a failure is reported and rethrown so the dialog stays open.
   async function remove() { if (!product || isNew) return; setSaving(true); try { await deleteJson(`/api/catalog-v2/products/${encodeURIComponent(id)}`); navigate("/catalog-v2", { replace: true }); toast({ type: "success", title: "商品已删除" }) } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "删除失败" }); throw error } finally { setSaving(false) } }
   if (error) return <div className="px-4 lg:px-6"><Alert tone="danger" title={error} /></div>
-  if (!product) return <div className="px-4 lg:px-6"><EmptyState title="商品不存在" description="返回新版商品录入重新选择。" /></div>
+  if (!product) return <div className="px-4 lg:px-6"><EmptyState scene="map" compact={false} title="商品不存在" description="返回新版商品录入重新选择。" /></div>
   const updatePeriod = (index: number, value: CatalogV2Period) => update({ periods: product.periods.map((period, current) => current === index ? value : period) })
   return <div className="grid gap-4 px-4 lg:px-6">
     <DetailHeader

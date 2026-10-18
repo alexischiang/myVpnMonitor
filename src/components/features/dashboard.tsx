@@ -244,7 +244,7 @@ export function DashboardPage() {
                 </div>
                 <StatusBadge status="warning" />
               </div>
-            ))}</div> : <EmptyState title="暂无临期客户" />}
+            ))}</div> : <EmptyState scene="inbox" title="暂无临期客户" description="近期没有即将到期的客户。" />}
           </Card>
         </div>
         <div className={`${fillCell} xl:col-span-4`}><ServiceMonitor /></div>

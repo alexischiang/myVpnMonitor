@@ -1,13 +1,29 @@
 import type { ReactNode } from "react"
-import { Check, X } from "lucide-react"
+import { Check, X, type LucideIcon } from "lucide-react"
 
 import { BentoCard, type BentoCardProps } from "@/components/features/bento-card"
 import { cn } from "@/lib/utils"
-import { Card } from "@/components/arc/card/card"
 
 export type PlanOfferSpec = {
   label: ReactNode
   value: ReactNode
+  /** Shown in a small tile at the start of the row; `color` also tints the row. */
+  icon?: LucideIcon
+  color?: PlanOfferSpecColor
+}
+
+// Tailwind 500 shades, written out because Tailwind only emits the palette variables a class uses; the icon tile mixes them
+// with transparent and the foreground so it reads in both themes.
+const specColors = { sky: "oklch(68.5% 0.169 237.323)", violet: "oklch(60.6% 0.25 292.717)", emerald: "oklch(69.6% 0.17 162.48)", amber: "oklch(76.9% 0.188 70.08)" }
+export type PlanOfferSpecColor = keyof typeof specColors
+
+function specIconStyle(color: PlanOfferSpecColor = "sky") {
+  const value = specColors[color]
+  return { background: `color-mix(in oklab, ${value} 16%, transparent)`, color: `color-mix(in oklab, ${value} 75%, var(--foreground))` }
+}
+
+function specRowStyle(color: PlanOfferSpecColor = "sky") {
+  return { background: `color-mix(in oklab, ${specColors[color]} 8%, transparent)` }
 }
 
 export type PlanOfferFeature = {
@@ -40,8 +56,15 @@ export function PlanOfferCard({ title, description, price, priceUnit, priceExtra
         {priceUnit ? <span className="text-sm text-muted-foreground">{priceUnit}</span> : null}
         {priceExtra}
       </section>
-      {specs.length ? <dl className="grid grid-cols-2 gap-2">
-        {specs.map((spec, index) => <Card key={index} className="grid content-start gap-1 rounded-2xl bg-background p-3"><dt className="text-xs text-muted-foreground">{spec.label}</dt><dd className="truncate text-xl font-semibold tabular-nums">{spec.value}</dd></Card>)}
+      {specs.length ? <dl className="grid gap-1.5">
+        {specs.map((spec, index) => {
+          const Icon = spec.icon
+          return <div key={index} className="flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2" style={specRowStyle(spec.color)}>
+            {Icon ? <span className="grid size-7 shrink-0 place-items-center rounded-lg" style={specIconStyle(spec.color)}><Icon className="size-4" aria-hidden /></span> : null}
+            <dt className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{spec.label}</dt>
+            <dd className="shrink-0 text-base font-semibold tabular-nums">{spec.value}</dd>
+          </div>
+        })}
       </dl> : null}
       {features.length ? <section aria-label={typeof featuresTitle === "string" ? featuresTitle : "套餐内容"} className="grid gap-3 text-sm">
         {featuresTitle ? <h3 className="font-semibold">{featuresTitle}</h3> : null}

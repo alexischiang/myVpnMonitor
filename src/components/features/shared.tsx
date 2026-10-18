@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ExternalLink } from "lucide-react"
+import { ExternalLink, Inbox } from "lucide-react"
 
 import { Progress } from "@/components/arc/progress/progress"
 import type { User, UserAlertSetting } from "@/types"
@@ -8,6 +8,8 @@ import { Alert } from "@/components/arc/alert/alert"
 import { Badge } from "@/components/arc/badge/badge"
 import { Button } from "@/components/arc/button/button"
 import { CopyButton } from "@/components/arc/copy-button/copy-button"
+import { EmptyState as ArcEmptyState } from "@/components/arc/empty-state/empty-state"
+import { EmptyScene, type SceneId } from "@/components/arc/blocks/empty-states/empty-states"
 
 // A compact label/value list for detail sidebars: labels on the left, values right-aligned and truncated, numbers in tabular widths.
 export function InfoList({ items }: { items: { label: string; value: React.ReactNode }[] }) {
@@ -41,13 +43,22 @@ export function StatusDot({ status, label }: { status: "online" | "offline" | "m
   return <span className="relative flex size-2 shrink-0" role="status" aria-label={text} title={text}><span className={`absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:animate-none ${color}`} /><span className={`relative inline-flex size-2 rounded-full ${color}`} /></span>
 }
 
-export function EmptyState({ title = "暂无数据", description }: { title?: string; description?: string }) {
-  return (
-    <div className="flex min-h-24 flex-col items-center justify-center gap-1 rounded-lg text-center">
-      <p className="text-sm font-medium">{title}</p>
-      {description && <p className="text-sm text-muted-foreground">{description}</p>}
-    </div>
-  )
+/**
+ * Empty, not-found and failed states. With a `scene` it draws the matching Arc empty-states illustration
+ * (search: no matches, inbox: caught up, map: not found, offline: failed to load); without one it is Arc's icon empty state.
+ */
+export function EmptyState({ title = "暂无数据", description, icon, scene, action, compact = true, className }: {
+  title?: string
+  description?: string
+  icon?: React.ReactNode
+  scene?: SceneId
+  action?: React.ReactNode
+  /** Only for scenes: the smaller drawing used inside cards and tables. */
+  compact?: boolean
+  className?: string
+}) {
+  if (scene) return <EmptyScene scene={scene} title={title} description={description} action={action} compact={compact} className={className} />
+  return <ArcEmptyState title={title} description={description ?? ""} icon={icon ?? <Inbox width={24} height={24} strokeWidth={1.5} />} action={action} className={className} />
 }
 
 export function UrlCell({ value }: { value?: string }) {

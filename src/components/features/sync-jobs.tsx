@@ -142,7 +142,7 @@ function RunHistorySheet({ job, onOpenChange }: { job: SyncJob | null; onOpenCha
     <DrawerContent title={job?.name || "执行记录"} description={`最近 50 次执行，记录保留 ${RETENTION_DAYS} 天。`} className="w-full gap-0 sm:max-w-xl"><div className="min-h-0 flex-1 overflow-y-auto">
         {error ? <div className="p-4"><Alert tone="danger" title={error} /></div> : null}
         {loading && !runs.length ? <div className="grid gap-3 p-4"><Skeleton lines={3} /><Skeleton lines={3} /><Skeleton lines={3} /></div> : null}
-        {!loading && !error && !runs.length ? <div className="p-4"><EmptyState title="暂无执行记录" description={job?.id === "referral-settlement" ? "只记录实际结算了返利或执行失败的轮次。" : "任务执行后会在这里显示结果。"} /></div> : null}
+        {!loading && !error && !runs.length ? <div className="p-4"><EmptyState icon={<History width={24} height={24} strokeWidth={1.5} />} title="暂无执行记录" description={job?.id === "referral-settlement" ? "只记录实际结算了返利或执行失败的轮次。" : "任务执行后会在这里显示结果。"} /></div> : null}
         {runs.length ? <div className="grid gap-3 gap-0">
           {runs.map(run => {
             const steps = panelSteps(run)

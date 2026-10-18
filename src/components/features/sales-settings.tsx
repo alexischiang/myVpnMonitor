@@ -8,7 +8,7 @@ import { fetchJson, putJson } from "@/api"
 import { DateRangePicker } from "@/components/arc/date-range-picker/date-range-picker"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Drawer, DrawerClose, DrawerContent } from "@/components/arc/drawer/drawer"
-import { PageHeader, UserAlert } from "@/components/features/shared"
+import { EmptyState, PageHeader, UserAlert } from "@/components/features/shared"
 import { MarkdownEditor } from "@/components/features/markdown-editor"
 import { useData } from "@/components/features/data-provider"
 import type { AnnouncementSetting, CouponSetting, FaqSetting, MarkdownDocumentSetting, SalesSettings, UserAlertSetting } from "@/types"
@@ -105,7 +105,7 @@ function MarkdownDocumentList({ title, description, empty, items, onAdd, onEdit 
   return (
     <section className="grid gap-4">
       <header className="flex flex-wrap items-end justify-between gap-3"><div className="grid gap-1"><h2 className="text-lg font-semibold">{title}</h2><p className="text-sm text-muted-foreground">{description}</p></div><Button variant="secondary" size="sm" onClick={onAdd}><Plus />添加内容</Button></header>
-      {items.length ? <div className="grid gap-3">{items.map(item => <Card key={item.id} title={<>{item.title}<Badge>{item.category || "未分类"}</Badge><Badge tone={item.enabled ? "neutral" : "neutral"}>{item.enabled ? "已启用" : "草稿"}</Badge></>} headerAction={<><Button variant="link" size="sm" onClick={() => onEdit(item)}>编辑</Button></>}>{item.description ? <p className="text-sm text-muted-foreground">{item.description}</p> : null}</Card>)}</div> : <p className="py-6 text-sm text-muted-foreground">{empty}</p>}
+      {items.length ? <div className="grid gap-3">{items.map(item => <Card key={item.id} title={<>{item.title}<Badge>{item.category || "未分类"}</Badge><Badge tone={item.enabled ? "neutral" : "neutral"}>{item.enabled ? "已启用" : "草稿"}</Badge></>} headerAction={<><Button variant="link" size="sm" onClick={() => onEdit(item)}>编辑</Button></>}>{item.description ? <p className="text-sm text-muted-foreground">{item.description}</p> : null}</Card>)}</div> : <EmptyState title={empty} />}
     </section>
   )
 }
@@ -212,7 +212,7 @@ export function SalesSettingsPage() {
         <TabsContent value="coupons">
           <section className="grid gap-4">
             <header className="flex flex-wrap items-end justify-between gap-3"><div className="grid gap-1"><h2 className="text-lg font-semibold">优惠码</h2><p className="text-sm text-muted-foreground">设置适用套餐、计费周期、总量及单账户使用次数。</p></div><Button variant="secondary" size="sm" onClick={() => setEditor({ type: "coupon", value: { id: crypto.randomUUID(), code: "", percent: 10, enabled: true, validFrom: "", validUntil: "", applicableGroups: couponGroups.map(item => item.value), applicableDurations: couponDurations.map(item => item.value), totalLimit: 0, perAccountLimit: 0 }, isNew: true })}><Plus />添加优惠码</Button></header>
-            {settings.coupons.length ? <div className="grid gap-3">{settings.coupons.map(coupon => <Card key={coupon.id} title={<>{coupon.code}<Badge tone={coupon.enabled ? "neutral" : "neutral"}>{coupon.enabled ? "已启用" : "已停用"}</Badge></>} description={`优惠 ${coupon.percent}% · ${couponValidity(coupon)} · ${couponScope(coupon)} · ${couponLimit(coupon)}`} headerAction={<><Button variant="link" size="sm" onClick={() => setEditor({ type: "coupon", value: { ...coupon, applicableGroups: coupon.applicableGroups?.length ? coupon.applicableGroups : couponGroups.map(item => item.value), applicableDurations: coupon.applicableDurations?.length ? coupon.applicableDurations : couponDurations.map(item => item.value) }, isNew: false })}>编辑</Button></>} />)}</div> : <p className="py-6 text-sm text-muted-foreground">暂无优惠码</p>}
+            {settings.coupons.length ? <div className="grid gap-3">{settings.coupons.map(coupon => <Card key={coupon.id} title={<>{coupon.code}<Badge tone={coupon.enabled ? "neutral" : "neutral"}>{coupon.enabled ? "已启用" : "已停用"}</Badge></>} description={`优惠 ${coupon.percent}% · ${couponValidity(coupon)} · ${couponScope(coupon)} · ${couponLimit(coupon)}`} headerAction={<><Button variant="link" size="sm" onClick={() => setEditor({ type: "coupon", value: { ...coupon, applicableGroups: coupon.applicableGroups?.length ? coupon.applicableGroups : couponGroups.map(item => item.value), applicableDurations: coupon.applicableDurations?.length ? coupon.applicableDurations : couponDurations.map(item => item.value) }, isNew: false })}>编辑</Button></>} />)}</div> : <EmptyState title="暂无优惠码" description="添加优惠码后，客户可在下单时使用。" />}
           </section>
         </TabsContent>
         <TabsContent value="alerts">
@@ -227,19 +227,19 @@ export function SalesSettingsPage() {
                 <Switch id="user-alerts-enabled" checked={settings.userAlertsEnabled} disabled={saving} onCheckedChange={checked => void toggleUserAlerts(checked)} />
               </Field>
             </Card>
-            {settings.userAlerts.length ? <div className={`grid gap-3 transition-opacity ${settings.userAlertsEnabled ? "" : "opacity-60"}`}>{settings.userAlerts.map(item => <Card key={item.id} title={<>{item.title || "提示"}<Badge tone={item.enabled && settings.userAlertsEnabled ? "success" : "neutral"}>{!item.enabled ? "已停用" : settings.userAlertsEnabled ? "显示中" : "已隐藏"}</Badge></>} description={alertSummary(item)} headerAction={<Button variant="link" size="sm" onClick={() => setEditor({ type: "alert", value: { ...item }, isNew: false })}>编辑</Button>} />)}</div> : <p className="py-6 text-sm text-muted-foreground">暂无 Alert，点击“添加 Alert”在用户端页面顶部显示提醒。</p>}
+            {settings.userAlerts.length ? <div className={`grid gap-3 transition-opacity ${settings.userAlertsEnabled ? "" : "opacity-60"}`}>{settings.userAlerts.map(item => <Card key={item.id} title={<>{item.title || "提示"}<Badge tone={item.enabled && settings.userAlertsEnabled ? "success" : "neutral"}>{!item.enabled ? "已停用" : settings.userAlertsEnabled ? "显示中" : "已隐藏"}</Badge></>} description={alertSummary(item)} headerAction={<Button variant="link" size="sm" onClick={() => setEditor({ type: "alert", value: { ...item }, isNew: false })}>编辑</Button>} />)}</div> : <EmptyState title="暂无 Alert" description="点击“添加 Alert”在用户端页面顶部显示提醒。" />}
           </section>
         </TabsContent>
         <TabsContent value="faqs">
           <section className="grid gap-4">
             <header className="flex flex-wrap items-end justify-between gap-3"><div className="grid gap-1"><h2 className="text-lg font-semibold">价格页 FAQ</h2><p className="text-sm text-muted-foreground">启用的问题会按当前顺序显示在套餐价格页面底部。</p></div><Button variant="secondary" size="sm" onClick={() => setEditor({ type: "faq", value: { id: crypto.randomUUID(), question: "", answer: "", enabled: true }, isNew: true })}><Plus />添加 FAQ</Button></header>
-            {settings.faqs.length ? <div className="grid gap-3">{settings.faqs.map(faq => <Card key={faq.id} title={<>{faq.question}<Badge tone={faq.enabled !== false ? "neutral" : "neutral"}>{faq.enabled !== false ? "显示" : "隐藏"}</Badge></>} headerAction={<><Button variant="link" size="sm" onClick={() => setEditor({ type: "faq", value: { ...faq }, isNew: false })}>编辑</Button></>} />)}</div> : <p className="py-6 text-sm text-muted-foreground">暂无 FAQ</p>}
+            {settings.faqs.length ? <div className="grid gap-3">{settings.faqs.map(faq => <Card key={faq.id} title={<>{faq.question}<Badge tone={faq.enabled !== false ? "neutral" : "neutral"}>{faq.enabled !== false ? "显示" : "隐藏"}</Badge></>} headerAction={<><Button variant="link" size="sm" onClick={() => setEditor({ type: "faq", value: { ...faq }, isNew: false })}>编辑</Button></>} />)}</div> : <EmptyState title="暂无 FAQ" description="添加后会显示在价格页的常见问题中。" />}
           </section>
         </TabsContent>
         <TabsContent value="announcements">
           <section className="grid gap-4">
             <header className="flex flex-wrap items-end justify-between gap-3"><div className="grid gap-1"><h2 className="text-lg font-semibold">网站公告</h2><p className="text-sm text-muted-foreground">启用的公告会按发布时间从新到旧显示在用户总览。</p></div><Button variant="secondary" size="sm" onClick={() => setEditor({ type: "announcement", value: { id: crypto.randomUUID(), title: "", content: "", publishedAt: new Date().toISOString(), enabled: true }, isNew: true })}><Plus />添加公告</Button></header>
-            {settings.announcements.length ? <div className="grid gap-3">{settings.announcements.slice().sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt)).map(announcement => <Card key={announcement.id} title={<>{announcement.title}<Badge tone={announcement.enabled ? "neutral" : "neutral"}>{announcement.enabled ? "已启用" : "已停用"}</Badge></>} description={format(new Date(announcement.publishedAt), "yyyy/MM/dd HH:mm")} headerAction={<><Button variant="link" size="sm" onClick={() => setEditor({ type: "announcement", value: { ...announcement }, isNew: false })}>编辑</Button></>} />)}</div> : <p className="py-6 text-sm text-muted-foreground">暂无公告</p>}
+            {settings.announcements.length ? <div className="grid gap-3">{settings.announcements.slice().sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt)).map(announcement => <Card key={announcement.id} title={<>{announcement.title}<Badge tone={announcement.enabled ? "neutral" : "neutral"}>{announcement.enabled ? "已启用" : "已停用"}</Badge></>} description={format(new Date(announcement.publishedAt), "yyyy/MM/dd HH:mm")} headerAction={<><Button variant="link" size="sm" onClick={() => setEditor({ type: "announcement", value: { ...announcement }, isNew: false })}>编辑</Button></>} />)}</div> : <EmptyState title="暂无公告" description="发布后会显示在用户端的公告栏中。" />}
           </section>
         </TabsContent>
         <TabsContent value="advertisements">

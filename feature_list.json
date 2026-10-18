@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-17",
+  "updated_at": "2026-10-18",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -3896,6 +3896,99 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-17"
+      }
+    },
+    {
+      "id": "empty-states-illustration",
+      "name": "Arc empty-states illustration for the ticket queue and other empty, no-match and not-found states",
+      "description": "Installed the Arc empty-states block (src/components/arc/blocks/empty-states) and added an EmptyScene export that draws one of its scenes (search, inbox, map, offline) as a plain empty state with title, description and action, morphing when the scene changes. The admin ticket queue shows the inbox (caught up) scene 全部处理完毕 when nothing is in progress, the search scene with 清除搜索 for a search with no matches, and the user ticket list offers 创建工单 when empty. The shared EmptyState now renders Arc EmptyState (icon tile) or, with a scene prop, the illustration; arc-data-table shows the search scene with a clear button when a search matches nothing; not-found pages use the map scene and order load failures the offline scene; the plain-text empty lines in sales settings use EmptyState.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The ticket queue with no active tickets shows the Arc caught-up illustration.",
+        "A search with no matches shows the search scene and a working clear action.",
+        "Other empty states use Arc EmptyState or a matching scene."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed. Browser on the local dev server with autologin, 800px wide: /tickets?q=zzzz shows the search scene 没有找到“zzzz” and 清除搜索 clears it; /tickets with /api/tickets stubbed to [] in the page shows the inbox scene 全部处理完毕; /orders searched for qqqqzzzz shows the search scene and 清除搜索 brings back 30 rows; /sales-settings 广告草稿 shows the Arc icon empty state; /users/detail/does-not-exist shows the map scene in light and dark themes. The only console error was a 401 from the page load before autologin; every later /api request returned 200 except the expected 404 for the missing user."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/tickets",
+          "/orders",
+          "/sales-settings",
+          "/users/detail/does-not-exist"
+        ],
+        "interactions": [
+          "Searched tickets with no match and clicked 清除搜索.",
+          "Viewed the ticket queue with an empty stubbed ticket list.",
+          "Searched orders with no match and clicked 清除搜索.",
+          "Opened the 广告草稿 tab.",
+          "Viewed a missing user in light and dark themes."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "order-alert-amounts-live-price-cycle-button",
+      "name": "Payment alert amount breakdown, price check when an order is created, and the periodic plan button text",
+      "description": "The 用户消费提醒 alert (Telegram and mail) replaces 消费金额 with 总金额, one line per deduction that applies (优惠码抵扣 with the code, VIP 折扣 with the percent, 余额抵扣) and 实付金额; the deductions and the paid amount add up to the total. Orders were already priced from the database at submit time, but a customer could be charged a price changed after the checkout loaded: the checkout now sends the payable amount it showed (expectedAmount), and POST /api/orders recomputes the quote and, when it differs, creates nothing and returns 409 with the new quote; the checkout shows it with a warning toast so the customer confirms before resubmitting. Requests without expectedAmount (admin manual sales, older clients) are unchanged. ApiError in src/api.ts keeps the status and body of failed requests. Periodic plan cards in the user centre read 选择计费周期; lifetime cards keep 选择套餐.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The payment alert shows 总金额, any deductions and 实付金额.",
+        "An order whose price changed since the checkout loaded is not created and the checkout shows the new price.",
+        "Periodic plan buttons read 选择计费周期."
+      ],
+      "verification": [
+        "2026-10-18: node test-notifier.js passes with new cases (coupon, VIP and balance deductions; fully paid from balance). test-payment.js: a stale expectedAmount returns 409 with quote.payableAmount 1.03 and the current one returns 201; the suite then stops at an existing failure on line 447 (callback URL https://webprovider.top from payment settings saved in the test DB), which fails the same way with these changes stashed. npm run check, npm test, test:wallet, test:catalog-v2 and test-ticket.js passed. Browser on the local dev server as the seeded expired-renew@xela.test account: /account/plans periodic cards show 选择计费周期 and lifetime cards 选择套餐; on the checkout for 测试 STANDARD the page sent expectedAmount 30.9, and with it rewritten to 25 in the page the order request returned 409, a warning toast read 商品价格已更新为 ¥30.90，请确认新价格后再提交订单。, the page stayed on checkout and /api/account/orders listed no order. The only console line was the network log for that deliberately triggered 409; no uncaught errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans",
+          "/account/plans/checkout?option=v2:test-standard:30d"
+        ],
+        "interactions": [
+          "Viewed periodic and lifetime plan cards.",
+          "Submitted the checkout with a stale expected amount and checked the toast, the quote and the order list."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "plan-card-spec-tiles",
+      "name": "Plan card traffic and online IP shown as compact tinted rows",
+      "description": "Only the spec area of plan cards changed: 每月流量/固定流量 and 在线IP数量 are stacked rows (44px each) instead of two tall side-by-side tiles. Each row has a light background tinted with its color (sky for traffic, violet for online IPs), a small icon tile (Gauge, MonitorSmartphone), the label on the left and the value on the right. PlanOfferSpec gained optional icon and color (sky, violet, emerald, amber). Monthly traffic drops the redundant /月 since the label says 每月流量. The card background, title and feature list are unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Traffic and online IP are stacked rows with a background color and icons.",
+        "No row text is clipped.",
+        "The rest of the plan card is unchanged."
+      ],
+      "verification": [
+        "2026-10-18: npm run check passed. Browser as the seeded expired-renew@xela.test account in a fresh tab: /account/plans periodic and lifetime cards show stacked rows (每月流量 50G / 在线IP数量 3; 固定流量 150G / 在线IP数量 3), each 44px tall, no dt/dd overflow; /pricing shows 8 rows with no horizontal overflow. The fresh tab console had no errors; an earlier ReferenceError for specRowStyle came from hot reload between two edits.",
+        "2026-10-18: Lifetime plan cards no longer show the 固定流量不限时长 heading line above the description; the description alone remains. npm run check passed; /account/plans lifetime tab shows 4 cards and the text no longer appears."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account/plans",
+          "/pricing"
+        ],
+        "interactions": [
+          "Switched to lifetime plans and checked rows for overflow.",
+          "Loaded /pricing and checked page overflow."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-18"
       }
     }
   ]

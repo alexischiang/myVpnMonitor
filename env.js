@@ -13,7 +13,9 @@ function loadLocalEnv({ override = false } = {}) {
     const key = trimmed.slice(0, separatorIndex).trim();
     const value = trimmed.slice(separatorIndex + 1).trim().replace(/^["']|["']$/g, "");
     // An empty value counts as unset: pm2 can resurrect a process with a key saved as "", which would otherwise hide .env.
-    if (key && (override || process.env[key] === undefined || process.env[key] === "")) process.env[key] = value;
+    // Tests blank keys on purpose (live mail credentials, public URLs), so under NODE_ENV=test an empty value stays empty.
+    const unset = process.env[key] === undefined || (process.env[key] === "" && process.env.NODE_ENV !== "test");
+    if (key && (override || unset)) process.env[key] = value;
   }
 }
 

@@ -66,6 +66,11 @@ export function fetchJson<T = unknown>(path: string, { background, ...options }:
   return trackRequest(() => requestJson<T>(path, options), background)
 }
 
+/** A failed request keeps the HTTP status and the reply body, for callers that act on a specific rejection. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly body: Record<string, unknown>) { super(message) }
+}
+
 async function requestJson<T>(path: string, options: RequestInit): Promise<T> {
   const method = String(options.method || "GET").toUpperCase()
   const attempts = method === "GET" ? 3 : 1
@@ -89,7 +94,7 @@ async function requestJson<T>(path: string, options: RequestInit): Promise<T> {
 
     try {
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.error || `Request failed: ${response.status}`)
+      if (!response.ok) throw new ApiError(payload.error || `Request failed: ${response.status}`, response.status, payload)
       return payload
     } catch (error) {
       lastError = error

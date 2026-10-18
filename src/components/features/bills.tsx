@@ -208,7 +208,7 @@ export function OrdersPage() {
     },
   ], [])
 
-  if (error) return <div className="px-4 lg:px-6"><EmptyState title="订单加载失败" description={error} /></div>
+  if (error) return <div className="px-4 lg:px-6"><EmptyState scene="offline" compact={false} title="订单加载失败" description={error} /></div>
   if (!orders) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
 
   return (
@@ -245,7 +245,7 @@ export function OrderDetailPage() {
     fetchJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(id)}`).then(setOrder).catch(error => setError(error.message))
   }, [id])
 
-  if (error) return <div className="px-4 lg:px-6"><EmptyState title="订单加载失败" description={error} /></div>
+  if (error) return <div className="px-4 lg:px-6"><EmptyState scene="offline" compact={false} title="订单加载失败" description={error} /></div>
   if (!order) return <main className="grid min-h-72 place-items-center"><Loader2 className="animate-spin" /></main>
   const status = orderStatus(order)
   const failure = order.internalFulfillmentError || order.paymentError
