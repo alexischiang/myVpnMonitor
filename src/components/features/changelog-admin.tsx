@@ -103,7 +103,7 @@ function ChangelogTagManager({ tags, onChange }: { tags: ChangelogTagRecord[]; o
             <Button variant="danger" size="icon-sm" aria-label={`删除标签 ${tag.label}`} title={tag.entryCount ? "有更新正在使用，不能删除" : "删除"} disabled={tag.entryCount > 0 || Boolean(busyId)} onClick={() => setDeleting(tag)}><Trash2 /></Button>
           </div>
         </li>
-      })}</ul> : <EmptyState title="还没有标签" description="至少添加一个标签后才能发布更新。" />}
+      })}</ul> : <EmptyState icon={<Tags width={24} height={24} strokeWidth={1.5} />} title="还没有标签" description="至少添加一个标签后才能发布更新。" />}
       <form className="flex flex-wrap items-end gap-2 border-t pt-4" onSubmit={event => void create(event)}>
         <Input label="新标签名称" id="changelog-tag-new-label" className="min-w-0 flex-1 basis-32" maxLength={12} value={newDraft.label} onChange={event => setNewDraft({ ...newDraft, label: event.target.value })} placeholder="例如：安全公告" />
         <div className="w-20 shrink-0"><Select label="颜色" iconOnly id="changelog-tag-new-color" value={newDraft.color} onValueChange={color => setNewDraft({ ...newDraft, color: color as ChangelogTagColor })} options={colorOptions} /></div>

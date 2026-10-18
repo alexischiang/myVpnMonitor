@@ -101,7 +101,7 @@ export function XuiLogsPage() {
             <Button type="submit"><Search />查询</Button>
           </form>
         </div><div className="grid gap-3 gap-0 md:hidden">
-          {data.items.length ? data.items.map(log => <ArcCard key={log.id} className="rounded-none border-x-0 border-t-0" title={<><ResultBadge log={log} /><Badge>{log.method}</Badge><span>{log.apiPath}</span></>} description={`${formatDateTime(log.createdAt)} · ${log.statusCode} · ${log.durationMs} ms · ${log.transport}`}>{log.error ? <p className="text-sm text-muted-foreground text-destructive">{log.error}</p> : null}</ArcCard>) : <ArcCard><EmptyState title="暂无日志" description="当前筛选条件下没有 3x-ui 访问记录。" /></ArcCard>}
+          {data.items.length ? data.items.map(log => <ArcCard key={log.id} className="rounded-none border-x-0 border-t-0" title={<><ResultBadge log={log} /><Badge>{log.method}</Badge><span>{log.apiPath}</span></>} description={`${formatDateTime(log.createdAt)} · ${log.statusCode} · ${log.durationMs} ms · ${log.transport}`}>{log.error ? <p className="text-sm text-muted-foreground text-destructive">{log.error}</p> : null}</ArcCard>) : <ArcCard><EmptyState scene="search" title="暂无日志" description="当前筛选条件下没有 3x-ui 访问记录。" /></ArcCard>}
         </div><div className="hidden md:block">
           <SimpleTable
             caption="3x-ui 访问日志"

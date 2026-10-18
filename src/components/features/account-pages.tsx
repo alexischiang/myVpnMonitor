@@ -554,7 +554,7 @@ const delta = entry.cashDelta + entry.giftDelta + entry.referralDelta;
 return entry.id }} cells={(entry) => {
 const delta = entry.cashDelta + entry.giftDelta + entry.referralDelta;
 return [<span className="tabular-nums">{formatDateTime(entry.createdAt)}</span>, <Badge>{walletEntryLabels[entry.type] || "其他"}</Badge>, <>{entry.description || "-"}</>, <span className={cn("text-right font-medium tabular-nums", delta >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-foreground")}>{delta >= 0 ? "+" : ""}{formatMoney(delta)}</span>, <span className="text-right tabular-nums">{formatMoney(entry.balance)}</span>] }} />
-          : <EmptyState title="暂无余额流水" description="充值、购买套餐或获得返利后，余额变动会显示在这里。" />}
+          : <EmptyState icon={<Coins width={24} height={24} strokeWidth={1.5} />} title="暂无余额流水" description="充值、购买套餐或获得返利后，余额变动会显示在这里。" />}
       </BentoListCard>
     </div>
   )
@@ -601,7 +601,7 @@ export function AccountReferralPage() {
     </BentoGrid>
     <BentoListCard title="返利明细" description="好友订单确认后，返利自动计入返利余额。">
       {data.rewards.length ? <SimpleTable caption="来源订单列表" columns={["来源订单", "实际投入", "返利金额", "状态", "到账时间"]} rows={data.rewards} rowKey={(item) => item.id} cells={(item) => [<span className="font-mono text-xs">{item.sourceOrderId}</span>, <span className="text-right tabular-nums">{formatMoney(item.baseAmount)}</span>, <span className="text-right font-medium tabular-nums">{formatMoney(item.rewardAmount)}</span>, <Badge tone={item.status === "available" ? "success" : "neutral"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "确认中" : item.status}</Badge>, <span className="tabular-nums">{formatDateTime(item.availableAt)}</span>]} />
-        : <EmptyState title="暂无返利记录" description="好友通过你的邀请链接注册并购买套餐后，返利会显示在这里。" />}
+        : <EmptyState icon={<Gift width={24} height={24} strokeWidth={1.5} />} title="暂无返利记录" description="好友通过你的邀请链接注册并购买套餐后，返利会显示在这里。" />}
     </BentoListCard>
   </div>
 }

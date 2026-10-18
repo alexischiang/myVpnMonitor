@@ -142,7 +142,7 @@ export function SubscriptionDetailPage() {
     },
   ], [])
 
-  if (!item) return <EmptyState title="未找到订阅" />
+  if (!item) return <EmptyState scene="map" compact={false} title="未找到订阅" description="该订阅不存在或已被删除。" />
 
   async function refresh() {
     setRefreshing(true)
@@ -443,7 +443,7 @@ export function UserDetailPage() {
     void fetchJson<{ availableBalance?: number }>(`/api/users/${user.id}/wallet`).then(data => setWalletBalance(typeof data.availableBalance === "number" ? data.availableBalance : null)).catch(() => setWalletBalance(null))
   }, [user?.id, user?.registeredOnly])
 
-  if (!user) return <EmptyState title="未找到用户" />
+  if (!user) return <EmptyState scene="map" compact={false} title="未找到用户" description="该用户不存在或已被删除。" />
   const weightedTraffic = user.xuiWeightedTraffic
 
   async function sendAccountInvite(event: React.FormEvent<HTMLFormElement>) {

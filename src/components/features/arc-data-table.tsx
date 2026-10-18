@@ -22,7 +22,7 @@ import { Button } from "@/components/arc/button/button"
 import { Card } from "@/components/arc/card/card"
 import { Checkbox } from "@/components/arc/checkbox/checkbox"
 import { DropdownMenu, type DropdownItem } from "@/components/arc/dropdown-menu/dropdown-menu"
-import { EmptyState } from "@/components/arc/empty-state/empty-state"
+import { EmptyState } from "@/components/features/shared"
 import { Pagination } from "@/components/arc/pagination/pagination"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/arc/popover/popover"
 import { SearchField } from "@/components/arc/search-field/search-field"
@@ -161,6 +161,11 @@ export function DataTable<TData, TValue>({
   const pageCount = Math.max(table.getPageCount(), 1)
   const pageRows = table.getRowModel().rows
   const visibleColumns = table.getVisibleLeafColumns()
+  const searchValue = String(searchableColumn?.getFilterValue() ?? "").trim()
+  // A search that matches nothing gets the search scene and a way out; an empty data set keeps the page's own copy.
+  const emptyView = searchValue
+    ? <EmptyState scene="search" title={`没有找到“${searchValue}”`} description="换个关键词，或清除搜索后再试。" action={<Button variant="secondary" size="sm" onClick={() => { searchableColumn?.setFilterValue(""); onSearchChange?.("") }}>清除搜索</Button>} />
+    : <EmptyState title={emptyTitle} description={emptyDescription} />
   const hideableColumns = table.getAllColumns().filter(column => (typeof column.accessorFn !== "undefined" || Boolean(column.columnDef.meta?.label)) && column.getCanHide())
 
   // Arc's table takes plain rows and sorts them by their values, so each row carries the sortable value of every column;
@@ -223,7 +228,7 @@ export function DataTable<TData, TValue>({
               ))}
             </dl>
           </Card>
-        )) : <EmptyState title={emptyTitle} description={emptyDescription ?? ""} />}
+        )) : emptyView}
       </div>
 
       <div className="hidden min-w-0 md:block">
@@ -236,7 +241,7 @@ export function DataTable<TData, TValue>({
             defaultSort={sorting[0] ? { key: sorting[0].id, direction: sorting[0].desc ? "desc" : "asc" } : undefined}
             onSortChange={sort => setSorting([{ id: sort.key, desc: sort.direction === "desc" }])}
           />
-        ) : <EmptyState title={emptyTitle} description={emptyDescription ?? ""} />}
+        ) : emptyView}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">

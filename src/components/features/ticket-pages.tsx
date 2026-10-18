@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, Image as ImageIcon, ImageUp, LifeBuoy, Loader2, Plus, Search, Send, UserRound, X, XCircle } from "lucide-react"
+import { AlertCircle, Image as ImageIcon, ImageUp, Loader2, Plus, Search, Send, UserRound, X, XCircle } from "lucide-react"
 import { toast } from "@/components/features/toast"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -10,7 +10,7 @@ import { SimpleTable } from "@/components/features/simple-table"
 import { ChatThread, type ChatDraft, type ChatMessage } from "@/components/arc/chat-thread/chat-thread"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Progress } from "@/components/arc/progress/progress"
-import { InfoList } from "@/components/features/shared"
+import { EmptyState, InfoList } from "@/components/features/shared"
 import { Separator } from "@/components/ui/separator"
 import { formatBytes, formatDate, formatDateTime, formatMoney } from "@/utils"
 import { BackButton } from "@/components/features/back-button"
@@ -145,12 +145,10 @@ function TicketConversation({ ticket, viewer, ticketPath, uploadPath, onTicket }
     placeholder="输入回复内容，可粘贴或拖入截图" accept={ticketImageTypes.join(",")} /></div>
 }
 
-function TicketListTable({ tickets, admin = false }: { tickets: Ticket[]; admin?: boolean }) {
+function TicketListTable({ tickets, admin = false, empty }: { tickets: Ticket[]; admin?: boolean; empty: React.ReactNode }) {
   const base = admin ? "/tickets" : "/account/tickets"
   const badges = (ticket: Ticket) => <span className="flex flex-wrap items-center gap-1.5"><TicketStageBadge status={ticket.status} /><TicketReplyBadge status={ticket.status} viewer={admin ? "admin" : "user"} /></span>
-  if (!tickets.length) return (
-    <Card className="justify-center py-12 text-center" title="暂无工单" description={admin ? "当前筛选条件下没有需要处理的工单。" : "遇到订阅、连接或付款问题时，可以创建工单联系支持人员。"}><LifeBuoy className="size-8 text-muted-foreground" /></Card>
-  )
+  if (!tickets.length) return empty
   return (
     <>
       <div className="grid gap-3 md:hidden">
@@ -195,7 +193,9 @@ export function AccountTicketsPage() {
       {error ? <ErrorAlert message={error} /> : null}
       <Card title="我的工单" description="进行中工单会标明当前等待哪一方回复。"><div className="grid gap-4">
         <Tabs value={status} onValueChange={value => setSearchParams(value === "all" ? {} : { status: value }, { replace: true })}><TabsList className="h-auto flex-wrap"><TabsTrigger value="all">全部</TabsTrigger><TabsTrigger value="active">进行中</TabsTrigger><TabsTrigger value="ended">已解决</TabsTrigger></TabsList></Tabs>
-        <TicketListTable tickets={filtered} />
+        <TicketListTable tickets={filtered} empty={!tickets.length
+          ? <EmptyState scene="inbox" title="还没有工单" description="遇到订阅、连接或付款问题时，可以创建工单联系支持人员。" action={<Button asChild size="sm"><Link to="/account/tickets/new"><Plus />创建工单</Link></Button>} />
+          : <EmptyState scene="inbox" title={status === "ended" ? "还没有已解决的工单" : "没有进行中的工单"} description={status === "ended" ? "工单解决后会归档到这里。" : "你的问题都已处理完毕，新的回复会出现在这里。"} />} />
       </div></Card>
     </section>
   )
@@ -280,7 +280,11 @@ export function AdminTicketsPage() {
       {error ? <ErrorAlert message={error} /> : null}
       <Card title="工单队列" description="按编号、邮箱或主题查找工单。"><div className="grid gap-4">
         <section className="flex flex-col gap-3 md:flex-row"><div className="flex-1"><SearchField label="搜索工单" hideLabel value={query} onValueChange={value => updateParam("q", value, "")} placeholder="搜索编号、邮箱或主题" /></div><Select label="筛选工单状态" hideLabel value={status} onValueChange={value => updateParam("status", value, "active")} className="w-full md:w-44" options={[{ value: "all", label: "全部状态" }, { value: "active", label: "进行中" }, { value: "ended", label: "已解决" }]} /></section>
-        <TicketListTable tickets={filtered} admin />
+        <TicketListTable tickets={filtered} admin empty={needle
+          ? <EmptyState scene="search" title={`没有找到“${query.trim()}”`} description="换一个编号、邮箱或主题关键词，或清除搜索后再试。" action={<Button variant="secondary" size="sm" onClick={() => updateParam("q", "", "")}>清除搜索</Button>} />
+          : status === "active"
+            ? <EmptyState scene="inbox" title="全部处理完毕" description="没有等待处理的工单，新工单提交后会首先出现在这里。" action={tickets.length ? <Button variant="secondary" size="sm" onClick={() => updateParam("status", "all", "active")}>查看全部工单</Button> : undefined} />
+            : <EmptyState scene="inbox" title={status === "ended" ? "还没有已解决的工单" : "还没有工单"} description={status === "ended" ? "解决后的工单会归档到这里。" : "用户提交的工单会首先出现在这里。"} />} />
       </div></Card>
     </section>
   )

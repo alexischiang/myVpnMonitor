@@ -187,10 +187,26 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
+// Amounts in cents: the order total before any deduction, each deduction that applies, and what the customer actually paid.
+// The deductions and the paid amount always add up to the total.
+function paymentAlertAmounts(order) {
+  const cents = value => Math.max(0, Math.round(Number(value || 0) * 100));
+  const payable = cents(order.totalAmount ?? order.amount);
+  const deductions = [
+    [`优惠码抵扣${order.couponCode ? `（${order.couponCode}）` : ""}`, cents(order.discountAmount)],
+    [`VIP 折扣${order.vipDiscountPercent ? `（${order.vipDiscountPercent}%）` : ""}`, cents(order.vipDiscountAmount)],
+    ["余额抵扣", cents(order.walletAmount)]
+  ].filter(([, value]) => value > 0);
+  const paid = Math.max(0, payable - cents(order.walletAmount));
+  return { total: payable + cents(order.discountAmount) + cents(order.vipDiscountAmount), deductions, paid };
+}
+
 function buildPaymentAlert(order) {
   const recharge = order.purpose === "recharge";
   const trafficPack = order.purpose === "traffic_pack";
   const total = Number(order.totalAmount ?? order.amount ?? 0).toFixed(2);
+  const amounts = paymentAlertAmounts(order);
+  const yuan = value => `¥${(value / 100).toFixed(2)}`;
   const channel = { "100": "支付宝", alipay: "支付宝", "200": "微信支付", wxpay: "微信支付", manual: "人工收款", wallet: "账户余额", "cash-credit": "现金价值全额抵扣" }[order.channelCode] || order.channelCode || "-";
   const platform = order.paymentPlatformName || { manual: "人工收款", wallet: "站内钱包" }[order.paymentProvider] || order.paymentProvider || "-";
   const paidAt = new Date(order.paidAt || Date.now()).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
@@ -202,7 +218,9 @@ function buildPaymentAlert(order) {
   if (!recharge && !trafficPack && order.purpose !== "addon") lines.push(`👤 客户类型：${Number(order.purchaseCountBefore) >= 1 ? "老客复购" : "新客购买"}`);
   return lines.concat([
     `📦 消费详情：${recharge ? `充值 ¥${total}` : `${order.planName || "-"} / ${order.optionLabel || "-"}`}`,
-    `💰 消费金额：¥${total}`,
+    `🧮 总金额：${yuan(amounts.total)}`,
+    ...amounts.deductions.map(([label, value]) => `🎟️ ${label}：-${yuan(value)}`),
+    `💰 实付金额：${yuan(amounts.paid)}`,
     `💳 付款渠道：${channel}`,
     `🏦 支付平台：${platform}`,
     `🧾 订单编号：${order.merOrderTid || order.id || "-"}`,

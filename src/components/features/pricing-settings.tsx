@@ -159,7 +159,7 @@ export function PricingDetailPage() {
     }
   }
 
-  if (!row) return <div className="grid gap-4 px-4 lg:px-6"><EmptyState title="商品不存在" description="请返回商品管理重新选择。" /><BackButton fallback="/pricing-settings" className="w-fit" /></div>
+  if (!row) return <div className="grid gap-4 px-4 lg:px-6"><EmptyState scene="map" compact={false} title="商品不存在" description="请返回商品管理重新选择。" /><BackButton fallback="/pricing-settings" className="w-fit" /></div>
 
   const serviceName = isLifetime ? row.lifetimeName || (isNew ? "" : `${row.name || row.group.toUpperCase()} 不限时`) : row.name || (isNew ? "" : row.group.toUpperCase())
   const serviceTitle = isLifetime ? row.lifetimeTitle || "固定流量不限时长" : row.title || ""
