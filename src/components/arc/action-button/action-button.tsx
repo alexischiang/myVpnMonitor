@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ButtonHTMLAttributes, MouseEvent, RefObject } from "react";
+import type { ButtonHTMLAttributes, MouseEvent, ReactNode, RefObject } from "react";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "motion/react";
 import type { TargetAndTransition, Variants } from "motion/react";
 import { ArrowRight } from "lucide-react";
@@ -25,6 +25,10 @@ export interface ActionButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonE
   size?: "sm" | "md" | "lg";
   /** Hides the trailing arrow of the idle state. */
   arrow?: boolean;
+  /** XELA extension: a leading icon that names the action (refresh, run) in place of the trailing arrow. */
+  icon?: ReactNode;
+  /** XELA extension: below 640px only the icon shows; the label stays for screen readers. */
+  collapse?: boolean;
 }
 
 const pressVariants: Variants = {
@@ -111,7 +115,7 @@ function MorphText({ text, reduced }: { text: string; reduced: boolean }) {
   </motion.span>;
 }
 
-export function ActionButton({ label, successLabel = "已完成", pendingLabel = "处理中", onAction, resetAfterMs = 2400, onActionError, onClick, pending: pendingProp, variant = "primary", size = "md", arrow: showArrow = true, className, disabled, ...props }: ActionButtonProps) {
+export function ActionButton({ label, successLabel = "已完成", pendingLabel = "处理中", onAction, resetAfterMs = 2400, onActionError, onClick, pending: pendingProp, variant = "primary", size = "md", arrow: showArrow = true, icon, collapse = false, className, disabled, ...props }: ActionButtonProps) {
   const [ownState, setState] = useState<"idle" | "pending" | "success">("idle");
   const state = pendingProp === undefined ? ownState : pendingProp ? "pending" : "idle";
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -140,10 +144,10 @@ export function ActionButton({ label, successLabel = "已完成", pendingLabel =
   const arrow = state === "idle";
 
   // Pending stays focusable (aria-disabled instead of disabled), so a keyboard user keeps focus through the whole save.
-  return <motion.button {...props} ref={buttonRef} tabIndex={props.tabIndex ?? 0} type={props.type ?? "button"} className={[styles.button, styles[variant], styles[size], className].filter(Boolean).join(" ")} disabled={disabled} aria-disabled={pending ? true : props["aria-disabled"]} aria-busy={pending} data-state={state} onClick={run} custom={buttonRef} variants={pressVariants} whileTap={reduceMotion || disabled || pending ? undefined : "pressed"} transition={motionTokens.spring.snappy}>
+  return <motion.button {...props} ref={buttonRef} tabIndex={props.tabIndex ?? 0} type={props.type ?? "button"} className={[styles.button, styles[variant], styles[size], icon && styles.leading, collapse && styles.collapse, className].filter(Boolean).join(" ")} disabled={disabled} aria-disabled={pending ? true : props["aria-disabled"]} aria-busy={pending} data-state={state} onClick={run} custom={buttonRef} variants={pressVariants} whileTap={reduceMotion || disabled || pending ? undefined : "pressed"} transition={motionTokens.spring.snappy}>
     <span className={styles.content} aria-hidden="true">
       <MorphText text={text} reduced={reduceMotion} />
-      <span className={styles.iconSlot}><AnimatePresence initial={false}><motion.span key={state} className={styles.phase} initial={reduceMotion ? fadeIn : arrow ? arrowIn : iconIn} animate={iconRest} exit={reduceMotion ? fadeOut : arrow ? arrowOut : iconOut} transition={reduceMotion ? { duration: motionTokens.duration.instant } : iconEnter}>{pending ? <span className={styles.spinner} /> : state === "success" ? <DrawnCheck reduced={reduceMotion} /> : showArrow ? <ArrowRight className={styles.arrow} width={17} height={17} /> : null}</motion.span></AnimatePresence></span>
+      <span className={styles.iconSlot}><AnimatePresence initial={false}><motion.span key={state} className={styles.phase} initial={reduceMotion ? fadeIn : arrow ? arrowIn : iconIn} animate={iconRest} exit={reduceMotion ? fadeOut : arrow ? arrowOut : iconOut} transition={reduceMotion ? { duration: motionTokens.duration.instant } : iconEnter}>{pending ? <span className={styles.spinner} /> : state === "success" ? <DrawnCheck reduced={reduceMotion} /> : icon ?? (showArrow ? <ArrowRight className={styles.arrow} width={17} height={17} /> : null)}</motion.span></AnimatePresence></span>
     </span>
     <span className={styles.visuallyHidden}>{label}</span>
     <span className={styles.visuallyHidden} role="status">{state === "pending" ? pendingLabel : state === "success" ? successLabel : ""}</span>

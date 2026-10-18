@@ -273,6 +273,16 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `button`、`badge`、`tabs`、`segmented-control`、`card` | 没有写尺寸类的图标按控件给定尺寸（按钮和标签页 16px，小号按钮 14px，徽标 12px，卡片标题 18px）；带 `size-*` 类的图标不受影响 |
 | 控件尺寸（`src/styles.css`） | 鼠标设备下 `--control-height-sm/md/lg` 为 32/36/40px、`--radius-control` 为 14px；触屏保持 Arc 的 36/44/50px 和 18px |
 | `card`（补充） | `fill`：卡片被网格行拉伸时内容区撑满高度，正文可以贴底 |
+| `filter-toolbar` | 内置文案改中文（触发按钮「筛选」、「清除全部」、「未设置筛选」、移除和返回的读屏文案、变更播报）。业务封装 `features/list-filters.tsx`：`ListFilterMenu`（放在搜索框同一行）和 `ListFilterChips`（已选筛选，全部为默认值时不渲染）；`DataTable` 的 `filters` / `onClearFilters` 用它们 |
+| `sortable-data-table`（补充） | 没有可排序列且不可选择时，手机布局（≤620px）不显示表头排序条（`data-unsortable`），只剩列名的条带没有用处 |
+| `card`（补充） | 头部标题可收缩（`.header > .title { min-width: 0 }`），长标题换行或截断，不再把 `headerAction` 挤出卡片 |
+| 手机尺寸（`src/styles.css`） | 640px 以下：字号整体降一档（`--text-sm` 13px 起，`--text-xs` 保持 12px）、`--space-5/6` 收为 16/20px（卡片内边距）、控件高度 32/40/44px（大号保持 44px 触控下限）、`--radius-control` 16px。Arc 组件与 Tailwind `text-*` 共用这些变量 |
+| `button` | `collapse`：640px 以下只显示图标，宽度等于控件高度，文字以零字号保留给读屏（`asChild` 链接同样适用）。只用于带图标的按钮 |
+| `action-button`（补充） | `icon`：按动作语义的前置图标（刷新、执行、保存），代替末尾通用箭头；`collapse`：同 `button` |
+| `filter-toolbar`（补充） | `FilterMenu` 的 `size="md"`（与文本框同高）、`icon`（代替加号）、`collapse`（640px 以下只显示图标） |
+| `badge` | 640px 以下缩小：`md` 22px 高、11px 字，`sm` 20px 高、10px 字 |
+| `dialog`、`drawer` | 正文改为纵向排列并留 `--space-5` 间距，表单区、搜索区、列表区和操作区不再紧贴 |
+| `sortable-data-table`（补充） | 单元格上下内边距 8px，52px 为最小行高：多行内容撑高行，单行和 36px 按钮的行仍为 52px |
 | `metric-card`（补充） | `style`（用于指定底色）；紧凑密度下数字用 `--text-2xl` |
 | `blocks/cta-section`（补充） | `tone="warning"`（仅 banner）：按 warning token 铺浅色底和描边，用于用户中心待付款提醒；发送工单 banner 不传，保持中性 |
 | `alert` | `inline`：标题和正文同一行，放不下时正文截断；`tinted`：按 tone 铺浅色底和描边；`action`：行尾操作（如“去支付”链接） |

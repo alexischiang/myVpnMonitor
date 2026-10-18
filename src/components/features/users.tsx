@@ -1,7 +1,8 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
+import { useClearSearchParams } from "@/hooks/use-search-param-state"
 import type { ColumnDef } from "@tanstack/react-table"
-import { Copy, ExternalLink, Eye, Gift, Loader2, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Copy, Eye, Gift, Loader2, Pencil, Plus, RefreshCw, Trash2, UserPlus } from "lucide-react"
 import { toast } from "@/components/features/toast"
 
 import { deleteJson, fetchJson, postJson, putJson } from "@/api"
@@ -10,7 +11,7 @@ import { DataTableCard } from "@/components/features/data-table-card"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
 import { useData } from "@/components/features/data-provider"
 import { ProviderBadge } from "@/components/features/provider-badge"
-import { StatusDot, TrafficProgress, UserStatusBadge } from "@/components/features/shared"
+import { StatusBadge, StatusDot, TrafficProgress, UserStatusBadge } from "@/components/features/shared"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserFormDialog, type UserFormValues } from "@/components/features/user-form-dialog"
 import { UsersSummaryCard } from "@/components/features/users-summary-card"
@@ -20,7 +21,6 @@ import { absoluteUrl, formatBytes, formatDate, formatDateTime, formatMoney, user
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Badge } from "@/components/arc/badge/badge"
 import { Button } from "@/components/arc/button/button"
-import { DropdownMenu } from "@/components/arc/dropdown-menu/dropdown-menu"
 import { Dialog as ArcDialog, DialogClose as ArcDialogClose, DialogContent as ArcDialogContent } from "@/components/arc/dialog/dialog"
 import { Checkbox } from "@/components/arc/checkbox/checkbox"
 import { Input } from "@/components/arc/input/input"
@@ -41,6 +41,8 @@ type BatchGiftPreview = {
   unavailableUsers: string[]
 }
 
+const userStatusLabels: Record<string, string> = { ok: "有效", warning: "即将到期", expired: "已过期", registered: "未购买" }
+
 function OnlineIndicator({ online }: { online: boolean }) {
   return <StatusDot status={online ? "online" : "offline"} />
 }
@@ -50,6 +52,7 @@ export function UsersPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const clearFilters = useClearSearchParams(["account", "plan", "status", "activity"])
   const [editing, setEditing] = React.useState<User | null>(null)
   const [open, setOpen] = React.useState(false)
   const [deleteUser, setDeleteUser] = React.useState<User | null>(null)
@@ -289,17 +292,23 @@ export function UsersPage() {
   }
 
   function renderMobileUser(item: User) {
-    const claimed = ["active", "disabled"].includes(item.accountStatus || "unclaimed")
     const xui = xuiPresenceFor(item)
-    return <Card title={<><span className="min-w-0 truncate">{item.userId ? <span className="font-medium">{item.userId}</span> : null}<span className={`${item.userId ? "ml-1 " : ""}text-xs font-normal text-muted-foreground`}>#{item.customerID}</span></span><UserStatusBadge user={item} />{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}</>} description={<><span>{item.registeredOnly ? formatDate(item.createdAt) : `${formatDate(item.expiresAt)} · ${formatMoney(item.actualPaid)} · ${(item.v2LineGroupId || "-").toUpperCase()}`}</span>{item.subscription ? <ProviderBadge name={item.subscription.serviceProvider || item.subscription.provider} /> : null}</>} headerAction={<><DropdownMenu label="用户操作" trigger={<Button variant="ghost" size="icon" aria-label="用户操作"><MoreHorizontal /></Button>} items={[
-      { label: "查看详情", icon: <ExternalLink size={15} />, onSelect: () => navigate(`/users/detail/${item.id}${location.search}`) },
-      ...(item.registeredOnly ? [] : [
-        ...(deliveryUrl(item) ? [{ label: "复制交付链接", icon: <Copy size={15} />, onSelect: () => void navigator.clipboard.writeText(deliveryUrl(item)).then(() => toast({ type: "success", title: "交付链接已复制" })) }] : []),
-        ...(item.lineType === "self_hosted" ? [] : [{ label: "更换订阅池", icon: <RefreshCw size={15} />, onSelect: () => { setPoolUser(item); setPoolId(""); setAllowDisabledPool(false); setAllowFullPool(false) } }]),
-        { label: "赠送时长", icon: <Gift size={15} />, onSelect: () => openGift(item) },
-        ...(!claimed ? [{ label: "编辑", icon: <Pencil size={15} />, onSelect: () => { setEditing(item); setOpen(true) } }, { label: "删除", icon: <Trash2 size={15} />, destructive: true, onSelect: () => void remove(item) }] : []),
-      ]),
-    ]} /></>}>{xui.available ? <p className="text-sm text-muted-foreground flex items-center gap-1.5 text-xs"><span>{xui.online ? xui.nodes.join(" / ") : xui.lastOnline ? `最后在线 ${formatDateTime(new Date(xui.lastOnline * 1000).toISOString())}` : "从未在线"}</span><OnlineIndicator online={xui.online} /></p> : null}</Card>
+    const status = userStatus(item)
+    // The whole card opens the user; its actions live on the detail page.
+    return <Link to={`/users/detail/${item.id}${location.search}`} className="block rounded-[var(--radius-panel)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"><Card><div className="grid min-w-0 gap-1.5">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-sm font-medium">{item.userId || `#${item.customerID}`}</p>
+        <div className="flex shrink-0 items-center gap-1">{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}<StatusBadge status={status}>{userStatusLabels[status]}</StatusBadge></div>
+      </div>
+      <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground tabular-nums">
+        <p className="min-w-0 truncate">{item.registeredOnly ? `注册 ${formatDate(item.createdAt)}` : `到期 ${formatDate(item.expiresAt)}`}{item.userId ? ` · #${item.customerID}` : ""}{item.registeredOnly ? "" : ` · ${(item.v2LineGroupId || "-").toUpperCase()}`}</p>
+        {item.registeredOnly ? null : <p className="shrink-0 font-medium text-foreground">{formatMoney(item.actualPaid)}</p>}
+      </div>
+      {xui.available || item.subscription ? <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
+        {xui.available ? <p className="flex min-w-0 items-center gap-1.5"><OnlineIndicator online={xui.online} /><span className="truncate">{xui.online ? xui.nodes.join(" / ") : xui.lastOnline ? `最后在线 ${formatDateTime(new Date(xui.lastOnline * 1000).toISOString())}` : "从未在线"}</span></p> : <span />}
+        {item.subscription ? <ProviderBadge name={item.subscription.serviceProvider || item.subscription.provider} /> : null}
+      </div> : null}
+    </div></Card></Link>
   }
 
   const columns = React.useMemo<ColumnDef<User>[]>(() => [
@@ -408,13 +417,15 @@ export function UsersPage() {
   return (
     <div className="grid gap-4 px-4 lg:px-6">
       <UsersSummaryCard total={totalUsers} active={activeUsers} addedToday={addedToday} expiring={expiringUsers} />
-      <DataTableCard filters={<>
-        <Select label="账户状态" value={accountFilter} onValueChange={value => updateSearchParam("account", value, "all")} id="account-filter" className="w-full" options={[{ value: "all", label: "全部" }, { value: "active", label: "已认领" }, { value: "disabled", label: "已停用" }, { value: "invited", label: "等待认领" }, { value: "unclaimed", label: "未认领" }]} />
-        <Select label="套餐" value={planFilter} onValueChange={value => updateSearchParam("plan", value, "all")} id="plan-filter" className="w-full" options={[{ value: "all", label: "全部" }, ...planOptions.map(plan => ({ value: plan, label: plan }))]} />
-        <Select label="套餐状态" value={statusFilter} onValueChange={value => updateSearchParam("status", value, "all")} id="status-filter" className="w-full" options={[{ value: "all", label: "全部" }, { value: "registered", label: "未购买" }, { value: "ok", label: "Active" }, { value: "warning", label: "Expiring" }, { value: "expired", label: "Expired" }]} />
-        <Select label="在线情况" value={activityFilter} onValueChange={value => updateSearchParam("activity", value, "all")} id="activity-filter" className="w-full" options={[{ value: "all", label: "全部" }, { value: "online", label: "当前在线" }, { value: "day", label: "超过 24 小时未在线" }, { value: "week", label: "超过 7 天未在线" }, { value: "month", label: "超过 30 天未在线" }, { value: "never", label: "从未在线" }]} />
-      </>}>
+      <DataTableCard>
         <DataTable
+          filters={[
+            { id: "account", label: "账户状态", value: accountFilter, onChange: value => updateSearchParam("account", value, "all"), options: [{ value: "all", label: "全部" }, { value: "active", label: "已认领" }, { value: "disabled", label: "已停用" }, { value: "invited", label: "等待认领" }, { value: "unclaimed", label: "未认领" }] },
+            { id: "plan", label: "套餐", value: planFilter, onChange: value => updateSearchParam("plan", value, "all"), options: [{ value: "all", label: "全部" }, ...planOptions.map(plan => ({ value: plan, label: plan }))] },
+            { id: "status", label: "套餐状态", value: statusFilter, onChange: value => updateSearchParam("status", value, "all"), options: [{ value: "all", label: "全部" }, { value: "registered", label: "未购买" }, { value: "ok", label: "Active" }, { value: "warning", label: "Expiring" }, { value: "expired", label: "Expired" }] },
+            { id: "activity", label: "在线情况", value: activityFilter, onChange: value => updateSearchParam("activity", value, "all"), options: [{ value: "all", label: "全部" }, { value: "online", label: "当前在线" }, { value: "day", label: "超过 24 小时未在线" }, { value: "week", label: "超过 7 天未在线" }, { value: "month", label: "超过 30 天未在线" }, { value: "never", label: "从未在线" }] },
+          ]}
+          onClearFilters={clearFilters}
           columns={columns}
           data={filteredUsers}
           searchKey="user"
@@ -426,7 +437,7 @@ export function UsersPage() {
           pageSize={30}
           frame="card"
           stateKey="users"
-          toolbar={<div className="flex gap-2"><Button size="sm" variant="secondary" onClick={openBatchGift}><Gift />批量赠送</Button><Button size="sm" onClick={() => { setEditing(null); setOpen(true) }}><Plus />新增用户</Button></div>}
+          toolbar={<div className="flex gap-2"><Button variant="secondary" collapse onClick={openBatchGift}><Gift />批量赠送</Button><Button collapse onClick={() => { setEditing(null); setOpen(true) }}><UserPlus />新增用户</Button></div>}
         />
       </DataTableCard>
 

@@ -1,3 +1,5 @@
+import type * as React from "react"
+
 import { StatusBadge } from "@/components/features/shared"
 
 const vipTiers = {
@@ -20,7 +22,7 @@ export function nextVipTier(tiers: VipTier[], spend: number) {
 export function VipBadge({ level = "vip1" }: { level?: string }) {
   const tier = vipTiers[level.toLowerCase() as keyof typeof vipTiers] || vipTiers.vip1
   return (
-    <StatusBadge status="ok" className="relative isolate text-white dark:text-white" style={{ backgroundImage: `linear-gradient(135deg, ${tier.start}, ${tier.end})` }}>
+    <StatusBadge status="ok" className="relative isolate text-white dark:text-white" style={{ backgroundImage: `linear-gradient(135deg, ${tier.start}, ${tier.end})`, "--badge-color": "#fff", "--badge-foreground": "#fff", "--badge-border": "transparent" } as React.CSSProperties}>
       <span aria-hidden className="vip-badge-shine absolute inset-0" />
       <span className="relative">{tier.label}</span>
     </StatusBadge>

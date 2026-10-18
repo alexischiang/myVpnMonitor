@@ -11,7 +11,8 @@
 .table th { height: 44px; padding: 0 var(--space-4); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: var(--text-sm); font-weight: 500; text-align: left; white-space: nowrap; }
 .table th[data-sortable] { padding: 0; }
 .table th[data-sorted] { color: var(--foreground); }
-.table td { height: 52px; padding: 0 var(--space-4); border-bottom: 1px solid var(--border-subtle); color: var(--foreground); font-weight: 400; vertical-align: middle; overflow-wrap: anywhere; }
+/* XELA extension: 52px is the minimum row height; cells with more lines grow with vertical padding instead of touching the row edges. */
+.table td { height: 52px; padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border-subtle); color: var(--foreground); font-weight: 400; vertical-align: middle; overflow-wrap: anywhere; }
 .table tbody tr:last-child td { border-bottom: 0; }
 .table [data-numeric] { text-align: right; font-variant-numeric: tabular-nums; }
 .table[data-selectable] tbody tr { cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -70,6 +71,8 @@
   /* XELA extension: !important beats the measured inline min-width the desktop layout sets. */
   .table { display: block; width: 100%; min-width: 0 !important; max-width: 100%; }
   .table thead { display: block; }
+  /* XELA extension: with nothing to sort or select, the strip would only repeat the column names, so it is left out. */
+  .table[data-unsortable] thead { display: none; }
   /* The header becomes a strip of sort controls, so sorting stays one tap away on a phone. */
   .table thead tr { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
   .table thead tr::-webkit-scrollbar { display: none; }

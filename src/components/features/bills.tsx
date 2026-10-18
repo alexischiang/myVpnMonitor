@@ -10,7 +10,7 @@ import { OrderMobileItem } from "@/components/features/order-mobile-item"
 import { EmptyState, PageHeader } from "@/components/features/shared"
 import { BackButton } from "@/components/features/back-button"
 import { ServiceDeliveryForm } from "@/components/features/service-delivery"
-import { useSearchParamState } from "@/hooks/use-search-param-state"
+import { useClearSearchParams, useSearchParamState } from "@/hooks/use-search-param-state"
 import { durationLabels, formatDateTime, formatMoney, orderProductLabel } from "@/utils"
 import type { AddonService } from "@/types"
 import { ActionButton } from "@/components/arc/action-button/action-button"
@@ -20,7 +20,6 @@ import { PageHeader as DetailHeader } from "@/components/arc/blocks/page-header/
 import { Button } from "@/components/arc/button/button"
 import { Card } from "@/components/arc/card/card"
 import { Dialog, DialogClose, DialogContent } from "@/components/arc/dialog/dialog"
-import { Select } from "@/components/arc/select/select"
 import { Textarea } from "@/components/arc/textarea/textarea"
 
 type AdminOrder = {
@@ -139,6 +138,7 @@ export function OrdersPage() {
   const [error, setError] = React.useState("")
   const [statusFilter, setStatusFilter] = useSearchParamState("status", "all")
   const [purposeFilter, setPurposeFilter] = useSearchParamState("purpose", "all")
+  const clearFilters = useClearSearchParams(["status", "purpose"])
 
   React.useEffect(() => {
     fetchJson<AdminOrder[]>("/api/admin/orders").then(setOrders).catch(error => setError(error.message))
@@ -214,11 +214,11 @@ export function OrdersPage() {
   return (
     <div className="grid gap-4 px-4 lg:px-6">
       <PageHeader title="Orders" description="显示所有客户创建的订单，包括待付款、取消、失败、未发放和已完成订单。" />
-      <DataTableCard filters={<>
-        <Select label="订单状态" value={statusFilter} onValueChange={setStatusFilter} id="order-status-filter" className="w-full" options={[{ value: "all", label: "全部状态" }, ...Object.entries(orderStatusLabels).map(([status, label]) => ({ value: status, label: label }))]} />
-        <Select label="订单类型" value={purposeFilter} onValueChange={setPurposeFilter} id="order-purpose-filter" className="w-full" options={[{ value: "all", label: "全部类型" }, { value: "plan", label: "套餐购买" }, { value: "traffic_pack", label: "流量包购买" }, { value: "addon", label: "附加服务" }, { value: "recharge", label: "余额充值" }]} />
-      </>}>
-        <DataTable columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={30} frame="card" renderMobileItem={renderMobileOrder} stateKey="orders" />
+      <DataTableCard>
+        <DataTable filters={[
+          { id: "status", label: "订单状态", value: statusFilter, onChange: setStatusFilter, options: [{ value: "all", label: "全部状态" }, ...Object.entries(orderStatusLabels).map(([status, label]) => ({ value: status, label }))] },
+          { id: "purpose", label: "订单类型", value: purposeFilter, onChange: setPurposeFilter, options: [{ value: "all", label: "全部类型" }, { value: "plan", label: "套餐购买" }, { value: "traffic_pack", label: "流量包购买" }, { value: "addon", label: "附加服务" }, { value: "recharge", label: "余额充值" }] },
+        ]} onClearFilters={clearFilters} columns={columns} data={filteredOrders} searchKey="customer" searchPlaceholder="搜索邮箱、订单号或套餐..." emptyTitle="暂无订单" pageSize={30} frame="card" renderMobileItem={renderMobileOrder} stateKey="orders" />
       </DataTableCard>
     </div>
   )
