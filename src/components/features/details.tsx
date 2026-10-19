@@ -19,7 +19,7 @@ import { BackButton } from "@/components/features/back-button"
 import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalogPurchaseOptionsFor, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
 import type { User, XuiCustomInboundManagement } from "@/types"
-import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, purchasedPlanName, userStatus } from "@/utils"
+import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, planSnapshotName, planSnapshotOptionId, userStatus } from "@/utils"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Alert } from "@/components/arc/alert/alert"
 import { Badge } from "@/components/arc/badge/badge"
@@ -236,7 +236,7 @@ export function UserDetailPage() {
   const { id } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
-  const { users, subscriptions, bills, pricing, reload, runAsync } = useData()
+  const { users, subscriptions, bills, reload, runAsync } = useData()
   const summaryUser = users.find(entry => entry.id === id)
   const [loadedUser, setLoadedUser] = React.useState<User | null>(null)
   const user = summaryUser && loadedUser?.id === id
@@ -314,9 +314,9 @@ export function UserDetailPage() {
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const purchaseCount = userBills.filter(item => !item.reversedAt).length
 
-  const productName = React.useMemo(() => {
-    return user ? purchasedPlanName(user, pricing) : "-"
-  }, [pricing, user])
+  const productName = planSnapshotName(user?.v2ProductSnapshot)
+  const currentOptionId = planSnapshotOptionId(user?.v2ProductSnapshot)
+  const currentUnlimited = user?.v2ProductSnapshot?.trafficBytes === null
   const catalogPurchaseOptions = React.useMemo(() => catalogPurchaseOptionsFor(catalogV2Products || []), [catalogV2Products])
   const catalogPlanOptions = React.useMemo(() => catalogPurchaseOptions.filter(option => option.product.type !== "addon"), [catalogPurchaseOptions])
   const planOptions = React.useMemo(() => {
@@ -334,9 +334,9 @@ export function UserDetailPage() {
     const targetBytes = unlimited ? 0 : baseBytes + (trafficTier - 1) * stepBytes
     const usedBytes = Math.max(0, Number(user.xuiWeightedTraffic?.usedBytes) || 0)
     const changes = [
-      ...(user.currentOptionId !== planOptionId ? [{ label: "商品规格", before: productName, after: option.label }] : []),
+      ...(currentOptionId !== planOptionId ? [{ label: "商品规格", before: productName, after: option.label }] : []),
       ...(lifetime && user.duration !== "lifetime" ? [{ label: "到期日", before: formatDate(user.expiresAt), after: "永久有效" }] : []),
-      ...((user.unlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0)) !== (unlimited ? "不限流量" : formatBytes(targetBytes)) ? [{ label: "流量配额", before: user.unlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0), after: unlimited ? "不限流量" : formatBytes(targetBytes) }] : []),
+      ...((currentUnlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0)) !== (unlimited ? "不限流量" : formatBytes(targetBytes)) ? [{ label: "流量配额", before: currentUnlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0), after: unlimited ? "不限流量" : formatBytes(targetBytes) }] : []),
       ...(Number(user.deviceLimit || 0) !== targetDevices ? [{ label: "在线IP数量", before: `${user.deviceLimit || 0}`, after: `${targetDevices}` }] : []),
     ]
     const impacts = [
@@ -346,7 +346,7 @@ export function UserDetailPage() {
       ...(targetBytes > 0 && usedBytes >= targetBytes ? ["目标额度不高于已用流量，变更后用户将进入流量耗尽状态"] : []),
     ]
     return { changes, impacts }
-  }, [planTrafficTier, productName, selectedPlanConfig, user])
+  }, [currentOptionId, currentUnlimited, planOptionId, planTrafficTier, productName, selectedPlanConfig, user])
   const latestPlanEvent = user?.userLogs?.find(log => ["plan-changed", "plan-change-rolled-back"].includes(log.reason || ""))
   const customInboundRows = React.useMemo(() => {
     const query = customInboundSearch.trim().toLocaleLowerCase()
@@ -636,11 +636,11 @@ export function UserDetailPage() {
   }
 
   function openPlanDialog() {
-    const optionId = planOptions.find(option => option.value === user.currentOptionId)?.value
+    const optionId = planOptions.find(option => option.value === currentOptionId)?.value
       || planOptions[0]?.value
       || ""
     setPlanOptionId(optionId)
-    setPlanTrafficTier(String(user.trafficTier || 1))
+    setPlanTrafficTier(String((user.v2ProductSnapshot?.trafficSteps || 0) + 1))
     setPlanNote("")
     setPlanError("")
     setPlanOpen(true)
@@ -809,7 +809,7 @@ export function UserDetailPage() {
       </Dialog>
       <Dialog open={poolOpen} onOpenChange={setPoolOpen}>
         <DialogContent title="手动换池" description={`当前订阅池：${poolDisplayName(currentPool)}`} size="lg"><form className="grid gap-4" onSubmit={changePool} noValidate>
-            <SubscriptionPoolSelect id="detail-manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={user.isSuperAccount ? undefined : user.activeGroup} />
+            <SubscriptionPoolSelect id="detail-manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={user.isSuperAccount ? undefined : user.v2ProductSnapshot?.lineGroupId || undefined} />
             <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={poolSaving}>取消</Button></DialogClose><ActionButton type="submit" disabled={poolSaving || !poolId || poolId === user.subscriptionId} label="确认换池" pendingLabel="换池中..." pending={poolSaving} /></div>
           </form></DialogContent>
       </Dialog>
@@ -819,7 +819,7 @@ export function UserDetailPage() {
               <Input label="赠送天数" error={(giftError) || undefined} id="detail-gift-days" type="number" min="1" step="1" value={giftDays} onChange={event => { setGiftDays(event.target.value); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }} />
               <Field><FieldLabel>快捷选择</FieldLabel><div className="flex flex-wrap gap-2">{[7, 15, 30].map(days => <Button key={days} type="button" variant={giftDays === String(days) ? "primary" : "secondary"} size="sm" onClick={() => { setGiftDays(String(days)); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }}>{days} 天</Button>)}</div></Field>
               {giftExpiresAt ? <Input label="赠送后到期日" id="detail-gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /> : null}
-              {giftExpiresAt ? <SubscriptionPoolSelect id="detail-gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={user.isSuperAccount ? undefined : user.activeGroup} description={giftMessage} /> : <FieldDescription>输入天数后先计算到期日和推荐订阅池。</FieldDescription>}
+              {giftExpiresAt ? <SubscriptionPoolSelect id="detail-gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={user.isSuperAccount ? undefined : user.v2ProductSnapshot?.lineGroupId || undefined} description={giftMessage} /> : <FieldDescription>输入天数后先计算到期日和推荐订阅池。</FieldDescription>}
             </FieldGroup>
             <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={giftSaving}>取消</Button></DialogClose>{giftExpiresAt ? <ActionButton type="submit" disabled={giftSaving || !giftPoolId} label="确认赠送" pendingLabel="赠送中..." pending={giftSaving} /> : <ActionButton type="button" onClick={() => void previewGift()} label="推荐订阅池" pendingLabel="计算中..." pending={giftPreviewing} />}</div>
           </form></DialogContent>
@@ -951,7 +951,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Info label="当前池 URL" value={currentPool?.url ? <UrlCell value={currentPool.url} /> : "-"} />
                     <Info label="供应商评级" value={user.poolCompatibility.rating ? <Badge>{user.poolCompatibility.rating} 级</Badge> : "未评级"} />
-                    <Info label="套餐匹配" value={user.isSuperAccount ? "超级账户可跨等级使用" : user.poolCompatibility.groupAllowed ? `${user.activeGroup?.toUpperCase() || "当前"} 套餐可用` : "不支持当前套餐"} />
+                    <Info label="套餐匹配" value={user.isSuperAccount ? "超级账户可跨等级使用" : user.poolCompatibility.groupAllowed ? `${user.v2ProductSnapshot?.lineGroupId?.toUpperCase() || "当前"} 套餐可用` : "不支持当前套餐"} />
                     <Info label="到期匹配" value={formatPoolExpiryDifference(user.poolCompatibility.expiryDiffDays)} />
                     <Info label="容量" value={`${user.poolCompatibility.customerCount ?? 0} / ${user.poolCompatibility.maxUsers ?? 15} 人`} />
                     <Info label="绑定方式" value={user.poolCompatibility.binding?.type === "manual" ? `手动换池${user.poolCompatibility.binding.at ? ` · ${formatDateTime(user.poolCompatibility.binding.at)}` : ""}` : "系统绑定"} />
@@ -972,21 +972,15 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
           </TabsContent>
           <TabsContent value="catalog-v2" className="grid min-w-0 gap-4">
             {user.v2ProductSnapshot ? <>
-              <Card title="当前 V2 商品" description="用户迁移后生效的商品绑定快照。" headerAction={<Badge tone="success">已迁移</Badge>}><div className="grid gap-4 sm:grid-cols-2">
+              <Card title="当前 V2 商品" description="用户当前套餐的商品快照，套餐权益和 3x-ui 同步只以它为准。" headerAction={<Badge tone="success">生效中</Badge>}><div className="grid gap-4 sm:grid-cols-2">
                   <Info label="商品名称" value={user.v2ProductSnapshot.name} />
-                  <Info label="商品 ID" value={user.v2ProductId || user.v2ProductSnapshot.productId} />
+                  <Info label="商品 ID" value={user.v2ProductSnapshot.productId} />
                   <Info label="商品类型" value={user.v2ProductSnapshot.productType === "recurring_plan" ? "周期性套餐" : "不限时套餐"} />
-                  <Info label="周期标识" value={user.v2PeriodId || "不限时"} />
+                  <Info label="周期标识" value={user.v2ProductSnapshot.periodId || "不限时"} />
                   <Info label="周期时长" value={user.v2ProductSnapshot.durationDays ? `${user.v2ProductSnapshot.durationDays} 天` : "不限时"} />
                   <Info label="流量额度" value={user.v2ProductSnapshot.trafficBytes === null ? "不限流量" : formatBytes(user.v2ProductSnapshot.trafficBytes)} />
                   <Info label="在线IP数量" value={user.v2ProductSnapshot.deviceLimit === null ? "-" : `${user.v2ProductSnapshot.deviceLimit}`} />
-                  <Info label="线路权限组" value={user.v2LineGroupId || "-"} />
-                </div></Card>
-              <Card title="迁移记录" description="旧商品绑定仍保留，可用于核对和回滚。"><div className="grid gap-4 sm:grid-cols-2">
-                  <Info label="迁移批次" value={user.v2MigrationId || "-"} />
-                  <Info label="迁移时间" value={user.v2MigratedAt ? formatDateTime(user.v2MigratedAt) : "-"} />
-                  <Info label="旧商品 ID" value={user.legacyProductBinding?.productId || "-"} />
-                  <Info label="旧周期标识" value={user.legacyProductBinding?.optionId || "-"} />
+                  <Info label="线路权限组" value={user.v2ProductSnapshot.lineGroupId || "-"} />
                 </div></Card>
             </> : <EmptyState title="尚未迁移到 V2 商品" description="完成 V2 商品映射迁移后，此处会显示新的商品绑定与原商品信息。" />}
           </TabsContent>

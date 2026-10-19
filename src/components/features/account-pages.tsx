@@ -26,7 +26,8 @@ import { ChangelogTimelineCard } from "@/components/features/changelog"
 import { nextVipTier, vipLevelLabel, type VipTier } from "@/components/features/vip-badge"
 import { DOCS_URL } from "@/lib/docs-site"
 import { cn } from "@/lib/utils"
-import { formatDate, formatDateTime, formatMoney, orderProductLabel, purchasedPlanParts } from "@/utils"
+import { formatDate, formatDateTime, formatMoney, orderProductLabel, planSnapshotParts } from "@/utils"
+import type { PlanSnapshot } from "@/types"
 
 import type { PaymentOrder } from "@/components/features/cashier-types"
 import { ActionButton } from "@/components/arc/action-button/action-button"
@@ -42,7 +43,8 @@ import { Input } from "@/components/arc/input/input"
 import { PasswordField } from "@/components/arc/password-field/password-field"
 import { Card as ArcCard } from "@/components/arc/card/card"
 import { SimpleTable } from "@/components/features/simple-table"
-type Subscription = { status: string; activeGroup: string; lineGroupId?: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; unlimited?: boolean; trafficTier?: number; purchasedTrafficGb?: number; currentProductSnapshot?: Record<string, unknown>; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number } | null }
+// Plan figures are derived on the server from planSnapshot, the user's only plan source.
+type Subscription = { status: string; lineGroupId?: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; planSnapshot?: PlanSnapshot | null; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number } | null }
 type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; nodeUsage: AccountNodeUsage; stale?: boolean; error?: string }
 type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
 type IpInfo = { ip: string; asn?: number; asOrganization?: string; country?: string; countryCode?: string; region?: string; regionCode?: string; city?: string; timezone?: string; fraudScore?: number; isResidential?: boolean; isBroadcast?: boolean }
@@ -230,7 +232,7 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
   const { subscription, status } = plan
   // Plan-only figures: traffic packs and admin gifts show in the traffic usage card, not here.
   const planTrafficGb = subscription?.planTrafficBytes ? Number((subscription.planTrafficBytes / 1024 ** 3).toFixed(2)) : 0
-  const planQuota = subscription?.unlimited ? "不限" : planTrafficGb ? `${planTrafficGb}GB${subscription?.duration === "lifetime" ? "" : "/月"}` : subscription?.traffic || "-"
+  const planQuota = subscription?.planSnapshot?.trafficBytes === null ? "不限" : planTrafficGb ? `${planTrafficGb}GB${subscription?.duration === "lifetime" ? "" : "/月"}` : subscription?.traffic || "-"
   const canBuyHomeIp = account.homeIp?.enabled && status === "active" && subscription?.duration !== "lifetime"
   const homeIpStartingPrice = Math.min(...(account.homeIp?.regions || []).map(region => Number(region.price)).filter(Number.isFinite))
   const expiresAtTime = Date.parse(subscription?.expiresAt || "")
@@ -241,8 +243,8 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
 
   // Current or expired plan as "NAME (period-traffic/月)"; the period and traffic part is set smaller.
   const shownPlan = subscription ?? account.subscription
-  // The headline name is the V2 line group, not the legacy tier in activeGroup.
-  const nameParts = shownPlan ? { ...purchasedPlanParts(shownPlan, [], shownPlan.planTrafficBytes || null), name: shownPlan.lineGroupId?.toUpperCase() || "-" } : null
+  // The headline name is the snapshot's line group; period and traffic come from the same snapshot.
+  const nameParts = shownPlan ? { ...planSnapshotParts(shownPlan.planSnapshot), name: shownPlan.lineGroupId?.toUpperCase() || "-" } : null
   const planDetail = nameParts ? `${nameParts.duration}-${nameParts.traffic}${nameParts.perMonth ? "/月" : ""}` : ""
   // No card title: plan name and grey facts share the top row; the headline figure sits bottom-left, the action bottom-right.
   return <BentoCard id="subscription" tone="yellow" span={span} rowSpan={rowSpan} className="scroll-mt-16">
@@ -272,13 +274,13 @@ const UNLIMITED_TRAFFIC_DISPLAY_GB = 9999
 
 function TrafficUsageCard({ plan, trafficError, nextResetAt, span, rowSpan }: { plan: PlanView; trafficLoading: boolean; trafficError: string; nextResetAt?: string; span: BentoSpan; rowSpan: BentoRowSpan }) {
   const { subscription, usedGb, totalGb, trafficTotal, trafficUsed } = plan
-  const limitGb = subscription?.unlimited ? UNLIMITED_TRAFFIC_DISPLAY_GB : totalGb
+  const limitGb = subscription?.planSnapshot?.trafficBytes === null ? UNLIMITED_TRAFFIC_DISPLAY_GB : totalGb
   // The meter carries its own heading and remaining amount, so the card has no title row.
   return <BentoCard span={span} rowSpan={rowSpan}>
     <div className="grid flex-1 content-end gap-2">
       {usedGb == null || !limitGb ? null : <UsageMeter label="流量使用" unit="GB" decimals={1} limit={limitGb} segments={[{ id: "used", label: "已用", value: usedGb }]} />}
       {trafficError ? <p className="truncate text-xs text-muted-foreground" title={trafficError}>流量同步暂不可用：{trafficError}</p>
-        : <p className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground"><span className="tabular-nums">已用 {trafficUsed} / {subscription?.unlimited ? `${UNLIMITED_TRAFFIC_DISPLAY_GB} GB` : trafficTotal}</span>{nextResetAt ? <span>{formatDate(nextResetAt)} 重置</span> : null}</p>}
+        : <p className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground"><span className="tabular-nums">已用 {trafficUsed} / {subscription?.planSnapshot?.trafficBytes === null ? `${UNLIMITED_TRAFFIC_DISPLAY_GB} GB` : trafficTotal}</span>{nextResetAt ? <span>{formatDate(nextResetAt)} 重置</span> : null}</p>}
     </div>
   </BentoCard>
 }

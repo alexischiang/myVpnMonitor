@@ -61,6 +61,20 @@ export type PoolCompatibility = {
   } | null
 }
 
+/** A user's plan as bound from an order and kept in step with its product by buyer sync. */
+export type PlanSnapshot = {
+  version: 2
+  productId: string
+  productType: "recurring_plan" | "lifetime_plan"
+  periodId: string | null
+  lineGroupId: string | null
+  name: string
+  durationDays: number | null
+  trafficBytes: number | null
+  trafficSteps?: number
+  deviceLimit: number | null
+}
+
 export type User = {
   id: string
   customerID: number
@@ -109,38 +123,15 @@ export type User = {
     nodes: Array<{ key: string; name: string; multiplier: number; rawBytes: number; weightedBytes: number }>
   }
   subscription?: Subscription
-  activeGroup?: string
   deviceLimit?: number
   isBusiness?: boolean
   isFamilyFriend?: boolean
   isSuperAccount?: boolean
-  unlimited?: boolean
-  trafficTier?: number
-  purchasedTrafficGb?: number
-  currentProductId?: string
-  currentOptionId?: string
   currentProductOrderId?: string
   currentProductSource?: string
   currentProductBoundAt?: string
-  currentProductSnapshot?: Record<string, unknown>
-  productCatalogVersion?: number
-  v2ProductId?: string
-  v2PeriodId?: string | null
-  v2LineGroupId?: string | null
-  v2ProductSnapshot?: {
-    version: 2
-    productId: string
-    productType: "recurring_plan" | "lifetime_plan"
-    periodId: string | null
-    lineGroupId: string | null
-    name: string
-    durationDays: number | null
-    trafficBytes: number | null
-    deviceLimit: number | null
-  }
-  v2MigrationId?: string
-  v2MigratedAt?: string
-  legacyProductBinding?: { productId: string; optionId: string; snapshot: Record<string, unknown> | null }
+  /** The user's plan: the only source of product, period, traffic, device limit and line group. */
+  v2ProductSnapshot?: PlanSnapshot
   vipLevel?: string
   duration?: string
   purchasedAt?: string

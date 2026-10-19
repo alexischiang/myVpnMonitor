@@ -86,7 +86,7 @@ export function UsersPage() {
   const [batchGiftLoading, setBatchGiftLoading] = React.useState(false)
   const [batchGiftSaving, setBatchGiftSaving] = React.useState(false)
   const currentPool = subscriptions.find(item => item.id === poolUser?.subscriptionId)
-  const planOptions = React.useMemo(() => [...new Set(users.map(item => item.v2LineGroupId).filter((value): value is string => Boolean(value)))].sort(), [users])
+  const planOptions = React.useMemo(() => [...new Set(users.map(item => item.v2ProductSnapshot?.lineGroupId).filter((value): value is string => Boolean(value)))].sort(), [users])
   const onlineGuidsByEmail = React.useMemo(() => {
     const result: Record<string, string[]> = {}
     for (const [guid, emails] of Object.entries(presence?.onlineByGuid || {})) {
@@ -108,7 +108,7 @@ export function UsersPage() {
   }, [activityFilter, onlineGuidsByEmail, presence])
   const filteredUsers = React.useMemo(() => users.filter(item =>
     (accountFilter === "all" || (item.accountStatus || "unclaimed") === accountFilter) &&
-    (planFilter === "all" || item.v2LineGroupId === planFilter) &&
+    (planFilter === "all" || item.v2ProductSnapshot?.lineGroupId === planFilter) &&
     (statusFilter === "all" || userStatus(item) === statusFilter) &&
     matchesActivity(item)
   ), [users, accountFilter, planFilter, statusFilter, matchesActivity])
@@ -301,7 +301,7 @@ export function UsersPage() {
         <div className="flex shrink-0 items-center gap-1">{item.registeredOnly ? null : <VipBadge level={item.vipLevel} />}<StatusBadge status={status}>{userStatusLabels[status]}</StatusBadge></div>
       </div>
       <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground tabular-nums">
-        <p className="min-w-0 truncate">{item.registeredOnly ? `注册 ${formatDate(item.createdAt)}` : `到期 ${formatDate(item.expiresAt)}`}{item.userId ? ` · #${item.customerID}` : ""}{item.registeredOnly ? "" : ` · ${(item.v2LineGroupId || "-").toUpperCase()}`}</p>
+        <p className="min-w-0 truncate">{item.registeredOnly ? `注册 ${formatDate(item.createdAt)}` : `到期 ${formatDate(item.expiresAt)}`}{item.userId ? ` · #${item.customerID}` : ""}{item.registeredOnly ? "" : ` · ${(item.v2ProductSnapshot?.lineGroupId || "-").toUpperCase()}`}</p>
         {item.registeredOnly ? null : <p className="shrink-0 font-medium text-foreground">{formatMoney(item.actualPaid)}</p>}
       </div>
       {xui.available || item.subscription ? <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -336,7 +336,7 @@ export function UsersPage() {
       meta: { label: "流量使用" },
       cell: ({ row }) => row.original.xuiWeightedTraffic?.totalBytes
         ? <TrafficProgress remaining={row.original.xuiWeightedTraffic.remainingBytes ?? 0} total={row.original.xuiWeightedTraffic.totalBytes} />
-        : row.original.unlimited ? "不限" : "-",
+        : row.original.v2ProductSnapshot?.trafficBytes === null ? "不限" : "-",
     },
     {
       id: "dailyTraffic",
@@ -346,10 +346,11 @@ export function UsersPage() {
       cell: ({ row }) => { const value = row.getValue<number>("dailyTraffic"); return value < 0 ? "-" : formatBytes(value) },
     },
     {
-      accessorKey: "v2LineGroupId",
+      id: "lineGroupId",
+      accessorFn: row => row.v2ProductSnapshot?.lineGroupId || "",
       header: DataTableColumnHeader({ title: "套餐等级" }),
       meta: { label: "套餐等级" },
-      cell: ({ row }) => row.original.v2LineGroupId ? <Badge>{row.original.v2LineGroupId.toUpperCase()}</Badge> : "-",
+      cell: ({ row }) => row.original.v2ProductSnapshot?.lineGroupId ? <Badge>{row.original.v2ProductSnapshot.lineGroupId.toUpperCase()}</Badge> : "-",
     },
     {
       accessorKey: "expiresAt",
@@ -468,7 +469,7 @@ export function UsersPage() {
                   <dt className="text-muted-foreground">当前池</dt><dd className="min-w-0">{currentPool ? <><span className="block font-medium text-foreground">{currentPool.serviceProvider || currentPool.provider || "Provider"}</span><span className="block break-all text-muted-foreground">{currentPool.email || currentPool.url}</span></> : "未绑定"}</dd>
                   <dt className="text-muted-foreground">池到期</dt><dd>{currentPool ? formatDate(currentPool.metrics?.expireAt) : "-"}</dd>
                 </dl></Card>
-            <SubscriptionPoolSelect id="manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={poolUser?.isSuperAccount ? undefined : poolUser?.activeGroup} />
+            <SubscriptionPoolSelect id="manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={poolUser?.isSuperAccount ? undefined : poolUser?.v2ProductSnapshot?.lineGroupId || undefined} />
             <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary">取消</Button></DialogClose><ActionButton type="submit" disabled={poolSaving || !poolId || poolId === poolUser?.subscriptionId} label="确认换池" pending={poolSaving} /></div>
           </form></DialogContent>
       </Dialog>
@@ -483,7 +484,7 @@ export function UsersPage() {
                 </div>
               </Field>
               {giftExpiresAt ? <Input label="赠送后到期日" id="gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /> : null}
-              {giftExpiresAt ? <SubscriptionPoolSelect id="gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={giftUser?.isSuperAccount ? undefined : giftUser?.activeGroup} description={giftMessage} /> : null}
+              {giftExpiresAt ? <SubscriptionPoolSelect id="gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={giftUser?.isSuperAccount ? undefined : giftUser?.v2ProductSnapshot?.lineGroupId || undefined} description={giftMessage} /> : null}
             </FieldGroup>
             <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary">取消</Button></DialogClose>{giftExpiresAt ? <ActionButton type="submit" disabled={giftSaving || !giftPoolId} label="确认赠送" pendingLabel="赠送中..." pending={giftSaving} /> : <ActionButton type="button" onClick={previewGift} label="推荐订阅池" pendingLabel="计算中..." pending={giftPreviewing} />}</div>
           </form></DialogContent>

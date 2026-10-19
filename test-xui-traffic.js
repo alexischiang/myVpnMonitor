@@ -32,7 +32,8 @@ assert.deepStrictEqual(directionalDelta({ up: 10, down: 20 }, null), { up: 0, do
 assert.strictEqual(isPeriodicPlan({ duration: "monthly" }), true);
 assert.strictEqual(isPeriodicPlan({ duration: "yearly" }), true);
 assert.strictEqual(isPeriodicPlan({ duration: "lifetime" }), false);
-assert.strictEqual(isPeriodicPlan({ duration: "monthly", unlimited: true }), false);
+assert.strictEqual(isPeriodicPlan({ duration: "monthly", v2ProductSnapshot: { trafficBytes: null } }), false, "an unlimited snapshot never resets");
+assert.strictEqual(isPeriodicPlan({ duration: "monthly", unlimited: true, v2ProductSnapshot: { trafficBytes: 100 } }), true, "a stray unlimited field is ignored");
 
 // cycleStartMs: fixed 30-day steps from purchase, regardless of plan length
 const purchase = Date.UTC(2026, 0, 1); // 2026-01-01

@@ -191,4 +191,41 @@ function lineGroupCoverage(group, inbounds = []) {
   return { regions, networkLevels: NETWORK_LEVEL_ORDER.filter(level => levels.has(level)) };
 }
 
-module.exports = { GB, DURATION_BY_DAYS, BOOLEAN_COMPARE_VALUES, trafficCustomizationCents, optionId, visibleProducts, resolvePurchase, resolveCompareValues, lineGroupCoverage };
+// Plan attributes that follow the product after purchase. Duration, expiry and price stay as bought.
+const PLAN_ENTITLEMENT_FIELDS = Object.freeze(["name", "deviceLimit", "trafficBytes", "lineGroupId"]);
+
+// What a holder of a plan snapshot gets under the product's current settings. The snapshot's own
+// period and traffic steps are kept, so a period that is no longer for sale still applies; returns
+// { skip } when the bought period or traffic steps no longer exist.
+function planEntitlement(product, snapshot = {}) {
+  if (product.type === "addon") return { skip: "附加服务没有套餐权益。" };
+  let trafficBytes = product.trafficBytes;
+  let deviceLimit = product.deviceLimit;
+  if (product.type === "recurring_plan") {
+    const period = product.periods.find(item => item.id === snapshot.periodId);
+    if (!period) return { skip: `周期规格 ${snapshot.periodId || "-"} 已删除。` };
+    const steps = Math.max(0, Number(snapshot.trafficSteps) || 0);
+    trafficBytes = period.trafficBytes;
+    deviceLimit = period.deviceLimit;
+    if (steps > 0 && trafficBytes !== null) {
+      const stepBytes = Number(product.trafficCustomization?.stepBytes);
+      if (!(stepBytes > 0)) return { skip: "已购流量档位的每档流量已删除。" };
+      trafficBytes += steps * stepBytes;
+    }
+  }
+  return {
+    name: product.name,
+    deviceLimit: Math.max(0, Number(deviceLimit) || 0),
+    trafficBytes: trafficBytes === null || trafficBytes === undefined ? null : Math.max(0, Number(trafficBytes) || 0),
+    lineGroupId: product.lineGroupId || null
+  };
+}
+
+// Entitlement fields whose value differs between a plan snapshot and the product's current settings.
+function planEntitlementChanges(snapshot = {}, entitlement = {}) {
+  return PLAN_ENTITLEMENT_FIELDS
+    .filter(field => (snapshot[field] ?? null) !== (entitlement[field] ?? null))
+    .map(field => ({ field, before: snapshot[field] ?? null, after: entitlement[field] ?? null }));
+}
+
+module.exports = { GB, DURATION_BY_DAYS, BOOLEAN_COMPARE_VALUES, PLAN_ENTITLEMENT_FIELDS, trafficCustomizationCents, optionId, visibleProducts, resolvePurchase, resolveCompareValues, lineGroupCoverage, planEntitlement, planEntitlementChanges };
