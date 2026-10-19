@@ -12,6 +12,7 @@ import { DataTableCard } from "@/components/features/data-table-card"
 import { type ListFilter } from "@/components/features/list-filters"
 import { EmptyState, PageHeader } from "@/components/features/shared"
 import { ConfirmDialog } from "@/components/features/confirm-dialog"
+import { ProductBuyerSyncButton } from "@/components/features/product-buyer-sync"
 import { cn } from "@/lib/utils"
 import type { AddonHandler, CatalogV2AddonCategory, CatalogV2CompareAttribute, CatalogV2LineGroup, CatalogV2Period, CatalogV2Product } from "@/types"
 import { builtInCompareRows, compareTrafficLabel, networkLevelSummary, regionsSummary, trafficCustomizationSummary } from "@/components/features/plan-compare-rows"
@@ -379,13 +380,15 @@ export function CatalogV2ProductDetailPage() {
   const isNew = id === "new"
   const navigate = useNavigate()
   const [product, setProduct] = React.useState<CatalogV2Product | null>(isNew ? defaultProduct() : null)
+  // The product as last loaded or saved, so the buyer sync can warn about edits it will not include.
+  const [savedProduct, setSavedProduct] = React.useState<CatalogV2Product | null>(null)
   const [groups, setGroups] = React.useState<CatalogV2LineGroup[]>([])
   const [addonCategories, setAddonCategories] = React.useState<CatalogV2AddonCategory[]>([])
   const [compareAttributes, setCompareAttributes] = React.useState<CatalogV2CompareAttribute[]>([])
   const [saving, setSaving] = React.useState(false)
   const [confirmDelete, setConfirmDelete] = React.useState(false)
   const [error, setError] = React.useState("")
-  React.useEffect(() => { Promise.all([fetchJson<CatalogV2Product[]>("/api/catalog-v2/products"), fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups"), fetchJson<CatalogV2AddonCategory[]>("/api/catalog-v2/addon-categories"), fetchJson<CatalogV2CompareAttribute[]>("/api/catalog-v2/compare-attributes")]).then(([products, lineGroups, categories, attributes]) => { setGroups(lineGroups); setAddonCategories(categories); setCompareAttributes(attributes); if (!isNew) setProduct(products.find(item => item.id === id) || null) }).catch(error => setError(error.message)) }, [id, isNew])
+  React.useEffect(() => { Promise.all([fetchJson<CatalogV2Product[]>("/api/catalog-v2/products"), fetchJson<CatalogV2LineGroup[]>("/api/catalog-v2/line-groups"), fetchJson<CatalogV2AddonCategory[]>("/api/catalog-v2/addon-categories"), fetchJson<CatalogV2CompareAttribute[]>("/api/catalog-v2/compare-attributes")]).then(([products, lineGroups, categories, attributes]) => { setGroups(lineGroups); setAddonCategories(categories); setCompareAttributes(attributes); if (!isNew) { const found = products.find(item => item.id === id) || null; setProduct(found); setSavedProduct(found) } }).catch(error => setError(error.message)) }, [id, isNew])
   function update(patch: Partial<CatalogV2Product>) { setProduct(current => current ? { ...current, ...patch } : current) }
   async function save() {
     if (!product) return
@@ -393,7 +396,7 @@ export function CatalogV2ProductDetailPage() {
     try {
       const saved = isNew ? await postJson<CatalogV2Product>("/api/catalog-v2/products", product) : await putJson<CatalogV2Product>(`/api/catalog-v2/products/${encodeURIComponent(id)}`, product)
       toast({ type: "success", title: "V2 商品已保存" })
-      if (isNew) navigate(`/catalog-v2/products/${encodeURIComponent(saved.id)}`, { replace: true }); else setProduct(saved)
+      if (isNew) navigate(`/catalog-v2/products/${encodeURIComponent(saved.id)}`, { replace: true }); else { setProduct(saved); setSavedProduct(saved) }
     } catch (error) { toast({ type: "error", title: error instanceof Error ? error.message : "保存失败" }) } finally { setSaving(false) }
   }
   // Runs from the confirm dialog; a failure is reported and rethrown so the dialog stays open.
@@ -406,7 +409,7 @@ export function CatalogV2ProductDetailPage() {
       breadcrumbs={[{ label: "商品管理", href: "/catalog-v2", onClick: event => { event.preventDefault(); navigate("/catalog-v2") } }, { label: isNew ? "新建 V2 商品" : product.name }]}
       title={isNew ? "新建 V2 商品" : product.name}
       description="保存后会直接用于商城、支付交付和 3x-ui 权限同步。"
-      actions={<><Button variant="secondary" asChild><Link to="/catalog-v2"><ArrowLeft />返回</Link></Button>{isNew ? null : <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={saving}><Trash2 />删除</Button>}<ActionButton onClick={() => void save()} label="保存商品" pending={saving} /></>}
+      actions={<><Button variant="secondary" collapse asChild><Link to="/catalog-v2"><ArrowLeft />返回</Link></Button>{isNew || !savedProduct || savedProduct.type === "addon" ? null : <ProductBuyerSyncButton productId={savedProduct.id} productName={savedProduct.name} groups={groups} dirty={JSON.stringify(product) !== JSON.stringify(savedProduct)} />}{isNew ? null : <Button variant="danger" collapse onClick={() => setConfirmDelete(true)} disabled={saving}><Trash2 />删除</Button>}<ActionButton onClick={() => void save()} label="保存商品" pending={saving} /></>}
     />
     <Card title="基础信息" description="商品 ID 创建后不可修改，只允许小写字母、数字和短横线。"><div className="grid gap-6">
       <div className="grid items-start gap-4 md:grid-cols-2">

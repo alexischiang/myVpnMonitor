@@ -150,7 +150,7 @@ export function SalesAnalyticsPage({ profitabilityView = false }: { profitabilit
     const usersById = new Map(users.map(user => [user.id, user]))
     const manualSales = unlinkedSalesBills(orders, bills).map(bill => {
       // ponytail: legacy bills lack product snapshots; use the current group until the ledger stores historical product IDs.
-      const group = usersById.get(bill.userId || "")?.activeGroup || ""
+      const group = usersById.get(bill.userId || "")?.v2ProductSnapshot?.lineGroupId || ""
       return {
         id: `bill:${bill.id}`,
         userId: bill.userId,

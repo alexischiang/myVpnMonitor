@@ -1,7 +1,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const { salesAmount, salesDateKey, salesDateRange, salesMonthRange, unlinkedSalesBills } = require("./src/components/features/sales-analytics-logic.ts");
-const { orderProductLabel, purchasedPlanName } = require("./src/utils.ts");
+const { orderProductLabel, orderPlanName, planSnapshotName, planSnapshotOptionId } = require("./src/utils.ts");
 assert.strictEqual(orderProductLabel({ planName: "ChatGPT PLUS 直充1个月", optionLabel: "ChatGPT PLUS 直充1个月" }), "ChatGPT PLUS 直充1个月", "add-ons use the product name as option label");
 assert.strictEqual(orderProductLabel({ planName: "BASIC", optionLabel: "30 天" }), "BASIC / 30 天");
 assert.strictEqual(orderProductLabel({ planName: "BASIC", optionLabel: "BASIC 30 天" }, " · "), "BASIC 30 天");
@@ -288,12 +288,15 @@ assert.strictEqual(isXuiTimeoutError(Object.assign(new Error("request failed"), 
 assert.strictEqual(isXuiTimeoutError(new Error("ordinary failure")), false);
 
 const gib = 1024 ** 3;
-assert.strictEqual(purchasedPlanName({ currentProductSnapshot: { planName: "BASIC", duration: "yearly", trafficGb: 50 } }), "BASIC-360天-50G");
+assert.strictEqual(planSnapshotName({ name: "BASIC", productId: "basic", productType: "recurring_plan", periodId: "360d", durationDays: 360, trafficBytes: 50 * gib }), "BASIC-360天-50G");
+assert.strictEqual(planSnapshotName({ name: "亲友", productId: "friends", productType: "lifetime_plan", periodId: null, durationDays: null, trafficBytes: null }), "亲友-不限时-无限流量");
+assert.deepStrictEqual([planSnapshotOptionId({ productId: "pro", periodId: "30d" }), planSnapshotOptionId({ productId: "life", periodId: null }), planSnapshotName(null)], ["v2:pro:30d", "v2:life", "-"]);
+assert.deepStrictEqual([orderPlanName({ planName: "PRO", optionLabel: "30 天", v2: { name: "PRO", productId: "pro", productType: "recurring_plan", durationDays: 30, trafficBytes: 100 * gib } }), orderPlanName({ planName: "旧套餐", optionLabel: "年付" }), orderPlanName(null)], ["PRO-30天-100G", "旧套餐 / 年付", "-"]);
 assert.deepStrictEqual(["initial", "extend", "replace"].map(billTypeForPurchaseAction), ["initial", "renewal", "replacement"]);
 assert.strictEqual(salesAmount({ realCashAmount: 40, totalAmount: 50, amount: 30 }), 40);
 assert.deepStrictEqual(xuiDirectionalTrafficByUser([{ originNodeGuid: "hk", clientStats: [{ email: "USER", up: 10, down: 20 }] }]), { user: { hk: { inBytes: 10, outBytes: 20 } } });
-assert.deepStrictEqual(xuiTrafficSamples({ user: { hk: { inBytes: 10, outBytes: 20 } } }, new Map([["user", { id: "u1", userId: "U1", activeGroup: "pro" }]]), { hk: "Hong Kong" }), [{ email: "user", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "", nodeName: "Hong Kong", up: 10, down: 20 }]);
-assert.strictEqual(xuiTrafficSamples({ user: { hk: { inBytes: 10, outBytes: 20 } } }, new Map([["user", { id: "u1", userId: "U1", productCatalogVersion: 2, v2ProductId: "pro-v2" }]]), { hk: "Hong Kong" })[0].planId, "pro-v2");
+assert.deepStrictEqual(xuiTrafficSamples({ user: { hk: { inBytes: 10, outBytes: 20 } } }, new Map([["user", { id: "u1", userId: "U1" }]]), { hk: "Hong Kong" }), [{ email: "user", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "", nodeName: "Hong Kong", up: 10, down: 20 }]);
+assert.strictEqual(xuiTrafficSamples({ user: { hk: { inBytes: 10, outBytes: 20 } } }, new Map([["user", { id: "u1", userId: "U1", v2ProductSnapshot: { productId: "pro-v2" } }]]), { hk: "Hong Kong" })[0].planId, "pro-v2");
 assert.deepStrictEqual(normalizeSalesTrafficState({ costConfigs: { hk: [2] }, nodeNames: { hk: "Current" } }, { costConfigs: { hk: [1], sg: [3] }, nodeNames: { hk: "Legacy", sg: "Singapore" } }), { costConfigs: { hk: [2], sg: [3] }, nodeNames: { hk: "Current", sg: "Singapore" } });
 assert.ok(!fs.readFileSync(require.resolve("./server"), "utf8").includes("profit-traffic:"));
 assert.deepStrictEqual(normalizeNodeCostConfig({ purchaseDate: "2026-09-15", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" }), { purchaseDate: "2026-09-15", monthlyFee: 100, trafficQuotaGiB: 100, trafficMode: "out_only" });
@@ -363,7 +366,7 @@ assert.deepStrictEqual(adminReferralDetails(
   rewards: [{ id: "reward", sourceOrderId: "order", orderNumber: "ORDER-1", inviteeEmail: "invitee@example.com", baseAmount: 50, rate: 10, rewardAmount: 5, status: "available", availableAt: "2026-08-29T01:00:00.000Z" }]
 });
 assert.deepStrictEqual(publicAccountNodeStatus(
-  { productCatalogVersion: 2, v2LineGroupId: "line-basic", activeGroup: "basic", xuiExtraInboundIds: [3] },
+  { v2ProductSnapshot: { lineGroupId: "line-basic" }, xuiExtraInboundIds: [3] },
   {
     configured: true,
     checkedAt: "2026-09-08T00:00:00.000Z",
@@ -391,7 +394,6 @@ const missingXuiUser = { xuiClientPresent: true, xuiLastError: "" };
 assert.deepStrictEqual(markMissingXuiClients(new Map([["missing@example.com", missingXuiUser]]), new Set(), "2026-08-22T00:00:00.000Z"), [missingXuiUser]);
 assert.deepStrictEqual(missingXuiUser, { xuiClientPresent: false, xuiClientMissingAt: "2026-08-22T00:00:00.000Z", xuiLastError: "3x-ui Client 已被删除或不存在。" });
 const trafficPackUser = {
-  productCatalogVersion: 2,
   v2ProductSnapshot: { trafficBytes: 700 * gib },
   xuiTrafficCycleKey: "cycle-1",
   xuiLastTraffic: { usedBytes: 55 * gib, remainingBytes: 645 * gib, totalBytes: 700 * gib },
@@ -411,7 +413,7 @@ const renewalProduct = {
   trafficCustomization: { enabled: true, stepBytes: 10 * gib, stepPriceCents: 200, maxSteps: 3 },
   periods: [{ id: "90d", durationDays: 90, trafficBytes: 100 * gib, deviceLimit: 3, priceCents: 3000, isEnabled: true }]
 };
-const expiredRenewalUser = { productCatalogVersion: 2, expiresAt: "2026-01-01T00:00:00.000Z", v2ProductSnapshot: { productId: "renew-pro", periodId: "90d", trafficSteps: 2 } };
+const expiredRenewalUser = { expiresAt: "2026-01-01T00:00:00.000Z", v2ProductSnapshot: { productId: "renew-pro", periodId: "90d", trafficSteps: 2 } };
 assert.deepStrictEqual(planRenewalOffer(expiredRenewalUser, [renewalProduct]), { optionId: "v2:renew-pro:90d", trafficTier: 3 });
 assert.strictEqual(planRenewalOffer({ ...expiredRenewalUser, expiresAt: "2999-01-01T00:00:00.000Z" }, [renewalProduct]), null);
 assert.strictEqual(planRenewalOffer(expiredRenewalUser, [{ ...renewalProduct, isForSale: false }]), null);
@@ -419,7 +421,6 @@ assert.strictEqual(planRenewalOffer(expiredRenewalUser, [{ ...renewalProduct, pe
 assert.strictEqual(planRenewalOffer({ ...expiredRenewalUser, v2ProductSnapshot: undefined }, [renewalProduct]), null);
 
 const linkedXuiUser = {
-  productCatalogVersion: 2,
   v2ProductSnapshot: { trafficBytes: 50 * gib },
   xuiTrafficLimitBytes: 80 * gib,
   purchasedAt: "2026-08-22T00:00:00.000Z"
@@ -428,12 +429,11 @@ initializeXuiTrafficSchedule(linkedXuiUser, { totalGB: 900 * gib }, "link", Date
 assert.strictEqual(linkedXuiUser.xuiTrafficLimitBytes, 50 * gib, "an unexplained cached quota must not override product entitlements");
 assert.strictEqual(linkedXuiUser.xuiNextTrafficResetAt, "2026-10-21T00:00:00.000Z", "linking schedules the next reset on the 30-day cycle from purchase, not a calendar day");
 assert.strictEqual(linkedXuiUser.xuiTrafficResetAnchorDay, undefined, "no monthly anchor day is stored");
-const linkedLifetimeUser = { productCatalogVersion: 2, v2ProductSnapshot: { trafficBytes: 50 * gib }, duration: "lifetime", purchasedAt: "2026-08-22T00:00:00.000Z" };
+const linkedLifetimeUser = { v2ProductSnapshot: { trafficBytes: 50 * gib }, duration: "lifetime", purchasedAt: "2026-08-22T00:00:00.000Z" };
 initializeXuiTrafficSchedule(linkedLifetimeUser, {}, "link", Date.parse("2026-09-22T00:00:00.000Z"));
 assert.strictEqual(linkedLifetimeUser.xuiNextTrafficResetAt, "", "lifetime plans never reset");
 
 const linkedXuiUserWithAdminGift = {
-  productCatalogVersion: 2,
   v2ProductSnapshot: { trafficBytes: 50 * gib },
   xuiTrafficLimitBytes: 900 * gib,
   xuiAdminGiftBytes: 500 * gib,
@@ -449,13 +449,12 @@ initializeXuiTrafficSchedule(linkedXuiUserWithAdminGift, { totalGB: 900 * gib },
 assert.strictEqual(linkedXuiUserWithAdminGift.xuiTrafficLimitBytes, 80 * gib, "only the product and explicit admin gift may contribute to quota");
 
 const linkedXuiUserWithoutManagedQuota = {
-  productCatalogVersion: 2,
   v2ProductSnapshot: { trafficBytes: 50 * gib },
   purchasedAt: "2026-08-22T00:00:00.000Z"
 };
 initializeXuiTrafficSchedule(linkedXuiUserWithoutManagedQuota, { totalGB: 900 * gib }, "link", Date.parse("2026-09-22T00:00:00.000Z"));
 assert.strictEqual(linkedXuiUserWithoutManagedQuota.xuiTrafficLimitBytes, 50 * gib, "a missing local quota must be derived from the app plan snapshot, not 3x-ui");
-assert.strictEqual(xuiTrafficLimitBytes({ productCatalogVersion: 2, v2ProductSnapshot: { trafficBytes: 50 * gib } }, { totalGB: 900 * gib }), 50 * gib);
+assert.strictEqual(xuiTrafficLimitBytes({ v2ProductSnapshot: { trafficBytes: 50 * gib } }, { totalGB: 900 * gib }), 50 * gib);
 assert.throws(() => xuiTrafficLimitBytes({}, { totalGB: 900 * gib }), /App 本地缺少可验证的套餐流量权益/);
 
 assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: 20 }).status, "high");
@@ -475,11 +474,12 @@ assert.deepStrictEqual(batchItems([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
 assert.strictEqual(publicInviterLabel({ customerID: 10001 }, { userId: "Alice" }), "Alice");
 assert.strictEqual(publicInviterLabel({ customerID: 10001 }, { userId: "alice@example.com" }), "alice@example.com");
 
-const rollbackUser = { group: "basic", activeGroup: "basic", duration: "quarterly", expiresAt: "2026-12-01T00:00:00.000Z", currentOptionId: "basic-90", xuiTrafficPackBytes: gib, xuiTrafficPackOrderIds: ["pack-1"] };
+const rollbackUser = { v2ProductSnapshot: { productId: "basic", periodId: "90d", lineGroupId: "basic" }, duration: "quarterly", expiresAt: "2026-12-01T00:00:00.000Z", xuiTrafficPackBytes: gib, xuiTrafficPackOrderIds: ["pack-1"] };
 const rollbackState = planChangeState(rollbackUser);
-Object.assign(rollbackUser, { group: "pro", activeGroup: "pro", duration: "lifetime", expiresAt: "9999-12-31T00:00:00.000Z", currentOptionId: "pro-lifetime", xuiTrafficPackBytes: 0, xuiTrafficPackOrderIds: [] });
+Object.assign(rollbackUser, { v2ProductSnapshot: { productId: "pro-lifetime", periodId: null, lineGroupId: "pro" }, duration: "lifetime", expiresAt: "9999-12-31T00:00:00.000Z", xuiTrafficPackBytes: 0, xuiTrafficPackOrderIds: [] });
 restorePlanChangeState(rollbackUser, rollbackState);
-assert.deepStrictEqual([rollbackUser.activeGroup, rollbackUser.duration, rollbackUser.expiresAt, rollbackUser.currentOptionId, rollbackUser.xuiTrafficPackBytes, rollbackUser.xuiTrafficPackOrderIds], ["basic", "quarterly", "2026-12-01T00:00:00.000Z", "basic-90", gib, ["pack-1"]]);
+assert.deepStrictEqual([rollbackUser.v2ProductSnapshot, rollbackUser.duration, rollbackUser.expiresAt, rollbackUser.xuiTrafficPackBytes, rollbackUser.xuiTrafficPackOrderIds], [{ productId: "basic", periodId: "90d", lineGroupId: "basic" }, "quarterly", "2026-12-01T00:00:00.000Z", gib, ["pack-1"]]);
+assert.ok(!("group" in rollbackState) && !("unlimited" in rollbackState) && !("currentOptionId" in rollbackState), "plan rollback state holds only the snapshot and purchase fields");
 
 const legacyCashValueUser = {
   id: "legacy-user",
@@ -579,10 +579,10 @@ assert.strictEqual(calculateGiftExpiry({}, 0, new Date("2026-07-15T00:00:00.000Z
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "yearly").slice(0, 10), "2027-05-23");
 assert.strictEqual(checkoutTaxAmount(33.35), 1);
 // User quotas come only from the V2 snapshot; legacy tier fields no longer imply any traffic.
-assert.strictEqual(planTrafficBytes({ activeGroup: "basic", duration: "monthly", purchasedTrafficGb: 150 }), 0);
+assert.strictEqual(planTrafficBytes({ duration: "monthly" }), 0, "no snapshot means no plan quota");
 assert.strictEqual(planTrafficBytes({ v2ProductSnapshot: { trafficBytes: null } }), 0);
 assert.strictEqual(planTrafficBytes({ v2ProductSnapshot: { trafficBytes: 150 * gib } }), 150 * gib);
-assert.throws(() => xuiTrafficLimitBytes({ activeGroup: "basic", duration: "monthly" }), /App 本地缺少可验证的套餐流量权益/);
+assert.throws(() => xuiTrafficLimitBytes({ duration: "monthly" }), /App 本地缺少可验证的套餐流量权益/);
 const xuiClient = normalizeXuiClientResult({ client: { email: "self@test", totalGB: 1000 }, inboundIds: [3], traffic: { up: 100, down: 250 } });
 assert.deepStrictEqual(normalizeXuiClientResult({ client: { email: "nested@test", inboundIds: [4, 5] } }).inboundIds, [4, 5]);
 assert.deepStrictEqual(normalizeXuiConnectedIps({ hk: { "SELF@test": [{ ip: "1.2.3.4" }, { ip: "1.2.3.4" }] }, jp: { "self@test": [{ ip: "5.6.7.8" }] } }, "self@test"), ["1.2.3.4", "5.6.7.8"]);
@@ -856,9 +856,9 @@ proxy-groups:
   - { name: ♻️ 自动选择, type: url-test, proxies: [node] }
 `), { showUserInfo: false }, [{ tag: "default", nodes: ["notice"] }]).toString("utf8"));
 assert.deepStrictEqual(excludedPlaceholderGroups["proxy-groups"].map(group => group.proxies), [["🚀 节点选择"], ["♻️ 自动选择"], ["node"]]);
-const userInfoConfig = require("js-yaml").load(injectPlaceholderNodes(Buffer.from("proxies: []\n"), { lineType: "self_hosted", activeGroup: "basic", v2LineGroupId: "pro", vipSpend: 400, xuiLastTraffic: { remainingBytes: 25.5 * gib } }, []).toString("utf8"));
+const userInfoConfig = require("js-yaml").load(injectPlaceholderNodes(Buffer.from("proxies: []\n"), { lineType: "self_hosted", v2ProductSnapshot: { lineGroupId: "pro" }, vipSpend: 400, xuiLastTraffic: { remainingBytes: 25.5 * gib } }, []).toString("utf8"));
 assert.strictEqual(userInfoConfig.proxies[0].name, "*VIP 2 | PRO | 剩余流量25.5G");
-assert.strictEqual(buildUserInfoNodes({ lineType: "self_hosted", v2LineGroupId: "pro", vipSpend: 0, xuiWeightedTraffic: { usedBytes: 100, totalBytes: 100, remainingBytes: 0 } })[0], "VIP 1 | PRO | 流量已耗尽");
+assert.strictEqual(buildUserInfoNodes({ lineType: "self_hosted", v2ProductSnapshot: { lineGroupId: "pro" }, vipSpend: 0, xuiWeightedTraffic: { usedBytes: 100, totalBytes: 100, remainingBytes: 0 } })[0], "VIP 1 | PRO | 流量已耗尽");
 
 const pinnedWithoutPlaceholders = require("js-yaml").load(injectPlaceholderNodes(Buffer.from(`proxies:
   - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }
@@ -941,7 +941,7 @@ Promise.all([
       return new Response("proxies: []\n", { status: 200, headers: { "content-type": "text/yaml" } });
     };
     try {
-      const user = { id: "stored-user", xuiSubId: "stored/sub id", expiresAt: "2099-01-01T00:00:00.000Z", productCatalogVersion: 2, v2ProductSnapshot: { trafficBytes: 3 }, xuiLastTraffic: { uploadBytes: 1, downloadBytes: 2, totalBytes: 3 }, showUserInfo: false };
+      const user = { id: "stored-user", xuiSubId: "stored/sub id", expiresAt: "2099-01-01T00:00:00.000Z", v2ProductSnapshot: { trafficBytes: 3 }, xuiLastTraffic: { uploadBytes: 1, downloadBytes: 2, totalBytes: 3 }, showUserInfo: false };
       assert.ok(selfHostedSubscriptionUrl(user).endsWith("/clash/stored%2Fsub%20id"));
       assert.throws(() => selfHostedSubscriptionUrl({}), /subId/);
       const liveConfig = await fetchSelfHostedSubscription(user);

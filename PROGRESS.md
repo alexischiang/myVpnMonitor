@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-10-19
-- Current Objective: 用户端创建工单页：铺满 AccountShell 内容宽度并优化布局
+- Current Objective: 商品快照唯一来源 + 流量包集成测试；修复 V2 流量包可被无限流量用户购买
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -488,8 +488,14 @@
 
 - 2026-10-19: npm run check、verify:harness、git diff --check 通过；/account/tickets/new 在 1440px 和 375px 浏览器验证，无控制台错误
 
+- 2026-10-19: npm run verify、npm run verify:harness、git diff --check 通过；隔离服务器+模拟 3x-ui 浏览器验证预览、进度、失败回滚、过期预览拒绝和 375px 布局，console_errors/page_errors 为空
+
+- 2026-10-19: npm run verify、verify:harness、git diff --check 通过；隔离服务器浏览器验证用户列表、用户详情、改套餐弹窗、商品同步、用户总览，console_errors/page_errors 为空
+
+- 2026-10-19: npm run verify、verify:harness、git diff --check 通过；test-payment 覆盖旧版流量包、V2 traffic_credit、流量包生效期间同步已购用户、无限流量快照拒购
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/public-pages.tsx`, `src/components/features/ticket-pages.tsx`, `test-wallet.js`
+- Files: `PROGRESS.md`, `commerce/catalog-v2-migration.js`, `commerce/catalog-v2.js`, `docs/agent/catalog-v2-migration.md`, `feature_list.json`, `package.json`, `scripts/catalog-v2-mapping.example.json`, `scripts/migrate-catalog-v2-users.js`, `scripts/seed-local-test-data.js`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/details.tsx`, `src/components/features/sales-analytics.tsx`, `src/components/features/user-bills-card.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/types.ts`, `src/utils.ts`, `test-catalog-v2.js`, `test-payment.js`, `test-xui-traffic.js`, `test.js`, `xui-traffic.js`, `src/components/features/product-buyer-sync.tsx`
 - Known risks: none
-- Recommended Next Step: 按需提交两项改动（结算即时价格、工单创建页布局）
+- Recommended Next Step: 等待用户审阅；未提交

@@ -68,7 +68,7 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
     totalBytes: user.xuiTrafficLimitBytes ?? 0,
     limitIp: user.deviceLimit ?? user.xuiIpLimit ?? 0,
     expiresAt: user.expiresAt || "",
-    resetsTraffic: !user.unlimited && user.duration !== "lifetime"
+    resetsTraffic: user.v2ProductSnapshot?.trafficBytes !== null && user.duration !== "lifetime"
   }
 
   const availableClients = React.useMemo(() => clients.filter(client => !client.linkedUserId || client.linkedUserId === user.id), [clients, user.id])
@@ -102,7 +102,7 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
           </TabsList>
         </Tabs>
         <FieldGroup>
-          <Input label="线路权限组" description="使用该权限组在 V2 商品库中配置的所有入站；如需更换请先更改套餐。" id="xui-line-group" value={user.v2LineGroupId || "未绑定 V2 套餐"} readOnly />
+          <Input label="线路权限组" description="使用该权限组在 V2 商品库中配置的所有入站；如需更换请先更改套餐。" id="xui-line-group" value={user.v2ProductSnapshot?.lineGroupId || "未绑定 V2 套餐"} readOnly />
           {mode === "link" ? <Field>
             <FieldLabel htmlFor="xui-client">3x-ui Client</FieldLabel>
             <Select label={loading ? "正在读取 Client..." : "选择未关联的 Client"} hideLabel value={clientEmail} onValueChange={setClientEmail} disabled={loading || saving} id="xui-client" className="w-full" placeholder={loading ? "正在读取 Client..." : "选择未关联的 Client"} options={[...availableClients.map(client => ({ value: client.email, label: client.email }))]} />
@@ -112,7 +112,7 @@ export function XuiClientDialog({ user, open, onOpenChange, onComplete }: {
         {mode === "import" ? <Card title={preview.email}><div className="grid gap-3 mt-2 grid-cols-2"><Card title={formatBytes(preview.totalBytes)} description="流量限额" /><Card title={preview.limitIp || "不限"} description="在线IP数量" /><Card title={preview.expiresAt ? formatDate(preview.expiresAt) : "不限"} description="到期日" /><Card title={preview.resetsTraffic ? "自购买起每 30 天" : "不重置"} description="流量重置" /></div></Card> : selectedClient ? <Card title={selectedClient.email} description={`关联后邮箱设为 ${user.email} · 3x-ui 原额度 ${selectedClient.totalBytes ? formatBytes(selectedClient.totalBytes) : "不限"}，将按 App 当前套餐额度 ${preview.totalBytes ? formatBytes(preview.totalBytes) : "不限流量"} 覆盖 · 在线IP数量 ${selectedClient.limitIp || "不限"} · ${selectedClient.expiryTime ? formatDate(new Date(selectedClient.expiryTime).toISOString()) : "永不过期"}`} /> : null}
         <Alert title="确认后旧订阅池停止交付；3x-ui 原生额度改为不限，由后台按节点倍率计费、停用，并自购买起每 30 天重置。" />
         {error ? <Alert tone="danger" title={error} /> : null}
-        <div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={saving}>取消</Button></DialogClose><ActionButton type="submit" disabled={saving || !user.v2LineGroupId || (mode === "link" && !selectedClient)} label="确认切换" pendingLabel="处理中..." pending={saving} /></div>
+        <div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={saving}>取消</Button></DialogClose><ActionButton type="submit" disabled={saving || !user.v2ProductSnapshot?.lineGroupId || (mode === "link" && !selectedClient)} label="确认切换" pendingLabel="处理中..." pending={saving} /></div>
       </form></DialogContent>
   </Dialog>
 }

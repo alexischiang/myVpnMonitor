@@ -1,15 +1,12 @@
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
 const { createDataStore } = require("./database");
 const { loadLocalEnv } = require("./env");
 const orders = require("./commerce/orders");
 const { createCheckoutWorkflow } = require("./commerce/checkout-workflow");
-const { GB, resolvePurchase } = require("./commerce/catalog-v2");
-const { migrateUsers } = require("./commerce/catalog-v2-migration");
+const { GB, resolvePurchase, planEntitlement, planEntitlementChanges } = require("./commerce/catalog-v2");
 
 function testDatabaseUrl() {
   loadLocalEnv();
@@ -106,6 +103,16 @@ async function main() {
     const manualQuote = resolvePurchase(products, { productId: ids.manual }, { taxRate: 3 });
     assert.deepEqual([manualQuote.amount, manualQuote.fulfillment.mode, manualQuote.selectedAddOnSnapshots[0].durationDays], [8.24, "manual", 30]);
     assert.throws(() => resolvePurchase(products, { productId: ids.manual, quantity: 2 }), /不允许修改/);
+    // Buyer sync keeps the bought period and traffic steps and reads the rest from the current product.
+    const savedRecurringPlan = products.find(item => item.id === ids.recurring);
+    const steppedEntitlement = planEntitlement(savedRecurringPlan, { periodId: "30d", trafficSteps: 2 });
+    assert.deepEqual(steppedEntitlement, { name: savedRecurringPlan.name, deviceLimit: 2, trafficBytes: 120 * GB, lineGroupId: ids.group });
+    assert.deepEqual(planEntitlement({ ...savedRecurringPlan, periods: savedRecurringPlan.periods.map(period => ({ ...period, isEnabled: false })) }, { periodId: "30d" }).trafficBytes, 100 * GB, "a period no longer for sale still applies to its buyers");
+    assert.match(planEntitlement(savedRecurringPlan, { periodId: "90d" }).skip, /90d 已删除/);
+    assert.match(planEntitlement({ ...savedRecurringPlan, trafficCustomization: { ...savedRecurringPlan.trafficCustomization, stepBytes: null } }, { periodId: "30d", trafficSteps: 1 }).skip, /每档流量已删除/);
+    assert.deepEqual(planEntitlement(products.find(item => item.id === ids.lifetime), {}), { name: products.find(item => item.id === ids.lifetime).name, deviceLimit: 3, trafficBytes: 200 * GB, lineGroupId: ids.group });
+    assert.deepEqual(planEntitlementChanges({ ...steppedEntitlement, durationDays: 30 }, steppedEntitlement), []);
+    assert.deepEqual(planEntitlementChanges({ ...steppedEntitlement, deviceLimit: 1, trafficBytes: null }, steppedEntitlement), [{ field: "deviceLimit", before: 1, after: 2 }, { field: "trafficBytes", before: null, after: 120 * GB }]);
 
     const delivered = [];
     let persisted = [];
@@ -152,50 +159,9 @@ async function main() {
     const afterLate = (await store.listCatalogV2Products()).find(item => item.id === ids.recurring).stock;
     assert.equal(afterLate, beforeLate, "late payment must not decrement stock");
 
-    const legacyUsers = [
-      { id: `user-recurring-${suffix}`, currentProductId: "basic", currentOptionId: "basic-30", currentProductSnapshot: { version: 1 }, userLogs: [] },
-      { id: `user-lifetime-${suffix}`, currentProductId: "pro", currentOptionId: "pro-lifetime", userLogs: [] },
-      { id: `user-empty-${suffix}`, userLogs: [] }
-    ];
-    const mappings = [
-      { legacyProductId: "basic", legacyOptionId: "basic-30", targetProductId: ids.recurring, targetPeriodId: "30d" },
-      { legacyProductId: "pro", legacyOptionId: "pro-lifetime", targetProductId: ids.lifetime, targetPeriodId: null }
-    ];
-    const migration = migrateUsers({ users: legacyUsers, products: await store.listCatalogV2Products(), mappings, migrationId: `test-${suffix}`, now: "2026-09-19T00:00:00.000Z" });
-    assert.deepEqual([migration.report.migrated, migration.report.skipped, migration.report.failed.length], [2, 1, 0]);
-    assert.deepEqual([migration.users[0].currentProductId, migration.users[0].v2ProductId, migration.users[0].v2PeriodId, migration.users[0].legacyProductBinding.optionId], ["basic", ids.recurring, "30d", "basic-30"]);
-    assert.deepEqual([migration.users[1].v2ProductId, migration.users[1].v2PeriodId], [ids.lifetime, null]);
-    const replay = migrateUsers({ users: migration.users, products: await store.listCatalogV2Products(), mappings, migrationId: `test-${suffix}` });
-    assert.deepEqual([replay.report.migrated, replay.report.alreadyMigrated, replay.report.failed.length], [0, 2, 0]);
-    const blocked = migrateUsers({ users: [...legacyUsers, { id: "unmapped", currentProductId: "ultra", currentOptionId: "ultra-90" }], products: await store.listCatalogV2Products(), mappings });
-    assert.equal(blocked.report.status, "blocked");
-    assert.match(blocked.report.failed.at(-1).reason, /未配置映射/);
-
-    const cliMigrationId = `cli-${suffix}`;
-    const cliDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-v2-migration-"));
-    const cliMappingPath = path.join(cliDirectory, "mapping.json");
-    fs.writeFileSync(cliMappingPath, JSON.stringify({ migrationId: cliMigrationId, mappings }));
-    await store.saveCollection("users", legacyUsers);
-    const cliEnvironment = { ...process.env, LOCAL_DATABASE_URL: databaseUrl, DATABASE_URL: "" };
-    const migrationScript = path.join(__dirname, "scripts", "migrate-catalog-v2-users.js");
-    const dryRun = spawnSync(process.execPath, [migrationScript, "--mapping", cliMappingPath], { cwd: __dirname, env: cliEnvironment, encoding: "utf8" });
-    assert.equal(dryRun.status, 0, dryRun.stderr);
-    assert.match(dryRun.stdout, /Dry run only/);
-    assert.equal((await store.loadAll()).users.find(user => user.id === legacyUsers[0].id).v2ProductId, undefined);
-    const databaseHost = new URL(databaseUrl).host;
-    const applied = spawnSync(process.execPath, [migrationScript, "--mapping", cliMappingPath, "--apply", `--confirm-host=${databaseHost}`], { cwd: __dirname, env: cliEnvironment, encoding: "utf8" });
-    assert.equal(applied.status, 0, applied.stderr);
-    assert.match(applied.stdout, /migration applied/);
-    const savedUsers = (await store.loadAll()).users;
-    assert.equal(savedUsers.find(user => user.id === legacyUsers[0].id).v2ProductId, ids.recurring);
-    const replayedCli = spawnSync(process.execPath, [migrationScript, "--mapping", cliMappingPath, "--apply", `--confirm-host=${databaseHost}`], { cwd: __dirname, env: cliEnvironment, encoding: "utf8" });
-    assert.equal(replayedCli.status, 0, replayedCli.stderr);
-    assert.match(replayedCli.stdout, /"alreadyMigrated": 2/);
-    fs.rmSync(cliDirectory, { recursive: true, force: true });
-    console.log("Catalog V2 checks passed: all product types, quotes, inventory reservations, payment collection, late-payment safety, and idempotent user migration, add-on categories, custom-node handler and buyer input, plan tagline and comparison rows.");
+    console.log("Catalog V2 checks passed: all product types, quotes, inventory reservations, payment collection, late-payment safety, add-on categories, custom-node handler and buyer input, plan tagline and comparison rows.");
   } finally {
     await store.saveCollection("users", originalUsers);
-    await store.pool.query("DELETE FROM app_records WHERE collection='migrationState' AND id=$1", [`cli-${suffix}`]);
     await store.pool.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id = ANY($1::text[])", [createdProducts]);
     for (const id of createdProducts.reverse()) await store.deleteCatalogV2Product(id);
     await store.deleteCatalogV2LineGroup(ids.group);

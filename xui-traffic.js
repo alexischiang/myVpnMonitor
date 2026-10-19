@@ -41,7 +41,8 @@ function directionalDelta(current = {}, cursor = null) {
 // Periodic (monthly/quarterly/half-yearly/yearly) plans reset traffic on a fixed
 // cadence; lifetime and unlimited plans never reset.
 function isPeriodicPlan(user = {}) {
-  return !user.unlimited && user.duration !== "lifetime";
+  // Unlimited comes from the plan snapshot, the only source of a user's plan.
+  return user.v2ProductSnapshot?.trafficBytes !== null && user.duration !== "lifetime";
 }
 
 // Traffic resets every `intervalDays` (30) from the purchase instant regardless of

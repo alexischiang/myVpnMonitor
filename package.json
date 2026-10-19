@@ -22,7 +22,6 @@
     "migrate:customer-ids": "node scripts/migrate-customer-ids.js",
     "migrate:duration-days": "node scripts/migrate-duration-days.js",
     "migrate:xui-data": "node scripts/migrate-xui-data.js",
-    "migrate:catalog-v2-users": "node scripts/migrate-catalog-v2-users.js",
     "setup:xui-db": "node scripts/setup-local-xui-db.js",
     "sync:neon-to-local": "node scripts/sync-neon-to-postgres.js",
     "test": "node test.js && node test-xui-service.js && node test-xui-traffic.js",

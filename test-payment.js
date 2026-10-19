@@ -138,7 +138,7 @@ async function main() {
 
   let app;
   let handler;
-  const catalogV2Ids = { group: `payment-v2-group-${Date.now()}`, product: `payment-v2-plan-${Date.now()}`, lifetime: `payment-v2-lifetime-${Date.now()}`, customNode: `payment-v2-node-${Date.now()}`, topUp: `payment-v2-topup-${Date.now()}`, flow: `payment-v2-flow-${Date.now()}`, flowBasic: `payment-v2-basic-${Date.now()}`, flowGroup: `payment-v2-flow-group-${Date.now()}` };
+  const catalogV2Ids = { group: `payment-v2-group-${Date.now()}`, product: `payment-v2-plan-${Date.now()}`, lifetime: `payment-v2-lifetime-${Date.now()}`, customNode: `payment-v2-node-${Date.now()}`, topUp: `payment-v2-topup-${Date.now()}`, flow: `payment-v2-flow-${Date.now()}`, flowBasic: `payment-v2-basic-${Date.now()}`, flowGroup: `payment-v2-flow-group-${Date.now()}`, trafficCredit: `payment-v2-traffic-${Date.now()}` };
   // Payment-flow checks buy this unlimited-stock 1 元 V2 plan (users are entitled only through V2 products).
   const paymentOptionId = `v2:${catalogV2Ids.flow}:30d`;
   try {
@@ -196,6 +196,14 @@ async function main() {
       "INSERT INTO app_records (collection, id, position, data) VALUES ('subscriptions', $1, 2, $2::jsonb)",
       [expiredSubscription.id, JSON.stringify(expiredSubscription)]
     );
+    // A user saved before the snapshot became the only plan source; startup strips the copies.
+    const preSnapshotUser = {
+      id: "pre-snapshot-user", userId: "pre-snapshot@example.test", email: "pre-snapshot@example.test", customerID: "900100", lineType: "upstream", subscriptionId: subscription.id, expiresAt: "2020-01-01T00:00:00.000Z", duration: "lifetime",
+      v2ProductSnapshot: { productId: "friends", productType: "lifetime_plan", periodId: null, lineGroupId: "pro", name: "亲友", durationDays: null, trafficBytes: 999 * 1024 ** 3, deviceLimit: 5 },
+      unlimited: true, group: "pro", activeGroup: "basic", v2LineGroupId: "pro", v2ProductId: "friends", v2PeriodId: null, purchasedTrafficGb: null, trafficTier: 1,
+      currentProductId: "pro", currentOptionId: "pro-lifetime", currentProductSnapshot: { planName: "PRO" }, productCatalogVersion: 2, legacyProductBinding: { productId: "pro", optionId: "pro-lifetime" }
+    };
+    await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', $1, 0, $2::jsonb)", [preSnapshotUser.id, JSON.stringify(preSnapshotUser)]);
 
     Object.assign(process.env, {
       NODE_ENV: "test",
@@ -279,6 +287,15 @@ async function main() {
     });
     const adminCookie = adminLogin.response.headers.get("set-cookie").split(";", 1)[0];
     const registeredUsers = await request("/api/users", { cookie: adminCookie });
+    // Startup removed the copies of the plan and kept them in a backup record; the snapshot wins, so 999 GB stays 999 GB.
+    const strippedUser = (await database.query("SELECT data FROM app_records WHERE collection='users' AND id='pre-snapshot-user'")).rows[0].data;
+    assert.deepStrictEqual(["unlimited", "group", "activeGroup", "v2LineGroupId", "v2ProductId", "v2PeriodId", "purchasedTrafficGb", "trafficTier", "currentProductId", "currentOptionId", "currentProductSnapshot", "productCatalogVersion", "legacyProductBinding"].filter(field => field in strippedUser), []);
+    assert.deepStrictEqual(strippedUser.v2ProductSnapshot, preSnapshotUser.v2ProductSnapshot);
+    const planBackup = (await database.query("SELECT data FROM app_records WHERE collection='migrationState' AND id='user-plan-snapshot-only-v1-backup'")).rows[0].data;
+    assert.deepStrictEqual([planBackup.users["pre-snapshot-user"].unlimited, planBackup.users["pre-snapshot-user"].activeGroup, planBackup.users["pre-snapshot-user"].legacyProductBinding.optionId], [true, "basic", "pro-lifetime"]);
+    const strippedPublic = registeredUsers.data.find(item => item.id === "pre-snapshot-user");
+    assert.deepStrictEqual([strippedPublic.activeGroup, strippedPublic.v2ProductSnapshot.lineGroupId, strippedPublic.xuiTrafficLimitBytes], [undefined, "pro", 999 * 1024 ** 3], "plan values are read from the snapshot");
+    assert.strictEqual((await request("/api/users/pre-snapshot-user", { method: "DELETE", cookie: adminCookie })).response.status, 200);
     const registeredOnly = registeredUsers.data.find(item => item.email === "buyer@example.test");
     assert.ok(registeredOnly?.id.startsWith("account:"));
     const disabledAccount = await request(`/api/users/${registeredOnly.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
@@ -532,7 +549,9 @@ async function main() {
     const createdUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
     assert.strictEqual(createdUser.userId, "buyer@example.test");
     assert.strictEqual(createdUser.email, "buyer@example.test");
-    assert.deepStrictEqual([createdUser.currentProductId, createdUser.currentOptionId, createdUser.currentProductOrderId], [catalogV2Ids.flow, paymentOptionId, paidOrder.data.id]);
+    assert.deepStrictEqual([createdUser.v2ProductSnapshot.productId, createdUser.v2ProductSnapshot.periodId, createdUser.currentProductOrderId], [catalogV2Ids.flow, "30d", paidOrder.data.id]);
+    const removedPlanFields = ["unlimited", "group", "activeGroup", "v2LineGroupId", "v2ProductId", "v2PeriodId", "purchasedTrafficGb", "trafficTier", "currentProductId", "currentOptionId", "currentProductSnapshot", "productCatalogVersion", "legacyProductBinding"];
+    assert.deepStrictEqual(removedPlanFields.filter(field => field in createdUser), [], "a purchase stores the plan only in v2ProductSnapshot");
     assert.deepStrictEqual([xuiClients.get("buyer@example.test").flow, xuiClients.get("buyer@example.test").totalGB], ["xtls-rprx-vision", 0], "the panel quota stays unlimited; the app enforces the plan quota");
     const adminBills = await request("/api/bills", { cookie: adminCookie });
     const initialBill = adminBills.data.find(item => item.paymentOrderId === paidOrder.data.id);
@@ -665,11 +684,11 @@ async function main() {
     assert.strictEqual(replacementOrder.data.purchaseCountBefore, 2);
     await callback(replacementOrder.data, 1, String(replacementOrder.data.amount), true);
     const replacedUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
-    assert.deepStrictEqual([replacedUser.v2ProductId, replacedUser.v2LineGroupId, replacedUser.v2ProductSnapshot.trafficBytes], [catalogV2Ids.flowBasic, catalogV2Ids.flowGroup, 50 * 1024 ** 3]);
+    assert.deepStrictEqual([replacedUser.v2ProductSnapshot.productId, replacedUser.v2ProductSnapshot.lineGroupId, replacedUser.v2ProductSnapshot.trafficBytes], [catalogV2Ids.flowBasic, catalogV2Ids.flowGroup, 50 * 1024 ** 3]);
     assert.deepStrictEqual(replacedUser.xuiExtraInboundIds, [2], "custom inbound grants must survive plan replacement");
     assert.deepStrictEqual(replacedUser.xuiInboundIds, [1, 2], "the line group inbounds plus custom grants");
-    assert.deepStrictEqual([replacedUser.currentProductId, replacedUser.currentOptionId, replacedUser.currentProductOrderId], [catalogV2Ids.flowBasic, basicOptionId, replacementOrder.data.id]);
-    assert.strictEqual(replacedUser.unlimited, false);
+    assert.deepStrictEqual([replacedUser.v2ProductSnapshot.productId, `v2:${replacedUser.v2ProductSnapshot.productId}:${replacedUser.v2ProductSnapshot.periodId}`, replacedUser.currentProductOrderId], [catalogV2Ids.flowBasic, basicOptionId, replacementOrder.data.id]);
+    assert.deepStrictEqual(removedPlanFields.filter(field => field in replacedUser), []);
     assert.strictEqual(replacedUser.cashValue, replacementOrder.data.amount, "replacement cash value must only include the new payment");
     assert.ok(new Date(replacedUser.expiresAt).getTime() < Date.now() + 31 * 86400000, "replacement must restart, not extend, the term");
 
@@ -1047,7 +1066,7 @@ async function main() {
     await handler.syncXuiPanel();
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.usedBytes, 1024 ** 3, "traffic after a manual reset counts");
     await database.query("DELETE FROM xui_daily_traffic WHERE email='v2-sync@example.test'");
-    assert.deepStrictEqual([v2User.productCatalogVersion, v2User.v2ProductId, v2User.v2LineGroupId], [2, catalogV2Ids.product, catalogV2Ids.group]);
+    assert.deepStrictEqual([v2User.v2ProductSnapshot.productId, v2User.v2ProductSnapshot.lineGroupId], [catalogV2Ids.product, catalogV2Ids.group]);
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
     assert.strictEqual((await database.query("SELECT stock FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.product])).rows[0].stock, 1);
     const catalogBeforeSync = (await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value;
@@ -1072,8 +1091,8 @@ async function main() {
     const adminCreated = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "admin-v2", email: "admin-v2@example.test", lineType: "self_hosted", optionId: hiddenOptionId, trafficTier: 1, purchasedAt: "2026-01-01", actualPaid: 5 } });
     assert.strictEqual(adminCreated.response.status, 201, adminCreated.text);
     assert.deepStrictEqual(
-      [adminCreated.data.productCatalogVersion, adminCreated.data.v2ProductId, adminCreated.data.v2LineGroupId, adminCreated.data.currentProductSource, adminCreated.data.expiresAt, adminCreated.data.xuiTrafficLimitBytes, adminCreated.data.deviceLimit],
-      [2, catalogV2Ids.product, catalogV2Ids.group, "admin_create", "2026-01-31T00:00:00.000Z", 50 * 1024 ** 3, 2]
+      [adminCreated.data.v2ProductSnapshot.productId, adminCreated.data.v2ProductSnapshot.lineGroupId, adminCreated.data.currentProductSource, adminCreated.data.expiresAt, adminCreated.data.xuiTrafficLimitBytes, adminCreated.data.deviceLimit, removedPlanFields.filter(field => field in adminCreated.data)],
+      [catalogV2Ids.product, catalogV2Ids.group, "admin_create", "2026-01-31T00:00:00.000Z", 50 * 1024 ** 3, 2, []]
     );
     assert.deepStrictEqual(xuiClients.get("admin-v2@example.test").inboundIds, [1]);
 
@@ -1094,7 +1113,7 @@ async function main() {
     assert.deepStrictEqual(adminCreatedBill.rows.map(row => [row.data.type, row.data.amount]), [["initial", 5]]);
     const adminIdentityEdit = await request(`/api/users/${adminCreated.data.id}`, { method: "PUT", cookie: adminCookie, body: { wechatName: "renamed", duration: "yearly", expiresAt: "2030-01-01", activeGroup: "ultra" } });
     assert.strictEqual(adminIdentityEdit.response.status, 200, adminIdentityEdit.text);
-    assert.deepStrictEqual([adminIdentityEdit.data.wechatName, adminIdentityEdit.data.expiresAt, adminIdentityEdit.data.currentProductSnapshot, adminIdentityEdit.data.v2ProductId], ["renamed", "2026-01-31T00:00:00.000Z", adminCreated.data.currentProductSnapshot, catalogV2Ids.product], "editing a user must not touch the plan binding");
+    assert.deepStrictEqual([adminIdentityEdit.data.wechatName, adminIdentityEdit.data.expiresAt, adminIdentityEdit.data.v2ProductSnapshot], ["renamed", "2026-01-31T00:00:00.000Z", adminCreated.data.v2ProductSnapshot], "editing a user must not touch the plan binding");
     const adminRenewal = await request(`/api/users/${adminCreated.data.id}/renew`, { method: "POST", cookie: adminCookie, body: { actualPaid: 1, duration: "monthly" } });
     assert.strictEqual(adminRenewal.response.status, 400);
     assert.match(adminRenewal.data.error, /已停用/);
@@ -1389,6 +1408,115 @@ async function main() {
     assert.deepStrictEqual([repairedReport.updated, repairedReport.skipped], [1, 0]);
     assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").inboundIds, xuiClients.get("v2-sync@example.test").enable], [[1], true]);
 
+    // Syncing a product change to buyers: preview, then apply the reviewed preview.
+    const buyerSyncPath = `/api/catalog-v2/products/${catalogV2Ids.product}/buyer-sync`;
+    const previewBuyerSync = async () => (await request(`${buyerSyncPath}/preview`, { method: "POST", cookie: adminCookie, body: {} })).data;
+    const applyBuyerSync = async fingerprint => {
+      const result = await request(buyerSyncPath, { method: "POST", cookie: adminCookie, headers: { accept: "application/x-ndjson" }, body: { fingerprint } });
+      const lines = result.text.trim().split("\n").map(line => JSON.parse(line));
+      return { steps: lines.slice(0, -1), final: lines.at(-1) };
+    };
+    const saveV2Plan = async period => {
+      const current = (await request("/api/catalog-v2/products", { cookie: adminCookie })).data.find(item => item.id === catalogV2Ids.product);
+      const saved = await request(`/api/catalog-v2/products/${catalogV2Ids.product}`, { method: "PUT", cookie: adminCookie, body: { ...current, periods: current.periods.map(item => ({ ...item, ...period })) } });
+      assert.strictEqual(saved.response.status, 200, saved.text);
+    };
+    const v2SyncUserRecord = async () => (await database.query("SELECT data FROM app_records WHERE collection='users' AND id=$1", [v2User.id])).rows[0].data;
+    const v2SyncUserBeforeBuyerSync = await v2SyncUserRecord();
+    assert.ok(!(await previewBuyerSync()).changes.some(change => change.userId === v2User.id), "a buyer whose snapshot matches the product has nothing to sync");
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 40 * 1024 ** 3, totalBytes: 50 * 1024 ** 3, depleted: false } })]);
+    await saveV2Plan({ trafficBytes: 30 * 1024 ** 3, deviceLimit: 4 });
+    const lowerPreview = await previewBuyerSync();
+    const lowerChange = lowerPreview.changes.find(change => change.userId === v2User.id);
+    assert.deepStrictEqual(lowerChange.fields, [{ field: "deviceLimit", before: 2, after: 4 }, { field: "trafficBytes", before: 50 * 1024 ** 3, after: 30 * 1024 ** 3 }]);
+    assert.deepStrictEqual([lowerChange.usedBytes, lowerChange.connection, lowerChange.entitlement], [40 * 1024 ** 3, "disable", undefined], "a quota below current usage closes the client, and the preview hides internals");
+    xuiRequests.length = 0;
+    const staleApply = await request(buyerSyncPath, { method: "POST", cookie: adminCookie, body: { fingerprint: "stale" } });
+    assert.deepStrictEqual([staleApply.response.status, staleApply.data.error], [409, "商品在预览后已被修改，请重新生成预览。"]);
+    assert.ok(!xuiRequests.some(entry => writeUrls.test(entry.url)), "a stale preview must not write to 3x-ui");
+    const lowerApply = await applyBuyerSync(lowerPreview.fingerprint);
+    assert.deepStrictEqual(lowerApply.steps[0], { step: "users", status: { done: 0, total: lowerPreview.changes.length } });
+    assert.deepStrictEqual(lowerApply.steps.at(-1).status, { done: lowerPreview.changes.length, total: lowerPreview.changes.length });
+    assert.strictEqual(lowerApply.final.status, 200, JSON.stringify(lowerApply.final));
+    assert.strictEqual(lowerApply.final.body.updated.find(item => item.userId === v2User.id)?.connection, "disable");
+    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").limitIp, xuiClients.get("v2-sync@example.test").enable, xuiClients.get("v2-sync@example.test").totalGB], [4, false, 0]);
+    const loweredUser = await v2SyncUserRecord();
+    assert.deepStrictEqual([loweredUser.v2ProductSnapshot.deviceLimit, loweredUser.v2ProductSnapshot.trafficBytes, loweredUser.xuiTrafficLimitBytes, removedPlanFields.filter(field => field in loweredUser)], [4, 30 * 1024 ** 3, 30 * 1024 ** 3, []], "buyer sync changes only the snapshot");
+    assert.deepStrictEqual([loweredUser.userLogs[0].reason, loweredUser.userLogs[0].details.rollbackState.v2ProductSnapshot.deviceLimit], ["product-buyer-sync", 2]);
+    assert.strictEqual(loweredUser.expiresAt, v2SyncUserBeforeBuyerSync.expiresAt, "buyer sync keeps the bought expiry");
+    const syncedOrder = (await database.query("SELECT data FROM app_records WHERE collection='paymentOrders' AND id=$1", [v2ManualOrder.data.id])).rows[0].data;
+    assert.deepStrictEqual([syncedOrder.productSnapshot.v2.deviceLimit, syncedOrder.productSnapshot.v2.trafficBytes], [2, 50 * 1024 ** 3], "the order keeps the snapshot it was bought with");
+    // A failed 3x-ui write restores the user; the change stays pending for the next run.
+    await saveV2Plan({ trafficBytes: 50 * 1024 ** 3, deviceLimit: 2 });
+    const raisePreview = await previewBuyerSync();
+    assert.strictEqual(raisePreview.changes.find(change => change.userId === v2User.id).connection, "enable", "a quota above current usage reopens the client");
+    failProvision = true;
+    const failedApply = await applyBuyerSync(raisePreview.fingerprint);
+    failProvision = false;
+    const failedEntry = failedApply.final.body.failed.find(item => item.userId === v2User.id);
+    assert.ok(failedEntry, JSON.stringify(failedApply.final));
+    assert.match(failedEntry.rollback, /^本地已回滚，3x-ui 回滚失败/);
+    assert.deepStrictEqual([(await v2SyncUserRecord()).v2ProductSnapshot.deviceLimit, xuiClients.get("v2-sync@example.test").limitIp], [4, 4], "a failed sync leaves the saved user and the panel client as they were");
+    const retryPreview = await previewBuyerSync();
+    assert.strictEqual(retryPreview.fingerprint, raisePreview.fingerprint);
+    assert.ok(retryPreview.changes.some(change => change.userId === v2User.id), "the in-memory user is restored, so the change is still pending");
+    const retryApply = await applyBuyerSync(retryPreview.fingerprint);
+    assert.deepStrictEqual([retryApply.final.status, retryApply.final.body.failed.length], [200, 0], JSON.stringify(retryApply.final));
+    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").limitIp, xuiClients.get("v2-sync@example.test").enable], [2, true]);
+    assert.deepStrictEqual((await v2SyncUserRecord()).v2ProductSnapshot, v2SyncUserBeforeBuyerSync.v2ProductSnapshot);
+   // Traffic packs on a snapshot-only user: both purchase paths add to the quota on top of the
+    // snapshot, buyer sync keeps an active pack, and an unlimited snapshot cannot buy one.
+    const GiB = 1024 ** 3;
+    const setV2Usage = async (usedGb, quotaGb) => {
+      const remainingBytes = Math.max(quotaGb - usedGb, 0) * GiB;
+      const traffic = { usedBytes: usedGb * GiB, totalBytes: quotaGb * GiB, remainingBytes, depleted: usedGb >= quotaGb, nodes: [], inbounds: [] };
+      await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: traffic, xuiLastTraffic: { ...traffic, available: true, status: usedGb >= quotaGb ? "depleted" : "active" } })]);
+    };
+    const v2PanelClient = () => xuiClients.get("v2-sync@example.test");
+    // Legacy traffic_pack order: the user has used up the 50 GB plan and the client is closed.
+    await setV2Usage(55, 50);
+    v2PanelClient().enable = false;
+    const legacyPackQuote = await request("/api/orders/quote", { method: "POST", cookie: v2Cookie, body: { product: "traffic_pack" } });
+    assert.strictEqual(legacyPackQuote.response.status, 200, legacyPackQuote.text);
+    const legacyPack = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, product: "traffic_pack", amount: 1 } });
+    assert.deepStrictEqual([legacyPack.response.status, legacyPack.data.purpose, legacyPack.data.fulfillmentStatus], [201, "traffic_pack", "fulfilled"], legacyPack.text);
+    let packUser = await v2SyncUserRecord();
+    assert.deepStrictEqual([packUser.xuiTrafficPackBytes, packUser.xuiTrafficLimitBytes, packUser.xuiLastTraffic.remainingBytes, packUser.v2ProductSnapshot.trafficBytes], [100 * GiB, 150 * GiB, 95 * GiB, 50 * GiB], "a pack adds to the snapshot quota without changing the snapshot");
+    assert.strictEqual(v2PanelClient().enable, true, "buying a pack reopens a client closed for used-up traffic");
+    // V2 traffic_credit add-on: 20 GB more on top of the plan and the first pack.
+    assert.strictEqual((await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: addonProduct(catalogV2Ids.trafficCredit, "20G 流量包", { mode: "automatic", handler: "traffic_credit", config: { trafficBytes: 20 * GiB } }, { purchaseRequirement: "requires_recurring_plan" }) })).response.status, 201);
+    const creditPack = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.trafficCredit}`, amount: 1 } });
+    assert.deepStrictEqual([creditPack.response.status, creditPack.data.purpose, creditPack.data.fulfillmentStatus], [201, "addon", "fulfilled"], creditPack.text);
+    packUser = await v2SyncUserRecord();
+    assert.deepStrictEqual([packUser.xuiTrafficPackBytes, packUser.xuiTrafficLimitBytes, packUser.xuiTrafficPackOrderIds.length], [120 * GiB, 170 * GiB, 2]);
+    // Buyer sync with the packs active: the packs stay and the quota is the new snapshot plus the packs.
+    await setV2Usage(140, 170);
+    await saveV2Plan({ trafficBytes: 30 * GiB });
+    const packPreview = (await previewBuyerSync()).changes.find(change => change.userId === v2User.id);
+    assert.deepStrictEqual([packPreview.usedBytes, packPreview.totalBytesBefore, packPreview.totalBytesAfter, packPreview.connection], [140 * GiB, 170 * GiB, 150 * GiB, "unchanged"], "140 GB used stays under 30 GB plan + 120 GB packs");
+    await saveV2Plan({ trafficBytes: 10 * GiB });
+    const packDisablePreview = await previewBuyerSync();
+    assert.deepStrictEqual(packDisablePreview.changes.find(change => change.userId === v2User.id).connection, "disable", "140 GB used reaches 10 GB plan + 120 GB packs");
+    assert.strictEqual((await applyBuyerSync(packDisablePreview.fingerprint)).final.status, 200);
+    packUser = await v2SyncUserRecord();
+    assert.deepStrictEqual([packUser.xuiTrafficPackBytes, packUser.xuiTrafficPackOrderIds.length, packUser.xuiTrafficLimitBytes, packUser.v2ProductSnapshot.trafficBytes, v2PanelClient().enable], [120 * GiB, 2, 130 * GiB, 10 * GiB, false], "buyer sync keeps the packs and closes the client by the combined quota");
+    await saveV2Plan({ trafficBytes: 50 * GiB });
+    const packRestorePreview = await previewBuyerSync();
+    assert.strictEqual(packRestorePreview.changes.find(change => change.userId === v2User.id).connection, "enable");
+    assert.strictEqual((await applyBuyerSync(packRestorePreview.fingerprint)).final.status, 200);
+    assert.deepStrictEqual([(await v2SyncUserRecord()).xuiTrafficLimitBytes, v2PanelClient().enable], [170 * GiB, true]);
+    // An unlimited snapshot cannot buy a pack on either path.
+    const finiteSnapshot = (await v2SyncUserRecord()).v2ProductSnapshot;
+    await database.query("UPDATE app_records SET data=jsonb_set(data, '{v2ProductSnapshot,trafficBytes}', 'null'::jsonb) WHERE collection='users' AND id=$1", [v2User.id]);
+    const unlimitedLegacy = await request("/api/admin/manual-payments/quote", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, product: "traffic_pack" } });
+    assert.deepStrictEqual([unlimitedLegacy.response.status, unlimitedLegacy.data.error], [400, "无限流量套餐无需购买流量包。"]);
+    const unlimitedCredit = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.trafficCredit}`, amount: 1 } });
+    assert.deepStrictEqual([unlimitedCredit.response.status, unlimitedCredit.data.error], [400, "无限流量套餐无需购买流量包。"], unlimitedCredit.text);
+    await database.query("UPDATE app_records SET data=jsonb_set(data, '{v2ProductSnapshot}', $2::jsonb) WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify(finiteSnapshot)]);
+    // The packs expire before the later checks, which expect the plan quota alone.
+    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiTrafficPackBytes: 0, xuiTrafficPackOrderIds: [], xuiTrafficPackCycleKey: "", xuiTrafficLimitBytes: 50 * GiB })]);
+    await setV2Usage(40, 50);
+
     xuiRequests.length = 0;
     const batchFailures = await handler.applyXuiInboundChanges([
       { email: "batch-a@example.test", attach: [2, 1], detach: [3] },
@@ -1406,7 +1534,7 @@ async function main() {
     const lifetimeOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.lifetime}`, amount: 1 } });
     assert.deepStrictEqual([lifetimeOrder.response.status, lifetimeOrder.data.fulfillmentStatus], [201, "fulfilled"], lifetimeOrder.text);
     const lifetimeUser = (await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data;
-    assert.deepStrictEqual([lifetimeUser.duration, lifetimeUser.productCatalogVersion, lifetimeUser.v2ProductId], ["lifetime", 2, catalogV2Ids.lifetime]);
+    assert.deepStrictEqual([lifetimeUser.duration, lifetimeUser.v2ProductSnapshot.productId], ["lifetime", catalogV2Ids.lifetime]);
     assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
     assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true);
     assert.strictEqual(xuiClients.get("v2-sync@example.test").limitIp, 3, "a new V2 plan must replace the previous device limit");
@@ -1437,7 +1565,7 @@ async function main() {
     assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "provisionXuiClient entry points must not take over an unlinked panel client either");
     assert.deepStrictEqual(xuiClients.get("v2-sync@example.test"), unlinkedPanelClient);
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, undefined);
-    const legacyUser = { id: "legacy-conflict", customerID: "900001", email: "legacy-owner@example.test", lineType: "self_hosted", group: "pro", activeGroup: "pro", v2LineGroupId: "pro", v2ProductSnapshot: { trafficBytes: 1024 ** 3, deviceLimit: 0 }, expiresAt: "2099-01-01T00:00:00.000Z", xuiTrafficLimitBytes: 1024 ** 3 };
+    const legacyUser = { id: "legacy-conflict", customerID: "900001", email: "legacy-owner@example.test", lineType: "self_hosted", v2ProductSnapshot: { lineGroupId: "pro", trafficBytes: 1024 ** 3, deviceLimit: 0 }, expiresAt: "2099-01-01T00:00:00.000Z", xuiTrafficLimitBytes: 1024 ** 3 };
     const legacyClients = new Map([["nexora_900001@internal", { email: "nexora_900001@internal", inboundIds: [1] }]]);
     const legacyFind = async email => legacyClients.get(email) || null;
     await assert.rejects(handler.writeXuiClient(structuredClone(legacyUser), { findClient: legacyFind, allInboundIds: [1, 2], groupInboundIds: [1], dryRun: true }), error => error.code === "XUI_CLIENT_CONFLICT" && error.email === "nexora_900001@internal", "a legacy-email panel client must be reported, not adopted");
@@ -1461,7 +1589,7 @@ async function main() {
 
     // Legacy pool migration on subscription refresh follows the same rule: a same-email panel
     // client is reported, not adopted, and the next refresh after deleting it creates one.
-    const legacyPool = { id: "legacy-pool-user", userId: "legacy-pool@example.test", email: "legacy-pool@example.test", wechatName: "legacy", customerID: "900002", lineType: "upstream", subscriptionId: subscription.id, subscriptionToken: "legacy-pool-token", group: "pro", activeGroup: "pro", productCatalogVersion: 2, v2ProductId: catalogV2Ids.flow, v2LineGroupId: catalogV2Ids.flowGroup, v2ProductSnapshot: { productId: catalogV2Ids.flow, productType: "recurring_plan", periodId: "30d", lineGroupId: catalogV2Ids.flowGroup, name: "PRO", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3 }, duration: "monthly", purchasedAt: new Date().toISOString(), expiresAt: "2099-01-01T00:00:00.000Z", createdAt: new Date().toISOString() };
+    const legacyPool = { id: "legacy-pool-user", userId: "legacy-pool@example.test", email: "legacy-pool@example.test", wechatName: "legacy", customerID: "900002", lineType: "upstream", subscriptionId: subscription.id, subscriptionToken: "legacy-pool-token", v2ProductSnapshot: { productId: catalogV2Ids.flow, productType: "recurring_plan", periodId: "30d", lineGroupId: catalogV2Ids.flowGroup, name: "PRO", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3 }, duration: "monthly", purchasedAt: new Date().toISOString(), expiresAt: "2099-01-01T00:00:00.000Z", createdAt: new Date().toISOString() };
     await database.query("INSERT INTO app_records (collection, id, data) VALUES ('users', $1, $2::jsonb)", [legacyPool.id, JSON.stringify(legacyPool)]);
     xuiClients.set("legacy-pool@example.test", { email: "legacy-pool@example.test", subId: "panel-only-sub", limitIp: 9, inboundIds: [2], enable: true });
     const panelOnlyClient = structuredClone(xuiClients.get("legacy-pool@example.test"));
@@ -1497,12 +1625,10 @@ async function main() {
     const lifetimeBillCount = (await database.query("SELECT COUNT(*)::int AS n FROM app_records WHERE collection='bills' AND data->>'paymentOrderId'=$1", [lifetimeOrder.data.id])).rows[0].n;
     const lifetimeSpend = lifetimeUser.actualPaid;
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({
-      currentProductId: v2User.currentProductId, currentOptionId: v2User.currentOptionId,
       currentProductOrderId: v2User.currentProductOrderId, currentProductBoundAt: v2User.currentProductBoundAt,
-      currentProductSnapshot: v2User.currentProductSnapshot, v2ProductId: v2User.v2ProductId,
-      v2PeriodId: v2User.v2PeriodId, v2LineGroupId: v2User.v2LineGroupId, v2ProductSnapshot: v2User.v2ProductSnapshot,
+      v2ProductSnapshot: v2User.v2ProductSnapshot,
       duration: v2User.duration, expiresAt: "2020-01-01T00:00:00.000Z", purchasedAt: v2User.purchasedAt,
-      unlimited: v2User.unlimited, trafficTier: v2User.trafficTier, xuiTrafficLimitBytes: v2User.xuiTrafficLimitBytes
+      xuiTrafficLimitBytes: v2User.xuiTrafficLimitBytes
     })]);
     const repairPath = `/api/admin/orders/${lifetimeOrder.data.id}/repair-binding`;
     const staleDetail = await request(`/api/admin/orders/${lifetimeOrder.data.id}`, { cookie: adminCookie });
@@ -1515,7 +1641,7 @@ async function main() {
     const repairedBinding = await request(repairPath, { method: "POST", cookie: adminCookie, body: {} });
     assert.strictEqual(repairedBinding.response.status, 200, repairedBinding.text);
     const repairedUser = (await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data;
-    assert.deepStrictEqual([repairedUser.currentProductOrderId, repairedUser.v2ProductId, repairedUser.duration, repairedUser.expiresAt, repairedUser.actualPaid], [lifetimeOrder.data.id, catalogV2Ids.lifetime, "lifetime", lifetimeUser.expiresAt, lifetimeSpend]);
+    assert.deepStrictEqual([repairedUser.currentProductOrderId, repairedUser.v2ProductSnapshot.productId, repairedUser.duration, repairedUser.expiresAt, repairedUser.actualPaid], [lifetimeOrder.data.id, catalogV2Ids.lifetime, "lifetime", lifetimeUser.expiresAt, lifetimeSpend]);
     assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").expiryTime, xuiClients.get("v2-sync@example.test").limitIp], [new Date(lifetimeUser.expiresAt).getTime(), 3]);
     assert.strictEqual((await request(repairPath, { method: "POST", cookie: adminCookie, body: {} })).response.status, 200, "repair must be idempotent");
     assert.strictEqual((await database.query("SELECT COUNT(*)::int AS n FROM app_records WHERE collection='bills' AND data->>'paymentOrderId'=$1", [lifetimeOrder.data.id])).rows[0].n, lifetimeBillCount, "repair must not duplicate the bill");

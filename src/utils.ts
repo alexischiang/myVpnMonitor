@@ -1,4 +1,4 @@
-import type { PricingRow, User } from "./types"
+import type { PlanSnapshot, User } from "./types"
 
 export const durationLabels: Record<string, string> = {
   monthly: "月付",
@@ -8,10 +8,6 @@ export const durationLabels: Record<string, string> = {
   custom: "自定义",
   lifetime: "永久",
 }
-
-const planDurationLabels: Record<string, string> = { monthly: "30天", quarterly: "90天", half_yearly: "180天", yearly: "360天", lifetime: "不限时" }
-
-type PurchasedPlan = Partial<Pick<User, "activeGroup" | "duration" | "unlimited" | "trafficTier" | "purchasedTrafficGb" | "currentProductSnapshot">> & { traffic?: string }
 
 // Product name plus option, without repeating the name: add-ons use the product name as their
 // option label, and some option labels already start with the product name.
@@ -23,25 +19,33 @@ export function orderProductLabel(order: { planName?: string; optionLabel?: stri
   return `${name}${separator}${option}`
 }
 
-export function purchasedPlanName(plan: PurchasedPlan, pricing: PricingRow[] = [], trafficBytes?: number | null) {
-  const { name, duration, traffic } = purchasedPlanParts(plan, pricing, trafficBytes)
+/** Product name, period label and traffic label of a plan, read only from its product snapshot; `perMonth` is false for lifetime or unlimited plans. */
+export function planSnapshotParts(snapshot?: PlanSnapshot | null) {
+  if (!snapshot) return { name: "-", duration: "-", traffic: "-", perMonth: false }
+  const unlimited = snapshot.trafficBytes === null
+  const lifetime = snapshot.productType === "lifetime_plan" || !snapshot.durationDays
+  const traffic = snapshot.trafficBytes === null ? "无限流量" : `${Number((snapshot.trafficBytes / 1024 ** 3).toFixed(2))}G`
+  return { name: snapshot.name || "-", duration: lifetime ? "不限时" : `${snapshot.durationDays}天`, traffic, perMonth: !lifetime && !unlimited }
+}
+
+export function planSnapshotName(snapshot?: PlanSnapshot | null) {
+  if (!snapshot) return "-"
+  const { name, duration, traffic } = planSnapshotParts(snapshot)
   return `${name}-${duration}-${traffic}`
 }
 
-/** Product name, period label and traffic label of a purchased plan; `perMonth` is false for lifetime or unlimited plans. */
-export function purchasedPlanParts(plan: PurchasedPlan, pricing: PricingRow[] = [], trafficBytes?: number | null) {
-  const snapshot = plan.currentProductSnapshot || {}
-  const group = typeof snapshot.group === "string" ? snapshot.group : plan.activeGroup
-  const name = typeof snapshot.planName === "string" ? snapshot.planName : typeof snapshot.name === "string" ? snapshot.name : group?.toUpperCase()
-  const duration = typeof snapshot.duration === "string" ? snapshot.duration : plan.duration
-  const row = pricing.find(item => item.group === group)
-  const lifetime = snapshot.lifetime === true || duration === "lifetime"
-  const unlimited = snapshot.unlimited === true || plan.unlimited === true
-  const trafficText = String(plan.traffic || "").match(/(\d+(?:\.\d+)?)\s*(?:GB|G)/i)
-  const candidates = [Number(snapshot.trafficGb), Number(plan.purchasedTrafficGb), Number(trafficBytes) / 1024 ** 3, Number(trafficText?.[1]), lifetime ? Number(row?.lifetimeTrafficBytes) / 1024 ** 3 : Number(row?.trafficBaseGb) * Number(plan.trafficTier || 1)]
-  const trafficGb = candidates.find(value => Number.isFinite(value) && value > 0)
-  const traffic = unlimited ? "无限流量" : trafficGb ? `${Number(trafficGb.toFixed(2))}G` : "-"
-  return { name: name || "-", duration: planDurationLabels[duration || ""] || "-", traffic, perMonth: !lifetime && !unlimited }
+/** The plan an order bought, from the order's own product snapshot (its V2 plan snapshot when it has one). */
+export function orderPlanName(productSnapshot?: Record<string, unknown> | null) {
+  if (!productSnapshot) return "-"
+  const v2 = productSnapshot.v2 as PlanSnapshot | undefined
+  if (v2?.productId) return planSnapshotName(v2)
+  return orderProductLabel({ planName: String(productSnapshot.planName || ""), optionLabel: String(productSnapshot.optionLabel || "") }) || "-"
+}
+
+/** The checkout option id of a plan snapshot, as `v2:product` or `v2:product:period`. */
+export function planSnapshotOptionId(snapshot?: PlanSnapshot | null) {
+  if (!snapshot) return ""
+  return snapshot.periodId ? `v2:${snapshot.productId}:${snapshot.periodId}` : `v2:${snapshot.productId}`
 }
 
 export const billTypeLabels: Record<string, string> = {

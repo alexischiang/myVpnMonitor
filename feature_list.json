@@ -4353,6 +4353,79 @@
         "page_errors": [],
         "checked_at": "2026-10-19"
       }
+    },
+    {
+      "id": "product-buyer-sync",
+      "name": "Sync product changes to existing buyers",
+      "description": "The V2 plan product page has a 同步已购用户 button in the header (icon-only below 640px, where 返回 and 删除 now collapse too so the four buttons fit at 375px). It opens a dialog that previews, read-only, which active self-hosted buyers of the saved product would change: name, online IP limit, traffic (period base plus the buyer's bought traffic steps) and line group, with used traffic against the old and new quota and whether the 3x-ui client gets closed or reopened. Confirming applies exactly that preview: POST /api/catalog-v2/products/:id/buyer-sync takes the preview's fingerprint of the saved product and answers 409 if the product was saved again since. The run holds the 3x-ui sync lock, streams { done, total } progress as NDJSON for the dialog's progress bar, and per user rewrites only v2ProductSnapshot (see plan-snapshot-single-source), recomputes traffic and pushes the client through provisionXuiClient with depletionDisables, the same rule as the scheduled sync: used traffic at or above the quota disables the client, below it re-enables it. Expiry, duration, price, traffic packs and order snapshots are not touched. A user whose panel write or save fails is restored in memory and pushed back to the panel, logged in the result with the rollback outcome, and stays pending; other users are not affected. Each synced user gets a product-buyer-sync log with rollbackState. Unsaved edits on the page are flagged in the dialog because the sync uses the saved product. Pure helpers planEntitlement and planEntitlementChanges live in commerce/catalog-v2.js.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The product page header has a buyer sync button that opens a preview of affected users before anything is written.",
+        "Confirming syncs app snapshots and 3x-ui under one rule: a client whose used traffic reaches the new quota is closed, otherwise enabled.",
+        "The dialog shows a loading/progress state until the run finishes, then per-user failures with their rollback outcome.",
+        "A failed user is rolled back locally and on the panel; a product saved after the preview is refused."
+      ],
+      "verification": [
+        "2026-10-19: npm run verify passed (build, core tests, test-checkout, test-payment, test-wallet, test-catalog-v2). test-catalog-v2 covers planEntitlement (bought steps, disabled period still applies, deleted period and step size skip) and planEntitlementChanges. test-payment covers no-op preview, lowering traffic below usage (connection disable, limitIp 4, enable false, totalGB 0 on the panel; snapshots, purchasedTrafficGb, xuiTrafficLimitBytes and log updated; expiry and order snapshot unchanged), a stale fingerprint answering 409 with no panel write, NDJSON progress lines, a panel outage restoring the user and leaving the change pending, and a retry that reopens the client.",
+        "Browser check on an isolated server (test DB schema buyer_sync_verify, mock 3x-ui panel with 700 ms client updates and one failing client; both removed afterwards): saved PRO 30d from 100 GB/3 IPs/香港线路 to 40 GB/5 IPs/香港+日本线路 with buyers at 10, 45 and 20 GB. The preview listed 3 users with the three field changes and marked the 45 GB user 关闭连接; unsaved edits showed the warning with nothing to sync. During the run the progress bar counted 1/3, the cancel button was disabled and Escape did not close the dialog. The result showed 2 synced and fail-carol failed with 已回滚; the panel had limitIp 5 and inbounds [1,2] for the two synced users (the 45 GB one disabled) and carol unchanged at limitIp 3, inbound [1], 100 GB. Reopening listed carol as still pending. Saving the product while the preview was open made confirm show the re-preview error. At 375px the header buttons fit and the dialog had no horizontal overflow."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/catalog-v2/products/verify-pro"
+        ],
+        "interactions": [
+          "Opened the sync dialog with unsaved edits and saw the warning and the no-change state.",
+          "Saved new traffic, IP limit and line group, previewed three buyers, confirmed, watched progress and tried Escape while running.",
+          "Read the per-user failure and rollback result, closed with 完成 and reopened to see the failed user still pending.",
+          "Saved the product while the preview was open, confirmed, and saw the re-preview error.",
+          "Checked the header and dialog at 375x812, then repeated preview and confirm in a fresh tab to read the console."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-19"
+      }
+    },
+    {
+      "id": "plan-snapshot-single-source",
+      "name": "Plan snapshot as the single source of a user's plan",
+      "description": "A user's plan (product, period, name, device limit, traffic, unlimited, line group, traffic steps) is read only from v2ProductSnapshot. The duplicate user fields unlimited, group, activeGroup, v2LineGroupId, v2ProductId, v2PeriodId, purchasedTrafficGb, trafficTier, currentProductId, currentOptionId, currentProductSnapshot, productCatalogVersion, legacyProductBinding, v2MigrationId and v2MigratedAt are no longer read or written and are removed by a startup migration that keeps a backup record. Buyer sync changes only the snapshot. 3x-ui writes and traffic enforcement depend only on the snapshot: a cycle's used traffic at or above the snapshot quota (plus packs and gifts) disables the client. The obsolete V1-to-V2 user migration is removed. Every device-limit display (user traffic card, ticket view, pack snapshot) reads planDeviceLimit instead of the panel's mirrored limitIp. The admin and user APIs no longer send a computed activeGroup or unlimited; the UI reads v2ProductSnapshot (users list, details, pool selects, sales analytics, plan card). Kept on purpose: duration, expiresAt and purchasedAt (the purchase), currentProductOrderId/Source/BoundAt (where the snapshot came from), and the xuiTrafficLimitBytes and xuiIpLimit caches, which are never a source. A V2 traffic_credit add-on now passes the same buyer checks as the legacy traffic pack (requireTrafficPackUser) at quote and at delivery, so an unlimited snapshot, a lifetime plan or a user without a synced 3x-ui client cannot buy one.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "product-buyer-sync"
+      ],
+      "done_criteria": [
+        "No server, xui or frontend code reads or writes the removed user fields; plan values come from v2ProductSnapshot.",
+        "Buyer sync and plan binding change only v2ProductSnapshot plus binding provenance.",
+        "A startup migration removes the old fields once, with a backup record, and is idempotent.",
+        "User and admin pages show plan data from the snapshot."
+      ],
+      "verification": [
+        "2026-10-19: Local copy of production (420 users) before the change: 9 friends users had unlimited: true with a 999 GB snapshot, 401 had legacy currentProductId values, 413 had legacyProductBinding, 49/114 had group/activeGroup differing from the snapshot. With the user's decision that the snapshot wins, the friends users get 999 GB; their largest lifetime usage there was 174.2 GB, so none is disconnected. The user's dev server on :3000 restarted on the edit and ran the migration on the local dev DB (XUI_READ_ONLY=true, no panel writes): changed 420, backup record user-plan-snapshot-only-v1-backup written.",
+        "2026-10-19: npm run verify passed (build, core tests, test-checkout, test-payment, test-wallet, test-catalog-v2); npm run verify:harness and git diff --check passed. test-payment seeds a pre-snapshot user before boot and checks that startup strips all old fields, keeps the snapshot, writes the backup, and serves activeGroup undefined and a 999 GB quota from the snapshot; purchases, replacements, admin create, identity edits and buyer sync leave none of the old fields. test.js covers planSnapshotName/OptionId, orderPlanName, the plan rollback state and snapshot line groups in subscription info nodes; test-xui-traffic covers the snapshot-based reset rule.",
+        "Browser check on an isolated server (test DB schema snapshot_verify, mock 3x-ui; removed afterwards) with a customer who bought PRO 30d plus one traffic step and a seeded pre-snapshot friends user: startup logged changed 1. /users showed PRO for both, 110 GB for the customer and 999 GB for the friend. The friend's V2 tab showed the snapshot fields and no migration card. The customer's change-plan dialog preselected PRO 套餐 · 30 天 and 第 2 档 · 110 GB. After renaming the product to PRO 套餐 Plus with 200 GB and 4 IPs, buyer sync previewed 110 → 210 GB (bought step kept) and 3 → 4 IPs; afterwards the stored user had only the snapshot changed and the panel limitIp 4. The first /account check still showed / 3 在线 from the panel's cached limitIp; after switching device-limit displays to the snapshot it showed / 4 在线, 30天-210G/月 and 210 GB. A first friend detail load crashed because the seeded fixture lacked xuiWeightedTraffic.nodes (real synced data always has it); after fixing the fixture it rendered with no console errors.",
+        "2026-10-19: Added traffic pack integration tests to test-payment on the snapshot-only user: a legacy traffic_pack order on a used-up 50 GB plan adds 100 GB (quota 150 GB, remaining 95 GB, snapshot unchanged) and reopens the closed client; a V2 traffic_credit add-on adds 20 GB (170 GB, two pack orders); with 140 GB used, buyer sync to 30 GB previews 170 → 150 GB unchanged, to 10 GB closes the client at 130 GB while keeping both packs, and back to 50 GB reopens it at 170 GB. The unlimited-snapshot check reproduced a bug first: the legacy path answered 400 无限流量套餐无需购买流量包。 but the V2 traffic_credit order was created and fulfilled (201). After giving traffic_credit the legacy buyer checks it answers 400 with the same message. npm run verify, npm run verify:harness and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users",
+          "/users/detail/:id",
+          "/catalog-v2/products/verify-pro",
+          "/account",
+          "/sales-analytics"
+        ],
+        "interactions": [
+          "Read the users list plan and traffic columns after the startup migration.",
+          "Opened a migrated user's V2 tab and a customer's change-plan dialog.",
+          "Changed the product, previewed and confirmed buyer sync, then checked the customer's account page.",
+          "Opened sales analytics and the users list as admin in a fresh tab and read the console."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-19"
+      }
     }
   ]
 }
