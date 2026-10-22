@@ -4426,6 +4426,48 @@
         "page_errors": [],
         "checked_at": "2026-10-19"
       }
+    },
+    {
+      "id": "early-plan-renewal",
+      "name": "Early renewal of an active recurring plan",
+      "description": "While a recurring V2 plan is active, the /account plan card always shows 提前续费 (when its product is still publicly sold). It opens the existing checkout with renew=1, so the quote and order carry planAction renew; any period and traffic tier of the same product can be bought at the current price. The paid order (purchaseAction extend, bill type renewal) is stored as user.queuedPlan and the current plan, its traffic cycle and traffic packs run on unchanged; the 3x-ui client expiry moves to the queued plan's end so service does not pause. Each 3x-ui traffic sync round (every 5 minutes, no commerce lock) first starts renewals whose current plan has ended: the queued snapshot becomes the plan from the old expiry, with a new traffic cycle. Only one renewal may wait, and no other plan can be bought until it starts; reversing the renewal order drops it. Delisted products get no renewal.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "expired-plan-renewal",
+        "plan-snapshot-single-source"
+      ],
+      "done_criteria": [
+        "POST /api/orders/quote with planAction renew returns purchaseAction extend and renewal { startsAt, expiresAt } for the active product; another product, an expired or lifetime plan, or an existing queued plan is rejected.",
+        "Paying the order queues the plan without changing expiresAt, purchasedAt, the snapshot or the traffic quota, writes a renewal bill with before/after expiry and sets the panel expiry to the queued end.",
+        "The traffic sync round starts the queued plan only after the current plan ends; reversing the order before then removes it.",
+        "The plan card keeps the expiry countdown at the bottom-left and stacks actions at the bottom-right: 提前续费 (primary) above the home IP or traffic pack button, replaced by 已续费 … 生效 once a renewal waits; the checkout shows when the renewal starts and ends and skips the replacement dialog."
+      ],
+      "verification": [
+        "2026-10-22: test.js covers planRenewalOffer for active plans (withdrawn period falls back, queued or lifetime plans get none). test-payment.js covers the whole flow on a fresh account: quote rejection for another product, extend quote dates, queued fulfilment leaving the current plan intact, panel expiry, renewal bill, overview queuedPlan, rejection of a second renewal and of replacement while queued, reversal dropping the queue, no activation before expiry and activation after it (purchasedAt = old expiry, 90-day snapshot, cash value, activation log).",
+        "2026-10-22: npm run verify passed (build, core tests, test-checkout, test-payment, test-wallet, test-catalog-v2); npm run verify:harness and git diff --check passed. Not deployed.",
+        "2026-10-22: The activation job first checks the in-memory users for a due renewal and takes the commerce lock (which reloads every collection) only when one exists, so a round with nothing due makes no database requests. test-payment checks hasDueQueuedPlan before and after the expiry; test-payment, npm run verify:fast and git diff --check passed.",
+        "2026-10-22: Replaced the separate activation job with a step at the start of resetDueXuiTraffic (each traffic sync round), without the commerce lock: like that round's cycle rollover it only rewrites user fields, and an activation lost to a concurrent full-collection write leaves queuedPlan in place, so the next round retries. The round's V2 sync step writes the new plan's device limit and group to 3x-ui. test-payment calls activateDueQueuedPlans directly (the sync path itself is not driven past a real expiry in tests). npm run verify and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/plans/checkout?option=v2:test-standard:90d&traffic=3&renew=1"
+        ],
+        "interactions": [
+          "Isolated server.js on a separate test-DB schema (NODE_ENV=test, no 3x-ui, mail or payment config) with the seeded expired-renew@xela.test made active for 20 more days; schema dropped afterwards.",
+          "/account at 1024px showed 提前续费 (secondary) beside the primary home IP button, linking to the checkout with renew=1.",
+          "Checkout showed 续费套餐将在当前套餐到期后（2026/11/11）自动生效，有效期至 2027/02/09; switching to 30 天 updated the end to 2026/12/11.",
+          "提交订单 went straight to the cashier with no replacement dialog; the order's purchaseAction was extend; the test order was cancelled.",
+          "With a queued plan, /account at 375px showed 已续费 30天-200G/月，2026/11/11 生效 instead of the renewal button, with no horizontal overflow.",
+          "Opening the renew checkout while a renewal waits shows 套餐不可用; the only console entry is the expected 400 network response of the rejected quote, not a page error.",
+          "Layout rework (2026-10-22): 提前续费 moved from the bottom-right button group to beside 20 天后到期; the home IP button stays alone at the bottom-right. Checked at the pane width (~1132px, both buttons 40px tall like the other desktop buttons) and 375px (both 44px, no horizontal overflow), in the renewable and the queued state (已续费 30天-200G/月，2026/11/11 生效 beside the countdown); no console errors.",
+          "Second layout (2026-10-22, as requested): countdown fixed bottom-left; 提前续费 as primary at the bottom-right directly above the home IP button, both right-aligned. Measured at ~1047px (countdown 21px from left and bottom; renewal and home IP 21px from the right, 40px tall) and 375px (44px tall, no horizontal overflow); queued state shows 已续费 30天-200G/月，2026/11/11 生效 above the home IP button. No console errors."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-22"
+      }
     }
   ]
 }

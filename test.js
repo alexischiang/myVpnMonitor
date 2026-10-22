@@ -415,7 +415,13 @@ const renewalProduct = {
 };
 const expiredRenewalUser = { expiresAt: "2026-01-01T00:00:00.000Z", v2ProductSnapshot: { productId: "renew-pro", periodId: "90d", trafficSteps: 2 } };
 assert.deepStrictEqual(planRenewalOffer(expiredRenewalUser, [renewalProduct]), { optionId: "v2:renew-pro:90d", trafficTier: 3 });
-assert.strictEqual(planRenewalOffer({ ...expiredRenewalUser, expiresAt: "2999-01-01T00:00:00.000Z" }, [renewalProduct]), null);
+// An active recurring plan renews early; a withdrawn period falls back to one still sold, and a waiting renewal or a lifetime plan has no offer.
+const activeRenewalUser = { ...expiredRenewalUser, expiresAt: "2999-01-01T00:00:00.000Z", v2ProductSnapshot: { ...expiredRenewalUser.v2ProductSnapshot, productType: "recurring_plan" } };
+assert.deepStrictEqual(planRenewalOffer(activeRenewalUser, [renewalProduct]), { optionId: "v2:renew-pro:90d", trafficTier: 3, early: true });
+assert.deepStrictEqual(planRenewalOffer(activeRenewalUser, [{ ...renewalProduct, periods: [{ ...renewalProduct.periods[0], isEnabled: false }, { ...renewalProduct.periods[0], id: "30d", durationDays: 30 }] }]), { optionId: "v2:renew-pro:30d", trafficTier: 1, early: true });
+assert.strictEqual(planRenewalOffer({ ...activeRenewalUser, queuedPlan: { orderId: "order-1" } }, [renewalProduct]), null);
+assert.strictEqual(planRenewalOffer({ ...activeRenewalUser, duration: "lifetime" }, [renewalProduct]), null);
+assert.strictEqual(planRenewalOffer(activeRenewalUser, [{ ...renewalProduct, isForSale: false }]), null);
 assert.strictEqual(planRenewalOffer(expiredRenewalUser, [{ ...renewalProduct, isForSale: false }]), null);
 assert.strictEqual(planRenewalOffer(expiredRenewalUser, [{ ...renewalProduct, periods: [{ ...renewalProduct.periods[0], isEnabled: false }] }]), null);
 assert.strictEqual(planRenewalOffer({ ...expiredRenewalUser, v2ProductSnapshot: undefined }, [renewalProduct]), null);
