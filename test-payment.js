@@ -737,6 +737,56 @@ async function main() {
     const manualRenewedUsers = await request("/api/users", { cookie: adminCookie });
     assert.strictEqual(manualRenewedUsers.data.find(item => item.email === "manual@example.test").vipSpend, 5.55);
 
+    // Early renewal: another plan of the active product waits in queuedPlan and starts when the current plan ends.
+    const earlyRegistration = await request("/api/auth/register", { method: "POST", body: { email: "early@example.test", password: "payment-test-password" } });
+    const earlyCookie = earlyRegistration.response.headers.get("set-cookie").split(";", 1)[0];
+    const earlyUser = async () => (await database.query("SELECT data FROM app_records WHERE collection = 'users' AND data->>'email' = 'early@example.test'")).rows[0].data;
+    const payEarly = async body => {
+      const order = await purchase({ method: "POST", cookie: earlyCookie, body: { channelCode: "100", ...body } });
+      assert.strictEqual(order.response.status, 201, order.text);
+      await callback(order.data, 1, String(order.data.amount), true);
+      return order.data;
+    };
+    const basic90OptionId = `v2:${catalogV2Ids.flowBasic}:90d`;
+    const earlyInitialOrder = await payEarly({ optionId: basicOptionId });
+    const earlyActive = await earlyUser();
+    const earlyOverview = await request("/api/account/overview", { cookie: earlyCookie });
+    assert.deepStrictEqual([earlyOverview.data.subscription.renewal, earlyOverview.data.subscription.queuedPlan], [{ optionId: basicOptionId, trafficTier: 1, early: true }, null]);
+    const otherProductRenewal = await request("/api/orders/quote", { method: "POST", cookie: earlyCookie, body: { optionId: paymentOptionId, planAction: "renew" } });
+    assert.deepStrictEqual([otherProductRenewal.response.status, /当前套餐的商品/.test(otherProductRenewal.data.error)], [400, true]);
+    const earlyQuote = await request("/api/orders/quote", { method: "POST", cookie: earlyCookie, body: { optionId: basic90OptionId, planAction: "renew" } });
+    assert.strictEqual(earlyQuote.data.purchaseAction, "extend");
+    assert.deepStrictEqual(earlyQuote.data.renewal, { startsAt: earlyActive.expiresAt, expiresAt: new Date(Date.parse(earlyActive.expiresAt) + 90 * 86400000).toISOString() });
+    // Renewing needs no replacement confirmation.
+    const reversedRenewalOrder = await payEarly({ optionId: basic90OptionId, planAction: "renew" });
+    assert.strictEqual(reversedRenewalOrder.purchaseAction, "extend");
+    let earlyQueued = await earlyUser();
+    assert.deepStrictEqual([earlyQueued.expiresAt, earlyQueued.purchasedAt, earlyQueued.v2ProductSnapshot.periodId, earlyQueued.currentProductOrderId], [earlyActive.expiresAt, earlyActive.purchasedAt, "30d", earlyInitialOrder.id], "the current plan runs on unchanged");
+    assert.deepStrictEqual([earlyQueued.queuedPlan.orderId, earlyQueued.queuedPlan.productSnapshot.periodId, earlyQueued.queuedPlan.duration], [reversedRenewalOrder.id, "90d", "quarterly"]);
+    assert.strictEqual(xuiClients.get(earlyQueued.xuiClientEmail).expiryTime, Date.parse(earlyQuote.data.renewal.expiresAt), "the panel keeps the client until the queued plan ends");
+    const renewalBill = (await request("/api/bills", { cookie: adminCookie })).data.find(bill => bill.paymentOrderId === reversedRenewalOrder.id);
+    assert.deepStrictEqual([renewalBill.type, renewalBill.beforeExpiresAt, renewalBill.afterExpiresAt], ["renewal", earlyActive.expiresAt, earlyQuote.data.renewal.expiresAt]);
+    const queuedOverview = await request("/api/account/overview", { cookie: earlyCookie });
+    assert.deepStrictEqual([queuedOverview.data.subscription.renewal, queuedOverview.data.subscription.queuedPlan.startsAt, queuedOverview.data.subscription.queuedPlan.expiresAt], [null, earlyActive.expiresAt, earlyQuote.data.renewal.expiresAt]);
+    const secondRenewal = await request("/api/orders/quote", { method: "POST", cookie: earlyCookie, body: { optionId: basicOptionId, planAction: "renew" } });
+    assert.deepStrictEqual([secondRenewal.response.status, /已有一个待生效的续费套餐/.test(secondRenewal.data.error)], [400, true]);
+    const replacementWhileQueued = await request("/api/orders/quote", { method: "POST", cookie: earlyCookie, body: { optionId: paymentOptionId } });
+    assert.deepStrictEqual([replacementWhileQueued.response.status, /生效前不能购买其他套餐/.test(replacementWhileQueued.data.error)], [400, true]);
+    // Reversing the renewal order drops the queued plan.
+    assert.strictEqual((await request(`/api/admin/orders/${reversedRenewalOrder.id}/reverse`, { method: "POST", cookie: adminCookie })).response.status, 200);
+    assert.strictEqual((await earlyUser()).queuedPlan, undefined);
+    const renewalOrder = await payEarly({ optionId: basic90OptionId, planAction: "renew" });
+    assert.strictEqual((await earlyUser()).queuedPlan.orderId, renewalOrder.id);
+    // The traffic sync round starts due renewals; nothing starts before the current plan ends.
+    assert.strictEqual((await handler.activateDueQueuedPlans(Date.parse(earlyActive.expiresAt) - 1000)).activated, 0);
+    const activation = await handler.activateDueQueuedPlans(Date.parse(earlyActive.expiresAt) + 1000);
+    assert.deepStrictEqual(activation, { activated: 1, failed: [] });
+    const earlyRenewed = await earlyUser();
+    assert.strictEqual(earlyRenewed.queuedPlan, undefined);
+    assert.deepStrictEqual([earlyRenewed.purchasedAt, earlyRenewed.expiresAt, earlyRenewed.v2ProductSnapshot.periodId, earlyRenewed.currentProductOrderId], [earlyActive.expiresAt, earlyQuote.data.renewal.expiresAt, "90d", renewalOrder.id]);
+    assert.strictEqual(earlyRenewed.cashValue, renewalOrder.amount);
+    assert.ok(earlyRenewed.userLogs.some(log => log.reason === "queued-plan-activated"));
+
     const inviterRegistration = await request("/api/auth/register", {
       method: "POST",
       body: { email: "inviter@example.test", password: "payment-test-password" }

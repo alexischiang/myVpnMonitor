@@ -70,7 +70,7 @@ const defaultPricingFaqs: FaqSetting[] = [
   { id: "devices", question: "“在线IP数量”是指什么？", answer: "指同一订阅可同时在线的 IP 数量，同一网络下的多个设备通常只占用一个 IP；具体数量以所选套餐和计费周期显示为准。" },
   { id: "gpt", question: "哪些套餐支持 GPT 解锁？", answer: "当前 PRO 套餐明确包含稳定 GPT 解锁。其他套餐能力请以套餐卡片的功能列表为准；实际可用性可能受目标平台策略和网络环境影响。" },
   { id: "discount", question: "季度、半年和年度套餐如何计算优惠？", answer: "页面折扣以月付价格乘以对应月数作为基准计算，周期价格旁的百分比就是相比连续月付节省的比例。" },
-  { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "新套餐支付成功后会立即覆盖当前套餐，原套餐剩余有效期和流量不再保留。提交订单前会要求再次确认。" },
+  { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "在用户中心点击「提前续费」可购买当前商品的任意周期和流量，续费套餐在当前套餐到期后自动生效；购买其他商品会立即覆盖当前套餐，原套餐剩余有效期和流量不再保留，提交订单前会要求再次确认。" },
   { id: "delivery", question: "支付后多久生效？可以退款吗？", answer: "支付成功并完成确认后套餐会自动生效。套餐属于即时交付的数字商品，购买后不支持退款。" },
 ]
 
@@ -301,6 +301,8 @@ type CheckoutQuote = {
   taxAmount: number
   beforeCreditAmount: number
   purchaseAction: "initial" | "extend" | "replace" | "add_on"
+  /** An early renewal's term: it starts when the current plan ends. */
+  renewal?: { startsAt: string; expiresAt: string } | null
   payableAmount: number
   walletAmount: number
   walletCashAmount: number
@@ -323,6 +325,8 @@ export function CheckoutPage() {
   const trafficPack = searchParams.get("product") === "traffic-pack"
   const homeIp = searchParams.get("product") === "home-ip"
   const standaloneAddOn = trafficPack || homeIp
+  // Early renewal of the active plan: the server queues the purchase after the current plan.
+  const planAction = !standaloneAddOn && searchParams.get("renew") === "1" ? { planAction: "renew" } : {}
   const initialOptionId = trafficPack ? "traffic-pack" : searchParams.get("option") || ""
   const [optionId, setOptionId] = React.useState(initialOptionId)
   const [quote, setQuote] = React.useState<CheckoutQuote | null>(null)
@@ -358,7 +362,7 @@ export function CheckoutPage() {
     setCouponError("")
     const pending = (async () => {
       try {
-        const nextQuote = await postJson<CheckoutQuote>("/api/orders/quote", trafficPack ? { product: "traffic_pack", useBalance: nextUseBalance } : homeIp ? { product: "home_ip", optionId: nextOptionId, useBalance: nextUseBalance } : { optionId: nextOptionId, couponCode: code, useBalance: nextUseBalance, addOns: [], trafficTier: nextTrafficTier })
+        const nextQuote = await postJson<CheckoutQuote>("/api/orders/quote", trafficPack ? { product: "traffic_pack", useBalance: nextUseBalance } : homeIp ? { product: "home_ip", optionId: nextOptionId, useBalance: nextUseBalance } : { optionId: nextOptionId, couponCode: code, useBalance: nextUseBalance, addOns: [], trafficTier: nextTrafficTier, ...planAction })
         if (request !== quoteRequestRef.current) return
         serverQuoteRef.current = nextQuote
         serverUseBalanceRef.current = nextUseBalance
@@ -437,7 +441,7 @@ export function CheckoutPage() {
       }
       const order = await postJson<{ id: string }>("/api/orders", {
         product: trafficPack ? "traffic_pack" : homeIp ? "home_ip" : "plan",
-        optionId, couponCode: quote.couponCode, addOns: [], trafficTier, useBalance, confirmReplacement, buyerInput,
+        optionId, couponCode: quote.couponCode, addOns: [], trafficTier, useBalance, confirmReplacement, buyerInput, ...planAction,
         expectedAmount: quote.payableAmount,
       })
       clearJsonCache()
@@ -474,6 +478,8 @@ export function CheckoutPage() {
     ? quote.fulfillment?.mode === "automatic" ? "支付成功后附加服务将自动发放。" : "支付成功后将进入人工交付。"
     : quote.purchaseAction === "replace"
     ? "新套餐支付成功后将立即覆盖当前套餐，原套餐剩余有效期和流量不再保留。"
+    : quote.purchaseAction === "extend" && quote.renewal
+    ? `续费套餐将在当前套餐到期后（${formatDate(quote.renewal.startsAt)}）自动生效，有效期至 ${formatDate(quote.renewal.expiresAt)}；当前套餐的剩余时间和流量不受影响。`
     : "付款成功后套餐立即生效。"
 
   return (
@@ -513,7 +519,7 @@ export function CheckoutPage() {
               <ActionButton className="min-h-11" onClick={confirmOrder} disabled={submitting} label="提交订单" pendingLabel="正在提交订单…" pending={submitting} />
               <p className="text-xs text-muted-foreground">提交后进入收银台，确认付款后发放服务。</p>
               <Button variant="secondary" onClick={() => navigate(-1)}><ArrowLeft />{isStandaloneAddOn ? "返回服务列表" : "返回服务选择"}</Button>
-              <p className="text-xs text-muted-foreground">{trafficPack || quote.purchaseAction === "add_on" && quote.fulfillment?.mode === "automatic" ? "付款成功后流量立即生效，月度重置、续费或更换套餐后失效。" : quote.purchaseAction === "add_on" ? "付款成功后进入人工交付，交付内容可在订单详情查看；数字商品不支持退款。" : homeIp ? "付款成功后进入人工交付，服务有效期以订单快照和交付记录为准。" : "付款成功后套餐立即生效，数字商品不支持退款。"}</p>
+              <p className="text-xs text-muted-foreground">{trafficPack || quote.purchaseAction === "add_on" && quote.fulfillment?.mode === "automatic" ? "付款成功后流量立即生效，月度重置、续费或更换套餐后失效。" : quote.purchaseAction === "add_on" ? "付款成功后进入人工交付，交付内容可在订单详情查看；数字商品不支持退款。" : homeIp ? "付款成功后进入人工交付，服务有效期以订单快照和交付记录为准。" : quote.purchaseAction === "extend" ? "付款成功后续费套餐进入等待，当前套餐到期后自动生效；数字商品不支持退款。" : "付款成功后套餐立即生效，数字商品不支持退款。"}</p>
             </div></Card>
         </aside>
       </section>

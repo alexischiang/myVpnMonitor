@@ -302,16 +302,26 @@ async function adminCatalogV2PlanOption(payload) {
   return option;
 }
 
-// Renewal is a new purchase of the expired plan's product, period and traffic; only products still publicly sold qualify.
+// Renewal is a new purchase of the plan's product, period and traffic; only products still publicly sold qualify.
+// An active recurring plan renews early (queued, see paymentPurchaseTerms) unless a renewal already waits; any period
+// of the product may be bought then, so a withdrawn period falls back to the first one still sold.
 function planRenewalOffer(user, products) {
   const snapshot = user?.v2ProductSnapshot;
-  if (!snapshot || !isUserExpired(user)) return null;
-  try {
-    const selected = resolveCatalogV2Purchase(products, { productId: snapshot.productId, periodId: snapshot.periodId, trafficSteps: snapshot.trafficSteps || 0 });
-    return selected.purpose === "plan" ? { optionId: selected.optionId, trafficTier: selected.trafficSteps + 1 } : null;
-  } catch {
-    return null;
+  if (!snapshot || user.queuedPlan) return null;
+  const early = !isUserExpired(user);
+  if (early && (snapshot.productType !== "recurring_plan" || user.duration === "lifetime")) return null;
+  const product = products.find(item => item.id === snapshot.productId);
+  const fallbackPeriods = early ? (product?.periods || []).filter(period => period.isEnabled && period.id !== snapshot.periodId).map(period => ({ periodId: period.id, trafficSteps: 0 })) : [];
+  for (const spec of [{ periodId: snapshot.periodId, trafficSteps: snapshot.trafficSteps || 0 }, ...fallbackPeriods]) {
+    try {
+      const selected = resolveCatalogV2Purchase(products, { productId: snapshot.productId, ...spec });
+      if (selected.purpose !== "plan") return null;
+      return { optionId: selected.optionId, trafficTier: selected.trafficSteps + 1, ...(early ? { early: true } : {}) };
+    } catch {
+      // Try the next period.
+    }
   }
+  return null;
 }
 
 // Identifies the saved product a buyer-sync preview was made from, so the apply step refuses a
@@ -461,7 +471,7 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false, wallet 
   const subtotalCents = Math.round(afterCouponCents * (100 - vipPercent) / 100);
   const taxRate = product.chargeTax === false ? 0 : checkoutTaxRate();
   const taxCents = Math.round(subtotalCents * taxRate / 100);
-  const terms = isPlan ? paymentPurchaseTerms(userForAccount(account)) : { purchaseAction: "add_on", cashCredit: 0 };
+  const terms = isPlan ? paymentPurchaseTerms(userForAccount(account), new Date(), { selected, renew: payload.planAction === "renew" }) : { purchaseAction: "add_on", cashCredit: 0 };
   const creditBytes = Number(selected.fulfillment?.config?.trafficBytes || 0) * (selected.quantity || 1);
   const traffic = selected.purpose === "addon" ? creditBytes ? `当前周期增加 ${Number((creditBytes / 1024 ** 3).toFixed(2))} GB 流量` : ""
     : selected.unlimited ? "无限流量" : selected.trafficBytes == null ? "" : `${Number((selected.trafficBytes / 1024 ** 3).toFixed(2))} GB`;
@@ -498,6 +508,7 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false, wallet 
     amount: (subtotalCents + taxCents) / 100,
     cashCredit: terms.cashCredit,
     purchaseAction: terms.purchaseAction,
+    renewal: terms.renewal || null,
     planAmount: isPlan ? (subtotalCents + taxCents) / 100 : 0,
     cycles
   };
@@ -511,7 +522,7 @@ const DEFAULT_PRICING_FAQS = [
   { id: "devices", question: "“在线IP数量”是指什么？", answer: "指同一订阅可同时在线的 IP 数量，同一网络下的多个设备通常只占用一个 IP；具体数量以所选套餐和计费周期显示为准。", enabled: true },
   { id: "gpt", question: "哪些套餐支持 GPT 解锁？", answer: "当前 PRO 套餐明确包含稳定 GPT 解锁。其他套餐能力请以套餐卡片的功能列表为准；实际可用性可能受目标平台策略和网络环境影响。", enabled: true },
   { id: "discount", question: "季度、半年和年度套餐如何计算优惠？", answer: "页面折扣以月付价格乘以对应月数作为基准计算，周期价格旁的百分比就是相比连续月付节省的比例。", enabled: true },
-  { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "新套餐支付成功后会立即覆盖当前套餐，原套餐剩余有效期和流量不再保留。提交订单前会要求再次确认。", enabled: true },
+  { id: "renewal", question: "套餐未到期时再次购买会怎样？", answer: "在用户中心点击「提前续费」可购买当前商品的任意周期和流量，续费套餐在当前套餐到期后自动生效；购买其他商品会立即覆盖当前套餐，原套餐剩余有效期和流量不再保留，提交订单前会要求再次确认。", enabled: true },
   { id: "delivery", question: "支付后多久生效？可以退款吗？", answer: "支付成功并完成确认后套餐会自动生效。套餐属于即时交付的数字商品，购买后不支持退款。", enabled: true }
 ];
 const DEFAULT_PAYMENT_API_BASE_URL = "http://RfBseViEKZlMAmu7ArWO.itxt002.xyz";
@@ -2534,10 +2545,115 @@ function remainingPlanCashValue(user, now = new Date(), userBills = bills) {
   return Math.round(cashValue * Math.min(Math.max((expiresAt - currentTime) / (expiresAt - valuedAt), 0), 1) * 100) / 100;
 }
 
-function paymentPurchaseTerms(user, now = new Date()) {
+// Early renewal buys another plan of the active recurring plan's product (any period and traffic tier) that waits in
+// user.queuedPlan and starts when the current plan ends. Only one may wait, and no other plan can be bought until it starts.
+function paymentPurchaseTerms(user, now = new Date(), { selected = null, renew = false } = {}) {
+  if (user?.queuedPlan) throw new Error(renew ? "已有一个待生效的续费套餐，生效后才能再次提前续费。" : "已有待生效的续费套餐，生效前不能购买其他套餐。");
   const active = user && new Date(user.expiresAt || 0).getTime() > now.getTime();
+  if (renew) {
+    const snapshot = user?.v2ProductSnapshot;
+    if (!active || snapshot?.productType !== "recurring_plan" || user.duration === "lifetime") throw new Error("只有生效中的周期性套餐可以提前续费。");
+    if (!selected || selected.productId !== snapshot.productId) throw new Error("提前续费只能选择当前套餐的商品。");
+    const startsAt = new Date(user.expiresAt).toISOString();
+    return { purchaseAction: "extend", cashCredit: 0, renewal: { startsAt, expiresAt: planExpiryFrom(startsAt, selected.duration, selected.durationDays) } };
+  }
   if (!active) return { purchaseAction: "initial", cashCredit: 0 };
   return { purchaseAction: "replace", cashCredit: 0 };
+}
+
+function planExpiryFrom(startsAt, duration, durationDays) {
+  return duration === "custom" && durationDays ? new Date(Date.parse(startsAt) + durationDays * 86400000).toISOString() : calculateExpiry(startsAt, duration);
+}
+
+// When the queued renewal starts and ends; it starts at the current expiry, so gifted days push it back.
+function queuedPlanWindow(user) {
+  const queued = user?.queuedPlan;
+  if (!queued || !Number.isFinite(Date.parse(user.expiresAt || ""))) return null;
+  const startsAt = new Date(user.expiresAt).toISOString();
+  return { startsAt, expiresAt: planExpiryFrom(startsAt, queued.duration, queued.durationDays) };
+}
+
+function queueRenewalPlan(user, order, { paidAt, cashValueAmount, vipSpendAmount }) {
+  const result = () => {
+    const window = queuedPlanWindow(user);
+    return { amount: cashValueAmount, vipSpendAmount, renewedAt: paidAt, beforeExpiresAt: window.startsAt, afterExpiresAt: window.expiresAt };
+  };
+  if (user.queuedPlan?.orderId === order.id) return result();
+  if (user.queuedPlan) throw new Error("已有待生效的续费套餐，本订单需人工处理。");
+  const option = order.productSnapshot;
+  user.queuedPlan = {
+    orderId: order.id,
+    source: order.paymentProvider === "manual" ? "manual_order" : "payment_order",
+    paidAt,
+    duration: option.duration,
+    durationDays: option.durationDays || null,
+    trafficBytes: Math.max(0, Number(order.trafficBytes) || 0),
+    cashValueAmount,
+    productSnapshot: structuredClone(option.v2)
+  };
+  user.actualPaid = Math.round(((Number(user.actualPaid) || 0) + cashValueAmount) * 100) / 100;
+  user.updatedAt = new Date().toISOString();
+  return result();
+}
+
+// Starts the queued plan at the current expiry: it becomes the user's plan with a fresh traffic cycle, and
+// traffic packs of the old plan end with it.
+function activateQueuedPlan(user) {
+  const queued = user.queuedPlan;
+  const { startsAt, expiresAt } = queuedPlanWindow(user);
+  Object.assign(user, {
+    purchasedAt: startsAt,
+    duration: queued.duration,
+    expiresAt,
+    cashValue: queued.cashValueAmount,
+    cashValueAt: startsAt,
+    v2ProductSnapshot: structuredClone(queued.productSnapshot),
+    currentProductOrderId: queued.orderId,
+    currentProductSource: queued.source,
+    currentProductBoundAt: startsAt,
+    xuiTrafficLimitBytes: queued.trafficBytes,
+    updatedAt: new Date().toISOString()
+  });
+  delete user.queuedPlan;
+  expireUserTrafficPacks(user);
+  return { orderId: queued.orderId, startsAt, expiresAt };
+}
+
+function isQueuedPlanDue(user, now = Date.now()) {
+  return Boolean(user.queuedPlan) && Date.parse(user.expiresAt || "") <= now;
+}
+
+// Runs at the start of each traffic sync round, without the commerce lock: the renewal was paid long before, and
+// like the round's traffic cycle rollover this only rewrites user fields. The panel already holds the queued expiry,
+// so service does not pause; the round's V2 sync step then writes the new plan's device limit and group to 3x-ui.
+async function activateDueQueuedPlans(now = Date.now()) {
+  const summary = { activated: 0, failed: [] };
+  const activated = [];
+  for (const user of users.filter(item => isQueuedPlanDue(item, now))) {
+    const previousUserState = structuredClone(user);
+    try {
+      const result = activateQueuedPlan(user);
+      await resetXuiTrafficAfterPlanPurchase(user, { id: result.orderId });
+      appendUserLogToUser(user, createUserLog({
+        event: "user-action",
+        status: "recorded",
+        reason: "queued-plan-activated",
+        message: `续费套餐已生效，有效期至 ${new Date(result.expiresAt).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })}。`,
+        details: { paymentOrderId: result.orderId, startsAt: result.startsAt, afterExpiresAt: result.expiresAt, duration: user.duration }
+      }));
+      activated.push(user);
+    } catch (error) {
+      Object.keys(user).forEach(key => delete user[key]);
+      Object.assign(user, previousUserState);
+      summary.failed.push({ userId: user.id, error: error.message });
+    }
+  }
+  if (summary.failed.length) console.error(`[queued-plan] activation failed: ${JSON.stringify(summary.failed)}`);
+  if (!activated.length) return summary;
+  await saveUsers();
+  summary.activated = activated.length;
+  console.log(`[queued-plan] activated ${activated.length} renewal(s): ${activated.map(user => user.id).join(", ")}`);
+  return summary;
 }
 
 function billTypeForPurchaseAction(action) {
@@ -2773,25 +2889,32 @@ async function fulfillPaymentOrderOnce(order, req) {
   });
   const vipSpendBefore = (wallet.vipSpendCents - Math.round(planGatewayAmount * 100)) / 100;
   syncWalletVip(account, wallet);
-  const expiresAt = nextUserExpiry(user, purchasedAt, selectedOption.duration, order.purchaseAction === "replace");
+  // An early renewal whose current plan is still running waits for it; one that ended before delivery starts now.
+  const queued = Boolean(user && order.purchaseAction === "extend" && !isUserExpired(user));
   if (user) {
     const previousUserState = structuredClone(user);
     let renewal;
     try {
-      renewal = renewUser(user, {
-        purchasedAt,
-        actualPaid: planCashValueAmount,
-        vipSpendAmount: planGatewayAmount,
-        cashValueAmount: planCashValueAmount,
-        duration: selectedOption.duration,
-        ...(selectedOption.duration === "custom" && selectedOption.durationDays ? { expiresAt: new Date(Date.parse(purchasedAt) + selectedOption.durationDays * 86400000).toISOString() } : {}),
-        lineType: "self_hosted",
-        replace: order.purchaseAction === "replace",
-        subscriptionId: ""
-      });
-      bindUserProductFromOrder(user, order);
-      await provisionXuiClient(user);
-      await resetXuiTrafficAfterPlanPurchase(user, order);
+      if (queued) {
+        renewal = queueRenewalPlan(user, order, { paidAt: purchasedAt, cashValueAmount: planCashValueAmount, vipSpendAmount: planGatewayAmount });
+        // Only the panel expiry moves (to the queued plan's end), so the client is not cut off between the two plans.
+        await provisionXuiClient(user);
+      } else {
+        renewal = renewUser(user, {
+          purchasedAt,
+          actualPaid: planCashValueAmount,
+          vipSpendAmount: planGatewayAmount,
+          cashValueAmount: planCashValueAmount,
+          duration: selectedOption.duration,
+          ...(selectedOption.duration === "custom" && selectedOption.durationDays ? { expiresAt: new Date(Date.parse(purchasedAt) + selectedOption.durationDays * 86400000).toISOString() } : {}),
+          lineType: "self_hosted",
+          replace: order.purchaseAction === "replace",
+          subscriptionId: ""
+        });
+        bindUserProductFromOrder(user, order);
+        await provisionXuiClient(user);
+        await resetXuiTrafficAfterPlanPurchase(user, order);
+      }
     } catch (error) {
       Object.keys(user).forEach(key => delete user[key]);
       Object.assign(user, previousUserState);
@@ -2805,7 +2928,7 @@ async function fulfillPaymentOrderOnce(order, req) {
       amount: planCashValueAmount,
       vipSpendAmount: renewal.vipSpendAmount,
       occurredAt: renewal.renewedAt,
-      duration: user.duration,
+      duration: selectedOption.duration,
       beforeExpiresAt: renewal.beforeExpiresAt,
       afterExpiresAt: renewal.afterExpiresAt,
       description: billType === "replacement" ? "Payment order replacement" : billType === "renewal" ? "Payment order renewal" : "Payment order purchase"
@@ -2817,7 +2940,8 @@ async function fulfillPaymentOrderOnce(order, req) {
       req,
       message: userActionMessage("user-renewed", {
         amount: renewal.amount,
-        duration: user.duration,
+        duration: selectedOption.duration,
+        ...(queued ? { beforeExpiresAt: renewal.beforeExpiresAt } : {}),
         afterExpiresAt: renewal.afterExpiresAt
       }),
       details: {
@@ -2828,7 +2952,8 @@ async function fulfillPaymentOrderOnce(order, req) {
         trafficTier: order.trafficTier || 1,
         trafficGb: order.trafficGb ?? null,
         addOns: order.addOnSnapshots || [],
-        duration: user.duration,
+        duration: selectedOption.duration,
+        ...(queued ? { queued: true, beforeExpiresAt: renewal.beforeExpiresAt } : {}),
         afterExpiresAt: renewal.afterExpiresAt
       }
     }));
@@ -2894,7 +3019,8 @@ async function fulfillPaymentOrderOnce(order, req) {
     }));
   }
 
-  user.xuiTrafficLimitBytes = selectedTrafficBytes;
+  // A queued renewal keeps the current plan's quota until it starts.
+  if (!queued) user.xuiTrafficLimitBytes = selectedTrafficBytes;
   if (Array.isArray(order.addOnSnapshots) && order.addOnSnapshots.length) {
     order.fulfillmentStatus = "manual_pending";
     order.fulfillmentStartedAt = new Date().toISOString();
@@ -4581,6 +4707,8 @@ async function resetXuiTrafficAfterPlanPurchase(user, order) {
 
 async function resetDueXuiTraffic() {
   const now = Date.now();
+  // A renewal whose current plan has ended starts first, so this round already counts its new traffic cycle.
+  await activateDueQueuedPlans(now);
   let changed = false;
   for (const user of users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail)) {
     if (user.duration === "lifetime") {
@@ -5594,7 +5722,8 @@ function desiredXuiClient(user, { email, group, existing = null, depletionDisabl
     // Decision X: the panel quota stays unlimited. Its counter is never reset, so a finite
     // totalGB would make 3x-ui disable clients the app still considers within quota.
     totalGB: 0,
-    expiryTime: new Date(user.expiresAt).getTime(),
+    // A queued renewal continues the service, so the panel keeps the client until the queued plan ends.
+    expiryTime: new Date(queuedPlanWindow(user)?.expiresAt || user.expiresAt).getTime(),
     limitIp: planDeviceLimit(user),
     reset: 0,
     flow: XUI_VISION_FLOW,
@@ -6328,7 +6457,9 @@ function reverseBill(bill) {
     const currentVipSpend = userVipSpend(user);
     user.actualPaid = Math.max(Math.round((currentPaid - (Number(bill.amount) || 0)) * 100) / 100, 0);
     user.vipSpend = Math.max(Math.round((currentVipSpend - (Number(bill.vipSpendAmount ?? bill.amount) || 0)) * 100) / 100, 0);
-    if (bill.type === "renewal" && bill.beforeExpiresAt && user.expiresAt === bill.afterExpiresAt) {
+    if (bill.paymentOrderId && user.queuedPlan?.orderId === bill.paymentOrderId) {
+      delete user.queuedPlan;
+    } else if (bill.type === "renewal" && bill.beforeExpiresAt && user.expiresAt === bill.afterExpiresAt) {
       user.expiresAt = bill.beforeExpiresAt;
     }
     const rebuilt = planCashValueFromBills(user);
@@ -7227,6 +7358,7 @@ const userLogReasonText = {
   "subconverter-request-failed": "\u8ba2\u9605\u8f6c\u6362\u8bf7\u6c42\u5931\u8d25",
   "user-created": "\u7528\u6237\u521b\u5efa",
   "user-renewed": "\u7528\u6237\u7eed\u8d39",
+  "queued-plan-activated": "\u7eed\u8d39\u5957\u9910\u751f\u6548",
   "user-gifted": "\u8d60\u9001\u65f6\u957f",
   "purchase-pool-changed": "\u8d2d\u4e70\u540e\u81ea\u52a8\u6362\u6c60",
   "user-updated": "\u7528\u6237\u8d44\u6599\u66f4\u65b0",
@@ -9257,7 +9389,8 @@ async function handleApi(req, res, pathname) {
         devices: planDeviceLimit(user),
         productName: user.v2ProductSnapshot?.name || planProductId(user),
         planSnapshot: user.v2ProductSnapshot || null,
-        renewal: isUserExpired(user) ? planRenewalOffer(user, await dataStore.listCatalogV2Products()) : null
+        renewal: planRenewalOffer(user, await dataStore.listCatalogV2Products()),
+        queuedPlan: user.queuedPlan ? { ...queuedPlanWindow(user), planSnapshot: user.queuedPlan.productSnapshot } : null
       } : null,
       services: accountServiceInstances(account.id),
       trafficPack: (() => { const config = trafficPackConfig(); return { trafficGb: config.trafficGb, price: config.price, enabled: config.product.enabled !== false }; })(),
@@ -12351,6 +12484,7 @@ if (require.main === module) {
 module.exports = Object.assign(requestHandler, {
   closeDataStore: () => dataStore.close(),
   planRenewalOffer,
+  activateDueQueuedPlans,
   normalizeDocsAnnouncements,
   mergePublicAnnouncements,
   ensureDataFile,

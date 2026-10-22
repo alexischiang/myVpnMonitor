@@ -44,7 +44,7 @@ import { PasswordField } from "@/components/arc/password-field/password-field"
 import { Card as ArcCard } from "@/components/arc/card/card"
 import { SimpleTable } from "@/components/features/simple-table"
 // Plan figures are derived on the server from planSnapshot, the user's only plan source.
-type Subscription = { status: string; lineGroupId?: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; planSnapshot?: PlanSnapshot | null; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number } | null }
+type Subscription = { status: string; lineGroupId?: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; planSnapshot?: PlanSnapshot | null; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number; early?: boolean } | null; queuedPlan?: { startsAt: string; expiresAt: string; planSnapshot: PlanSnapshot | null } | null }
 type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; nodeUsage: AccountNodeUsage; stale?: boolean; error?: string }
 type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
 type IpInfo = { ip: string; asn?: number; asOrganization?: string; country?: string; countryCode?: string; region?: string; regionCode?: string; city?: string; timezone?: string; fraudScore?: number; isResidential?: boolean; isBroadcast?: boolean }
@@ -237,9 +237,14 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
   const homeIpStartingPrice = Math.min(...(account.homeIp?.regions || []).map(region => Number(region.price)).filter(Number.isFinite))
   const expiresAtTime = Date.parse(subscription?.expiresAt || "")
   const remainingDays = Number.isFinite(expiresAtTime) ? Math.max(0, Math.ceil((expiresAtTime - Date.now()) / 86400000)) : null
-  // Expired plans still publicly sold renew as a new purchase with the same product, period and traffic preselected.
-  const renewal = status === "expired" ? account.subscription?.renewal : null
-  const renewalUrl = renewal ? `/account/plans/checkout?${new URLSearchParams({ option: renewal.optionId, traffic: String(renewal.trafficTier) })}` : ""
+  // Plans still publicly sold renew as a new purchase with the same product, period and traffic preselected; an active
+  // recurring plan renews early, and the renewal waits until the current plan ends.
+  const renewal = account.subscription?.renewal
+  const renewalUrl = renewal ? `/account/plans/checkout?${new URLSearchParams({ option: renewal.optionId, traffic: String(renewal.trafficTier), ...(renewal.early ? { renew: "1" } : {}) })}` : ""
+  const earlyRenewalUrl = subscription && renewal?.early ? renewalUrl : ""
+  const queuedPlan = subscription?.queuedPlan
+  const queuedParts = queuedPlan ? planSnapshotParts(queuedPlan.planSnapshot) : null
+  const otherAction = subscription && status === "depleted" ? "traffic" : canBuyHomeIp ? "home-ip" : ""
 
   // Current or expired plan as "NAME (period-traffic/月)"; the period and traffic part is set smaller.
   const shownPlan = subscription ?? account.subscription
@@ -256,12 +261,17 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
           <p>流量配额 {planQuota}</p>
         </div> : null}
       </div>
-      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
-        {subscription ? subscription.duration === "lifetime" ? <p className="text-3xl font-semibold">永久有效</p> : <p className="flex items-baseline gap-2"><strong className="text-3xl font-semibold tabular-nums">{remainingDays ?? "-"}</strong><span className="text-sm">天后到期</span></p>
+      {/* The countdown stays bottom-left; actions stack bottom-right, the renewal above the add-on offer. */}
+      <div className={cn("flex items-end justify-between gap-4", !subscription && "flex-wrap gap-y-3")}>
+        {subscription ? subscription.duration === "lifetime" ? <p className="shrink-0 text-3xl font-semibold">永久有效</p> : <p className="flex shrink-0 items-baseline gap-2"><strong className="text-3xl font-semibold tabular-nums">{remainingDays ?? "-"}</strong><span className="text-sm">天后到期</span></p>
           : <p className="max-w-80 text-sm">{renewalUrl ? `套餐已于 ${formatDate(account.subscription?.expiresAt)} 到期，续费后恢复使用。` : "开通套餐后，这里会显示到期时间、流量配额和在线IP数量。"}</p>}
-        {/* Traffic used up: the plan is still active, so the next step is a traffic pack, not a renewal. */}
-        {subscription && status === "depleted" ? <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans#addons"><PackagePlus />流量已用完，购买流量包</Link></BentoButton>
-          : subscription ? canBuyHomeIp ? <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans/checkout?product=home-ip"><span className="sm:hidden">定制家宽IP</span><span className="hidden sm:inline">AI被降智？定制纯净家宽 IP{Number.isFinite(homeIpStartingPrice) ? ` · ${formatMoney(homeIpStartingPrice)} 起` : ""}</span><ArrowUpRight className="size-5 text-white" strokeWidth={2.5} aria-hidden /></Link></BentoButton> : null
+        {subscription ? earlyRenewalUrl || queuedPlan || otherAction ? <div className="flex min-w-0 flex-col items-end gap-2 text-right">
+            {earlyRenewalUrl ? <BentoButton asChild size="lg"><Link to={earlyRenewalUrl}><RefreshCw />提前续费</Link></BentoButton>
+              : queuedPlan && queuedParts ? <p className="text-sm text-muted-foreground tabular-nums">已续费 {queuedParts.duration}-{queuedParts.traffic}{queuedParts.perMonth ? "/月" : ""}，{formatDate(queuedPlan.startsAt)} 生效</p> : null}
+            {/* Traffic used up: the plan is still active, so the next step is a traffic pack. */}
+            {otherAction === "traffic" ? <BentoButton asChild size="lg"><Link to="/account/plans#addons"><PackagePlus />流量已用完，购买流量包</Link></BentoButton>
+              : otherAction === "home-ip" ? <BentoButton asChild size="lg"><Link to="/account/plans/checkout?product=home-ip"><span className="sm:hidden">定制家宽IP</span><span className="hidden sm:inline">AI被降智？定制纯净家宽 IP{Number.isFinite(homeIpStartingPrice) ? ` · ${formatMoney(homeIpStartingPrice)} 起` : ""}</span><ArrowUpRight className="size-5 text-white" strokeWidth={2.5} aria-hidden /></Link></BentoButton> : null}
+          </div> : null
           : renewalUrl ? <BentoButton asChild size="lg" className="ml-auto"><Link to={renewalUrl}><RefreshCw />续费</Link></BentoButton>
           : <BentoButton asChild size="lg" className="ml-auto"><Link to="/account/plans"><PackagePlus />购买服务</Link></BentoButton>}
       </div>

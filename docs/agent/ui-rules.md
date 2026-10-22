@@ -22,6 +22,7 @@
 - 如没有可直接使用的组件或需要通过拼装已有组件实现的组件，创建新的业务组件并做到最大化的抽象，确保该组件在后面的项目中可以通过传参复用。
 - 已有基础组件时，必须通过其正式 API 和 variant 使用，不能用带样式的 `div` 重新实现。
 - 不得为了处理单个页面的特殊情况而修改基础组件的全局默认行为。
+- Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining.
 
 ## 设计系统分层
 
