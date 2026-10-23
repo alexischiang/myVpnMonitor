@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-19",
+  "updated_at": "2026-10-23",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -4468,6 +4468,21 @@
         "page_errors": [],
         "checked_at": "2026-10-22"
       }
+    },
+    {
+      "id": "xui-client-enable-gate",
+      "name": "One rule for enabling 3x-ui clients",
+      "description": "xuiClientAllowed(user) = plan not expired and account not disabled. Every 3x-ui enable decision uses it: desiredXuiClient, the traffic-sync self-healing re-enable, missing-client marking and re-provisioning, custom-inbound projection, the admin traffic reset, and enableXuiClientAfterTrafficIncrease (traffic packs, traffic_credit add-ons, admin traffic gifts). Added traffic still clears the panel quota but only re-enables an allowed client; before, an admin traffic gift re-enabled expired or disabled users. An isOn plan switch and endUserPlan were tried and removed at the user request.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": ["early-plan-renewal"],
+      "done_criteria": [
+        "All 3x-ui enable decisions go through xuiClientAllowed.",
+        "Added traffic clears the panel quota and re-enables the client only when xuiClientAllowed; a disabled account stays off after a traffic gift."
+      ],
+      "verification": [
+        "2026-10-23: test-payment.js disables an account, gifts traffic and checks the client stays off, then re-enables the account; the test fails when the gate is replaced with enable=true and passes with it; npm run verify passed."
+      ]
     }
   ]
 }

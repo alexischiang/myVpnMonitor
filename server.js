@@ -337,10 +337,16 @@ function applyPlanEntitlement(user, entitlement) {
   user.updatedAt = new Date().toISOString();
 }
 
-// Whether the user's 3x-ui client is enabled under the same rule as the scheduled sync: active
-// plan, account not disabled, and traffic not used up.
+// Whether the user may have an enabled 3x-ui client at all: plan not expired and account not
+// disabled. Traffic depletion is checked separately where it applies.
+function xuiClientAllowed(user) {
+  return !isUserExpired(user) && !isUserAccountDisabled(user);
+}
+
+// Whether the user's 3x-ui client is enabled under the same rule as the scheduled sync: client
+// allowed and traffic not used up.
 function xuiClientShouldBeEnabled(user) {
-  return !isUserExpired(user) && !isUserAccountDisabled(user) && !user.xuiWeightedTraffic?.depleted;
+  return xuiClientAllowed(user) && !user.xuiWeightedTraffic?.depleted;
 }
 
 // Read-only plan of what syncing a product to its active self-hosted buyers changes. Each change
@@ -3820,12 +3826,15 @@ function refreshUserPlanTraffic(user) {
   ]);
 }
 
+// Clears the panel quota after the user gained traffic and re-enables the client, unless the plan is
+// expired or the account is disabled.
 async function enableXuiClientAfterTrafficIncrease(user) {
   const email = xuiClientEmail(user);
   const remote = await getXuiClientByEmail(email);
   const totalBytes = xuiTrafficLimitBytes(user);
-  await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable: true }) });
-  await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [email] } });
+  const enable = xuiClientAllowed(user);
+  await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable }) });
+  if (enable) await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [email] } });
   const state = await getXuiBillingState();
   if (state.users[email]) {
     state.users[email].totalBytes = totalBytes;
@@ -4878,7 +4887,7 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
     // Self-healing re-enable: if the panel has the client disabled but they are no longer
     // over quota (traffic pack, cycle reset, or the from-zero launch) and are otherwise
     // valid, re-enable them. Independent of any stored ledger flag.
-    if (user && remote.enable === false && !depleted && !expired && !isUserAccountDisabled(user)) enableEmails.push(email);
+    if (user && remote.enable === false && !depleted && xuiClientAllowed(user)) enableEmails.push(email);
     ledger.disabled = ledger.disabled || depleted;
     ledger.totalBytes = totalBytes;
     state.users[email] = ledger;
@@ -4927,7 +4936,7 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
     }
   }
 
-  const activeUsersByEmail = new Map([...appUsersByEmail].filter(([, user]) => !isUserExpired(user) && !isUserAccountDisabled(user)));
+  const activeUsersByEmail = new Map([...appUsersByEmail].filter(([, user]) => xuiClientAllowed(user)));
   for (const user of markMissingXuiClients(activeUsersByEmail, remoteEmails)) if (!changedUsers.includes(user)) changedUsers.push(user);
 
   // Mirror applied enable changes onto the fetched client objects, so a caller sharing this
@@ -5129,7 +5138,7 @@ async function applyUserCustomInbounds(user, inboundIds, { req = null, actor = "
     details: { actor, reason, addedInboundIds: addedIds, removedInboundIds: removedIds, addedNames: addedIds.map(inboundName), removedNames: removedIds.map(inboundName), effectiveInboundIds }
   }));
   // Keeps the binding but leaves the client disabled while the user's plan is expired.
-  await saveXuiClientProjection(user, !isUserExpired(user) && !isUserAccountDisabled(user));
+  await saveXuiClientProjection(user, xuiClientAllowed(user));
   return { addedIds, removedIds, inboundNames: Object.fromEntries(nextIds.map(id => [id, inboundName(id)])) };
 }
 
@@ -5347,8 +5356,8 @@ async function runCatalogV2Sync({ forceReload = false, snapshot = {}, readOnly =
       const groupInboundIds = desiredByGroup.get(planLineGroupId(user)) || [];
       if (!clientsByEmail.has(xuiClientEmail(user))) {
         report.missing++;
-        if (readOnly || isUserExpired(user) || isUserAccountDisabled(user)) {
-          if (readOnly && !isUserExpired(user) && !isUserAccountDisabled(user)) report.skipped++;
+        if (readOnly || !xuiClientAllowed(user)) {
+          if (readOnly && xuiClientAllowed(user)) report.skipped++;
           if (repairedTrafficLimit) await saveUser(user);
           continue;
         }
@@ -5729,7 +5738,7 @@ function desiredXuiClient(user, { email, group, existing = null, depletionDisabl
     flow: XUI_VISION_FLOW,
     groupName: group,
     comment: xuiClientComment(user),
-    enable: !isUserExpired(user) && !isUserAccountDisabled(user) && !(depletionDisables && user.xuiWeightedTraffic?.depleted)
+    enable: xuiClientAllowed(user) && !(depletionDisables && user.xuiWeightedTraffic?.depleted)
   };
   delete desired.traffic;
   delete desired.inboundIds;
@@ -11926,7 +11935,7 @@ async function handleApi(req, res, pathname) {
         // counter reset would skew the local-node derivation). The current cycle restarts at zero
         // from this instant through a cycle baseline; a client disabled for quota is re-enabled now.
         startXuiCycleBaseline(item, currentXuiCycleStartKey(item), Date.now());
-        if (!isUserExpired(item) && !isUserAccountDisabled(item)) {
+        if (xuiClientAllowed(item)) {
           await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [xuiClientEmail(item)] } });
         }
         const now = new Date().toISOString();

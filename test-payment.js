@@ -786,6 +786,15 @@ async function main() {
     assert.deepStrictEqual([earlyRenewed.purchasedAt, earlyRenewed.expiresAt, earlyRenewed.v2ProductSnapshot.periodId, earlyRenewed.currentProductOrderId], [earlyActive.expiresAt, earlyQuote.data.renewal.expiresAt, "90d", renewalOrder.id]);
     assert.strictEqual(earlyRenewed.cashValue, renewalOrder.amount);
     assert.ok(earlyRenewed.userLogs.some(log => log.reason === "queued-plan-activated"));
+    // Added traffic re-enables the client only when it is allowed: a disabled account stays off after a traffic gift.
+    const disableEarly = await request(`/api/users/${earlyRenewed.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
+    assert.strictEqual(disableEarly.response.status, 200, disableEarly.text);
+    assert.strictEqual(xuiClients.get(earlyRenewed.xuiClientEmail).enable, false);
+    const disabledTrafficGift = await request(`/api/users/${earlyRenewed.id}/traffic-gift`, { method: "POST", cookie: adminCookie, body: { trafficGb: 1 } });
+    assert.strictEqual(disabledTrafficGift.response.status, 200, disabledTrafficGift.text);
+    assert.strictEqual(xuiClients.get(earlyRenewed.xuiClientEmail).enable, false, "added traffic does not re-enable a disabled account's client");
+    assert.strictEqual((await request(`/api/users/${earlyRenewed.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: false } })).response.status, 200);
+    assert.strictEqual(xuiClients.get(earlyRenewed.xuiClientEmail).enable, true);
 
     const inviterRegistration = await request("/api/auth/register", {
       method: "POST",
