@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-22
-- Current Objective: 周期性套餐提前续费（排队套餐，流量同步轮次中到期启用）
+- Last Updated: 2026-10-24
+- Current Objective: 管理端邮箱换绑（POST /api/users/:id/email + 用户详情页换绑邮箱入口）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -498,8 +498,20 @@
 
 - 2026-10-22: npm run verify、npm run verify:harness、git diff --check 通过
 
+- 2026-10-23: npm run verify、verify:harness、git diff --check 通过；test-payment.js 覆盖 endUserPlan
+
+- 2026-10-23: npm run verify、verify:harness、git diff --check 通过；test-payment.js 复现并覆盖流量赠送不再重新开启已结束套餐
+
+- 2026-10-23: npm run verify、verify:harness、git diff --check 通过；test-payment.js 验证流量赠送不会重新开启已停用账户
+
+- 2026-10-24: npm run check、verify:fast、verify:harness、git diff --check 通过；/users/detail 在 1920/1600/1280/375px 浏览器验证，无新的 console/page errors
+
+- 2026-10-24: npm run check, verify:fast, verify:harness passed; dashboard verified in browser with stubbed responses
+
+- 2026-10-24: verify:catalog-v2、verify:fast、check、verify:harness、git diff --check 通过；/users/detail 浏览器验证换绑与重复邮箱报错，无新增页面错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `docs/agent/ui-rules.md`, `feature_list.json`, `server.js`, `src/components/features/account-pages.tsx`, `src/components/features/public-pages.tsx`, `test-payment.js`, `test.js`
+- Files: `.claude/launch.json`, `PROGRESS.md`, `feature_list.json`, `notifier.js`, `server.js`, `src/components/features/dashboard.tsx`, `src/components/features/details.tsx`, `test-payment.js`, `test.js`, `src/components/features/node-traffic-list.tsx`
 - Known risks: none
-- Recommended Next Step: 等待用户确认后提交并部署；上线后在服务器日志中观察 [queued-plan] activated 记录
+- Recommended Next Step: 无；如需要，可在换绑后给新旧邮箱发送通知邮件

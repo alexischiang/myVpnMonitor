@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import type { ColumnDef } from "@tanstack/react-table"
-import { AlertCircle, ArrowRightLeft, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, Settings2, UserCog } from "lucide-react"
+import { AlertCircle, ArrowRightLeft, AtSign, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, Settings2, UserCog } from "lucide-react"
 import { toast } from "@/components/features/toast"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -15,6 +15,7 @@ import { useData } from "@/components/features/data-provider"
 import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
 import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
 import { UserBillsCard } from "@/components/features/user-bills-card"
+import { NodeTrafficList } from "@/components/features/node-traffic-list"
 import { BackButton } from "@/components/features/back-button"
 import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalogPurchaseOptionsFor, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
@@ -257,6 +258,11 @@ export function UserDetailPage() {
   const [giftBalanceError, setGiftBalanceError] = React.useState("")
   const [giftBalanceSaving, setGiftBalanceSaving] = React.useState(false)
   const [trafficGiftOpen, setTrafficGiftOpen] = React.useState(false)
+  const [emailRebindOpen, setEmailRebindOpen] = React.useState(false)
+  const [emailRebindValue, setEmailRebindValue] = React.useState("")
+  const [emailRebindNote, setEmailRebindNote] = React.useState("")
+  const [emailRebindError, setEmailRebindError] = React.useState("")
+  const [emailRebindSaving, setEmailRebindSaving] = React.useState(false)
   const [trafficGiftGb, setTrafficGiftGb] = React.useState("")
   const [trafficGiftNote, setTrafficGiftNote] = React.useState("")
   const [trafficGiftError, setTrafficGiftError] = React.useState("")
@@ -505,6 +511,28 @@ export function UserDetailPage() {
       toast({ type: "error", title: error instanceof Error ? error.message : "赠送余额失败" })
     } finally {
       setGiftBalanceSaving(false)
+    }
+  }
+
+  async function rebindEmail(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const input = event.currentTarget.elements.namedItem("rebindEmail") as HTMLInputElement
+    if (!emailRebindValue.trim() || !input.validity.valid) {
+      setEmailRebindError(emailRebindValue.trim() ? "请输入有效的邮箱地址。" : "请输入新邮箱。")
+      return
+    }
+    setEmailRebindSaving(true)
+    setEmailRebindError("")
+    try {
+      await postJson(`/api/users/${user.id}/email`, { email: emailRebindValue, note: emailRebindNote })
+      // Registered-only accounts have no detail endpoint; their row comes from the users list.
+      await (user.id.startsWith("account:") ? reload(["users"]) : refreshUserDetails())
+      setEmailRebindOpen(false)
+      toast({ type: "success", title: `邮箱已换绑为 ${emailRebindValue.trim().toLowerCase()}` })
+    } catch (error) {
+      setEmailRebindError(error instanceof Error ? error.message : "换绑邮箱失败")
+    } finally {
+      setEmailRebindSaving(false)
     }
   }
 
@@ -794,6 +822,13 @@ export function UserDetailPage() {
             <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={giftBalanceSaving}>取消</Button></DialogClose><ActionButton type="submit" label="确认赠送" pendingLabel="赠送中..." pending={giftBalanceSaving} /></div>
           </form></DialogContent>
       </Dialog>
+      <Dialog open={emailRebindOpen} onOpenChange={setEmailRebindOpen}>
+        <DialogContent title="换绑邮箱" description={`当前邮箱：${user.email || "-"}。换绑后用户需用新邮箱登录，已发出的重置密码和认领链接失效；3x-ui 客户端保持不变。`}><form className="grid gap-4" onSubmit={rebindEmail} noValidate>
+            <Input label="新邮箱" error={emailRebindError || undefined} id="rebind-email" name="rebindEmail" type="email" value={emailRebindValue} onChange={event => { setEmailRebindValue(event.target.value); setEmailRebindError("") }} aria-invalid={Boolean(emailRebindError)} autoFocus required />
+            <Input label="备注" id="rebind-email-note" maxLength={200} placeholder="可选" value={emailRebindNote} onChange={event => setEmailRebindNote(event.target.value)} />
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={emailRebindSaving}>取消</Button></DialogClose><ActionButton type="submit" label="确认换绑邮箱" pendingLabel="换绑中..." pending={emailRebindSaving} /></div>
+          </form></DialogContent>
+      </Dialog>
       <Dialog open={trafficGiftOpen} onOpenChange={setTrafficGiftOpen}>
         <DialogContent title="单向赠送流量" description="只会增加用户额度，不能覆盖或扣减。最终额度始终由本地套餐、已购流量包和赠送记录计算，不读取 3x-ui 额度。"><form className="grid gap-4" onSubmit={giftTraffic}>
             <Input label="赠送流量（GB）" error={(trafficGiftError) || undefined} id="traffic-gift-gb" type="number" min="0.01" max="102400" step="0.01" value={trafficGiftGb} onChange={event => { setTrafficGiftGb(event.target.value); setTrafficGiftError("") }} aria-invalid={Boolean(trafficGiftError)} autoFocus required />
@@ -900,6 +935,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               ] : [{ label: "换池", icon: <RefreshCw />, onSelect: openPoolDialog }]),
               { label: "赠送时长", icon: <Gift />, onSelect: openGiftDialog },
             ]),
+            ...(["active", "disabled", "invited"].includes(user.accountStatus || "") ? [{ label: "换绑邮箱", icon: <AtSign />, onSelect: () => { setEmailRebindValue(""); setEmailRebindNote(""); setEmailRebindError(""); setEmailRebindOpen(true) } }] : []),
             ...(user.accountStatus === "active" ? [
               ...(user.registeredOnly ? [] : [{ label: "赠送余额", icon: <Gift />, onSelect: () => { setGiftBalanceError(""); setGiftBalanceOpen(true) } }]),
               { label: "停用账户", icon: <Power />, onSelect: () => setAccountStatusOpen(true), destructive: true },
@@ -910,21 +946,22 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
             ]),
           ]} />}</Card>
 
-        <Tabs defaultValue="overview" className="min-w-0 gap-4">
+        <Tabs defaultValue="overview" className="@container min-w-0 gap-4">
           <TabsList className="grid w-full grid-cols-2 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-4">
             <TabsTrigger value="overview" className="h-9">基本信息</TabsTrigger>
             <TabsTrigger value="catalog-v2" className="h-9">V2 商品</TabsTrigger>
             <TabsTrigger value="bills" className="h-9">用户日志</TabsTrigger>
             <TabsTrigger value="referral" className="h-9">邀请返利</TabsTrigger>
           </TabsList>
-          <TabsContent value="overview" className="grid min-w-0 gap-4">
-            <Card title="当前套餐" description={user.registeredOnly ? "尚未开通订阅" : productName} headerAction={<UserStatusBadge user={user} />}><div className="grid gap-4 sm:grid-cols-2">
+          <TabsContent value="overview" className={`grid min-w-0 gap-4 ${user.lineType === "self_hosted" ? "@4xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] @4xl:grid-rows-[auto_auto_auto_1fr] @4xl:items-start" : ""}`}>
+            {/* Wide panes: node traffic on the left, plan and status stacked on the right. Narrow panes: one column with the plan first. */}
+            <Card className="order-first @4xl:order-none @4xl:col-start-2 @4xl:row-start-1" title="当前套餐" description={user.registeredOnly ? "尚未开通订阅" : productName} headerAction={<UserStatusBadge user={user} />}><div className="grid gap-4 sm:grid-cols-2 @4xl:grid-cols-1">
                 <Info label="当前到期" value={formatUserExpiry(user)} />
                 <Info label="原套餐到期" value={formatDate(user.planExpiresAt || user.expiresAt)} />
                 <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
                 <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
               </div></Card>
-            {user.lineType === "self_hosted" ? <Card title="倍率流量" description="按节点倍率折算用户流量；节点倍率修改仅影响之后产生的流量" headerAction={<Badge tone={!weightedTraffic ? "neutral" : weightedTraffic.depleted ? "danger" : "success"}>{!weightedTraffic ? "未同步" : weightedTraffic.depleted ? "已耗尽" : "正常"}</Badge>}><div className="grid gap-4">
+            {user.lineType === "self_hosted" ? <Card className="@4xl:col-start-1 @4xl:row-span-4 @4xl:row-start-1" title="倍率流量" description="按节点倍率折算用户流量；节点倍率修改仅影响之后产生的流量" headerAction={<Badge tone={!weightedTraffic ? "neutral" : weightedTraffic.depleted ? "danger" : "success"}>{!weightedTraffic ? "未同步" : weightedTraffic.depleted ? "已耗尽" : "正常"}</Badge>}><div className="grid gap-4">
                 {weightedTraffic ? <>
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Info label="原始流量" value={formatBytes(weightedTraffic.rawUsedBytes)} />
@@ -933,12 +970,12 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
                   </div>
                   {weightedTraffic.totalBytes ? <TrafficProgress remaining={weightedTraffic.remainingBytes} total={weightedTraffic.totalBytes} /> : null}
                   <Separator />
-                  {weightedTraffic.nodes.length ? <SimpleTable caption="节点列表" columns={["节点", "原始流量", "倍率", "折算流量"]} rows={weightedTraffic.nodes} rowKey={(node) => node.key} cells={(node) => [<span className="font-medium">{node.name}</span>, <>{formatBytes(node.rawBytes)}</>, <>× {node.multiplier}</>, <span className="text-right font-medium">{formatBytes(node.weightedBytes)}</span>]} /> : <EmptyState title="暂无节点流量明细" />}
+                  {weightedTraffic.nodes.length ? <NodeTrafficList nodes={weightedTraffic.nodes} /> : <EmptyState title="暂无节点流量明细" />}
                   <p className="text-xs text-muted-foreground">最后同步：{weightedTraffic.lastSyncedAt ? formatDateTime(weightedTraffic.lastSyncedAt) : "-"}</p>
                 </> : <EmptyState title="暂无倍率流量数据" description="完成首次 3x-ui 流量同步后显示节点明细。" />}
               </div></Card> : null}
             {user.poolCompatibility ? (
-              <Card title="推荐适配度" description={poolDisplayName(currentPool)} headerAction={<Badge tone={user.poolCompatibility.status === "high" ? "success" : user.poolCompatibility.status === "usable" ? "neutral" : user.poolCompatibility.status === "incompatible" ? "danger" : "warning"}>
+              <Card className="@4xl:col-start-2" title="推荐适配度" description={poolDisplayName(currentPool)} headerAction={<Badge tone={user.poolCompatibility.status === "high" ? "success" : user.poolCompatibility.status === "usable" ? "neutral" : user.poolCompatibility.status === "incompatible" ? "danger" : "warning"}>
                       {user.poolCompatibility.statusText}
                     </Badge>}><div className="grid gap-4">
                   {user.poolCompatibility.status !== "high" ? (
@@ -961,7 +998,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
                   ) : null}
                 </div></Card>
             ) : null}
-            <Card title="3x-ui 信息"><div className="grid gap-4 sm:grid-cols-2">
+            <Card className="@4xl:col-start-2" title="3x-ui 信息"><div className="grid gap-4 sm:grid-cols-2">
                 <Info label="迁移状态" value={<Badge tone={migrationStatus.variant}>{migrationStatus.label}</Badge>} />
                 <Info label="迁移方式" value={xuiMigrationSource(user)} />
                 <Info label="客户端" value={user.xuiClientEmail || "-"} />

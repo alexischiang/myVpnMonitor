@@ -94,6 +94,7 @@ function renderEmailHtml({ subject, text, html }) {
 async function sendMail({ to, subject, text, html }) {
   const cfg = getMailerConfig();
   const renderedHtml = renderEmailHtml({ subject, text, html });
+  let resendError = "";
   if (cfg.resendApiKey && cfg.resendFrom) {
     try {
       const response = await fetch("https://api.resend.com/emails", {
@@ -104,20 +105,40 @@ async function sendMail({ to, subject, text, html }) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || `Resend request failed (${response.status}).`);
-      return result;
+      return { ...result, transport: "resend" };
     } catch (error) {
       if (!cfg.from || !cfg.pass) throw error;
       console.warn(`[mail] Resend failed; falling back to SMTP: ${error.message}`);
+      resendError = error.message;
     }
   }
   const transporter = getTransporter();
-  return transporter.sendMail({
+  const info = await transporter.sendMail({
     from: `NEXORA <${cfg.from}>`,
     to: to || cfg.to,
     subject,
     text,
     html: renderedHtml
   });
+  // Callers that care (the admin test mail) can tell a Resend failure apart from a Resend delivery.
+  return { ...info, transport: "smtp", ...(resendError ? { resendError } : {}) };
+}
+
+// GET /domains needs a full-access key; a send-only key answers 401 restricted_api_key, which still means the key is valid.
+function classifyResendProbe(httpStatus, payload = {}) {
+  if (httpStatus >= 200 && httpStatus < 300) return { status: "ok" };
+  if (httpStatus === 401 && payload?.name === "restricted_api_key") return { status: "ok" };
+  return { status: "error", message: payload?.message || `Resend responded ${httpStatus}.` };
+}
+
+async function checkResend({ signal } = {}) {
+  const { resendApiKey } = getMailerConfig();
+  const response = await fetch("https://api.resend.com/domains", {
+    headers: { authorization: `Bearer ${resendApiKey}` },
+    signal
+  });
+  const payload = await response.json().catch(() => ({}));
+  return classifyResendProbe(response.status, payload);
 }
 
 async function requestTelegram(method, options = {}) {
@@ -255,6 +276,8 @@ module.exports = {
   getMailerConfig,
   getTelegramConfig,
   checkTelegram,
+  checkResend,
+  classifyResendProbe,
   sendMail,
   sendTelegram,
   renderEmailHtml,

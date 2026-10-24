@@ -8,6 +8,15 @@
         "server.js"
       ],
       "port": 3000
+    },
+    {
+      "name": "dev-all",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "PORT=3000 npm run dev:all"
+      ],
+      "port": 5173
     }
   ]
 }
