@@ -15,6 +15,7 @@ const {
   parseAccountUnavailable,
   calculateExpiry,
   calculateGiftExpiry,
+  giftDaysPreview,
   extractClashConfigBody,
   statusFor,
   toBytes,
@@ -582,6 +583,20 @@ assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "half_yearly").sl
 assert.strictEqual(calculateGiftExpiry({ expiresAt: "2026-07-20T00:00:00.000Z" }, 10, new Date("2026-07-15T00:00:00.000Z")).slice(0, 10), "2026-07-30");
 assert.strictEqual(calculateGiftExpiry({ expiresAt: "2026-07-10T00:00:00.000Z" }, 10, new Date("2026-07-15T00:00:00.000Z")).slice(0, 10), "2026-07-25");
 assert.strictEqual(calculateGiftExpiry({}, 0, new Date("2026-07-15T00:00:00.000Z")), null);
+// Gifted days need an active recurring V2 plan; a queued early renewal moves back by the same days.
+{
+  const giftNow = new Date("2026-07-15T00:00:00.000Z");
+  const recurring = { productType: "recurring_plan", productId: "p", name: "BASIC", durationDays: 30 };
+  const giftUser = { expiresAt: "2026-07-20T00:00:00.000Z", duration: "custom", giftedDays: 2, v2ProductSnapshot: recurring, queuedPlan: { duration: "custom", durationDays: 30, productSnapshot: recurring } };
+  const preview = giftDaysPreview(giftUser, 10, giftNow);
+  assert.deepStrictEqual([preview.beforeExpiresAt.slice(0, 10), preview.afterExpiresAt.slice(0, 10), preview.giftedDaysAfter], ["2026-07-20", "2026-07-30", 12]);
+  assert.deepStrictEqual([preview.queuedPlan.before.expiresAt.slice(0, 10), preview.queuedPlan.after.startsAt.slice(0, 10), preview.queuedPlan.after.expiresAt.slice(0, 10)], ["2026-08-19", "2026-07-30", "2026-08-29"]);
+  const noGift = /没有生效中的周期性套餐/;
+  assert.throws(() => giftDaysPreview({ ...giftUser, expiresAt: "2026-07-10T00:00:00.000Z" }, 10, giftNow), noGift, "expired plan");
+  assert.throws(() => giftDaysPreview({ ...giftUser, v2ProductSnapshot: undefined }, 10, giftNow), noGift, "no V2 plan");
+  assert.throws(() => giftDaysPreview({ ...giftUser, duration: "lifetime", v2ProductSnapshot: { ...recurring, productType: "lifetime_plan" } }, 10, giftNow), noGift, "lifetime plan");
+  assert.throws(() => giftDaysPreview(giftUser, 0, giftNow), /赠送天数/);
+}
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "yearly").slice(0, 10), "2027-05-23");
 assert.strictEqual(checkoutTaxAmount(33.35), 1);
 // User quotas come only from the V2 snapshot; legacy tier fields no longer imply any traffic.

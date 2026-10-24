@@ -52,6 +52,9 @@ export const billTypeLabels: Record<string, string> = {
   initial: "新购套餐",
   renewal: "续费套餐",
   replacement: "覆盖套餐",
+  addon: "附加服务",
+  traffic_pack: "流量包",
+  recharge: "余额充值",
 }
 
 export const statusLabels: Record<string, string> = {

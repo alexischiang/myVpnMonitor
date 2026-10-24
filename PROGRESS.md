@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-24
-- Current Objective: 管理端邮箱换绑（POST /api/users/:id/email + 用户详情页换绑邮箱入口）
+- Last Updated: 2026-10-25
+- Current Objective: 赠送时长改为基于当前生效周期性套餐并先预览后确认
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -510,8 +510,20 @@
 
 - 2026-10-24: verify:catalog-v2、verify:fast、check、verify:harness、git diff --check 通过；/users/detail 浏览器验证换绑与重复邮箱报错，无新增页面错误
 
+- 2026-10-24: verify:catalog-v2、verify:fast、check、verify:harness、git diff --check 通过；浏览器验证未认领与已认领换绑无控制台错误
+
+- 2026-10-24: verify:catalog-v2、verify:fast、check、verify:harness、git diff --check 通过；浏览器验证周期下拉和到期日预览无控制台错误
+
+- 2026-10-24: verify:catalog-v2、verify:fast、check、verify:harness、git diff --check 通过；npm run verify 因本机缺 TEST_DATABASE_URL 未能跑支付步骤；浏览器验证流量包/附加服务/已撤销订单显示且无控制台错误
+
+- 2026-10-24: verify:catalog-v2、verify:fast、verify:harness、git diff --check 通过
+
+- 2026-10-25: verify:catalog-v2、verify:fast、verify:harness、git diff --check 通过
+
+- 2026-10-25: npm run check、verify:catalog-v2、verify:fast、git diff --check 通过；/users/detail 桌面与移动端验证无法赠送提示与预览流程，无新增控制台错误
+
 ## Next Session
 
-- Files: `.claude/launch.json`, `PROGRESS.md`, `feature_list.json`, `notifier.js`, `server.js`, `src/components/features/dashboard.tsx`, `src/components/features/details.tsx`, `test-payment.js`, `test.js`, `src/components/features/node-traffic-list.tsx`
+- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/user-bills-card.tsx`, `src/types.ts`, `src/utils.ts`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 无；如需要，可在换绑后给新旧邮箱发送通知邮件
+- Recommended Next Step: 无

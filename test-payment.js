@@ -775,6 +775,7 @@ async function main() {
     // Reversing the renewal order drops the queued plan.
     assert.strictEqual((await request(`/api/admin/orders/${reversedRenewalOrder.id}/reverse`, { method: "POST", cookie: adminCookie })).response.status, 200);
     assert.strictEqual((await earlyUser()).queuedPlan, undefined);
+    assert.strictEqual(xuiClients.get(earlyQueued.xuiClientEmail).expiryTime, Date.parse(earlyActive.expiresAt), "the panel goes back to the current plan's end");
     const renewalOrder = await payEarly({ optionId: basic90OptionId, planAction: "renew" });
     assert.strictEqual((await earlyUser()).queuedPlan.orderId, renewalOrder.id);
     // The traffic sync round starts due renewals; nothing starts before the current plan ends.
@@ -795,6 +796,41 @@ async function main() {
     assert.strictEqual(xuiClients.get(earlyRenewed.xuiClientEmail).enable, false, "added traffic does not re-enable a disabled account's client");
     assert.strictEqual((await request(`/api/users/${earlyRenewed.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: false } })).response.status, 200);
     assert.strictEqual(xuiClients.get(earlyRenewed.xuiClientEmail).enable, true);
+
+    // Reversing a replacement restores only the plan: days gifted afterwards, a rebound email and the user log stay,
+    // and the panel follows the restored plan.
+    const revertRegistration = await request("/api/auth/register", { method: "POST", body: { email: "revert@example.test", password: "payment-test-password" } });
+    const revertCookie = revertRegistration.response.headers.get("set-cookie").split(";", 1)[0];
+    const revertUser = async () => (await database.query("SELECT data FROM app_records WHERE collection = 'users' AND data->>'email' = 'revert@example.test'")).rows[0]?.data;
+    const payRevert = async body => {
+      const order = await purchase({ method: "POST", cookie: revertCookie, body: { channelCode: "100", ...body } });
+      assert.strictEqual(order.response.status, 201, order.text);
+      await callback(order.data, 1, String(order.data.amount), true);
+      return order.data;
+    };
+    await payRevert({ optionId: basicOptionId });
+    const revertBefore = await revertUser();
+    const revertReplacement = await payRevert({ optionId: paymentOptionId, confirmReplacement: true });
+    assert.strictEqual(revertReplacement.purchaseAction, "replace");
+    const revertReplaced = await revertUser();
+    assert.notStrictEqual(revertReplaced.v2ProductSnapshot.productId, revertBefore.v2ProductSnapshot.productId);
+    const revertPack = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: (await request(`/api/users/${revertReplaced.id}`, { cookie: adminCookie })).data.accountId, product: "traffic_pack", amount: 1 } });
+    assert.deepStrictEqual([revertPack.response.status, revertPack.data.fulfillmentStatus], [201, "fulfilled"], revertPack.text);
+    assert.strictEqual((await request(`/api/users/${revertReplaced.id}/gift`, { method: "POST", cookie: adminCookie, body: { days: 3 } })).response.status, 200);
+    assert.strictEqual((await request(`/api/users/${revertReplaced.id}/email`, { method: "POST", cookie: adminCookie, body: { email: "revert-new@example.test" } })).response.status, 200);
+    assert.strictEqual((await request(`/api/admin/orders/${revertReplacement.id}/reverse`, { method: "POST", cookie: adminCookie })).response.status, 200);
+    const revertAfter = (await request(`/api/users/${revertReplaced.id}`, { cookie: adminCookie })).data;
+    assert.deepStrictEqual(
+      [revertAfter.v2ProductSnapshot.productId, revertAfter.purchasedAt, revertAfter.currentProductOrderId, revertAfter.expiresAt],
+      [revertBefore.v2ProductSnapshot.productId, revertBefore.purchasedAt, revertBefore.currentProductOrderId, new Date(Date.parse(revertBefore.expiresAt) + 3 * 86400000).toISOString()],
+      "the pre-order plan comes back with the 3 gifted days on top"
+    );
+    assert.strictEqual(revertAfter.email, "revert-new@example.test", "the rebound email is kept");
+    assert.deepStrictEqual([revertAfter.xuiTrafficPackBytes, revertAfter.xuiTrafficPackOrderIds, revertAfter.xuiTrafficLimitBytes], [100 * 1024 ** 3, [revertPack.data.id], revertBefore.v2ProductSnapshot.trafficBytes + 100 * 1024 ** 3], "a traffic pack bought after the replacement stays on the restored plan");
+    assert.ok(["user-gifted", "email-changed", "order-reversed"].every(reason => revertAfter.userLogs.some(log => log.reason === reason)), "later user logs are kept");
+    assert.strictEqual(revertAfter.actualPaid, revertBefore.actualPaid);
+    assert.strictEqual(xuiClients.get(revertAfter.xuiClientEmail).expiryTime, Date.parse(revertAfter.expiresAt), "the panel follows the restored plan");
+    assert.strictEqual((await request("/api/auth/login", { method: "POST", body: { account: "revert-new@example.test", password: "payment-test-password" } })).response.status, 200);
 
     const inviterRegistration = await request("/api/auth/register", {
       method: "POST",
@@ -994,8 +1030,14 @@ async function main() {
     assert.deepStrictEqual([referrals.data.pendingAmount, referrals.data.earnedAmount, referrals.data.referralBalance], [0, 0, 0]);
     restoredInviterWallet = await request("/api/account/wallet", { cookie: inviterCookie });
     assert.strictEqual(restoredInviterWallet.data.referralBalance, 0);
+    // Reversing the first plan order keeps the user it created: still linked to the account, plan ended at reversal.
     const reversedUsers = await request("/api/users", { cookie: adminCookie });
-    assert.strictEqual(reversedUsers.data.find(item => item.email === "invitee@example.test")?.registeredOnly, true);
+    const keptInvitee = reversedUsers.data.filter(item => item.email === "invitee@example.test");
+    assert.deepStrictEqual(keptInvitee.map(item => [Boolean(item.registeredOnly), item.accountStatus, item.actualPaid]), [[false, "active", 0]], "the user created by the reversed first order is kept and stays linked");
+    assert.ok(Date.parse(keptInvitee[0].expiresAt) <= Date.now(), "the reversed first order ends the plan");
+    const keptInviteeDetail = (await request(`/api/users/${keptInvitee[0].id}`, { cookie: adminCookie })).data;
+    assert.ok(keptInviteeDetail.userLogs.some(log => log.reason === "order-reversed"));
+    assert.strictEqual(xuiClients.get(keptInviteeDetail.xuiClientEmail)?.enable, false, "the ended plan disables the 3x-ui client");
     const reversedBills = await database.query("SELECT COUNT(*)::int AS count FROM app_records WHERE collection = 'bills' AND data->>'paymentOrderId' = ANY($1::text[]) AND data->>'reversedAt' <> ''", [[walletOrder.data.id, inviterOrder.data.id, inviteeOrder.data.id]]);
     assert.strictEqual(reversedBills.rows[0].count, 3);
     const reversalEntries = await database.query("SELECT COUNT(*)::int AS count FROM wallet_entries WHERE idempotency_key LIKE 'reversal:%' AND source_id = ANY($1::text[])", [[walletOrder.data.id, rechargeOrder.data.id, inviterOrder.data.id, inviteeOrder.data.id]]);
@@ -1752,6 +1794,83 @@ async function main() {
     assert.strictEqual(reboundLogin.response.status, 200);
     assert.strictEqual((await request("/api/auth/me", { cookie: newPasswordLogin.response.headers.get("set-cookie").split(";", 1)[0] })).data.email, "buyer-new@example.test", "an existing session shows the new email");
     assert.strictEqual((await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: "buyer@example.test" } })).response.status, 200);
+    assert.ok(!("claimMail" in rebound.data), "a claimed account keeps its password and gets no claim mail");
+
+    // Rebinding an unclaimed user restarts the claim flow under the new email; a failed mail keeps the rebind.
+    const notifierForRebind = require("./notifier");
+    const realRebindMailer = { isMailConfigured: notifierForRebind.isMailConfigured, sendMail: notifierForRebind.sendMail };
+    const rebindMails = [];
+    let failRebindMail = false;
+    Object.assign(notifierForRebind, { isMailConfigured: () => true, sendMail: async mail => {
+      if (failRebindMail) throw new Error("simulated mail outage");
+      rebindMails.push(mail);
+    } });
+    const unclaimedCreate = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "rebind-unclaimed", email: "rebind-unclaimed@example.test", lineType: "self_hosted", optionId: paymentOptionId, purchasedAt: "2026-01-01", actualPaid: 1 } });
+    assert.strictEqual(unclaimedCreate.response.status, 201, unclaimedCreate.text);
+    try {
+      const unclaimedPath = `/api/users/${unclaimedCreate.data.id}/email`;
+      assert.strictEqual(unclaimedCreate.data.accountStatus, "unclaimed");
+      const unclaimedRebind = await request(unclaimedPath, { method: "POST", cookie: adminCookie, body: { email: "Rebind-Claim@Example.test" } });
+      assert.strictEqual(unclaimedRebind.response.status, 200, unclaimedRebind.text);
+      assert.deepStrictEqual([unclaimedRebind.data.email, unclaimedRebind.data.accountStatus, unclaimedRebind.data.claimMail], ["rebind-claim@example.test", "invited", { sent: true, to: "rebind-claim@example.test" }]);
+      assert.deepStrictEqual(rebindMails.map(mail => [mail.to, mail.subject]), [["rebind-claim@example.test", "认领你的订阅账户"]]);
+      const firstClaimToken = new URL(rebindMails[0].text.match(/https?:\/\/\S+/)[0]).searchParams.get("token");
+      const invitedRebind = await request(unclaimedPath, { method: "POST", cookie: adminCookie, body: { email: "rebind-claim2@example.test" } });
+      assert.deepStrictEqual([invitedRebind.data.accountStatus, invitedRebind.data.claimMail?.to, rebindMails.length], ["invited", "rebind-claim2@example.test", 2], "an invited account is re-invited at the new email");
+      assert.strictEqual((await request("/api/auth/reset-password", { method: "POST", body: { token: firstClaimToken, password: "rebind-claim-password" } })).response.status, 400, "the link mailed before the rebind stops working");
+      const claimToken = new URL(rebindMails[1].text.match(/https?:\/\/\S+/)[0]).searchParams.get("token");
+      assert.strictEqual((await request("/api/auth/reset-password", { method: "POST", body: { token: claimToken, password: "rebind-claim-password" } })).response.status, 200);
+      assert.strictEqual((await request("/api/auth/login", { method: "POST", body: { account: "rebind-claim2@example.test", password: "rebind-claim-password" } })).response.status, 200);
+      failRebindMail = true;
+      const claimedAfter = await request(unclaimedPath, { method: "POST", cookie: adminCookie, body: { email: "rebind-claim3@example.test" } });
+      assert.deepStrictEqual([claimedAfter.response.status, claimedAfter.data.accountStatus, "claimMail" in claimedAfter.data], [200, "active", false], "once claimed, a rebind sends no mail even if mail is down");
+      assert.strictEqual((await request("/api/auth/login", { method: "POST", body: { account: "rebind-claim3@example.test", password: "rebind-claim-password" } })).response.status, 200, "the claimed password survives the rebind");
+    } finally {
+      Object.assign(notifierForRebind, realRebindMailer);
+    }
+    const failedMailUser = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "rebind-mail-down", email: "rebind-mail-down@example.test", lineType: "self_hosted", optionId: paymentOptionId, purchasedAt: "2026-01-01", actualPaid: 1 } });
+    Object.assign(notifierForRebind, { isMailConfigured: () => true, sendMail: async () => { throw new Error("simulated mail outage"); } });
+    try {
+      const failedMailRebind = await request(`/api/users/${failedMailUser.data.id}/email`, { method: "POST", cookie: adminCookie, body: { email: "rebind-mail-down2@example.test" } });
+      assert.deepStrictEqual([failedMailRebind.response.status, failedMailRebind.data.email, failedMailRebind.data.claimMail?.sent, failedMailRebind.data.claimMail?.error], [200, "rebind-mail-down2@example.test", false, "simulated mail outage"]);
+    } finally {
+      Object.assign(notifierForRebind, realRebindMailer);
+    }
+    assert.strictEqual((await request(`/api/users/${failedMailUser.data.id}`, { method: "DELETE", cookie: adminCookie })).response.status, 200);
+
+    // An admin plan change may pick any period: the expiry is recomputed as if the new spec had been bought on
+    // the purchase date, gifted days are kept, rollback restores it, and a lifetime user starts at the purchase date.
+    const addDays = (value, days) => { const date = new Date(value); date.setUTCDate(date.getUTCDate() + days); return date.toISOString(); };
+    const planPurchasedAt = addDays(new Date().toISOString().slice(0, 10), -10);
+    const planUser = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "plan-period", email: "plan-period@example.test", lineType: "self_hosted", optionId: paymentOptionId, purchasedAt: planPurchasedAt, actualPaid: 1 } });
+    assert.strictEqual(planUser.response.status, 201, planUser.text);
+    assert.strictEqual(planUser.data.expiresAt, addDays(planPurchasedAt, 30));
+    const giftPreview = await request(`/api/users/${planUser.data.id}/gift`, { method: "POST", cookie: adminCookie, body: { days: 5, preview: true } });
+    assert.deepStrictEqual([giftPreview.response.status, giftPreview.data.beforeExpiresAt, giftPreview.data.afterExpiresAt, giftPreview.data.plan?.productType], [200, addDays(planPurchasedAt, 30), addDays(planPurchasedAt, 35), "recurring_plan"], giftPreview.text);
+    assert.strictEqual((await request(`/api/users/${planUser.data.id}`, { cookie: adminCookie })).data.expiresAt, addDays(planPurchasedAt, 30), "a gift preview changes nothing");
+    assert.strictEqual((await request(`/api/users/${planUser.data.id}/gift`, { method: "POST", cookie: adminCookie, body: { days: 5 } })).response.status, 200);
+    const planPath = `/api/users/${planUser.data.id}/plan`;
+    const toNinety = await request(planPath, { method: "POST", cookie: adminCookie, body: { optionId: `v2:${catalogV2Ids.flowBasic}:90d`, trafficTier: 1, note: "换成 90 天" } });
+    assert.strictEqual(toNinety.response.status, 200, toNinety.text);
+    assert.deepStrictEqual([toNinety.data.v2ProductSnapshot.durationDays, toNinety.data.expiresAt, toNinety.data.planExpiresAt], [90, addDays(planPurchasedAt, 95), addDays(planPurchasedAt, 90)], "30 -> 90 days moves the expiry by 60 days and keeps the 5 gifted days");
+    const planChange = (await request(`/api/users/${planUser.data.id}`, { cookie: adminCookie })).data.userLogs.find(log => log.reason === "plan-changed");
+    const rolledBack = await request(`/api/users/${planUser.data.id}/plan-rollback`, { method: "POST", cookie: adminCookie, body: { changeId: planChange.id } });
+    assert.deepStrictEqual([rolledBack.response.status, rolledBack.data.v2ProductSnapshot?.durationDays, rolledBack.data.expiresAt], [200, 30, addDays(planPurchasedAt, 35)], rolledBack.text);
+    const planLifetimeId = `${catalogV2Ids.lifetime}-plan`;
+    assert.strictEqual((await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: {
+      id: planLifetimeId, type: "lifetime_plan", isEnabled: true, isForSale: false, stock: null, sortOrder: 0,
+      name: "Plan change lifetime", description: "Plan period checks", features: [], isRecommended: false, lineGroupId: catalogV2Ids.flowGroup,
+      trafficBytes: 0, deviceLimit: 3, priceCents: 100
+    } })).response.status, 201);
+    const toLifetime = await request(planPath, { method: "POST", cookie: adminCookie, body: { optionId: `v2:${planLifetimeId}`, note: "换成终身" } });
+    assert.strictEqual(toLifetime.response.status, 200, toLifetime.text);
+    assert.strictEqual(toLifetime.data.duration, "lifetime");
+    const fromLifetime = await request(planPath, { method: "POST", cookie: adminCookie, body: { optionId: `v2:${catalogV2Ids.flowBasic}:30d`, trafficTier: 1, note: "终身换回 30 天" } });
+    assert.deepStrictEqual([fromLifetime.response.status, fromLifetime.data.duration === "lifetime", fromLifetime.data.expiresAt, fromLifetime.data.planExpiresAt], [200, false, addDays(planPurchasedAt, 30), addDays(planPurchasedAt, 30)], "a lifetime user starts the new period at the purchase date");
+    assert.ok(fromLifetime.data.xuiNextTrafficResetAt, "a recurring plan gets a traffic reset date again");
+    const planUserBills = await database.query("SELECT data FROM app_records WHERE collection='bills' AND data->>'userId'=$1", [planUser.data.id]);
+    assert.deepStrictEqual([fromLifetime.data.actualPaid, planUserBills.rows.map(row => row.data.type)], [planUser.data.actualPaid, ["initial"]], "plan changes and rollback add no bill and leave the amount paid unchanged");
+    assert.strictEqual((await request(`/api/users/${planUser.data.id}`, { method: "DELETE", cookie: adminCookie })).response.status, 200);
 
     // Reaching the quota mails the user once, a failed send is retried, and using the quota up again
     // after a top-up mails again. Users already out of traffic when the switch is turned on are skipped.
@@ -1912,6 +2031,45 @@ async function main() {
     const cronRun = (await handler.listSyncJobRuns("subscription-refresh"))[0];
     assert.deepStrictEqual([cronRun.trigger, ["success", "partial"].includes(cronRun.status), cronRun.summary.total], ["cron", true, cronRefresh.data.refreshed], "the cron subscription refresh must be recorded");
     delete process.env.CRON_SECRET;
+
+    // Buying again after the reversed first order continues on the kept user instead of creating another one.
+    const inviteeRepurchase = await purchase({ method: "POST", cookie: inviteeCookie, body: { optionId: paymentOptionId, channelCode: "100", confirmReplacement: true, useBalance: false } });
+    assert.strictEqual(inviteeRepurchase.response.status, 201, inviteeRepurchase.text);
+    await callback(inviteeRepurchase.data, 1, String(inviteeRepurchase.data.amount), true);
+    const inviteeAfterRepurchase = (await request("/api/users", { cookie: adminCookie })).data.filter(item => item.email === "invitee@example.test");
+    assert.deepStrictEqual(inviteeAfterRepurchase.map(item => item.id), [keptInvitee[0].id], "the repurchase lands on the kept user");
+    assert.ok(Date.parse(inviteeAfterRepurchase[0].expiresAt) > Date.now());
+    assert.strictEqual(xuiClients.get(keptInviteeDetail.xuiClientEmail)?.enable, true);
+
+    // The user detail lists every paid order of the user (plans, add-ons, traffic packs, recharges, reversed ones
+    // marked) plus bills without an order, and cashSpent counts only cash that came in, not wallet deductions.
+    const allAdminOrders = (await request("/api/admin/orders", { cookie: adminCookie })).data;
+    const allBills = (await request("/api/bills", { cookie: adminCookie })).data;
+    const billedTypes = new Set();
+    let checkedBillingUsers = 0;
+    const listedUsers = (await request("/api/users", { cookie: adminCookie })).data;
+    const listedIds = new Set(listedUsers.map(item => item.id));
+    for (const listed of listedUsers) {
+      // Same owner as the Orders page, except that an order whose user was removed goes to its account.
+      const ownedBy = order => listedIds.has(order.userId) ? order.userId : listedUsers.find(item => item.accountId === order.accountId && !item.id.startsWith("account:"))?.id || `account:${order.accountId}`;
+      const paidOrders = allAdminOrders.filter(order => ownedBy(order) === listed.id && ["paid", "reversed"].includes(order.status));
+      if (!paidOrders.length) continue;
+      const detail = (await request(`/api/users/${listed.id}`, { cookie: adminCookie })).data;
+      const orderRecords = detail.billingRecords.filter(record => record.id.startsWith("order:"));
+      assert.deepStrictEqual(orderRecords.map(record => record.paymentOrderId).sort(), paidOrders.map(order => order.id).sort(), `${listed.email}: every paid order is listed`);
+      for (const record of orderRecords) {
+        const order = paidOrders.find(item => item.id === record.paymentOrderId);
+        assert.deepStrictEqual([record.cashAmount, Boolean(record.reversedAt)], [order.amount, order.status === "reversed"], `${listed.email}: ${order.merOrderTid} counts only the external payment`);
+        billedTypes.add(record.type);
+      }
+      const looseBills = allBills.filter(bill => bill.userId === listed.id && (!bill.paymentOrderId || !paidOrders.some(order => order.id === bill.paymentOrderId)));
+      assert.strictEqual(detail.billingRecords.length, orderRecords.length + looseBills.length, `${listed.email}: bills without an order are listed too`);
+      const expectedCash = Math.round(detail.billingRecords.filter(record => !record.reversedAt).reduce((sum, record) => sum + record.cashAmount * 100, 0)) / 100;
+      assert.strictEqual(detail.cashSpent, expectedCash);
+      checkedBillingUsers += 1;
+    }
+    assert.ok(checkedBillingUsers > 0);
+    for (const type of ["initial", "recharge", "traffic_pack", "addon"]) assert.ok(billedTypes.has(type), `the user bill lists include ${type} orders (${[...billedTypes].join(", ")})`);
 
     console.log("Payment chain checks passed: payments, wallet priority, referral spending, idempotent reversals, snapshots, ledger entries, and validation.");
   } finally {
