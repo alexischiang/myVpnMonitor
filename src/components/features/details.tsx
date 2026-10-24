@@ -19,7 +19,7 @@ import { NodeTrafficList } from "@/components/features/node-traffic-list"
 import { BackButton } from "@/components/features/back-button"
 import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalogPurchaseOptionsFor, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
-import type { User, XuiCustomInboundManagement } from "@/types"
+import type { PlanSnapshot, User, XuiCustomInboundManagement } from "@/types"
 import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, planSnapshotName, planSnapshotOptionId, userStatus } from "@/utils"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Alert } from "@/components/arc/alert/alert"
@@ -38,9 +38,18 @@ import { Card as ArcCard } from "@/components/arc/card/card"
 import { SimpleTable } from "@/components/features/simple-table"
 
 type GiftPreview = {
-  expiresAt: string
-  subscription: User["subscription"] | null
-  reason?: string
+  days: number
+  plan: PlanSnapshot
+  beforeExpiresAt: string
+  afterExpiresAt: string
+  giftedDaysBefore: number
+  giftedDaysAfter: number
+  queuedPlan: { planSnapshot: PlanSnapshot | null; before: { startsAt: string; expiresAt: string }; after: { startsAt: string; expiresAt: string } } | null
+}
+
+// Mirrors the server's giftDaysPreview gate: only an active recurring V2 plan can receive gifted days.
+function hasActiveRecurringPlan(user: User) {
+  return user.v2ProductSnapshot?.productType === "recurring_plan" && user.duration !== "lifetime" && new Date(user.expiresAt || 0).getTime() > Date.now()
 }
 
 type ManualPaymentQuote = {
@@ -57,6 +66,20 @@ type ReferralDetails = {
   invitedUsers: Array<{ id: string; email: string; status: string; createdAt?: string; orderCount: number; totalPaid: number }>
   orders: Array<{ id: string; number: string; inviteeEmail: string; planName: string; amount: number; status: string; createdAt?: string }>
   rewards: Array<{ id: string; sourceOrderId: string; orderNumber: string; inviteeEmail: string; baseAmount: number; rate: number; rewardAmount: number; status: string; availableAt?: string }>
+}
+
+// Mirrors the server's planChangeExpiry: the period moves by the difference in days (gifted days are kept);
+// a lifetime user starts the new period at the purchase date.
+function planChangeExpiresAt(user: User, toDays: number) {
+  const shift = (value: string | undefined, days: number) => {
+    const date = new Date(value || "")
+    if (Number.isNaN(date.getTime())) return null
+    date.setUTCDate(date.getUTCDate() + days)
+    return date.toISOString()
+  }
+  const fromDays = Number(user.v2ProductSnapshot?.durationDays) || 0
+  if (user.duration === "lifetime" || !fromDays || !user.expiresAt) return shift(user.purchasedAt || user.createdAt, toDays)
+  return shift(user.expiresAt, toDays - fromDays)
 }
 
 function formatPoolExpiryDifference(days?: number | null) {
@@ -281,14 +304,10 @@ export function UserDetailPage() {
   const [allowFullPool, setAllowFullPool] = React.useState(false)
   const [giftOpen, setGiftOpen] = React.useState(false)
   const [giftDays, setGiftDays] = React.useState("")
-  const [giftExpiresAt, setGiftExpiresAt] = React.useState("")
-  const [giftPoolId, setGiftPoolId] = React.useState("")
-  const [giftMessage, setGiftMessage] = React.useState("")
+  const [giftPreview, setGiftPreview] = React.useState<GiftPreview | null>(null)
   const [giftError, setGiftError] = React.useState("")
   const [giftPreviewing, setGiftPreviewing] = React.useState(false)
   const [giftSaving, setGiftSaving] = React.useState(false)
-  const [allowDisabledGiftPool, setAllowDisabledGiftPool] = React.useState(false)
-  const [allowFullGiftPool, setAllowFullGiftPool] = React.useState(false)
   const [accountStatusOpen, setAccountStatusOpen] = React.useState(false)
   const [accountStatusSaving, setAccountStatusSaving] = React.useState(false)
   const [xuiRecoverOpen, setXuiRecoverOpen] = React.useState(false)
@@ -325,10 +344,7 @@ export function UserDetailPage() {
   const currentUnlimited = user?.v2ProductSnapshot?.trafficBytes === null
   const catalogPurchaseOptions = React.useMemo(() => catalogPurchaseOptionsFor(catalogV2Products || []), [catalogV2Products])
   const catalogPlanOptions = React.useMemo(() => catalogPurchaseOptions.filter(option => option.product.type !== "addon"), [catalogPurchaseOptions])
-  const planOptions = React.useMemo(() => {
-    const currentDays = Number(user?.v2ProductSnapshot?.durationDays)
-    return catalogPlanOptions.filter(option => option.product.type === "lifetime_plan" || option.period?.durationDays === currentDays)
-  }, [catalogPlanOptions, user])
+  const planOptions = catalogPlanOptions
   const selectedPlanConfig = React.useMemo(() => {
     const option = planOptions.find(item => item.value === planOptionId)
     return option ? catalogPlanConfig(option) : null
@@ -339,15 +355,18 @@ export function UserDetailPage() {
     const trafficTier = lifetime || unlimited ? 1 : Number(planTrafficTier)
     const targetBytes = unlimited ? 0 : baseBytes + (trafficTier - 1) * stepBytes
     const usedBytes = Math.max(0, Number(user.xuiWeightedTraffic?.usedBytes) || 0)
+    const targetExpiresAt = lifetime ? null : planChangeExpiresAt(user, option.period?.durationDays || 0)
     const changes = [
       ...(currentOptionId !== planOptionId ? [{ label: "商品规格", before: productName, after: option.label }] : []),
       ...(lifetime && user.duration !== "lifetime" ? [{ label: "到期日", before: formatDate(user.expiresAt), after: "永久有效" }] : []),
+      ...(!lifetime && targetExpiresAt && targetExpiresAt !== user.expiresAt ? [{ label: "到期日", before: user.duration === "lifetime" ? "永久有效" : formatDate(user.expiresAt), after: formatDate(targetExpiresAt) }] : []),
       ...((currentUnlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0)) !== (unlimited ? "不限流量" : formatBytes(targetBytes)) ? [{ label: "流量配额", before: currentUnlimited ? "不限流量" : formatBytes(user.xuiTrafficLimitBytes || 0), after: unlimited ? "不限流量" : formatBytes(targetBytes) }] : []),
       ...(Number(user.deviceLimit || 0) !== targetDevices ? [{ label: "在线IP数量", before: `${user.deviceLimit || 0}`, after: `${targetDevices}` }] : []),
     ]
     const impacts = [
       `已用流量 ${formatBytes(usedBytes)} 保留，不会清零`,
-      "本次后台调整不生成账单，不退款，也不抵扣剩余期限",
+      "本次后台调整不生成账单，不退款",
+      ...(targetExpiresAt && Date.parse(targetExpiresAt) <= Date.now() ? ["按购买日重算后到期日已过，变更后用户将处于过期状态"] : []),
       "套餐权限、在线IP数量和流量配额会立即同步到 3x-ui",
       ...(targetBytes > 0 && usedBytes >= targetBytes ? ["目标额度不高于已用流量，变更后用户将进入流量耗尽状态"] : []),
     ]
@@ -368,7 +387,7 @@ export function UserDetailPage() {
   }, [customInboundData, customInboundDraft])
 
   React.useEffect(() => {
-    if (!id || id.startsWith("account:")) return
+    if (!id) return
     let active = true
     void fetchJson<User>(`/api/users/${id}`).then(data => { if (active) setLoadedUser(data) }).catch(() => undefined)
     return () => { active = false }
@@ -524,11 +543,14 @@ export function UserDetailPage() {
     setEmailRebindSaving(true)
     setEmailRebindError("")
     try {
-      await postJson(`/api/users/${user.id}/email`, { email: emailRebindValue, note: emailRebindNote })
+      const result = await postJson<{ claimMail?: { sent: boolean; error?: string } }>(`/api/users/${user.id}/email`, { email: emailRebindValue, note: emailRebindNote })
       // Registered-only accounts have no detail endpoint; their row comes from the users list.
       await (user.id.startsWith("account:") ? reload(["users"]) : refreshUserDetails())
       setEmailRebindOpen(false)
-      toast({ type: "success", title: `邮箱已换绑为 ${emailRebindValue.trim().toLowerCase()}` })
+      const title = `邮箱已换绑为 ${emailRebindValue.trim().toLowerCase()}`
+      if (!result?.claimMail) toast({ type: "success", title })
+      else if (result.claimMail.sent) toast({ type: "success", title, description: "认领邮件已发送到新邮箱。" })
+      else toast({ type: "warning", title, description: `认领邮件发送失败：${result.claimMail.error || "未知错误"}，可稍后重新发送认领邮件。` })
     } catch (error) {
       setEmailRebindError(error instanceof Error ? error.message : "换绑邮箱失败")
     } finally {
@@ -584,16 +606,13 @@ export function UserDetailPage() {
 
   function openGiftDialog() {
     setGiftDays("")
-    setGiftExpiresAt("")
-    setGiftPoolId("")
-    setGiftMessage("")
+    setGiftPreview(null)
     setGiftError("")
-    setAllowDisabledGiftPool(false)
-    setAllowFullGiftPool(false)
     setGiftOpen(true)
   }
 
-  async function previewGift() {
+  async function previewGift(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
     const days = Number(giftDays)
     if (!Number.isSafeInteger(days) || days <= 0) {
       setGiftError("请输入正确的赠送天数")
@@ -602,23 +621,19 @@ export function UserDetailPage() {
     setGiftPreviewing(true)
     setGiftError("")
     try {
-      const preview = await postJson<GiftPreview>(`/api/users/${user.id}/gift`, { days, preview: true })
-      setGiftExpiresAt(preview.expiresAt)
-      setGiftPoolId(preview.subscription?.id || "")
-      setGiftMessage(preview.subscription ? "已根据赠送后的到期日推荐订阅池，可手动更换。" : preview.reason || "暂无推荐订阅池，请手动选择。")
+      setGiftPreview(await postJson<GiftPreview>(`/api/users/${user.id}/gift`, { days, preview: true }))
     } catch (error) {
-      setGiftError(error instanceof Error ? error.message : "计算赠送时长失败")
+      setGiftError(error instanceof Error ? error.message : "生成赠送预览失败")
     } finally {
       setGiftPreviewing(false)
     }
   }
 
-  async function submitGift(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!giftExpiresAt || !giftPoolId) return
+  async function submitGift() {
+    if (!giftPreview) return
     setGiftSaving(true)
     try {
-      await postJson(`/api/users/${user.id}/gift`, { days: Number(giftDays), subscriptionId: giftPoolId, allowDisabled: allowDisabledGiftPool, allowFull: allowFullGiftPool })
+      await postJson(`/api/users/${user.id}/gift`, { days: giftPreview.days })
       await refreshUserDetails()
       setGiftOpen(false)
       toast({ type: "success", title: "赠送时长已生效" })
@@ -823,7 +838,7 @@ export function UserDetailPage() {
           </form></DialogContent>
       </Dialog>
       <Dialog open={emailRebindOpen} onOpenChange={setEmailRebindOpen}>
-        <DialogContent title="换绑邮箱" description={`当前邮箱：${user.email || "-"}。换绑后用户需用新邮箱登录，已发出的重置密码和认领链接失效；3x-ui 客户端保持不变。`}><form className="grid gap-4" onSubmit={rebindEmail} noValidate>
+        <DialogContent title="换绑邮箱" description={`当前邮箱：${user.email || "-"}。${["active", "disabled"].includes(user.accountStatus || "") ? "换绑后用户用新邮箱和原密码登录" : "换绑后将向新邮箱发送认领邮件"}，已发出的重置密码和认领链接失效；3x-ui 客户端保持不变。`}><form className="grid gap-4" onSubmit={rebindEmail} noValidate>
             <Input label="新邮箱" error={emailRebindError || undefined} id="rebind-email" name="rebindEmail" type="email" value={emailRebindValue} onChange={event => { setEmailRebindValue(event.target.value); setEmailRebindError("") }} aria-invalid={Boolean(emailRebindError)} autoFocus required />
             <Input label="备注" id="rebind-email-note" maxLength={200} placeholder="可选" value={emailRebindNote} onChange={event => setEmailRebindNote(event.target.value)} />
             <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={emailRebindSaving}>取消</Button></DialogClose><ActionButton type="submit" label="确认换绑邮箱" pendingLabel="换绑中..." pending={emailRebindSaving} /></div>
@@ -849,15 +864,30 @@ export function UserDetailPage() {
           </form></DialogContent>
       </Dialog>
       <Dialog open={giftOpen} onOpenChange={setGiftOpen}>
-        <DialogContent title="赠送时长" description={`${user.userId || user.email || "用户"} · 当前到期 ${formatDate(user.expiresAt)}`}><form className="grid gap-4" onSubmit={submitGift} noValidate>
+        <DialogContent title="赠送时长" description={`${user.userId || user.email || "用户"} · 赠送天数叠加到当前生效套餐的到期日`}>{!hasActiveRecurringPlan(user) ? <div className="grid gap-4">
+            <Alert tone="warning" title="无法赠送时长">用户当前没有生效中的周期性套餐{user.v2ProductSnapshot ? `（当前：${productName}，${user.duration === "lifetime" || user.v2ProductSnapshot.productType === "lifetime_plan" ? "不限时套餐" : `已于 ${formatDate(user.expiresAt)} 到期`}）` : ""}，请先通过购买或更改套餐开通周期性套餐。</Alert>
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary">关闭</Button></DialogClose></div>
+          </div> : giftPreview ? <div className="grid gap-4">
+            <ArcCard title="变更预览"><SimpleTable caption="赠送时长变更" columns={["项目", "当前", "赠送后"]} rows={[
+              { label: "套餐", before: planSnapshotName(giftPreview.plan), after: planSnapshotName(giftPreview.plan) },
+              { label: "到期日", before: formatDate(giftPreview.beforeExpiresAt), after: formatDate(giftPreview.afterExpiresAt) },
+              { label: "累计赠送", before: `${giftPreview.giftedDaysBefore} 天`, after: `${giftPreview.giftedDaysAfter} 天` },
+              ...(giftPreview.queuedPlan ? [
+                { label: "续费套餐生效", before: formatDate(giftPreview.queuedPlan.before.startsAt), after: formatDate(giftPreview.queuedPlan.after.startsAt) },
+                { label: "续费套餐到期", before: formatDate(giftPreview.queuedPlan.before.expiresAt), after: formatDate(giftPreview.queuedPlan.after.expiresAt) },
+              ] : []),
+            ]} rowKey={change => change.label} cells={change => [<span className="font-medium">{change.label}</span>, <span className="whitespace-normal tabular-nums text-muted-foreground">{change.before}</span>, <span className="whitespace-normal tabular-nums">{change.after}</span>]} /></ArcCard>
+            <Alert tone="warning" title="执行影响">赠送 {giftPreview.days} 天，套餐规格、流量额度和线路绑定保持不变{user.lineType === "self_hosted" ? "；新的到期日会同步到 3x-ui" : ""}。</Alert>
+            {giftError ? <Alert tone="danger" title={giftError} /> : null}
+            <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="secondary" disabled={giftSaving} onClick={() => { setGiftPreview(null); setGiftError("") }}>返回修改</Button><ActionButton type="button" onClick={() => void submitGift()} label="确认赠送" pendingLabel="赠送中..." pending={giftSaving} /></div>
+          </div> : <form className="grid gap-4" onSubmit={previewGift} noValidate>
             <FieldGroup>
-              <Input label="赠送天数" error={(giftError) || undefined} id="detail-gift-days" type="number" min="1" step="1" value={giftDays} onChange={event => { setGiftDays(event.target.value); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }} />
-              <Field><FieldLabel>快捷选择</FieldLabel><div className="flex flex-wrap gap-2">{[7, 15, 30].map(days => <Button key={days} type="button" variant={giftDays === String(days) ? "primary" : "secondary"} size="sm" onClick={() => { setGiftDays(String(days)); setGiftExpiresAt(""); setGiftPoolId(""); setGiftMessage(""); setGiftError("") }}>{days} 天</Button>)}</div></Field>
-              {giftExpiresAt ? <Input label="赠送后到期日" id="detail-gift-expires-at" value={giftExpiresAt.slice(0, 10)} readOnly /> : null}
-              {giftExpiresAt ? <SubscriptionPoolSelect id="detail-gift-pool" label="订阅池 URL" subscriptions={subscriptions} value={giftPoolId} onValueChange={setGiftPoolId} allowDisabled={allowDisabledGiftPool} onAllowDisabledChange={setAllowDisabledGiftPool} allowFull={allowFullGiftPool} onAllowFullChange={setAllowFullGiftPool} group={user.isSuperAccount ? undefined : user.v2ProductSnapshot?.lineGroupId || undefined} description={giftMessage} /> : <FieldDescription>输入天数后先计算到期日和推荐订阅池。</FieldDescription>}
+              <div className="grid gap-3 rounded-xl bg-muted px-3 py-2 sm:grid-cols-2"><Info label="当前套餐" value={productName} /><Info label="当前到期" value={formatDate(user.expiresAt)} /></div>
+              <Input label="赠送天数" error={(giftError) || undefined} id="detail-gift-days" type="number" min="1" step="1" value={giftDays} onChange={event => { setGiftDays(event.target.value); setGiftError("") }} autoFocus />
+              <Field><FieldLabel>快捷选择</FieldLabel><div className="flex flex-wrap gap-2">{[7, 15, 30].map(days => <Button key={days} type="button" variant={giftDays === String(days) ? "primary" : "secondary"} size="sm" onClick={() => { setGiftDays(String(days)); setGiftError("") }}>{days} 天</Button>)}</div></Field>
             </FieldGroup>
-            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={giftSaving}>取消</Button></DialogClose>{giftExpiresAt ? <ActionButton type="submit" disabled={giftSaving || !giftPoolId} label="确认赠送" pendingLabel="赠送中..." pending={giftSaving} /> : <ActionButton type="button" onClick={() => void previewGift()} label="推荐订阅池" pendingLabel="计算中..." pending={giftPreviewing} />}</div>
-          </form></DialogContent>
+            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={giftPreviewing}>取消</Button></DialogClose><ActionButton type="submit" label="下一步" pendingLabel="生成预览..." pending={giftPreviewing} /></div>
+          </form>}</DialogContent>
       </Dialog>
       <Dialog open={userTypeOpen} onOpenChange={setUserTypeOpen}>
         <ArcDialogContent title="设置用户类型" description="超级账户可跨越 BASIC、PRO、ULTRA 套餐等级选择订阅池。"><Select label="用户类型" value={selectedUserType} onValueChange={value => setSelectedUserType(value as keyof typeof userTypeLabels)} disabled={userTypeSaving} id="user-type" className="w-full" options={[...Object.entries(userTypeLabels).map(([value, label]) => ({ value: value, label: label }))]} /><div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={userTypeSaving}>取消</Button></DialogClose><ActionButton type="button" onClick={() => void saveUserType()} label="保存类型" pendingLabel="保存中..." pending={userTypeSaving} /></div></ArcDialogContent>
@@ -881,7 +911,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
       <Dialog open={planOpen} onOpenChange={open => { setPlanOpen(open); if (!open) setPlanConfirmOpen(false) }}>
         <DialogContent title="更改套餐" description="可选择商品库中的套餐规格，包括未上架商品；附加商品和旧版规格不可选择。操作原因会写入用户记录。" size="lg" className="max-h-[calc(100dvh-2rem)] overflow-y-auto"><form className="grid gap-4" onSubmit={previewPlanChange}>
             <FieldGroup>
-              <CatalogPlanFields idPrefix="plan" label="目标商品规格" placeholder="当前周期没有可用商品规格" options={planOptions} value={planOptionId} onValueChange={setPlanOptionId} trafficTier={planTrafficTier} onTrafficTierChange={setPlanTrafficTier} disabled={planSaving} description="切换至不限时规格后，到期日将改为永久有效。" tierDescription="后台调整不计算价格，所选流量配额会直接同步到 3x-ui。" />
+              <CatalogPlanFields idPrefix="plan" label="目标商品规格" placeholder="没有可用商品规格" options={planOptions} value={planOptionId} onValueChange={setPlanOptionId} trafficTier={planTrafficTier} onTrafficTierChange={setPlanTrafficTier} disabled={planSaving} description="切换周期时按购买日重新计算到期日，赠送时长保留；切换至不限时规格后，到期日改为永久有效。" tierDescription="后台调整不计算价格，所选流量配额会直接同步到 3x-ui。" />
               <Input label="变更原因" error={(planError) || undefined} id="plan-note" maxLength={200} value={planNote} onChange={event => { setPlanNote(event.target.value); setPlanError("") }} placeholder="例如：客服补偿、套餐升级" aria-invalid={Boolean(planError)} autoFocus required />
             </FieldGroup>
             {planPreview?.changes.length ? <ArcCard title="变更预览"><SimpleTable caption="项目列表" columns={["项目", "当前", "变更后"]} rows={planPreview.changes} rowKey={(change) => change.label} cells={(change) => [<span className="font-medium">{change.label}</span>, <span className="whitespace-normal text-muted-foreground">{change.before}</span>, <span className="whitespace-normal">{change.after}</span>]} /></ArcCard> : null}
@@ -910,8 +940,8 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
         <Card className="self-start xl:sticky xl:top-4" title={<>{user.wechatName || user.userId || user.email || "用户"}
               <AccountVerificationIcon type={userType(user)} /></>} description={<UserStatusBadge user={user} />} headerAction={<BackButton fallback={`/users${location.search}`} iconOnly size="icon-sm" />}><div className="hidden justify-center xl:flex"><Avatar name={user.wechatName || user.userId || user.email || "用户"} size="xl" /></div><div className="grid gap-4">
             <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-0.5 rounded-xl bg-muted px-3 py-2"><p className="text-xs text-muted-foreground">购买次数</p><p className="text-lg font-semibold tabular-nums">{purchaseCount}</p></div>
-              <div className="grid gap-0.5 rounded-xl bg-muted px-3 py-2"><p className="text-xs text-muted-foreground">总消费金额</p><p className="text-lg font-semibold tabular-nums">{formatMoney(user.actualPaid)}</p></div>
+              <div className="grid gap-0.5 rounded-xl bg-muted px-3 py-2"><p className="text-xs text-muted-foreground">套餐购买次数</p><p className="text-lg font-semibold tabular-nums">{purchaseCount}</p></div>
+              <div className="grid gap-0.5 rounded-xl bg-muted px-3 py-2"><p className="text-xs text-muted-foreground">总消费金额</p><p className="text-lg font-semibold tabular-nums">{user.cashSpent === undefined ? "-" : formatMoney(user.cashSpent)}</p></div>
             </div>
             <Separator />
             <div className="grid gap-3 [&>div]:grid-cols-[5rem_minmax(0,1fr)] [&>div]:items-start [&>div]:gap-3 [&>div>div]:text-right [&>div>div]:text-sm [&>div>div]:font-normal [&>div>p]:text-sm">
@@ -935,7 +965,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               ] : [{ label: "换池", icon: <RefreshCw />, onSelect: openPoolDialog }]),
               { label: "赠送时长", icon: <Gift />, onSelect: openGiftDialog },
             ]),
-            ...(["active", "disabled", "invited"].includes(user.accountStatus || "") ? [{ label: "换绑邮箱", icon: <AtSign />, onSelect: () => { setEmailRebindValue(""); setEmailRebindNote(""); setEmailRebindError(""); setEmailRebindOpen(true) } }] : []),
+            ...(user.email || user.accountStatus !== "unclaimed" ? [{ label: "换绑邮箱", icon: <AtSign />, onSelect: () => { setEmailRebindValue(""); setEmailRebindNote(""); setEmailRebindError(""); setEmailRebindOpen(true) } }] : []),
             ...(user.accountStatus === "active" ? [
               ...(user.registeredOnly ? [] : [{ label: "赠送余额", icon: <Gift />, onSelect: () => { setGiftBalanceError(""); setGiftBalanceOpen(true) } }]),
               { label: "停用账户", icon: <Power />, onSelect: () => setAccountStatusOpen(true), destructive: true },
@@ -1022,7 +1052,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
             </> : <EmptyState title="尚未迁移到 V2 商品" description="完成 V2 商品映射迁移后，此处会显示新的商品绑定与原商品信息。" />}
           </TabsContent>
           <TabsContent value="bills" className="grid min-w-0 gap-4">
-            <UserBillsCard bills={userBills} />
+            <UserBillsCard records={user.billingRecords} />
             <Card className="gap-0 overflow-hidden py-0" title="用户日志" description={`共 ${user.userLogs?.length || 0} 条`}><SimpleTable caption="时间列表" columns={["时间", "类型", "状态", "内容", "操作"]} rows={user.userLogs} rowKey={(log) => log.id} cells={(log) => [<span className="text-muted-foreground">{formatDateTime(log.at)}</span>, <Badge>{log.reasonText || log.reason || "用户日志"}</Badge>, <Badge tone={["failed", "blocked", "no_usable_pool"].includes(log.status || "") ? "danger" : "neutral"}>{log.statusText || log.status || "已记录"}</Badge>, <span className="whitespace-normal text-muted-foreground">{log.message || [log.fromSubscriptionLabel, log.toSubscriptionLabel].filter(Boolean).join(" → ") || "-"}</span>, <span className="text-right">{latestPlanEvent?.id === log.id && log.reason === "plan-changed" && log.details?.rollbackState ? <Button type="button" variant="secondary" size="sm" onClick={() => setPlanRollbackId(log.id)}><RotateCcw />撤销变更</Button> : null}</span>]} emptyMessage="暂无用户日志" /></Card>
           </TabsContent>
           <TabsContent value="referral" className="grid min-w-0 gap-4">

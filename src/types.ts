@@ -75,7 +75,25 @@ export type PlanSnapshot = {
   deviceLimit: number | null
 }
 
+export type BillingRecord = {
+  id: string
+  paymentOrderId: string
+  merOrderTid: string
+  planName: string
+  optionLabel: string
+  productSnapshot: Record<string, unknown> | null
+  type: string
+  amount: number
+  cashAmount: number
+  walletAmount: number
+  occurredAt: string
+  reversedAt: string
+  description: string
+}
+
 export type User = {
+  billingRecords?: BillingRecord[]
+  cashSpent?: number
   id: string
   customerID: number
   registeredOnly?: boolean

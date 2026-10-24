@@ -3121,6 +3121,32 @@ async function retryFailedFulfillments() {
 
 const paymentReversalTasks = new Map();
 
+// Plan fields a plan purchase sets on an existing user (renewUser, product binding, traffic cycle reset).
+const ORDER_REVERSAL_PLAN_FIELDS = ["purchasedAt", "duration", "planExpiresAt", "lineType", "subscriptionId", "currentProductOrderId", "currentProductSource", "currentProductBoundAt", "v2ProductSnapshot", "xuiTrafficCycleKey", "xuiTrafficCycleBaseline", "xuiLastTrafficResetAt", "xuiNextTrafficResetAt", "xuiWeightedTraffic", "xuiLastTraffic"];
+
+// Puts the plan of a reversed purchase back to the pre-order snapshot without touching anything else on the user.
+// Days added after the purchase (gifts, plan changes) stay on top of the restored expiry, and traffic packs bought
+// after it stay with the restored cycle.
+function restorePlanFromOrderSnapshot(user, before, bill, order) {
+  for (const field of ORDER_REVERSAL_PLAN_FIELDS) {
+    if (before[field] === undefined) delete user[field];
+    else user[field] = structuredClone(before[field]);
+  }
+  const addedMs = bill?.afterExpiresAt ? Date.parse(user.expiresAt || "") - Date.parse(bill.afterExpiresAt) : 0;
+  const beforeMs = Date.parse(before.expiresAt || "");
+  user.expiresAt = before.duration !== "lifetime" && Number.isFinite(beforeMs) && Number.isFinite(addedMs)
+    ? new Date(beforeMs + addedMs).toISOString()
+    : before.expiresAt;
+  const beforePackIds = Array.isArray(before.xuiTrafficPackOrderIds) ? before.xuiTrafficPackOrderIds : [];
+  const laterPackIds = (Array.isArray(user.xuiTrafficPackOrderIds) ? user.xuiTrafficPackOrderIds : []).filter(id => !beforePackIds.includes(id) && id !== order.id);
+  const laterPackBytes = laterPackIds.reduce((sum, id) => sum + (Number(paymentOrders.find(item => item.id === id)?.trafficPackBytes) || 0), 0);
+  user.xuiTrafficPackBytes = Math.max(0, Number(before.xuiTrafficPackBytes) || 0) + laterPackBytes;
+  user.xuiTrafficPackOrderIds = [...beforePackIds, ...laterPackIds];
+  user.xuiTrafficPackCycleKey = laterPackBytes ? user.xuiTrafficCycleKey || before.xuiTrafficPackCycleKey || "" : before.xuiTrafficPackCycleKey || "";
+  user.updatedAt = new Date().toISOString();
+  refreshUserPlanTraffic(user);
+}
+
 async function reversePaymentOrderOnce(order) {
   if (order.reversedAt) return order;
   if (order.status !== "paid") throw new Error("只有已付款订单可以撤销。");
@@ -3172,21 +3198,39 @@ async function reversePaymentOrderOnce(order) {
   const account = accounts.find(item => item.id === order.accountId);
   if (!account) throw new Error("订单账户不存在，无法完成撤销。");
 
+  let resyncUser = null;
   if (order.purpose === "recharge") {
     syncWalletVip(account, wallet);
   } else {
     const snapshot = order.rollbackSnapshot;
-    for (const bill of bills.filter(item => item.paymentOrderId === order.id)) reverseBill(bill);
     const currentUserId = order.userId || snapshot.userId || snapshot.user?.id || "";
     const currentIndex = users.findIndex(item => item.id === currentUserId);
-    if (snapshot.user) {
-      const restoredUser = structuredClone(snapshot.user);
-      if (currentIndex >= 0) users[currentIndex] = restoredUser;
-      else users.unshift(restoredUser);
-    } else if (currentIndex >= 0) {
-      users.splice(currentIndex, 1);
+    const current = currentIndex >= 0 ? users[currentIndex] : null;
+    const pendingQueued = current?.queuedPlan?.orderId === order.id;
+    const orderBills = bills.filter(item => item.paymentOrderId === order.id);
+    // reverseBill takes back the amount paid, drops a still-waiting queued plan and rebuilds the cash value.
+    for (const bill of orderBills) reverseBill(bill);
+    if (snapshot.user && !current) {
+      users.unshift(structuredClone(snapshot.user));
+      account.linkedUserId = snapshot.accountLinkedUserId || "";
+    } else if (snapshot.user) {
+      // Only what the order changed goes back; logs, email, gifts and later traffic packs stay.
+      if (!pendingQueued) restorePlanFromOrderSnapshot(current, snapshot.user, orderBills.find(bill => bill.userId === current.id), order);
+      appendUserLogToUser(current, createUserLog({ event: "user-action", status: "recorded", reason: "order-reversed", message: `套餐订单 ${order.merOrderTid} 已撤销，套餐恢复为下单前。`, details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid } }));
+      resyncUser = current;
+      account.linkedUserId = snapshot.accountLinkedUserId || current.id;
+    } else if (current) {
+      // The order created this user. The user stays (with its logs, bills and 3x-ui client) and stays linked to
+      // the account, so a later purchase continues on it; only the plan ends now.
+      const endedAt = new Date().toISOString();
+      Object.assign(current, { expiresAt: endedAt, planExpiresAt: endedAt, updatedAt: endedAt });
+      delete current.queuedPlan;
+      appendUserLogToUser(current, createUserLog({ event: "user-action", status: "recorded", reason: "order-reversed", message: `首单 ${order.merOrderTid} 已撤销，套餐于撤销时结束。`, details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid } }));
+      resyncUser = current;
+      account.linkedUserId = current.id;
+    } else {
+      account.linkedUserId = snapshot.accountLinkedUserId || "";
     }
-    account.linkedUserId = snapshot.accountLinkedUserId || "";
     account.purchaseCount = Number(snapshot.accountPurchaseCount) || 0;
     account.updatedAt = new Date().toISOString();
     syncWalletVip(account, wallet);
@@ -3198,6 +3242,15 @@ async function reversePaymentOrderOnce(order) {
   order.reversalError = "";
   order.updatedAt = order.reversedAt;
   await saveUsers();
+  // The panel follows the restored or ended plan now; if it is unreachable the scheduled sync catches up.
+  if (resyncUser && isSelfHostedUser(resyncUser) && resyncUser.xuiClientEmail) {
+    try {
+      await provisionXuiClient(resyncUser);
+    } catch (error) {
+      resyncUser.xuiLastError = error.message;
+    }
+    await saveUsers();
+  }
   await saveAccounts();
   await savePaymentOrders();
   return order;
@@ -6046,6 +6099,26 @@ function nextUserExpiry(user, purchasedAt, duration, replace = false) {
   return calculateExpiry(base.toISOString(), duration);
 }
 
+// Admin plan change to a recurring spec, as if the new spec had been bought on the purchase date:
+// the period moves by the difference in days, so gifted days and early renewals stacked on top are kept.
+// A lifetime user has no period to shift and starts the new period at the purchase date.
+function planChangeExpiry(user, { wasLifetime, fromDays, toDays }) {
+  const shift = (value, days) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    date.setUTCDate(date.getUTCDate() + days);
+    return date.toISOString();
+  };
+  const purchasedAt = user.purchasedAt || user.createdAt;
+  if (wasLifetime || !fromDays || !user.expiresAt) {
+    const expiresAt = shift(purchasedAt, toDays);
+    if (!expiresAt) throw new Error("用户缺少购买日期，不能按新周期计算到期日。");
+    return { expiresAt, planExpiresAt: expiresAt };
+  }
+  const days = toDays - fromDays;
+  return { expiresAt: shift(user.expiresAt, days), planExpiresAt: user.planExpiresAt ? shift(user.planExpiresAt, days) : null };
+}
+
 function calculateGiftExpiry(user, days, now = new Date()) {
   const giftDays = Number(days);
   if (!Number.isSafeInteger(giftDays) || giftDays <= 0) return null;
@@ -6054,6 +6127,28 @@ function calculateGiftExpiry(user, days, now = new Date()) {
   const base = currentExpiry && !Number.isNaN(currentExpiry.getTime()) && currentExpiry > now ? currentExpiry : new Date(now);
   base.setUTCDate(base.getUTCDate() + giftDays);
   return base.toISOString();
+}
+
+// Gifted days extend the active recurring V2 plan only; the line and pool binding stay as they are,
+// and a queued early renewal starts later by the same days.
+function giftDaysPreview(user, days, now = new Date()) {
+  const giftDays = Number(days);
+  if (!Number.isSafeInteger(giftDays) || giftDays <= 0) throw new Error("请输入正确的赠送天数。");
+  const snapshot = user?.v2ProductSnapshot;
+  const active = new Date(user?.expiresAt || 0).getTime() > now.getTime();
+  if (!active || snapshot?.productType !== "recurring_plan" || user.duration === "lifetime") throw new Error("用户当前没有生效中的周期性套餐，无法赠送时长。");
+  const afterExpiresAt = calculateGiftExpiry(user, giftDays, now);
+  const queuedBefore = queuedPlanWindow(user);
+  const queuedAfter = queuedBefore ? queuedPlanWindow({ ...user, expiresAt: afterExpiresAt }) : null;
+  return {
+    days: giftDays,
+    plan: snapshot,
+    beforeExpiresAt: new Date(user.expiresAt).toISOString(),
+    afterExpiresAt,
+    giftedDaysBefore: Number(user.giftedDays) || 0,
+    giftedDaysAfter: (Number(user.giftedDays) || 0) + giftDays,
+    queuedPlan: queuedBefore ? { planSnapshot: user.queuedPlan.productSnapshot || null, before: queuedBefore, after: queuedAfter } : null
+  };
 }
 
 function batchGiftTargets({ days, group = "", allowDisabled = false } = {}) {
@@ -6846,6 +6941,68 @@ function paymentOrderForBill(bill) {
     && order.status === "paid"
     && Number(order.amount) === Number(bill.amount)
     && order.paidAt === bill.occurredAt) || null;
+}
+
+// Everything a user paid for on the admin detail page: each paid order of the user or their account (plans,
+// add-ons, traffic packs, recharges, reversed ones included) plus bills without an order (admin-created users,
+// migrated purchases). cashAmount is cash that actually came in: the gateway or manual payment of an order,
+// never the wallet balance it used (the recharge that filled the wallet already counts), and the full amount
+// of a bill without an order. cashSpent sums it over records that were not reversed.
+// An order belongs to the user it was delivered to while that user exists; otherwise (for example a reversed
+// first purchase that removed the user) to the account's linked user, or to the registered account itself.
+function paymentOrderOwnerId(order) {
+  if (order.userId && users.some(user => user.id === order.userId)) return order.userId;
+  const account = accounts.find(item => item.id === order.accountId);
+  return account ? account.linkedUserId || `account:${account.id}` : order.userId || "";
+}
+
+function userBillingSummary(ownerId) {
+  const userBills = ownerId.startsWith("account:") ? [] : bills.filter(bill => bill.userId === ownerId);
+  const orderRecords = paymentOrders
+    .filter(order => order.status === "paid" && paymentOrderOwnerId(order) === ownerId)
+    .map(order => {
+      const purpose = order.purpose || "plan";
+      const bill = userBills.find(item => item.paymentOrderId === order.id);
+      return {
+        id: `order:${order.id}`,
+        paymentOrderId: order.id,
+        merOrderTid: order.merOrderTid || "",
+        planName: order.planName || "",
+        optionLabel: order.optionLabel || "",
+        productSnapshot: order.productSnapshot || null,
+        type: purpose === "plan" ? bill?.type || billTypeForPurchaseAction(order.purchaseAction) : purpose,
+        amount: Number(order.totalAmount ?? order.amount) || 0,
+        cashAmount: externalPaymentCents(order) / 100,
+        walletAmount: Number(order.walletAmount) || 0,
+        occurredAt: order.paidAt || order.createdAt || "",
+        reversedAt: order.reversedAt || bill?.reversedAt || "",
+        description: ""
+      };
+    });
+  const orderIds = new Set(orderRecords.map(record => record.paymentOrderId));
+  const billRecords = userBills
+    .filter(bill => !bill.paymentOrderId || !orderIds.has(bill.paymentOrderId))
+    .map(bill => {
+      const order = paymentOrderForBill(bill);
+      return {
+        id: `bill:${bill.id}`,
+        paymentOrderId: bill.paymentOrderId || "",
+        merOrderTid: order?.merOrderTid || "",
+        planName: order?.planName || "",
+        optionLabel: order?.optionLabel || "",
+        productSnapshot: order?.productSnapshot || null,
+        type: bill.type || "",
+        amount: Number(bill.amount) || 0,
+        cashAmount: order ? externalPaymentCents(order) / 100 : Math.max(Number(bill.amount) || 0, 0),
+        walletAmount: Number(order?.walletAmount) || 0,
+        occurredAt: bill.occurredAt || "",
+        reversedAt: bill.reversedAt || "",
+        description: bill.description || ""
+      };
+    });
+  const billingRecords = [...orderRecords, ...billRecords].sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt));
+  const cashSpent = Math.round(billingRecords.filter(record => !record.reversedAt).reduce((sum, record) => sum + record.cashAmount * 100, 0)) / 100;
+  return { billingRecords, cashSpent };
 }
 
 function publicBillDetail(bill) {
@@ -11690,9 +11847,10 @@ async function handleApi(req, res, pathname) {
     }
 
     if (!action && req.method === "GET") {
+      const billing = userBillingSummary(registeredAccount ? `account:${registeredAccount.id}` : item.id);
       sendJson(res, 200, registeredAccount
-        ? publicRegisteredAccount(registeredAccount)
-        : { ...publicUser(item), poolCompatibility: currentPoolCompatibility(item) });
+        ? { ...publicRegisteredAccount(registeredAccount), ...billing }
+        : { ...publicUser(item), poolCompatibility: currentPoolCompatibility(item), ...billing });
       return;
     }
 
@@ -11760,43 +11918,24 @@ async function handleApi(req, res, pathname) {
       const previousUserState = structuredClone(item);
       try {
         const payload = await readJson(req);
-        const expiresAt = calculateGiftExpiry(item, payload.days);
-        if (!expiresAt) throw new Error("请输入正确的赠送天数。");
-        const selfHosted = isSelfHostedUser(item);
-        const recommendation = selfHosted
-          ? { subscription: null, reason: "自研线路不使用订阅池。", details: null }
-          : recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: item.id, group: poolSelectionGroup(item) });
+        const preview = giftDaysPreview(item, payload.days);
         if (payload.preview === true) {
-          sendJson(res, 200, {
-            expiresAt,
-            subscription: recommendation.subscription ? publicItem(recommendation.subscription) : null,
-            reason: recommendation.reason,
-            recommendation: recommendation.details || null
-          });
+          sendJson(res, 200, preview);
           return;
         }
-        const toSubscription = selfHosted ? null : subscriptions.find(entry => entry.id === String(payload.subscriptionId || recommendation.subscription?.id || ""));
-        if (!selfHosted && !toSubscription) throw new Error("请选择有效的订阅池。");
-        if (!selfHosted && !subscriptionAllowsGroup(toSubscription, poolSelectionGroup(item))) throw new Error("该订阅池不允许当前用户套餐等级。");
-        if (!selfHosted && ((toSubscription.enabled === false && payload.allowDisabled !== true) || !subscriptionCanBeManuallyAssigned(toSubscription))) throw new Error("请选择已启用且未过期的订阅池，或有效的手动 Base64 池。");
-        const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId) || null;
-        if (!selfHosted && fromSubscription?.id !== toSubscription.id && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
-        const beforeExpiresAt = item.expiresAt || null;
+        const { days, beforeExpiresAt, afterExpiresAt } = preview;
         item.planExpiresAt ||= beforeExpiresAt;
-        item.giftedDays = (Number(item.giftedDays) || 0) + Number(payload.days);
-        item.expiresAt = expiresAt;
-        if (!selfHosted) item.subscriptionId = toSubscription.id;
+        item.giftedDays = (Number(item.giftedDays) || 0) + days;
+        item.expiresAt = afterExpiresAt;
         item.updatedAt = new Date().toISOString();
-        if (selfHosted) await provisionXuiClient(item);
+        if (isSelfHostedUser(item)) await provisionXuiClient(item);
         appendUserLogToUser(item, createUserLog({
           event: "user-action",
           status: "recorded",
           reason: "user-gifted",
-          fromSubscription,
-          toSubscription,
           req,
-          message: userActionMessage("user-gifted", { days: Number(payload.days), beforeExpiresAt, afterExpiresAt: expiresAt }),
-          details: { days: Number(payload.days), beforeExpiresAt, afterExpiresAt: expiresAt }
+          message: userActionMessage("user-gifted", { days, beforeExpiresAt, afterExpiresAt }),
+          details: { days, beforeExpiresAt, afterExpiresAt }
         }));
         await saveUsers();
         sendJson(res, 200, publicUser(item));
@@ -11876,18 +12015,22 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    // Admin-only email rebind: the login email of the claimed account and the user's contact email move together.
+    // Admin-only email rebind: the login email of the account and the user's contact email move together.
+    // A claimed account keeps its password and just logs in with the new email. An unclaimed user goes back
+    // into the claim flow under the new email, so a claim link is mailed there.
     // An existing 3x-ui client keeps its stored xuiClientEmail, so traffic history and billing stay on the same client;
     // a user without a client yet gets one under the new email when it is provisioned.
     if (action === "email" && req.method === "POST") {
       const previousUser = item ? structuredClone(item) : null;
-      const account = registeredAccount || (item ? accounts.find(entry => entry.linkedUserId === item.id) : null);
+      let account = registeredAccount || (item ? accounts.find(entry => entry.linkedUserId === item.id) : null);
       const previousAccount = account ? structuredClone(account) : null;
+      let createdAccount = null;
       try {
         const payload = await readJson(req);
         const email = normalizeAccountEmail(payload.email);
         const note = String(payload.note || "").trim().slice(0, 200);
         const fromEmail = account?.email || (item ? nexoraUserEmail(item) : "");
+        if (!fromEmail) throw new Error("该用户尚未填写账户邮箱。");
         if (email === fromEmail) throw new Error("新邮箱与当前邮箱相同。");
         if (accounts.some(entry => entry.id !== account?.id && entry.email === email)) throw new Error("该邮箱已被其他账户使用。");
         if (users.some(entry => entry.id !== item?.id && [entry.email, entry.userId].some(value => String(value || "").trim().toLowerCase() === email))) throw new Error("该邮箱已被其他用户使用。");
@@ -11897,6 +12040,12 @@ async function handleApi(req, res, pathname) {
           item.email = email;
           item.updatedAt = now;
         }
+        const claimed = ["active", "disabled"].includes(account?.status);
+        if (!account && item) {
+          account = createdAccount = { id: crypto.randomUUID(), customerID: item.customerID, email, passwordHash: "", status: "invited", linkedUserId: item.id, createdAt: now, updatedAt: now };
+          accounts.unshift(account);
+        }
+        let claimToken = "";
         if (account) {
           account.email = email;
           // Links already mailed to the old address must not work after the rebind.
@@ -11904,18 +12053,36 @@ async function handleApi(req, res, pathname) {
           delete account.resetTokenExpiresAt;
           delete account.claimTokenHash;
           delete account.claimTokenExpiresAt;
+          if (!claimed) {
+            claimToken = crypto.randomBytes(32).toString("base64url");
+            account.status = "invited";
+            account.claimTokenHash = tokenHash(claimToken);
+            account.claimTokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+          }
           account.updatedAt = now;
         }
         const actor = currentSession(req)?.account || "admin";
         if (item) appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "email-changed", req, message: userActionMessage("email-changed", { fromEmail, toEmail: email, actor, note }), details: { fromEmail, toEmail: email, actor, note } }));
         if (item) await saveUsers();
         if (account) await saveAccounts();
-        sendJson(res, 200, registeredAccount ? publicRegisteredAccount(account) : publicUser(item));
+        // The rebind is saved either way; a failed claim mail is reported so the admin can resend it.
+        let claimMail = null;
+        if (claimToken) {
+          try {
+            await sendAccountActionMail({ to: email, subject: "认领你的订阅账户", title: "请点击下面的链接设置密码并认领订阅", url: accountActionUrl(req, "/reset-password", claimToken) });
+            claimMail = { sent: true, to: email };
+          } catch (error) {
+            console.error(`Claim email after rebind failed for ${email}:`, error.message);
+            claimMail = { sent: false, to: email, error: error.message };
+          }
+        }
+        sendJson(res, 200, { ...(registeredAccount ? publicRegisteredAccount(account) : publicUser(item)), ...(claimMail ? { claimMail } : {}) });
       } catch (error) {
         if (item && previousUser) {
           Object.keys(item).forEach(key => delete item[key]);
           Object.assign(item, previousUser);
         }
+        if (createdAccount) accounts.splice(accounts.indexOf(createdAccount), 1);
         if (account && previousAccount) {
           Object.keys(account).forEach(key => delete account[key]);
           Object.assign(account, previousAccount);
@@ -12014,17 +12181,20 @@ async function handleApi(req, res, pathname) {
         if (!item || !isSelfHostedUser(item)) throw new Error("仅自研线路用户可以直接更改套餐。");
         const payload = await readJson(req);
         const option = await adminCatalogV2PlanOption(payload);
-        if (!option.lifetime && option.durationDays !== Number(item.v2ProductSnapshot?.durationDays)) throw new Error("目标商品必须与当前周期一致，或为不限时规格。");
         const note = String(payload.note || "").trim().slice(0, 200);
         if (!note) throw new Error("请填写套餐变更原因。");
         const before = userSnapshotForLog(item);
         const rollbackState = planChangeState(item);
         const beforePlan = `${(accessGroupForUser(item) || "-").toUpperCase()} / ${planIsUnlimited(item) ? "无限流量" : "固定流量"}`;
+        const wasLifetime = item.duration === "lifetime";
+        const fromDays = Number(item.v2ProductSnapshot?.durationDays) || 0;
         Object.assign(item, { duration: option.duration, updatedAt: new Date().toISOString() });
         if (option.lifetime === true) Object.assign(item, { duration: "lifetime", expiresAt: LIFETIME_EXPIRES_AT, planExpiresAt: LIFETIME_EXPIRES_AT, xuiNextTrafficResetAt: "" });
+        else Object.assign(item, planChangeExpiry(item, { wasLifetime, fromDays, toDays: option.durationDays }));
         bindUserProductFromOrder(item, { id: "", paidAt: new Date().toISOString(), paymentProvider: "manual", catalogVersion: 2, optionId: option.optionId, productSnapshot: { ...option, v2: option.productSnapshotV2 } });
         item.xuiTrafficLimitBytes = Math.max(0, Number(option.trafficBytes) || 0);
         expireUserTrafficPacks(item);
+        if (option.lifetime !== true) item.xuiNextTrafficResetAt = nextXuiCycleResetAt(item);
         refreshUserPlanTraffic(item);
         await provisionXuiClient(item);
         const actor = currentSession(req)?.account || "admin";
@@ -12555,6 +12725,7 @@ module.exports = Object.assign(requestHandler, {
   parseAccountUnavailable,
   calculateExpiry,
   calculateGiftExpiry,
+  giftDaysPreview,
   poolSelectionGroup,
   extractClashConfigBody,
   statusFor,

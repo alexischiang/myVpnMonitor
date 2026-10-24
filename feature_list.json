@@ -1,7 +1,16 @@
 {
   "version": 1,
-  "updated_at": "2026-10-24",
-  "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
+  "updated_at": "2026-10-25",
+  "required_fields": [
+    "id",
+    "name",
+    "description",
+    "status",
+    "ui",
+    "dependencies",
+    "done_criteria",
+    "verification"
+  ],
   "features": [
     {
       "id": "harness-minimum-loop",
@@ -27,7 +36,9 @@
       "description": "Block UI features from passing without clean browser console and page-error evidence.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["harness-minimum-loop"],
+      "dependencies": [
+        "harness-minimum-loop"
+      ],
       "done_criteria": [
         "Passing UI features require structured browser verification evidence.",
         "Console errors and uncaught page errors block passing status.",
@@ -45,7 +56,9 @@
       "description": "Update PROGRESS.md through one explicit lifecycle command using inferred repository state and supplied handoff context.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["harness-minimum-loop"],
+      "dependencies": [
+        "harness-minimum-loop"
+      ],
       "done_criteria": [
         "One command updates the progress date, objective, active feature, blockers, changed files, next step, and optional evidence.",
         "Missing required context fails without modifying PROGRESS.md.",
@@ -74,7 +87,9 @@
         "2026-09-04: Playwright verified the long Alert title at 960x1145 and 390x844 with no horizontal title overflow and a visible edit action."
       ],
       "browser_verification": {
-        "routes": ["/sales-settings"],
+        "routes": [
+          "/sales-settings"
+        ],
         "interactions": [
           "Logged in as administrator and opened Alert 管理.",
           "Verified the marked long unbroken title at 960x1145 and 390x844.",
@@ -101,7 +116,9 @@
         "2026-09-05: Browser verification confirmed complete wrapping and identical computed title/message colors at desktop and mobile widths."
       ],
       "browser_verification": {
-        "routes": ["/account"],
+        "routes": [
+          "/account"
+        ],
         "interactions": [
           "Rendered a UserAlert through the account page with a 194-character unbroken title and message text.",
           "Verified line clamp is disabled, overflow wrapping is enabled, and no horizontal text overflow occurs at 960x1145 and 390x844.",
@@ -131,7 +148,9 @@
         "2026-09-05: Browser verification displayed the selected user's initial bill as 新购套餐."
       ],
       "browser_verification": {
-        "routes": ["/users/detail/1d2e95e0-7a6f-4e29-bd3c-0ae589a292ee"],
+        "routes": [
+          "/users/detail/1d2e95e0-7a6f-4e29-bd3c-0ae589a292ee"
+        ],
         "interactions": [
           "Logged in as administrator and opened the selected user detail page.",
           "Opened 用户日志 and confirmed the bill badge displays 新购套餐 instead of the raw initial value."
@@ -147,7 +166,9 @@
       "description": "Display the merchant order number and purchased product name in the user bill table.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["billing-purchase-classification"],
+      "dependencies": [
+        "billing-purchase-classification"
+      ],
       "done_criteria": [
         "User bill rows show the merchant order number instead of an internal UUID when linked to a payment order.",
         "User bill rows include the purchased product name.",
@@ -160,7 +181,9 @@
         "2026-09-05: Unit coverage confirmed the shared formatter produces BASIC-360天-50G for a yearly 50G snapshot."
       ],
       "browser_verification": {
-        "routes": ["/users/detail/1d2e95e0-7a6f-4e29-bd3c-0ae589a292ee"],
+        "routes": [
+          "/users/detail/1d2e95e0-7a6f-4e29-bd3c-0ae589a292ee"
+        ],
         "interactions": [
           "Logged in as administrator and opened the selected user detail page.",
           "Opened 用户日志 and confirmed the bill table contains the 商品名称 column.",
@@ -190,7 +213,9 @@
         "2026-09-05: Browser verification confirmed the dashboard remained healthy with no console or page errors."
       ],
       "browser_verification": {
-        "routes": ["/dashboard"],
+        "routes": [
+          "/dashboard"
+        ],
         "interactions": [
           "Logged in as administrator and opened the dashboard.",
           "Confirmed today's node traffic card rendered after the corrected freeze semantics were applied."
@@ -206,7 +231,10 @@
       "description": "Persist directional user traffic, configure monthly VPS costs, amortize plan revenue, and report user and infrastructure profitability.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["dashboard-active-inbound-traffic", "billing-purchase-classification"],
+      "dependencies": [
+        "dashboard-active-inbound-traffic",
+        "billing-purchase-classification"
+      ],
       "done_criteria": [
         "Each node supports purchase-date VPS fee, quota, and in+out or out-only cost metering settings.",
         "User quota usage remains in+out while durable daily analytics retain separate inbound and outbound bytes.",
@@ -223,7 +251,11 @@
         "2026-09-06: npm run verify passed after changing VPS cost activation to an exact purchase date; regression coverage includes legacy month settings, exact-day activation, full purchase-date cycles, and month-end purchases."
       ],
       "browser_verification": {
-        "routes": ["/xui-monitor", "/sales-analytics", "/sales-analytics/profitability"],
+        "routes": [
+          "/xui-monitor",
+          "/sales-analytics",
+          "/sales-analytics/profitability"
+        ],
         "interactions": [
           "Logged in as administrator and opened node settings; confirmed the exact VPS purchase-date input, monthly fee, quota, metering mode, and purchase-date cycle explanation.",
           "Switched between the sales overview and cost profitability subpages; confirmed each route only renders its own analytics.",
@@ -243,7 +275,9 @@
       "description": "Provision paid plans to the authenticated account email while retiring pool assignment branches from payment fulfillment.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["billing-purchase-classification"],
+      "dependencies": [
+        "billing-purchase-classification"
+      ],
       "done_criteria": [
         "A linked legacy pool user receives the purchased plan on the authenticated account email.",
         "Successful delivery clears the legacy pool binding and changes the user to self-hosted delivery.",
@@ -278,7 +312,9 @@
         "2026-09-13: Browser verification confirmed editing inbound metadata submits only the app API and produces no console or page errors."
       ],
       "browser_verification": {
-        "routes": ["/xui-inbounds"],
+        "routes": [
+          "/xui-inbounds"
+        ],
         "interactions": [
           "Opened an inbound editor, changed the region, saved, and confirmed the browser issued only PUT /api/xui-inbound-groups with no 3x-ui request or runtime errors.",
           "Logged in as administrator and opened inbound management.",
@@ -315,7 +351,10 @@
         "2026-09-14: Separated traffic-sync serialization from billing settings; simultaneous Token plus cost save returned 200 for credentials and settings, and the missing-Token alert was restored."
       ],
       "browser_verification": {
-        "routes": ["/xui-inbounds", "/xui-monitor"],
+        "routes": [
+          "/xui-inbounds",
+          "/xui-monitor"
+        ],
         "interactions": [
           "Opened package groups and confirmed 保存套餐分组 is disabled without changes.",
           "Opened an inbound editor and confirmed 保存设置 is disabled without changes and enabled after changing the region.",
@@ -353,7 +392,9 @@
       "description": "Keep clash_rule_base top-level settings while restoring full 3x-ui proxy objects after conversion.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["self-hosted-subscription-fast-path"],
+      "dependencies": [
+        "self-hosted-subscription-fast-path"
+      ],
       "done_criteria": [
         "The converted Clash document remains the final configuration base.",
         "Top-level settings from clash_rule_base are preserved.",
@@ -370,7 +411,9 @@
       "description": "Default sales analytics to the current month and retain the selected time range between its subpages.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["sales-traffic-profitability"],
+      "dependencies": [
+        "sales-traffic-profitability"
+      ],
       "done_criteria": [
         "Sales analytics initially displays the current month.",
         "Switching between sales overview and profitability retains the selected time range."
@@ -380,7 +423,10 @@
         "2026-09-08: Browser verification confirmed the current month is selected by default and both a preset period and selected month persist across both sales subpages."
       ],
       "browser_verification": {
-        "routes": ["/sales-analytics", "/sales-analytics/profitability"],
+        "routes": [
+          "/sales-analytics",
+          "/sales-analytics/profitability"
+        ],
         "interactions": [
           "Logged in as administrator and confirmed September is selected by default.",
           "Selected the 30-day preset and confirmed it remained active after navigating to profitability and back.",
@@ -417,7 +463,9 @@
       "description": "Apply package-group inbound additions and removals with the matching bulk API while keeping client groups on the single-client update path.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["xui-inbound-subscription-order"],
+      "dependencies": [
+        "xui-inbound-subscription-order"
+      ],
       "done_criteria": [
         "An add-only package change calls only bulkAttach.",
         "A remove-only package change calls only bulkDetach.",
@@ -436,7 +484,10 @@
       "description": "Use the effective activeGroup to repair mismatched 3x-ui client groupName values during the five-minute traffic task.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["xui-inbound-delta-sync", "xui-timeout-retry"],
+      "dependencies": [
+        "xui-inbound-delta-sync",
+        "xui-timeout-retry"
+      ],
       "done_criteria": [
         "The legacy daily subscription-pool refresh timer is removed while explicit refresh endpoints remain available.",
         "Every five-minute traffic sync audits active self-hosted users against the clients/list snapshot and repairs existing groupName mismatches.",
@@ -454,7 +505,9 @@
       "description": "Remove the growing monthly profit-traffic state and serve sales profitability exclusively from normalized application PostgreSQL data.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["sales-traffic-profitability"],
+      "dependencies": [
+        "sales-traffic-profitability"
+      ],
       "done_criteria": [
         "The five-minute traffic sync never reads or writes profit-traffic monthly state.",
         "Sales profitability reads traffic, node names, and cost settings only from the application database.",
@@ -468,7 +521,10 @@
         "2026-09-15: Browser verification rendered the profitability report from application-database data and saved a node cost through only PUT /api/sales-traffic/nodes/hk/cost, with no console or page errors."
       ],
       "browser_verification": {
-        "routes": ["/sales-analytics/profitability", "/xui-monitor"],
+        "routes": [
+          "/sales-analytics/profitability",
+          "/xui-monitor"
+        ],
         "interactions": [
           "Opened the profitability report with application-database traffic, user, node, revenue, and cost data.",
           "Changed only the node monthly cost and saved it.",
@@ -485,7 +541,10 @@
       "description": "Let active self-hosted subscribers view real probe status for package inbounds and their private custom inbounds, with upgrade guidance for locked access groups.",
       "status": "pending",
       "ui": true,
-      "dependencies": ["xui-inbound-subscription-order", "xui-timeout-retry"],
+      "dependencies": [
+        "xui-inbound-subscription-order",
+        "xui-timeout-retry"
+      ],
       "done_criteria": [
         "Only active self-hosted subscribers see the account node-status navigation and protected data.",
         "The page shows real status and probe latency for every assigned package-group inbound plus only the current user's custom inbounds.",
@@ -522,7 +581,9 @@
         "2026-09-21: Playwright verified the account IP card at desktop and 390x844 with the expected IP, translated organization and location, no horizontal overflow, and no console or page errors."
       ],
       "browser_verification": {
-        "routes": ["/account"],
+        "routes": [
+          "/account"
+        ],
         "interactions": [
           "Opened the authenticated user overview with the IP-info response available.",
           "Confirmed the IP address, organization, and location are visible.",
@@ -652,7 +713,9 @@
         "2026-09-16: Rebased the generated OKLCH scale on orange-600 #ff592c; Playwright confirmed the exact base color, white solid-button text and English parameter labels."
       ],
       "browser_verification": {
-        "routes": ["/account/design-system/buttons"],
+        "routes": [
+          "/account/design-system/buttons"
+        ],
         "interactions": [
           "Opened the lazy-loaded showcase with mocked authenticated account data.",
           "Verified solid, soft, outline, ghost and link variants plus sizes, loading, disabled and icon examples.",
@@ -694,7 +757,10 @@
         "2026-09-17: Removed the account plan header background, centered its content, increased the card gap to 48px, and changed the recommendation wrapper to orange-600 with white text. npm run check passed; Playwright verified desktop and 390px lifetime switching with no overflow or console/page errors."
       ],
       "browser_verification": {
-        "routes": ["/account/plans", "/pricing"],
+        "routes": [
+          "/account/plans",
+          "/pricing"
+        ],
         "interactions": [
           "Opened the account plans page with an isolated authenticated browser session and live public pricing data.",
           "Confirmed the account page contains one plan-mode tablist and renders only the selected mode's three product cards.",
@@ -751,7 +817,13 @@
         "2026-09-24: Shared the existing 3x-ui synchronization queue between traffic sampling and Catalog V2 access repair so their aligned five-minute timers cannot issue competing panel reads; npm run verify, npm run verify:fast and git diff --check passed."
       ],
       "browser_verification": {
-        "routes": ["/pricing", "/catalog-v2", "/users/detail/:id", "/orders/:id", "/account/plans/checkout"],
+        "routes": [
+          "/pricing",
+          "/catalog-v2",
+          "/users/detail/:id",
+          "/orders/:id",
+          "/account/plans/checkout"
+        ],
         "interactions": [
           "Verified the public storefront reads V2 only and shows a safe empty state when no V2 products are available.",
           "Logged in as administrator, opened 商品管理, and confirmed the legacy product-management navigation entry is absent.",
@@ -799,7 +871,15 @@
         "2026-09-23: Existing line-group updates now remove inbound keys that became missing or custom while still rejecting newly submitted invalid keys; npm test, npm run verify:fast and git diff --check passed."
       ],
       "browser_verification": {
-        "routes": ["/catalog-v2", "/catalog-v2/products/new", "/catalog-v2/products/v2-browser-product", "/catalog-v2/line-groups", "/catalog-v2/line-groups/new", "/users/detail/ce6fb1f9-5e6a-4e2b-a24d-5168cb46e42d", "/xui-inbounds"],
+        "routes": [
+          "/catalog-v2",
+          "/catalog-v2/products/new",
+          "/catalog-v2/products/v2-browser-product",
+          "/catalog-v2/line-groups",
+          "/catalog-v2/line-groups/new",
+          "/users/detail/ce6fb1f9-5e6a-4e2b-a24d-5168cb46e42d",
+          "/xui-inbounds"
+        ],
         "interactions": [
           "Logged in as administrator and opened the independent V2 product catalog.",
           "Created a temporary enabled line group containing a live nodeGuid:inboundId entry and confirmed the UI remained blocked until synchronization completed.",
@@ -824,7 +904,10 @@
       "description": "Route every client inbound attach/detach through one helper that groups clients by identical inbound sets, and make the five-minute Catalog V2 sync save per user and respect traffic depletion.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["xui-inbound-delta-sync", "catalog-v2-business-cutover"],
+      "dependencies": [
+        "xui-inbound-delta-sync",
+        "catalog-v2-business-cutover"
+      ],
       "done_criteria": [
         "A single helper sends one bulkAttach or bulkDetach request per distinct sorted inbound set, and every client inbound synchronization path uses it.",
         "A client whose attach request failed is never detached in the same round.",
@@ -846,7 +929,9 @@
       "description": "Replace the separate five-minute traffic billing and Catalog V2 timers with one job that reads the panel once and runs both steps in order.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["xui-inbound-batch-sync"],
+      "dependencies": [
+        "xui-inbound-batch-sync"
+      ],
       "done_criteria": [
         "One five-minute timer reads server/status, nodes/list, inbounds/list and clients/list once per run and shares them with traffic billing and Catalog V2 sync.",
         "Catalog V2 sync derives inbound keys from inbounds/list and no longer triggers the TCP inbound probe.",
@@ -866,7 +951,9 @@
       "description": "Persist the 3x-ui inbound list in an app table refreshed by the five-minute panel sync, probe only from that table, and stop inbound-list consumers from triggering TCP probes.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["xui-panel-sync-merge"],
+      "dependencies": [
+        "xui-panel-sync-merge"
+      ],
       "done_criteria": [
         "A xui_inbounds table stores each inbound's key, id, node, host, port, protocol, name, tag, enabled state, client count and recent activity, and is replaced from the five-minute panel sync snapshot.",
         "The two-minute TCP probe reads only the xui_inbounds table, writes probe results back to it, and sends no 3x-ui requests.",
@@ -880,7 +967,10 @@
         "2026-09-24: Local server against the live panel with XUI_READ_ONLY=true filled 25 inbounds (all with port and host); the table-only probe recorded 24 online and 1 disabled. xui_audit_logs showed only read-only POSTs (activeInbounds, clientIpsByGuid, lastOnline, onlinesByGuid) and no blocked or write requests."
       ],
       "browser_verification": {
-        "routes": ["/xui-inbounds", "/account/nodes"],
+        "routes": [
+          "/xui-inbounds",
+          "/account/nodes"
+        ],
         "interactions": [
           "Logged in as administrator, opened inbound management and confirmed 25 inbounds with probe latency, recent activity and client counts.",
           "Clicked the refresh button; the server log showed only GET /api/xui-inbounds with no 3x-ui request.",
@@ -899,7 +989,9 @@
       "description": "In XUI_READ_ONLY mode the Catalog V2 step still computes differences but sends no client update, provisioning or inbound attach/detach request, and reports the skipped users.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["xui-panel-sync-merge"],
+      "dependencies": [
+        "xui-panel-sync-merge"
+      ],
       "done_criteria": [
         "With read-only enabled, syncCatalogV2ToXui sends no clients/update, clients/add, bulkAttach or bulkDetach request.",
         "Users whose panel state differs are counted in report.skipped instead of report.updated or report.failed.",
@@ -918,7 +1010,9 @@
       "description": "Push totalGB=0 to 3x-ui from Catalog V2 sync, provisioning and traffic-pack re-enable so quota is enforced only by the app's bulkDisable/bulkEnable, ending the panel-disable/app-enable loop for clients whose never-reset panel counter exceeds the plan quota.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["xui-panel-sync-merge"],
+      "dependencies": [
+        "xui-panel-sync-merge"
+      ],
       "done_criteria": [
         "Catalog V2 sync, provisioning and traffic-pack re-enable write totalGB=0 to the panel.",
         "A client whose panel counter exceeds its former panel quota but whose app cycle usage is within quota stays enabled across panel sync rounds without repeated bulkEnable.",
@@ -938,7 +1032,10 @@
       "description": "Persist every background sync job run in a sync_job_runs table and show job status, history and a run-now action on an admin page grouped by module.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["xui-panel-sync-merge", "xui-inbound-table-probe-split"],
+      "dependencies": [
+        "xui-panel-sync-merge",
+        "xui-inbound-table-probe-split"
+      ],
       "done_criteria": [
         "Scheduled, startup, cron and manual runs of the panel sync, inbound probe, traffic prune, subscription refresh and referral settlement write a sync_job_runs row with status, duration, summary and error.",
         "Panel sync reports partial when only some steps fail and failed when all fail; the summary includes the Catalog V2 report.",
@@ -953,7 +1050,9 @@
         "2026-09-25: test-payment now also covers a startup-triggered xui-traffic-prune run, pruneSyncJobHistory deleting runs older than 14 days while keeping newer ones, and /api/cron/refresh (503 without CRON_SECRET, 401 with a wrong token, a recorded cron subscription-refresh run on success); npm run verify, verify:harness and git diff --check passed."
       ],
       "browser_verification": {
-        "routes": ["/sync-jobs"],
+        "routes": [
+          "/sync-jobs"
+        ],
         "interactions": [
           "Ran server.js against TEST_DATABASE_URL with 3x-ui unconfigured, logged in as a local administrator and seeded one partial xui-panel-sync run generated by xuiPanelSyncJobResult with two conflicts.",
           "At 800px desktop, confirmed the task column stays readable, the conflict error lists both emails, and the history sheet shows 冲突 2 and the full error without clamping.",
@@ -973,7 +1072,9 @@
       "description": "All creates and updates of an app user's 3x-ui client go through writeXuiClient, which enforces the app -> panel data direction and reports unlinked panel clients as conflicts instead of adopting them.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["sync-job-monitor"],
+      "dependencies": [
+        "sync-job-monitor"
+      ],
       "done_criteria": [
         "provisionXuiClient and runCatalogV2Sync both write through writeXuiClient; the sync keeps its snapshot lookups, batched inbound changes and read-only dry run.",
         "A same-email panel client not linked to the app user raises XUI_CLIENT_CONFLICT (409) before any panel write, from every provisionXuiClient entry point; the sync records it in report.conflicts.",
@@ -1045,7 +1146,10 @@
         "2026-09-25: Browser verification on the local dev server (XUI_READ_ONLY=true) after the admin logged in: see browser_verification."
       ],
       "browser_verification": {
-        "routes": ["/xui-inbounds", "/users"],
+        "routes": [
+          "/xui-inbounds",
+          "/users"
+        ],
         "interactions": [
           "/xui-inbounds loaded with no console errors.",
           "Edited V2 line group test: added 美国洛杉矶 S02 and saved; PUT /api/catalog-v2/line-groups/test returned 200 with two inboundKeys and xuiSync {updated:0, skipped:0, failed:0} (the dev DB has no V2 users). Removed it again and saved; the response had the original single inboundKey and xuiSync, so the group is restored.",
@@ -2139,7 +2243,9 @@
         "2026-09-30: npm run agent:init, npm run check, npm run verify:fast and git diff --check passed; overview API returned lineGroupId test-line-standard (activeGroup still the legacy pro) for the seeded expired-renew test account."
       ],
       "browser_verification": {
-        "routes": ["/account"],
+        "routes": [
+          "/account"
+        ],
         "interactions": [
           "Logged in as the seeded expired-renew@xela.test account on http://[::1]:5173 (separate cookie jar, admin session on localhost untouched); dismissed the announcement dialog.",
           "Plan card headline rendered TEST-LINE-STANDARD with the extruded poster style, title attribute TEST-LINE-STANDARD (90天-200G/月); no layout overflow."
@@ -2155,7 +2261,9 @@
       "description": "The admin 新增用户 dialog creates self-hosted users bound to a V2 plan spec (product, period, traffic tier; unlisted allowed) like a paid order, with a purchase date and amount defaulting to the spec price. Editing a user only changes identity fields. The legacy tier admin renewal entry and the legacy branch of admin plan change are removed; the V2 spec picker is a shared CatalogPlanFields component also used by the plan change dialog.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["account-plan-card-line-group"],
+      "dependencies": [
+        "account-plan-card-line-group"
+      ],
       "done_criteria": [
         "POST /api/users requires a V2 plan spec and binds productCatalogVersion 2, v2ProductId, v2LineGroupId, expiry, traffic and IP limit from it; legacy tier payloads are rejected.",
         "PUT /api/users/:id ignores plan, expiry and spend fields and never rebinds the product.",
@@ -2166,7 +2274,10 @@
         "2026-09-30: npm run check, npm run verify:fast and git diff --check passed. Isolated schema run of test-checkout, test-payment (new admin create/edit/renew assertions), test-wallet and test-catalog-v2 passed and the schema was dropped; scripts/verify-catalog-v2.js itself cannot spawn npm on Windows (ENOENT for npm.cmd), so the same steps were run with node directly."
       ],
       "browser_verification": {
-        "routes": ["/users", "/users/detail/24e685b3-15db-431b-aa54-985201cccdf8"],
+        "routes": [
+          "/users",
+          "/users/detail/24e685b3-15db-431b-aa54-985201cccdf8"
+        ],
         "interactions": [
           "新增用户: empty step 1 showed user ID and email errors; step 2 listed V2 specs, BASIC 套餐 · 90 天 showed tiers, expiry 2026/12/29 and 109, tier 3 changed it to 139; PRO 不限时套餐 showed 永久有效, no tier field and 159. Cancelled without creating a user (user list unchanged).",
           "Fixed during the check: the next button turned into the submit button mid-click (distinct keys now) and the spec placeholder wrongly said no specs were available.",
@@ -2184,7 +2295,9 @@
       "description": "Line access, plan traffic, 3x-ui quota, IP limit, inbounds, renewal offers and overview/delivery/list/ticket labels read only the user's V2 snapshot and v2LineGroupId; the legacy tier fallbacks (pricing rows, LEGACY_RECURRING_TRAFFIC_GB, basic/pro/ultra group checks) are removed. Legacy (v1) plan specs are rejected at quote and order submission so a paid order can never lack a V2 entitlement. The admin 调整权限组 dialog, the line endpoint (410) and the xui-recover endpoint are removed; 切换到自研线路 shows the V2 line group read-only. Payment regression tests buy V2 products instead of the test-only pro-test-001 option, which is removed. Order-side legacy code for historical orders (fulfillment, rollback, refund, bills) and upstream pool group checks are unchanged.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["admin-user-v2-plans"],
+      "dependencies": [
+        "admin-user-v2-plans"
+      ],
       "done_criteria": [
         "planTrafficBytes, xuiTrafficLimitBytes, planDeviceLimit and accessGroupForUser use only v2ProductSnapshot / v2LineGroupId; users without a V2 snapshot get no quota.",
         "Quotes and orders for legacy plan specs (e.g. basic-30, pro-lifetime) return 400; traffic pack, home IP and V2 products still work.",
@@ -2234,7 +2347,9 @@
       "description": "Removed the v1 plan quote chain (paymentQuote, planQuoteWithAddOns, resolvePaymentPlanOption, dynamicPaymentPlanOption, PAYMENT_PLAN_OPTIONS, recurringPlanOption, planCycleOptions, traffic tier helpers, PRICING_PERIODS, productVariantAvailable), the completed one-time user-product-binding-v5 startup migration and its v1 binding helpers (inferUserProductBinding, inferCustomUserDuration, productBinding, bindUserProduct, latestMatchingPlanOrder, familyGrantOrder), the v1 branch of bindUserProductFromOrder, and the orphan test-vip.js. Plan fulfillment now throws for a paid legacy plan order (manual handling) instead of building a v1 entitlement. Kept: legacy pricing rows and the pricing settings page (traffic pack, home IP, historical bill labels), historical order rollback/reversal/bills, renewUser (used by V2 fulfillment), upstream pool USER_GROUPS logic.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["user-entitlement-v2-only"],
+      "dependencies": [
+        "user-entitlement-v2-only"
+      ],
       "done_criteria": [
         "No code path quotes, orders, binds or fulfills a v1 plan spec; a paid legacy plan order fails fulfillment with 旧版套餐订单不再自动交付.",
         "Historical v1 orders still reverse and roll back; traffic pack, home IP and V2 flows unchanged.",
@@ -2267,7 +2382,9 @@
       "description": "The admin 重置流量 button (POST /api/users/:id/traffic-reset) reset the 3x-ui panel counter and zeroed the cached display, but cycle usage is summed from xui_daily_traffic, so the next sync restored the old usage. The route now opens a cycle baseline as of the reset instant (same mechanism as xui-cycle-traffic-from-zero) and no longer calls panel resetTraffic (which would also skew the local-node derivation); a client disabled for quota is still re-enabled immediately. Removed the now-unused resetXuiClientTraffic and xuiResetReference. Also fixed syncJobsPayload reading the in-memory running flag after the history query, which could report a finished job with a stale running last run (made test-payment intermittently fail).",
       "status": "passing",
       "ui": false,
-      "dependencies": ["xui-cycle-traffic-from-zero"],
+      "dependencies": [
+        "xui-cycle-traffic-from-zero"
+      ],
       "done_criteria": [
         "After an admin traffic reset the next sync reports 0 used, and only later traffic counts.",
         "Plan quota, traffic packs and the next reset date are unchanged; the existing dialog text stays accurate.",
@@ -2293,7 +2410,9 @@
         "2026-10-03: new test-payment step inserts a stale cached inbound: plain GET still lists it, GET ?refresh=1 returns only the panel's inbounds with empty refreshError. npm run check, npm test and node test-payment.js passed. Browser check on an isolated server (test DB + mock 3x-ui): deleting an inbound in the mock and re-entering /xui-inbounds removed it; deleting another and clicking 刷新 removed it; requests used ?refresh=1; no console errors. The refreshError alert path was not exercised in the browser. Not deployed."
       ],
       "browser_verification": {
-        "routes": ["/xui-inbounds"],
+        "routes": [
+          "/xui-inbounds"
+        ],
         "interactions": [
           "Deleted mock inbound 3 in the mock panel, navigated to /dashboard and back to /xui-inbounds: 3 inbounds became 2 without a panel sync.",
           "Deleted mock inbound 2, clicked 刷新: the table showed only Mock 洛杉矶 S01; network shows GET /api/xui-inbounds?refresh=1 → 200."
@@ -2309,7 +2428,9 @@
       "description": "Region, network level and package/custom type move from the inbound-groups JSON state into xui_inbounds columns, saved per inbound. Inbounds missing from 3x-ui are marked missing_since instead of deleted, so their settings survive a partial panel read and come back when the inbound reappears; an empty panel list is rejected; rows missing for 30 days are purged. The legacy inbound-groups metadata is imported once automatically.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["xui-inbounds-live-refresh"],
+      "dependencies": [
+        "xui-inbounds-live-refresh"
+      ],
       "done_criteria": [
         "Inbound settings are read from and written to xui_inbounds; PUT /api/xui-inbounds/:key/settings updates one inbound and /api/xui-inbound-groups is removed.",
         "An inbound missing from 3x-ui is hidden everywhere but keeps its settings, and is restored with them when it reappears.",
@@ -2321,7 +2442,9 @@
         "2026-10-03: test-payment now seeds legacy inbound-groups metadata and asserts the one-time import (local:1 keeps 迁移地区/premium, unknown local:7 kept as a hidden missing row, state stamped importedToTableAt); per-inbound PUT normalizes input, makes no 3x-ui request, returns 404 for missing inbounds, and the old /api/xui-inbound-groups returns 404; an inbound dropped by the mock panel is hidden but keeps its settings and returns with them; an empty panel list keeps the 3 inbounds and sets refreshError; a row missing 31 days is purged while a recent one stays. test.js covers normalizeXuiInboundSettings. npm run verify (check, docs build, test, payment, wallet, catalog V2) exit 0. Not deployed."
       ],
       "browser_verification": {
-        "routes": ["/xui-inbounds"],
+        "routes": [
+          "/xui-inbounds"
+        ],
         "interactions": [
           "Isolated server on the test DB with a mock 3x-ui: edited Mock 香港 S01, set region 验证地区 and network level 精品线路, saved; the only write was PUT /api/xui-inbounds/local%3A2/settings → 200 and the table showed 精品线路 / 验证地区.",
           "Hid inbound 2 in the mock panel and clicked 刷新 (GET /api/xui-inbounds?refresh=1): the row disappeared; restored it and clicked 刷新: it came back still showing 精品线路 / 验证地区."
@@ -2609,7 +2732,11 @@
         "2026-10-08: curl on an isolated server (test DB, port 3210, DOCS_SITE_URL=http://localhost:3100): /docs, /docs/ and /docs/tutorials/shadowrocket-tutorial/?from=app return 301 to the same path and query on the docs site."
       ],
       "browser_verification": {
-        "routes": ["/account","/account/docs","/docs/"],
+        "routes": [
+          "/account",
+          "/account/docs",
+          "/docs/"
+        ],
         "interactions": [
           "Docs site served by nexora-docs scripts/preview.mjs on :3100, built with a temporary pinned announcement (e2e-check) and two dummy manifest downloads, both removed afterwards. App: isolated server.js on :3210 with the seeded expired-renew@xela.test customer.",
           "/account: the 网站公告 card shows the docs announcement summary; the reminder dialog shows the summary with 我知道了 (outline) and 阅读全文 (link to http://localhost:3100/announcements/e2e-check/, target=_blank, rel=noopener noreferrer). Clicking it opened the docs page. Reopening from the carousel shows 关闭 + 阅读全文.",
@@ -2630,7 +2757,9 @@
       "description": "The account sidebar 使用文档, the overview 使用教程 / 查看使用教程 buttons and the /account/docs route used to go to /docs/ in the same tab (the sidebar already used a new tab, through the server 301). They now link straight to the standalone docs site (VITE_DOCS_SITE_URL, default https://docs.webprovider.top/docs/) and the buttons open it in a new tab; /account/docs, reached by typing or an old bookmark, sends the browser to the docs site.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["standalone-docs-site"],
+      "dependencies": [
+        "standalone-docs-site"
+      ],
       "done_criteria": [
         "Sidebar 使用文档, overview 使用教程 and 查看使用教程 all point at https://docs.webprovider.top/docs/ with target=_blank and rel=noopener noreferrer; clicking keeps the account page open.",
         "Visiting /account/docs directly goes to the docs site; GET /docs/* still 301s for old links."
@@ -2640,7 +2769,10 @@
         "2026-10-09: curl on the isolated server: /docs and /docs/tutorials/and-flclash-tutorial/ still 301 to the same path on https://docs.webprovider.top."
       ],
       "browser_verification": {
-        "routes": ["/account", "/account/docs"],
+        "routes": [
+          "/account",
+          "/account/docs"
+        ],
         "interactions": [
           "Isolated server.js on :3210 (test DB, no 3x-ui) with the seeded expired-renew@xela.test customer; its plan was moved into the future in the test DB so the 订阅链接 card renders, and the seed was reset afterwards.",
           "/account desktop: sidebar 使用文档, greeting 查看使用教程 and the 订阅链接 card's 使用教程 are all <a href=\"https://docs.webprovider.top/docs/\" target=\"_blank\" rel=\"noopener noreferrer\">.",
@@ -3488,7 +3620,9 @@
         "2026-10-16: Recurring plan cards no longer repeat 周期性套餐 above the description (the selector already says it); lifetime cards keep their 固定流量不限时长 line. Browser: on /pricing the main text contains 周期性套餐 once (the selector button), and the lifetime view still shows the line on each card; no 4xx responses in this page load."
       ],
       "browser_verification": {
-        "routes": ["/pricing"],
+        "routes": [
+          "/pricing"
+        ],
         "interactions": [
           "Selected 年付 and read the price unit.",
           "Selected 不限时套餐 and confirmed the period selector hides.",
@@ -3722,7 +3856,12 @@
         "2026-10-17: npm run check passed. Browser on the dev server (Vite 5173), light and dark: admin /dashboard computed --background #f5f5f5 / #262626 and --surface #ffffff / #171717; /account as the seeded expired-renew@xela.test account: shell background rgb(245,245,245) / rgb(38,38,38), header rgb(255,255,255) with the 0 6px 32px shadow / rgb(23,23,23), no gradient band; /account/plans cards white on grey. All API requests 200; the only console errors were 401s from /api/auth/me on the logged-out login page before signing in."
       ],
       "browser_verification": {
-        "routes": ["/dashboard", "/account", "/account/plans", "/login"],
+        "routes": [
+          "/dashboard",
+          "/account",
+          "/account/plans",
+          "/login"
+        ],
         "interactions": [
           "Switched between light and dark themes and read computed page, card and header colours.",
           "Closed the announcement dialog on the overview."
@@ -3755,7 +3894,11 @@
         "2026-10-17: Tag dialog and confirm dialogs. npm run check passed. Admin /changelog after a clean reload: 管理标签 in the 发布更新 card header opened the 标签管理 dialog (size lg) listing every tag with a swatch-only colour select, entry count, check (save) and trash icon buttons; the colour menu listed nine swatches; the swatch sits centred in the trigger (centre 282.4 = trigger centre 282.4 after switching .withIcon to flex). Added 临时标签 with the icon-only add button (toast 标签已添加), its delete opened a nested confirm dialog 删除标签「临时标签」？, confirming removed it from the API and closed only the confirm. Entry 临时测试更新 (created via the admin API): delete → confirm 删除更新「临时测试更新」？; 取消 kept the entry; confirming deleted it and removed the row. Console after the reload: no errors."
       ],
       "browser_verification": {
-        "routes": ["/changelog", "/account", "/account/changelog"],
+        "routes": [
+          "/changelog",
+          "/account",
+          "/account/changelog"
+        ],
         "interactions": [
           "Opened 标签管理 from the 发布更新 card and opened a swatch colour menu.",
           "Added a tag with the icon-only add button and deleted it through the confirm dialog.",
@@ -3772,7 +3915,9 @@
       "description": "ConfirmDialog (src/components/features/confirm-dialog.tsx, on Arc Dialog) replaces every window.confirm: changelog entries and tags, V2 addon categories, compare attributes and products (catalog-v2.tsx), and V2 line groups (xui-inbounds.tsx). The delete button opens the dialog; the existing remove runs on confirm with the button loading; a failed request is toasted and keeps the dialog open. Dialog action rows follow Arc's dialog demo (uiarc.dev/components/dialog): buttons sit in the body's 24px padding, right-aligned with an 8px gap and no extra top margin; the confirming button is the solid primary button (danger is kept for page-level delete triggers). The old mt-6 from the shadcn footer pattern is gone from 35 rows: first-child rows lost it, rows in a gap-spaced grid rely on the gap, rows after content in a plain block use mt-4. The user-form wizard footer bar and the inbound drawer keep their own layout.",
       "status": "passing",
       "ui": true,
-      "dependencies": ["changelog"],
+      "dependencies": [
+        "changelog"
+      ],
       "done_criteria": [
         "No window.confirm remains in src.",
         "Every delete opens an Arc confirm dialog; cancel keeps the record, confirm deletes it.",
@@ -3859,7 +4004,10 @@
         "2026-10-17: npm run check and npm run verify:fast passed. Browser on an isolated server (dev DB copy in schema arc_verify, Vite :5180), /dashboard at 1440x900: 收入趋势 709x418 beside three 346x129 compact cards (待交付服务, 待处理工单, 当前在线人数) ending on the same line; with /api/xui-presence stubbed in the page (6 nodes, 5 users, 37 online), 今日节点使用流量 and 今日用户流量 Top 5 are 528x376 each; 日收入 / 用户增长 528x438; 到期提醒 709x383 beside 服务监控 346x383. Without the stub the online card shows 3x-ui 尚未配置. 1024px: KPIs 2x2, chart full width, three compact cards in one row. 375px: all cards 325px wide, scrollWidth 375. Clicked 立即刷新 and 刷新; console in a fresh tab had no errors on /dashboard and /users."
       ],
       "browser_verification": {
-        "routes": ["/dashboard", "/users"],
+        "routes": [
+          "/dashboard",
+          "/users"
+        ],
         "interactions": [
           "Measured every card at 1440, 1024 and 375 px.",
           "Stubbed 3x-ui presence data in the page to view both traffic rankings filled.",
@@ -3887,7 +4035,12 @@
         "2026-10-17: npm run check and npm run verify:fast passed. Browser on an isolated server (dev DB copy in schema arc_verify, one copied account given a test password), 1440x900: #subscription-url computed border 0 and a full radius inside the gradient pill. /account/nodes with node-status stubbed in the page (8 nodes: online, offline, maintenance, locked, dedicated): rows aligned with 在线/离线/维护中 and 38-210 ms; at 375px no horizontal overflow. Footer copyright on /account and /pricing reads © 2026 NEXORA. With self-hosted traffic stubbed as depleted (100/100 GB): before, no traffic-pack entry and badge 即将用完; after, button 流量已用完，购买流量包 and badge 已用完; clicking it opened /account/plans#addons with 附加服务 at the top (100G 流量包 listed); a direct load of that URL also lands there. Fresh-tab console on /account, /account/nodes, /account/plans#addons and /pricing: no errors."
       ],
       "browser_verification": {
-        "routes": ["/account", "/account/nodes", "/account/plans#addons", "/pricing"],
+        "routes": [
+          "/account",
+          "/account/nodes",
+          "/account/plans#addons",
+          "/pricing"
+        ],
         "interactions": [
           "Inspected the subscription field's computed border and radius.",
           "Viewed node status with stubbed node data at 1440 and 375 px.",
@@ -4475,7 +4628,9 @@
       "description": "xuiClientAllowed(user) = plan not expired and account not disabled. Every 3x-ui enable decision uses it: desiredXuiClient, the traffic-sync self-healing re-enable, missing-client marking and re-provisioning, custom-inbound projection, the admin traffic reset, and enableXuiClientAfterTrafficIncrease (traffic packs, traffic_credit add-ons, admin traffic gifts). Added traffic still clears the panel quota but only re-enables an allowed client; before, an admin traffic gift re-enabled expired or disabled users. An isOn plan switch and endUserPlan were tried and removed at the user request.",
       "status": "passing",
       "ui": false,
-      "dependencies": ["early-plan-renewal"],
+      "dependencies": [
+        "early-plan-renewal"
+      ],
       "done_criteria": [
         "All 3x-ui enable decisions go through xuiClientAllowed.",
         "Added traffic clears the panel quota and re-enables the client only when xuiClientAllowed; a disabled account stays off after a traffic gift."
@@ -4499,7 +4654,9 @@
         "2026-10-24: npm run check, npm run verify:fast and npm run verify:harness passed; browser checked /users/detail with a 17-node user at 1920, 1600, 1280 and 375px."
       ],
       "browser_verification": {
-        "routes": ["/users/detail/c4ce1abd-5052-4f9f-a2b5-f115c009773b"],
+        "routes": [
+          "/users/detail/c4ce1abd-5052-4f9f-a2b5-f115c009773b"
+        ],
         "interactions": [
           "Local dev (PORT=3000 backend on the local database, XUI_READ_ONLY=true, Vite on 5173), admin session.",
           "1920 and 1600px: 倍率流量 on the left, 当前套餐 and 3x-ui 信息 stacked on the right; nodes in two columns ranked 主面板 211 GB (70%), 34 GB (11%), 32 GB (10%) down to 60 KB.",
@@ -4529,7 +4686,9 @@
         "2026-10-24: local /api/health reports resend ok; the local .env key gets 200 from GET https://api.resend.com/domains, so ok is correct for it."
       ],
       "browser_verification": {
-        "routes": ["/dashboard"],
+        "routes": [
+          "/dashboard"
+        ],
         "interactions": [
           "Local dev (PORT=3000 backend on the local database, XUI_READ_ONLY=true, Vite on 5173), admin session; 服务监控 lists Resend with real latency.",
           "No real mail sent: window.fetch stubbed in the page for /api/alerts/test-mail. Fallback reply showed a warning toast '测试邮件已通过 SMTP 发送至 admin@example.test，Resend 发送失败' with description 'API key is invalid'; Resend reply showed '测试邮件已通过 Resend 发送至 admin@example.test'.",
@@ -4543,7 +4702,7 @@
     {
       "id": "admin-email-rebind",
       "name": "Admin-only email rebind",
-      "description": "POST /api/users/:id/email (behind requireAdmin; also works for registered-only account:<id>) changes a user's email: the linked account's login email, user.email, and user.userId when it equalled the old email. The new email is normalized and must not be used by another account or user, and must differ from the current one. Reset-password and claim tokens are cleared so links mailed to the old address stop working. An existing 3x-ui client keeps its stored xuiClientEmail and no 3x-ui request is made. A 换绑邮箱 user log records old -> new, operator and note. /api/auth/me reads the email from the account, so sessions show the new address. User detail page: 换绑邮箱 action for claimed, disabled and invited accounts, with a dialog for the new email and an optional note.",
+      "description": "POST /api/users/:id/email (behind requireAdmin; also works for registered-only account:<id>) changes a user's email: the linked account's login email, user.email, and user.userId when it equalled the old email. The new email is normalized and must not be used by another account or user, and must differ from the current one. Reset-password and claim tokens are cleared so links mailed to the old address stop working. An existing 3x-ui client keeps its stored xuiClientEmail and no 3x-ui request is made. A 换绑邮箱 user log records old -> new, operator and note. /api/auth/me reads the email from the account, so sessions show the new address. User detail page: 换绑邮箱 action for claimed, disabled and invited accounts, with a dialog for the new email and an optional note. Rebind is offered for every user with an account email. A claimed (active/disabled) account keeps its password and gets no mail; an unclaimed user (invited or no account) is put back into the claim flow under the new email: the account is created if missing, set to invited with a fresh 30-minute claim token, and a claim mail (/reset-password link) is sent to the new address. A failed mail keeps the rebind and returns claimMail { sent: false, error } so the admin sees a warning and can resend.",
       "status": "passing",
       "ui": true,
       "dependencies": [],
@@ -4551,24 +4710,157 @@
         "Only admins can rebind; customers get 403 and have no entry point.",
         "After a rebind the old email cannot log in and the new one can, with the same password.",
         "Duplicate, invalid and unchanged emails are rejected with a field error.",
-        "The 3x-ui client email is unchanged and a user log is written."
+        "The 3x-ui client email is unchanged and a user log is written.",
+        "An unclaimed user's rebind sends a claim mail to the new email; a claimed user's rebind keeps the password and sends nothing."
       ],
       "verification": [
-        "2026-10-24: test-payment.js covers user 403, invalid / duplicate / unchanged email, rebind with mixed case and spaces, unchanged xuiClientEmail with no 3x-ui client requests, the 换绑邮箱 log message, old-email login 401, new-email login 200, an existing session's /api/auth/me showing the new email, and restoring the email. npm run verify:catalog-v2 (checkout, payment, wallet, catalog-v2 in an isolated schema), npm run verify:fast, npm run check and npm run verify:harness passed."
+        "2026-10-24: test-payment.js covers user 403, invalid / duplicate / unchanged email, rebind with mixed case and spaces, unchanged xuiClientEmail with no 3x-ui client requests, the 换绑邮箱 log message, old-email login 401, new-email login 200, an existing session's /api/auth/me showing the new email, and restoring the email. npm run verify:catalog-v2 (checkout, payment, wallet, catalog-v2 in an isolated schema), npm run verify:fast, npm run check and npm run verify:harness passed.",
+        "2026-10-24: test-payment.js adds unclaimed rebind -> invited + claim mail to the new email, re-rebind of an invited account invalidating the first link, claiming via the new link and logging in, a later rebind of the now-claimed account sending no mail and keeping the password, and a mail outage still saving the rebind with claimMail.sent=false. npm run verify:catalog-v2, npm run verify:fast, npm run check and git diff --check passed."
       ],
       "browser_verification": {
-        "routes": ["/users/detail/b3f4d06f-0f75-45c9-bb29-d719c64572b2"],
+        "routes": [
+          "/users/detail/1350a9f8-7a6f-4567-9beb-53654ba0584a",
+          "/users/detail/b3f4d06f-0f75-45c9-bb29-d719c64572b2"
+        ],
         "interactions": [
-          "Local dev (backend on the local database, XUI_READ_ONLY=true), admin session, seeded test account expired-unlisted@xela.test at 1600px.",
-          "换绑邮箱 button listed in the profile actions; the dialog shows the current email and the effects.",
-          "Submitting expired-renew@xela.test showed 该邮箱已被其他账户使用。 under the field (expected 400).",
-          "Submitting rebind-check@xela.test with a note closed the dialog, showed the success toast, and updated the title and 邮箱 row; the user log read 换绑邮箱：expired-unlisted@xela.test -> rebind-check@xela.test；操作人 admin；备注 browser check.",
-          "Restored the account to expired-unlisted@xela.test through the API.",
-          "Console: the only new entries were the expected 400 and 500s from the Vite proxy while nodemon restarted after server.js edits (ECONNREFUSED in the dev log); a clean reload added none."
+          "Standalone server on port 3001 against the local database with RESEND_API_KEY and SMTP deliberately invalid so no real mail could be sent; admin session; seeded test data.",
+          "Removed the seeded account of expired-renew@xela.test so the user showed 账户 未认领; 管理用户 menu listed 换绑邮箱 and the dialog read 换绑后将向新邮箱发送认领邮件.",
+          "Submitting rebind-claim@xela.test closed the dialog, updated the title and 邮箱 row, set 账户 to 等待认领 and showed the warning toast 认领邮件发送失败：connect ECONNREFUSED 127.0.0.1:1，可稍后重新发送认领邮件 (expected with mail disabled).",
+          "On the claimed expired-unlisted@xela.test the dialog read 换绑后用户用新邮箱和原密码登录; closed without submitting.",
+          "Restored the test data with scripts/seed-local-test-data.js --reset and a re-seed."
         ],
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-10-24"
+      }
+    },
+    {
+      "id": "admin-plan-change-any-period",
+      "name": "Admin plan change across periods",
+      "description": "POST /api/users/:id/plan accepts any enabled V2 plan spec, not only the current period. A recurring target is treated as bought on the purchase date: expiresAt and planExpiresAt move by (new days - old days), so gifted days and stacked renewals are kept; a lifetime user switching to a recurring spec gets purchasedAt + new days. The traffic reset date is recomputed. Rollback restores the previous expiry. The 更改套餐 dialog lists every period and previews the new expiry, warning when it is already past.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Admin can pick any period in 更改套餐.",
+        "Expiry is recomputed from the purchase date with gifted days kept; lifetime -> recurring starts at the purchase date.",
+        "Rollback restores the previous expiry."
+      ],
+      "verification": [
+        "2026-10-24: test-payment.js covers 30 -> 90 days with 5 gifted days (expiry purchase+95, planExpiresAt purchase+90), rollback to purchase+35, recurring -> lifetime, and lifetime -> 30 days (purchase+30 with a traffic reset date). npm run verify:catalog-v2, npm run verify:fast, npm run check and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/5678ac80-917d-441f-9f44-dc29ad531cbc"
+        ],
+        "interactions": [
+          "Local dev (npm run dev:all, local database, XUI_READ_ONLY=true), admin session, seeded expired-renew@xela.test on 测试 STANDARD 90 天 expiring 2026/10/19.",
+          "更改套餐 dropdown listed every period (PRO 360 天, ULTRA 30/90/180/360 天, 测试 STANDARD 30/90 天) instead of only the current 90-day ones.",
+          "Selecting 测试 STANDARD · 30 天 previewed 到期日 2026/10/19 -> 2026/08/20 (60 days earlier) and the impact note 按购买日重算后到期日已过，变更后用户将处于过期状态.",
+          "Closed the dialog without submitting; the change itself is covered by test-payment.js."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-24"
+      }
+    },
+    {
+      "id": "user-detail-all-billing-records",
+      "name": "User detail lists every paid order and real cash spent",
+      "description": "GET /api/users/:id (and account:<id>) returns billingRecords and cashSpent. billingRecords holds every paid order owned by the user — plans, add-ons, traffic packs, recharges, reversed ones marked — plus bills without an order (admin-created users, migrated purchases). An order belongs to its delivered user while that user exists, otherwise to the account's linked user or the registered account. cashAmount is the order's gateway/manual payment (wallet deductions excluded; recharges count) or the full amount of a bill without an order; cashSpent sums non-reversed records. The detail page shows them in 账单记录 (order link, type badge incl. 附加服务/流量包/余额充值, 已撤销 badge, order amount, cash paid, wallet deduction note), renames 购买次数 to 套餐购买次数 (still plan bills only) and shows 总消费金额 from cashSpent. The bills table, dashboard income, actualPaid and plan cash value are unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Every paid order of a user, including add-ons, traffic packs and recharges, appears in the detail page bill list.",
+        "套餐购买次数 counts plan bills only.",
+        "总消费金额 counts only real cash: recharges and external payments, not wallet deductions; reversed records excluded."
+      ],
+      "verification": [
+        "2026-10-24: test-payment.js checks, for every user with paid orders, that billingRecords lists exactly the user's paid/reversed orders plus bills without an order, that each order's cashAmount equals its external payment and reversal flag, that cashSpent sums non-reversed cash, and that initial, recharge, traffic_pack and addon records all occur. npm run verify:catalog-v2 (checkout, payment, wallet, catalog-v2 in an isolated schema), npm run verify:fast, npm run check and git diff --check passed. npm run verify could not run its payment step because TEST_DATABASE_URL is not set locally; verify:catalog-v2 runs the same payment suite in an isolated schema."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/e3a3fea9-51af-4255-8d02-75ec0b83ece6",
+          "/users/detail/0cff8f5e-cd93-43bf-bed0-888f0a241f29",
+          "/users/detail/0e372395-031f-4ae0-87c9-88f9cc0cb5be"
+        ],
+        "interactions": [
+          "Local dev (npm run dev:all, local database copy), admin session, 800px wide pane.",
+          "User with a plan and two traffic packs: 账单记录 listed 2 流量包 rows (¥20.60) and 1 新购套餐 row (¥40.17); 套餐购买次数 1; 总消费金额 ¥81.37 (stored actualPaid was ¥40.17).",
+          "User with an add-on: API returned addon ¥25.75 + initial ¥132.87, cashSpent ¥158.62.",
+          "User whose reversed first purchase had removed its user record: the two reversed orders appear under the account's current user with 已撤销 badges and struck-through amounts; 总消费金额 counts only the active ¥212.28.",
+          "The table scrolls inside its card (table 843px in a 599px container); page scrollWidth equals the viewport.",
+          "Console in a freshly opened tab for each page: no entries. Earlier createRoot/Crisp errors came from Vite HMR in the long-lived tab, and a 404 from deliberately opening the removed user's page."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-24"
+      }
+    },
+    {
+      "id": "first-order-reversal-keeps-user",
+      "name": "Reversing a first plan order keeps the user",
+      "description": "reversePaymentOrderOnce no longer deletes the user created by the reversed order. The user, its logs, bills and 3x-ui client stay and the account stays linked to it; the plan ends at the reversal time (expiresAt and planExpiresAt set to now, any queued plan dropped), an order-reversed user log is written, and the 3x-ui client is re-provisioned so it is disabled (a panel failure is recorded in xuiLastError and left to the scheduled sync). A later purchase by the account continues on the same user. Reversals of orders whose user existed before still restore the pre-order snapshot.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "Reversing a first plan order keeps the user, linked to the account, with the plan ended.",
+        "The user's 3x-ui client is disabled.",
+        "A repurchase lands on the same user."
+      ],
+      "verification": [
+        "2026-10-24: test-payment.js reverses invitee@example.test's first plan order and checks one user remains (not registered-only, account active, actualPaid 0, expired), an order-reversed log, the 3x-ui client disabled, and that a repurchase lands on the same user id with a future expiry and the client re-enabled. npm run verify:catalog-v2, npm run verify:fast and git diff --check passed."
+      ]
+    },
+    {
+      "id": "renewal-reversal-restores-plan-only",
+      "name": "Renewal reversal restores only the plan",
+      "description": "Reversing a plan order whose user existed before (renewal, replacement, early renewal) no longer swaps in the whole pre-order user. restorePlanFromOrderSnapshot puts back only the plan fields the purchase set (purchasedAt, duration, planExpiresAt, line, product binding and V2 snapshot, traffic cycle and usage display); days added after the purchase stay on top of the restored expiry (current expiry minus the bill's afterExpiresAt), traffic packs bought after the purchase stay with the restored cycle, and email, logs, gifts and everything else stay. reverseBill still takes back actualPaid/vipSpend and drops a still-waiting queued plan, whose plan fields are left untouched. An order-reversed log is written and the 3x-ui client is re-provisioned to the restored plan (failure recorded in xuiLastError). If the user no longer exists the snapshot is re-inserted as before.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "first-order-reversal-keeps-user"
+      ],
+      "done_criteria": [
+        "Reversing a renewal or replacement restores the pre-order plan.",
+        "Gifts, email changes, logs and later traffic packs survive the reversal.",
+        "The 3x-ui client follows the restored plan right away."
+      ],
+      "verification": [
+        "2026-10-25: test-payment.js replaces revert@example.test's plan, buys a traffic pack, gifts 3 days and rebinds the email, then reverses the replacement: the pre-order product, purchasedAt and binding come back with expiry = old expiry + 3 days, the new email and the gift/email/order-reversed logs stay, the pack stays (100 GiB on top of the old quota), actualPaid returns to the pre-order value, the panel expiry matches and the new email logs in. A reversed still-waiting early renewal drops the queued plan and returns the panel expiry to the current plan end. npm run verify:catalog-v2, npm run verify:fast and git diff --check passed."
+      ]
+    },
+    {
+      "id": "gift-days-active-plan-preview",
+      "name": "Gift days extend the active recurring plan with a preview",
+      "description": "The admin 赠送时长 dialog no longer recommends or rebinds a subscription pool. It reads the user's current V2 plan: without an active recurring plan (expired, lifetime or no V2 snapshot) it shows 无法赠送时长 and no input. Otherwise the admin enters days, 下一步 asks POST /api/users/:id/gift with preview:true for a before/after table (plan, expiry, total gifted days, and a queued early renewal's new start/end), and 确认赠送 applies it. The server gate lives in giftDaysPreview; the write keeps subscriptionId and line binding, re-provisions self-hosted users to 3x-ui and logs user-gifted.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Gift days do not touch the subscription pool binding.",
+        "Users without an active recurring plan are told they cannot receive gifted days, in the UI and by the API.",
+        "Entering days and clicking 下一步 shows a change preview; only 确认赠送 writes."
+      ],
+      "verification": [
+        "2026-10-25: test.js covers giftDaysPreview (expiry +10 days, gifted total, queued renewal shifted by the same days; expired, no-V2 and lifetime users rejected). test-payment.js checks the preview API returns before/after expiry without changing the user, then applies the gift. npm run check, npm run verify:catalog-v2 (checkout, payment, wallet, catalog), npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/5678ac80-917d-441f-9f44-dc29ad531cbc",
+          "/users/detail/f4b2354b-2abe-4d64-a9b3-25c8d557c2fd"
+        ],
+        "interactions": [
+          "Local dev (npm run dev:all, local database copy), admin session via autologin, 1280x900 and 375x812.",
+          "Expired recurring user: 赠送时长 shows the 无法赠送时长 warning with the plan name and expiry, only a 关闭 button.",
+          "Active recurring self-hosted user: dialog shows 当前套餐 PRO 套餐-90天-100G and 当前到期 2026/12/17; 下一步 with empty days shows the field error; 7 天 -> 下一步 shows 到期日 2026/12/17 -> 2026/12/24 and 累计赠送 0 -> 7 天; 返回修改 goes back to the input; 30 天 preview on mobile reads 2027/01/16. Not confirmed on this real user; the API expiry stayed 2026-12-16T16:23:18.688Z.",
+          "After a clean reload of the detail page and a 15 天 preview, no new console errors; the only console error in the tab is the 401 from the initial /login page load before autologin."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-25"
       }
     }
   ]
