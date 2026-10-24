@@ -82,8 +82,11 @@ function ServiceMonitor() {
   async function sendTestMail() {
     setSendingMail(true)
     try {
-      const result = await postJson<{ to: string }>("/api/alerts/test-mail")
-      toast({ type: "success", title: `测试邮件已发送至 ${result.to}` })
+      const result = await postJson<{ to: string; mail?: { transport?: "resend" | "smtp"; resendError?: string } }>("/api/alerts/test-mail")
+      const via = result.mail?.transport === "resend" ? "Resend" : result.mail?.transport === "smtp" ? "SMTP" : ""
+      // A Resend failure silently falls back to SMTP; surface it so a delivered test mail doesn't hide a broken Resend key.
+      if (result.mail?.resendError) toast({ type: "warning", title: `测试邮件已通过 SMTP 发送至 ${result.to}，Resend 发送失败`, description: result.mail.resendError })
+      else toast({ type: "success", title: via ? `测试邮件已通过 ${via} 发送至 ${result.to}` : `测试邮件已发送至 ${result.to}` })
     } catch (error) {
       toast({ type: "error", title: error instanceof Error ? error.message : "测试邮件发送失败" })
     } finally {

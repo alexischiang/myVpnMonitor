@@ -7371,6 +7371,7 @@ const userLogReasonText = {
   "user-gifted": "\u8d60\u9001\u65f6\u957f",
   "purchase-pool-changed": "\u8d2d\u4e70\u540e\u81ea\u52a8\u6362\u6c60",
   "user-updated": "\u7528\u6237\u8d44\u6599\u66f4\u65b0",
+  "email-changed": "换绑邮箱",
   "plan-changed": "\u5957\u9910\u53d8\u66f4",
   "product-buyer-sync": "\u5546\u54c1\u540c\u6b65",
   "plan-change-rolled-back": "\u64a4\u9500\u5957\u9910\u53d8\u66f4",
@@ -7652,6 +7653,7 @@ function userActionMessage(reason, details = {}) {
   if (reason === "user-gifted") return `\u8d60\u9001 ${details.days || 0} \u5929\uff0c\u5230\u671f ${details.beforeExpiresAt || "-"} -> ${details.afterExpiresAt || "-"}`;
   if (reason === "plan-changed") return `\u66f4\u6539\u5957\u9910\uff1a${details.beforePlan || "-"} -> ${details.afterPlan || "-"}\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}\uff1b\u5907\u6ce8 ${details.note || "-"}`;
   if (reason === "plan-change-rolled-back") return `\u64a4\u9500\u5957\u9910\u53d8\u66f4\uff1a${details.beforePlan || "-"} -> ${details.afterPlan || "-"}\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}`;
+  if (reason === "email-changed") return `换绑邮箱：${details.fromEmail || "-"} -> ${details.toEmail || "-"}；操作人 ${details.actor || "admin"}${details.note ? `；备注 ${details.note}` : ""}`;
   if (reason === "traffic-reset") return `\u624b\u52a8\u91cd\u7f6e\u7528\u6237\u6d41\u91cf\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}`;
   if (reason === "custom-inbounds-updated") {
     const added = Array.isArray(details.addedNames) && details.addedNames.length ? `\u65b0\u589e\uff1a${details.addedNames.join("\u3001")}` : "";
@@ -8839,18 +8841,20 @@ async function sendAlertTestMessage({ mailOnly = false } = {}) {
   const cfg = notifier.getMailerConfig();
   const text = "NEXORA alert test.";
   const sent = [];
+  let mail = null;
   if (notifier.isMailConfigured()) {
-    await notifier.sendMail({
+    const delivered = await notifier.sendMail({
       subject: "[NEXORA] Alert test",
       text: `${text}\nMail target: ${cfg.to}`
     });
+    mail = { transport: delivered?.transport, ...(delivered?.resendError ? { resendError: delivered.resendError } : {}) };
     sent.push("mail");
   }
   if (!mailOnly && notifier.isTelegramConfigured()) {
     await notifier.sendTelegram({ text });
     sent.push("telegram");
   }
-  return { sent, to: cfg.to };
+  return { sent, to: cfg.to, ...(mail ? { mail } : {}) };
 }
 
 function telegramAuthorizedChat(chatId) {
@@ -9230,8 +9234,8 @@ async function handleApi(req, res, pathname) {
     sendJson(res, 200, {
       ok: true,
       role: session.role,
-      account: session.role === "admin" ? session.account : session.email,
-      email: session.email || "",
+      account: session.role === "admin" ? session.account : account?.email || session.email,
+      email: account?.email || session.email || "",
       hasActiveNodeAccess: Boolean(user && isSelfHostedUser(user) && !isUserExpired(user) && !isUserAccountDisabled(user))
     });
     return;
@@ -9613,11 +9617,8 @@ async function handleApi(req, res, pathname) {
         const timer = setTimeout(() => controller.abort(), 5000);
         const startedAt = Date.now();
         try {
-          const response = await fetch("https://api.resend.com/domains", {
-            headers: { authorization: `Bearer ${mailConfig.resendApiKey}` },
-            signal: controller.signal
-          });
-          services.resend = { status: response.status < 500 ? "ok" : "error", latency: Date.now() - startedAt };
+          const result = await notifier.checkResend({ signal: controller.signal });
+          services.resend = { ...result, latency: Date.now() - startedAt };
         } catch (error) {
           services.resend = { status: "error", message: error.message };
         } finally {
@@ -11675,7 +11676,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -11869,6 +11870,55 @@ async function handleApi(req, res, pathname) {
         if (item && previousUserState) {
           Object.keys(item).forEach(key => delete item[key]);
           Object.assign(item, previousUserState);
+        }
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    // Admin-only email rebind: the login email of the claimed account and the user's contact email move together.
+    // An existing 3x-ui client keeps its stored xuiClientEmail, so traffic history and billing stay on the same client;
+    // a user without a client yet gets one under the new email when it is provisioned.
+    if (action === "email" && req.method === "POST") {
+      const previousUser = item ? structuredClone(item) : null;
+      const account = registeredAccount || (item ? accounts.find(entry => entry.linkedUserId === item.id) : null);
+      const previousAccount = account ? structuredClone(account) : null;
+      try {
+        const payload = await readJson(req);
+        const email = normalizeAccountEmail(payload.email);
+        const note = String(payload.note || "").trim().slice(0, 200);
+        const fromEmail = account?.email || (item ? nexoraUserEmail(item) : "");
+        if (email === fromEmail) throw new Error("新邮箱与当前邮箱相同。");
+        if (accounts.some(entry => entry.id !== account?.id && entry.email === email)) throw new Error("该邮箱已被其他账户使用。");
+        if (users.some(entry => entry.id !== item?.id && [entry.email, entry.userId].some(value => String(value || "").trim().toLowerCase() === email))) throw new Error("该邮箱已被其他用户使用。");
+        const now = new Date().toISOString();
+        if (item) {
+          if (String(item.userId || "").trim().toLowerCase() === fromEmail) item.userId = email;
+          item.email = email;
+          item.updatedAt = now;
+        }
+        if (account) {
+          account.email = email;
+          // Links already mailed to the old address must not work after the rebind.
+          delete account.resetTokenHash;
+          delete account.resetTokenExpiresAt;
+          delete account.claimTokenHash;
+          delete account.claimTokenExpiresAt;
+          account.updatedAt = now;
+        }
+        const actor = currentSession(req)?.account || "admin";
+        if (item) appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "email-changed", req, message: userActionMessage("email-changed", { fromEmail, toEmail: email, actor, note }), details: { fromEmail, toEmail: email, actor, note } }));
+        if (item) await saveUsers();
+        if (account) await saveAccounts();
+        sendJson(res, 200, registeredAccount ? publicRegisteredAccount(account) : publicUser(item));
+      } catch (error) {
+        if (item && previousUser) {
+          Object.keys(item).forEach(key => delete item[key]);
+          Object.assign(item, previousUser);
+        }
+        if (account && previousAccount) {
+          Object.keys(account).forEach(key => delete account[key]);
+          Object.assign(account, previousAccount);
         }
         sendJson(res, 400, { error: error.message });
       }

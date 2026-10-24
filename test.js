@@ -909,6 +909,59 @@ rules: ["MATCH,PROXY"]
 assert.ok(!("global-client-fingerprint" in nextinCompatibleConfig));
 assert.strictEqual(nextinCompatibleConfig.proxies[0]["client-fingerprint"], "chrome");
 
+// Runs after the parallel checks because it stubs global fetch and the mail env.
+async function resendMailChecks() {
+  const notifier = require("./notifier");
+  assert.deepStrictEqual(notifier.classifyResendProbe(200, { data: [] }), { status: "ok" });
+  assert.deepStrictEqual(notifier.classifyResendProbe(401, { name: "restricted_api_key", message: "This API key is restricted to only send emails" }), { status: "ok" }, "a send-only key is valid");
+  assert.deepStrictEqual(notifier.classifyResendProbe(400, { name: "validation_error", message: "API key is invalid" }), { status: "error", message: "API key is invalid" });
+  assert.strictEqual(notifier.classifyResendProbe(401, { name: "missing_api_key", message: "Missing API key" }).status, "error");
+  assert.strictEqual(notifier.classifyResendProbe(403, {}).status, "error");
+  assert.strictEqual(notifier.classifyResendProbe(503, {}).status, "error");
+
+  const mailEnv = ["RESEND_API_KEY", "RESEND_EMAIL_FROM", "ALERT_EMAIL_FROM", "ALERT_EMAIL_PASS"];
+  const savedEnv = Object.fromEntries(mailEnv.map(key => [key, process.env[key]]));
+  const originalFetch = global.fetch;
+  const nodemailer = require("nodemailer");
+  const originalCreateTransport = nodemailer.createTransport;
+  const smtpSent = [];
+  let resendReply;
+  global.fetch = async url => {
+    if (!String(url).startsWith("https://api.resend.com/")) throw new Error(`unexpected fetch ${url}`);
+    return new Response(JSON.stringify(resendReply.body), { status: resendReply.status, headers: { "content-type": "application/json" } });
+  };
+  nodemailer.createTransport = () => ({ sendMail: async message => { smtpSent.push(message); return { messageId: "smtp-1" }; } });
+  try {
+    Object.assign(process.env, { RESEND_API_KEY: "re_test", RESEND_EMAIL_FROM: "NEXORA <mail@example.test>", ALERT_EMAIL_FROM: "smtp@example.test", ALERT_EMAIL_PASS: "smtp-pass" });
+    resendReply = { status: 400, body: { name: "validation_error", message: "API key is invalid" } };
+    assert.deepStrictEqual(await notifier.checkResend(), { status: "error", message: "API key is invalid" });
+    resendReply = { status: 401, body: { name: "restricted_api_key", message: "restricted" } };
+    assert.deepStrictEqual(await notifier.checkResend(), { status: "ok" });
+
+    resendReply = { status: 200, body: { id: "resend-1" } };
+    const viaResend = await notifier.sendMail({ to: "a@example.test", subject: "s", text: "t" });
+    assert.strictEqual(viaResend.transport, "resend");
+    assert.strictEqual(viaResend.id, "resend-1");
+    assert.strictEqual(smtpSent.length, 0);
+
+    resendReply = { status: 400, body: { name: "validation_error", message: "API key is invalid" } };
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    let viaSmtp;
+    try { viaSmtp = await notifier.sendMail({ to: "a@example.test", subject: "s", text: "t" }); } finally { console.warn = originalWarn; }
+    assert.strictEqual(viaSmtp.transport, "smtp", "a Resend failure falls back to SMTP");
+    assert.strictEqual(viaSmtp.resendError, "API key is invalid");
+    assert.strictEqual(smtpSent.length, 1);
+  } finally {
+    global.fetch = originalFetch;
+    nodemailer.createTransport = originalCreateTransport;
+    for (const key of mailEnv) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
+  }
+}
+
 let migrationRuns = 0;
 Promise.all([
   // A commerce operation that never finishes makes later callers fail fast with a 503 and skips their work.
@@ -988,6 +1041,6 @@ Promise.all([
       await new Promise(resolve => server.close(resolve));
     }
   })()
-]).then(() => {
+]).then(resendMailChecks).then(() => {
   console.log("All checks passed.");
 }).catch(error => { console.error(error); process.exitCode = 1; });

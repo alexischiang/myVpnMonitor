@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-23",
+  "updated_at": "2026-10-24",
   "required_fields": ["id", "name", "description", "status", "ui", "dependencies", "done_criteria", "verification"],
   "features": [
     {
@@ -4483,6 +4483,93 @@
       "verification": [
         "2026-10-23: test-payment.js disables an account, gifts traffic and checks the client stays off, then re-enables the account; the test fails when the gate is replaced with enable=true and passes with it; npm run verify passed."
       ]
+    },
+    {
+      "id": "user-detail-wide-layout",
+      "name": "User detail wide layout and ranked node traffic",
+      "description": "Admin user detail overview: when the tab pane is at least 56rem wide (container query on Tabs) and the user is self-hosted, 倍率流量 takes the wide left column and 当前套餐, 推荐适配度 and 3x-ui 信息 stack in a 22rem right column; narrower panes keep one column with 当前套餐 first. Node traffic is a ranked list (NodeTrafficList) sorted by weighted bytes, heaviest first, each row with its share of the total as a bar and percent, plus a multiplier badge and raw bytes when the multiplier is not 1; two columns once the card is at least 36rem.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The heaviest node is listed first.",
+        "Wide panes split into two columns; narrow panes stay single column with 当前套餐 first and no horizontal overflow."
+      ],
+      "verification": [
+        "2026-10-24: npm run check, npm run verify:fast and npm run verify:harness passed; browser checked /users/detail with a 17-node user at 1920, 1600, 1280 and 375px."
+      ],
+      "browser_verification": {
+        "routes": ["/users/detail/c4ce1abd-5052-4f9f-a2b5-f115c009773b"],
+        "interactions": [
+          "Local dev (PORT=3000 backend on the local database, XUI_READ_ONLY=true, Vite on 5173), admin session.",
+          "1920 and 1600px: 倍率流量 on the left, 当前套餐 and 3x-ui 信息 stacked on the right; nodes in two columns ranked 主面板 211 GB (70%), 34 GB (11%), 32 GB (10%) down to 60 KB.",
+          "1280px: tab pane below 56rem, single column with 当前套餐 above 倍率流量; node list still two columns.",
+          "375px: single column in the order 当前套餐, 倍率流量, 3x-ui 信息; one node per row; no horizontal overflow.",
+          "No local user has a non-1 multiplier, so the badge and raw-bytes text were not seen in the browser."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-24"
+      }
+    },
+    {
+      "id": "resend-status-reporting",
+      "name": "Truthful Resend health and test-mail transport",
+      "description": "/api/health classifies the Resend probe (GET /domains) by response: 200 or 401 restricted_api_key (send-only key) is ok; any other status, e.g. 400 'API key is invalid', is an error carrying Resend's message. notifier.sendMail still falls back to Gmail SMTP when Resend fails but returns { transport: 'resend' | 'smtp', resendError? }; /api/alerts/test-mail returns it as mail, and the dashboard test-mail toast names the transport and warns with the Resend error after a fallback.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "An invalid Resend key shows Resend as an error in /api/health instead of ok.",
+        "A send-only key still reports ok.",
+        "The test-mail toast says whether Resend or SMTP delivered, and warns with the Resend error when it fell back."
+      ],
+      "verification": [
+        "2026-10-24: test.js resendMailChecks covers classifyResendProbe for 200, 401 restricted_api_key, 400 invalid key, 401 missing key, 403 and 503; checkResend with a stubbed fetch; sendMail returning transport resend, and transport smtp with resendError after a 400. npm run check, npm run verify:fast and npm run verify:harness passed.",
+        "2026-10-24: local /api/health reports resend ok; the local .env key gets 200 from GET https://api.resend.com/domains, so ok is correct for it."
+      ],
+      "browser_verification": {
+        "routes": ["/dashboard"],
+        "interactions": [
+          "Local dev (PORT=3000 backend on the local database, XUI_READ_ONLY=true, Vite on 5173), admin session; 服务监控 lists Resend with real latency.",
+          "No real mail sent: window.fetch stubbed in the page for /api/alerts/test-mail. Fallback reply showed a warning toast '测试邮件已通过 SMTP 发送至 admin@example.test，Resend 发送失败' with description 'API key is invalid'; Resend reply showed '测试邮件已通过 Resend 发送至 admin@example.test'.",
+          "/api/health stubbed to resend error 'API key is invalid'; after clicking 刷新 the dashboard alert showed 'Resend 连接异常：API key is invalid'."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-24"
+      }
+    },
+    {
+      "id": "admin-email-rebind",
+      "name": "Admin-only email rebind",
+      "description": "POST /api/users/:id/email (behind requireAdmin; also works for registered-only account:<id>) changes a user's email: the linked account's login email, user.email, and user.userId when it equalled the old email. The new email is normalized and must not be used by another account or user, and must differ from the current one. Reset-password and claim tokens are cleared so links mailed to the old address stop working. An existing 3x-ui client keeps its stored xuiClientEmail and no 3x-ui request is made. A 换绑邮箱 user log records old -> new, operator and note. /api/auth/me reads the email from the account, so sessions show the new address. User detail page: 换绑邮箱 action for claimed, disabled and invited accounts, with a dialog for the new email and an optional note.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Only admins can rebind; customers get 403 and have no entry point.",
+        "After a rebind the old email cannot log in and the new one can, with the same password.",
+        "Duplicate, invalid and unchanged emails are rejected with a field error.",
+        "The 3x-ui client email is unchanged and a user log is written."
+      ],
+      "verification": [
+        "2026-10-24: test-payment.js covers user 403, invalid / duplicate / unchanged email, rebind with mixed case and spaces, unchanged xuiClientEmail with no 3x-ui client requests, the 换绑邮箱 log message, old-email login 401, new-email login 200, an existing session's /api/auth/me showing the new email, and restoring the email. npm run verify:catalog-v2 (checkout, payment, wallet, catalog-v2 in an isolated schema), npm run verify:fast, npm run check and npm run verify:harness passed."
+      ],
+      "browser_verification": {
+        "routes": ["/users/detail/b3f4d06f-0f75-45c9-bb29-d719c64572b2"],
+        "interactions": [
+          "Local dev (backend on the local database, XUI_READ_ONLY=true), admin session, seeded test account expired-unlisted@xela.test at 1600px.",
+          "换绑邮箱 button listed in the profile actions; the dialog shows the current email and the effects.",
+          "Submitting expired-renew@xela.test showed 该邮箱已被其他账户使用。 under the field (expected 400).",
+          "Submitting rebind-check@xela.test with a note closed the dialog, showed the success toast, and updated the title and 邮箱 row; the user log read 换绑邮箱：expired-unlisted@xela.test -> rebind-check@xela.test；操作人 admin；备注 browser check.",
+          "Restored the account to expired-unlisted@xela.test through the API.",
+          "Console: the only new entries were the expected 400 and 500s from the Vite proxy while nodemon restarted after server.js edits (ECONNREFUSED in the dev log); a clean reload added none."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-24"
+      }
     }
   ]
 }

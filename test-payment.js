@@ -1734,6 +1734,25 @@ async function main() {
     const newPasswordLogin = await request("/api/auth/login", { method: "POST", body: { account: "buyer@example.test", password: "payment-test-password-new" } });
     assert.strictEqual(newPasswordLogin.response.status, 200);
 
+    // Admin email rebind: login moves to the new address, the 3x-ui client keeps its email, and users cannot call it.
+    const rebindPath = `/api/users/${managedUser.id}/email`;
+    assert.strictEqual((await request(rebindPath, { method: "POST", cookie: newPasswordLogin.response.headers.get("set-cookie").split(";", 1)[0], body: { email: "buyer-new@example.test" } })).response.status, 403);
+    assert.strictEqual((await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: "not-an-email" } })).data.error, "请输入有效邮箱。");
+    assert.strictEqual((await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: "v2-sync@example.test" } })).data.error, "该邮箱已被其他账户使用。");
+    assert.strictEqual((await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: " Buyer@Example.test " } })).data.error, "新邮箱与当前邮箱相同。");
+    xuiRequests.length = 0;
+    const rebound = await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: " Buyer-New@Example.test ", note: "用户换邮箱" } });
+    assert.strictEqual(rebound.response.status, 200, rebound.text);
+    assert.deepStrictEqual([rebound.data.email, rebound.data.xuiClientEmail], ["buyer-new@example.test", "buyer@example.test"]);
+    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/clients/")), "a rebind must not touch the 3x-ui client");
+    const reboundDetail = await request(`/api/users/${managedUser.id}`, { cookie: adminCookie });
+    assert.match(reboundDetail.data.userLogs.find(log => log.reason === "email-changed")?.message || "", /buyer@example\.test -> buyer-new@example\.test.*备注 用户换邮箱/);
+    assert.strictEqual((await request("/api/auth/login", { method: "POST", body: { account: "buyer@example.test", password: "payment-test-password-new" } })).response.status, 401);
+    const reboundLogin = await request("/api/auth/login", { method: "POST", body: { account: "buyer-new@example.test", password: "payment-test-password-new" } });
+    assert.strictEqual(reboundLogin.response.status, 200);
+    assert.strictEqual((await request("/api/auth/me", { cookie: newPasswordLogin.response.headers.get("set-cookie").split(";", 1)[0] })).data.email, "buyer-new@example.test", "an existing session shows the new email");
+    assert.strictEqual((await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: "buyer@example.test" } })).response.status, 200);
+
     // Reaching the quota mails the user once, a failed send is retried, and using the quota up again
     // after a top-up mails again. Users already out of traffic when the switch is turned on are skipped.
     const notifier = require("./notifier");
