@@ -47,4 +47,5 @@ process.on("SIGTERM", () => shutdown(0));
 run("backend", ["run", "dev:server"]);
 if (process.env.XUI_SERVICE_URL) run("xui", ["run", "dev:xui"]);
 else console.warn("XUI_SERVICE_URL is not configured; using the existing direct 3x-ui connection.");
+if (process.env.NODE_HUB_URL) run("node-hub", ["run", "dev:hub"]);
 run("frontend", ["run", "dev"]);

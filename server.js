@@ -11,6 +11,7 @@ const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const { loadLocalEnv } = require("./env");
 const { assertXuiRequestAllowed, requestXui, requestXuiService, retryXuiTimeout } = require("./xui-client");
 const xuiTraffic = require("./xui-traffic");
+const nodeHub = require("./node-hub/bridge");
 const yaml = require("js-yaml");
 const notifier = require("./notifier");
 const packageJson = require("./package.json");
@@ -66,6 +67,12 @@ const XUI_PROVISION_RETRY_DELAYS_MS = [300, 1000];
 // even then only a few per sync so clients migrate to "unlimited on panel" gradually.
 const XUI_PANEL_QUOTA_CLEAR_PER_SYNC = Math.max(0, Number(process.env.XUI_PANEL_QUOTA_CLEAR_PER_SYNC) || 0);
 const XUI_VISION_FLOW = "xtls-rprx-vision";
+// node-hub: the control plane for xboard-node machines (see docs/agent/node-hub.md). Unset means
+// every node-hub code path is skipped and 3x-ui behaves exactly as before.
+const NODE_HUB_URL = (process.env.NODE_HUB_URL || "").replace(/\/+$/, "");
+const NODE_HUB_INTERNAL_TOKEN = String(process.env.NODE_HUB_INTERNAL_TOKEN || "").trim();
+const NODE_HUB_SYNC_INTERVAL_MS = Math.max(15000, Number(process.env.NODE_HUB_SYNC_INTERVAL_MS || 60000));
+const NODE_HUB_TIMEOUT_MS = Math.max(1000, Number(process.env.NODE_HUB_TIMEOUT_MS || 10000));
 const TRAFFIC_PACK_BYTES = 100 * 1024 ** 3;
 const TRAFFIC_PACK_PRICE = 20;
 const DEFAULT_CHECKOUT_TAX_RATE = 3;
@@ -393,7 +400,7 @@ function publicCatalogV2BuyerSyncPlan(plan) {
 // back to it; other users are not affected. onProgress gets { done, total } after each user.
 async function applyCatalogV2BuyerSync(productId, fingerprint, { req = null, onProgress = () => {} } = {}) {
   if (XUI_READ_ONLY) throw Object.assign(new Error("3x-ui 处于只读模式，不能同步已购用户。"), { statusCode: 409 });
-  if (!xuiConfigured()) throw Object.assign(new Error("自研线路尚未完成3x-ui配置。"), { statusCode: 409 });
+  if (!selfHostedLineConfigured()) throw Object.assign(new Error("自研线路尚未完成3x-ui配置。"), { statusCode: 409 });
   return withXuiSyncLock(async () => {
     await loadLatestUsersAndAccounts({ force: true });
     const [products, groups] = await Promise.all([dataStore.listCatalogV2Products(), dataStore.listCatalogV2LineGroups()]);
@@ -404,7 +411,7 @@ async function applyCatalogV2BuyerSync(productId, fingerprint, { req = null, onP
     const actor = currentSession(req)?.account || "admin";
     const result = { holders: plan.holders, unchanged: plan.unchanged, skipped: plan.skipped, updated: [], failed: [] };
     const total = plan.changes.length;
-    const allInboundIds = total ? await getAllXuiInboundIds() : [];
+    const allInboundIds = total && xuiPanelConfigured() ? await getAllXuiInboundIds() : [];
     onProgress({ done: 0, total });
     for (const [index, change] of plan.changes.entries()) {
       const ref = { userId: change.userId, label: change.label };
@@ -3879,21 +3886,34 @@ function refreshUserPlanTraffic(user) {
   ]);
 }
 
-// Clears the panel quota after the user gained traffic and re-enables the client, unless the plan is
-// expired or the account is disabled.
+// Pushes a user's changed entitlement to node-hub right away. Hub-only, the hub is the only
+// enforcement point, so its failure is the caller's failure; next to 3x-ui the panel write already
+// succeeded and the next full entitlement sync repairs the hub.
+async function syncHubUserNow(user) {
+  if (!hubConfigured()) return;
+  const sync = syncHubUser(user);
+  if (!xuiPanelConfigured()) await sync;
+  else await sync.catch(error => hubLogger.warn({ userId: user.id, error: error.message }, "node-hub entitlement sync failed; the next full sync retries"));
+}
+
+// Clears the panel quota after the user gained traffic and re-enables the client (and the hub
+// entitlement), unless the plan is expired or the account is disabled.
 async function enableXuiClientAfterTrafficIncrease(user) {
   const email = xuiClientEmail(user);
-  const remote = await getXuiClientByEmail(email);
   const totalBytes = xuiTrafficLimitBytes(user);
-  const enable = xuiClientAllowed(user);
-  await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable }) });
-  if (enable) await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [email] } });
+  if (xuiPanelConfigured()) {
+    const remote = await getXuiClientByEmail(email);
+    const enable = xuiClientAllowed(user);
+    await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable }) });
+    if (enable) await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [email] } });
+  }
   const state = await getXuiBillingState();
   if (state.users[email]) {
     state.users[email].totalBytes = totalBytes;
     state.users[email].disabled = false;
     await saveXuiBillingState(state);
   }
+  await syncHubUserNow(user);
 }
 
 function chinaDateParts(value) {
@@ -3929,6 +3949,190 @@ function planDeviceLimit(user = {}) {
 
 function xuiConfigured() {
   return Boolean(XUI_BASE_URL && XUI_API_TOKEN && SUB_CONVERTER_URL && XUI_SUBSCRIPTION_BASE_URL);
+}
+
+function xuiPanelConfigured() {
+  return Boolean(XUI_BASE_URL && XUI_API_TOKEN);
+}
+
+function hubConfigured() {
+  return Boolean(NODE_HUB_URL && NODE_HUB_INTERNAL_TOKEN);
+}
+
+// Self-hosted lines can be delivered through 3x-ui, node-hub, or both.
+function selfHostedLineConfigured() {
+  return xuiConfigured() || Boolean(hubConfigured() && SUB_CONVERTER_URL);
+}
+
+const requestNodeHub = nodeHub.createNodeHubClient({ url: NODE_HUB_URL, token: NODE_HUB_INTERNAL_TOKEN, timeoutMs: NODE_HUB_TIMEOUT_MS });
+const hubLogger = logger.child({ component: "node-hub" });
+
+let hubOverviewCache = { at: 0, value: null, pending: null, generation: 0 };
+// Machines and nodes from node-hub, cached for a few seconds because every inbound view reads it.
+async function getHubOverview({ force = false } = {}) {
+  if (!hubConfigured()) return { machines: [], nodes: [], settings: {} };
+  if (!force && hubOverviewCache.value && Date.now() - hubOverviewCache.at < 5000) return hubOverviewCache.value;
+  if (hubOverviewCache.pending) return hubOverviewCache.pending;
+  const generation = hubOverviewCache.generation;
+  const pending = requestNodeHub("/internal/overview")
+    .then(value => {
+      // A change made while this request was in flight invalidated it; don't cache the older view.
+      if (hubOverviewCache.generation === generation) Object.assign(hubOverviewCache, { at: Date.now(), value });
+      return value;
+    })
+    .finally(() => { if (hubOverviewCache.pending === pending) hubOverviewCache.pending = null; });
+  hubOverviewCache.pending = pending;
+  return pending;
+}
+
+// Drops the cached overview and any request already in flight, so the next read sees the change.
+function invalidateHubOverview() {
+  Object.assign(hubOverviewCache, { at: 0, pending: null, generation: hubOverviewCache.generation + 1 });
+}
+
+async function hubInboundRows(options = {}) {
+  return hubConfigured() ? nodeHub.hubManagementRows(await getHubOverview(options)) : [];
+}
+
+function userNodeSpeedLimitMbps(user = {}) {
+  return Math.max(0, Math.floor(Number(user.nodeSpeedLimitMbps ?? user.v2ProductSnapshot?.speedLimitMbps) || 0));
+}
+
+async function hubEntitlementContext() {
+  const [groups, rows] = await Promise.all([dataStore.listCatalogV2LineGroups(), hubInboundRows({ force: true })]);
+  return { groups, rows };
+}
+
+// The node-hub entitlement for one app user: which hub nodes, with what limits, and whether the
+// user may connect now (same rule as the 3x-ui client's enable flag). null for users that have
+// no self-hosted line identity.
+function hubEntitlementFor(user, { groups, rows }, { forceDisabled = false } = {}) {
+  if (!user?.xuiClientEmail || (!isSelfHostedUser(user) && !forceDisabled)) return null;
+  let email;
+  try { email = xuiClientEmail(user); } catch { return null; }
+  const group = groups.find(item => item.id === planLineGroupId(user) && item.isEnabled) || null;
+  const nodeIds = nodeHub.hubNodeIdsForUser({ groupInboundKeys: group?.inboundKeys || [], extraInboundIds: user.xuiExtraInboundIds, rows });
+  let entitled = true;
+  try { xuiTrafficLimitBytes(user); } catch { entitled = false; }
+  return {
+    userKey: user.id,
+    email,
+    ...(user.hubUuid ? { uuid: user.hubUuid } : {}),
+    userLabel: billUserLabel(user),
+    planId: planProductId(user),
+    nodeIds,
+    speedLimit: userNodeSpeedLimitMbps(user),
+    deviceLimit: planDeviceLimit(user),
+    enabled: !forceDisabled && entitled && nodeIds.length > 0 && xuiClientShouldBeEnabled(user)
+  };
+}
+
+function hubUuidOrEmpty(value) {
+  const uuid = String(value || "").toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid) ? uuid : "";
+}
+
+// Next to 3x-ui, a user's first hub credential is their 3x-ui client uuid, so VLESS/VMess configs
+// move to hub nodes unchanged. Users whose panel client cannot be found are left off the hub until
+// provisioning creates it; a hub-generated uuid would never be replaced afterwards.
+async function panelUuidsByEmail() {
+  const listed = await xuiRequest("/panel/api/clients/list");
+  return new Map((Array.isArray(listed) ? listed : []).map(item => normalizeXuiClientResult(item))
+    .map(client => [client.email.trim().toLowerCase(), hubUuidOrEmpty(client.uuid || client.id)])
+    .filter(([email, uuid]) => email && uuid));
+}
+
+// Pushes one user's entitlement to node-hub and keeps the hub uuid on the user, so the user's
+// credential survives a rebuilt hub database. Callers save the user.
+async function syncHubUser(user, { forceDisabled = false, context = null, uuid = "" } = {}) {
+  if (!hubConfigured()) return null;
+  const entitlement = hubEntitlementFor(user, context || await hubEntitlementContext(), { forceDisabled });
+  if (!entitlement) return null;
+  if (!entitlement.uuid) entitlement.uuid = hubUuidOrEmpty(uuid);
+  if (!entitlement.uuid && xuiPanelConfigured()) {
+    try {
+      const client = await getXuiClientByEmail(entitlement.email);
+      entitlement.uuid = hubUuidOrEmpty(client.uuid || client.id);
+    } catch (error) {
+      if (error.statusCode !== 404) throw error;
+    }
+    if (!entitlement.uuid) return null;
+  }
+  if (!entitlement.uuid) delete entitlement.uuid;
+  const stored = await requestNodeHub(`/internal/users/${encodeURIComponent(user.id)}`, { method: "PUT", body: entitlement });
+  if (stored?.uuid && user.hubUuid !== stored.uuid) user.hubUuid = stored.uuid;
+  user.hubNodeIds = stored?.nodeIds || entitlement.nodeIds;
+  return stored;
+}
+
+// node-hub machines as monitor rows, with the same per-guid multiplier and VPS cost settings as
+// 3x-ui nodes (their billing guid is hub-m<machine id>).
+async function hubMonitorRows({ billing = null, salesTraffic = null, force = false } = {}) {
+  const [overview, billingState, salesState] = await Promise.all([getHubOverview({ force }), billing || getXuiBillingState(), salesTraffic || getSalesTrafficState()]);
+  return nodeHub.hubMonitorNodes(overview).map(node => ({
+    ...node,
+    trafficTokenRequired: false,
+    trafficConfigured: true,
+    trafficError: "",
+    multiplier: xuiMultiplier(billingState.multipliers?.[node.guid]),
+    costConfig: nodeCostConfigForDate(salesState.costConfigs?.[node.guid])
+  }));
+}
+
+let hubUsersSyncRun = null;
+// Full entitlement sync: every self-hosted user is pushed and every other hub user is disabled.
+// Runs every NODE_HUB_SYNC_INTERVAL_MS and after the 3x-ui panel sync, so depletion, expiry,
+// renewals and line-group edits reach the nodes within a pull interval.
+function syncHubUsers({ reload = true } = {}) {
+  if (!hubConfigured()) return Promise.resolve(null);
+  if (hubUsersSyncRun) return hubUsersSyncRun;
+  hubUsersSyncRun = (async () => {
+    if (reload) await loadLatestData();
+    const context = await hubEntitlementContext();
+    const owners = users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail);
+    let entitlements = owners.map(item => [item, hubEntitlementFor(item, context)]).filter(([, entry]) => entry);
+    if (xuiPanelConfigured() && entitlements.some(([, entry]) => !entry.uuid)) {
+      const panelUuids = await panelUuidsByEmail();
+      entitlements = entitlements.filter(([, entry]) => {
+        if (!entry.uuid) entry.uuid = panelUuids.get(entry.email) || "";
+        return entry.uuid;
+      });
+    }
+    const result = await requestNodeHub("/internal/users", { method: "PUT", body: { users: entitlements.map(([, entry]) => entry), replace: true } });
+    const changedUsers = [];
+    for (const [item, entry] of entitlements) {
+      const uuid = result?.uuids?.[item.id];
+      const nodeIdsChanged = JSON.stringify(item.hubNodeIds || []) !== JSON.stringify(entry.nodeIds);
+      if ((uuid && item.hubUuid !== uuid) || nodeIdsChanged) {
+        if (uuid) item.hubUuid = uuid;
+        item.hubNodeIds = entry.nodeIds;
+        changedUsers.push(item);
+      }
+    }
+    await Promise.all(changedUsers.map(saveUser));
+    invalidateHubOverview();
+    return { users: entitlements.length, enabled: entitlements.filter(([, entry]) => entry.enabled).length, changed: Number(result?.changed) || 0, disabled: Number(result?.disabled) || 0 };
+  })().finally(() => { hubUsersSyncRun = null; });
+  return hubUsersSyncRun;
+}
+
+// Hub-only provisioning (3x-ui not configured): the user's line identity is their registered
+// email and the hub entitlement; there is no panel client.
+async function provisionHubOnlyUser(user) {
+  if (!accessGroupForUser(user)) throw new Error("Self-hosted user is missing a valid access group.");
+  xuiTrafficLimitBytes(user);
+  const email = xuiClientEmail(user);
+  const conflict = users.find(item => item.id !== user.id && String(item.xuiClientEmail || "").trim().toLowerCase() === email);
+  if (conflict) throw Object.assign(new Error("该邮箱已关联其他用户的自研线路。"), { statusCode: 409 });
+  user.lineType = "self_hosted";
+  user.subscriptionId = "";
+  user.xuiClientEmail = email;
+  const stored = await syncHubUser(user);
+  if (!stored) throw new Error("node-hub 未接受该用户的线路授权。");
+  user.xuiLastSyncedAt = new Date().toISOString();
+  user.xuiLastError = "";
+  user.xuiMetadataSyncedAt = user.xuiLastSyncedAt;
+  return { email, enable: stored.enabled, inboundIds: [], subId: "", usedTraffic: 0, traffic: { up: 0, down: 0, enable: true }, backend: "node-hub" };
 }
 
 function validAccountEmail(value) {
@@ -4838,7 +5042,7 @@ function markMissingXuiClients(appUsersByEmail, remoteEmails, checkedAt = new Da
 }
 
 async function syncXuiWeightedTraffic(snapshot = {}) {
-  if (!XUI_BASE_URL || !XUI_API_TOKEN) return getXuiBillingState();
+  if (!xuiPanelConfigured() && !hubConfigured()) return getXuiBillingState();
   return withXuiSyncLock(() => runXuiWeightedTrafficSync(snapshot));
 }
 
@@ -4848,7 +5052,10 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   const roundStartedAt = Number(snapshot.readStartedAt) || Date.now();
   await loadLatestData();
   if (!XUI_READ_ONLY) await resetDueXuiTraffic();
-  const [status, nodes, inbounds, clients, clientIpsByGuid, onlinesByGuid, lastOnline] = await Promise.all([
+  // Without a 3x-ui panel (node-hub only) there is nothing to read from a panel: node-hub writes
+  // its traffic straight into the daily table, and the ledger below runs over the app's users.
+  const panel = xuiPanelConfigured();
+  const [status, nodes, inbounds, clients, clientIpsByGuid, onlinesByGuid, lastOnline] = panel ? await Promise.all([
     snapshot.status || xuiRequest("/panel/api/server/status"),
     snapshot.nodes || xuiRequest("/panel/api/nodes/list"),
     snapshot.inbounds || xuiRequest("/panel/api/inbounds/list"),
@@ -4856,11 +5063,18 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
     xuiRequest("/panel/api/clients/clientIpsByGuid", { method: "POST" }).catch(() => null),
     xuiRequest("/panel/api/clients/onlinesByGuid", { method: "POST" }).catch(() => null),
     xuiRequest("/panel/api/clients/lastOnline", { method: "POST" }).catch(() => null)
-  ]);
+  ]) : [{}, [], [], [], null, null, null];
+  const [hubOverview, hubPresence] = hubConfigured() ? await Promise.all([
+    getHubOverview({ force: true }).catch(error => { hubLogger.warn({ error: error.message }, "node-hub overview unavailable for billing"); return null; }),
+    requestNodeHub("/internal/presence").catch(error => { hubLogger.warn({ error: error.message }, "node-hub presence unavailable for billing"); return null; })
+  ]) : [null, null];
   const state = await getXuiBillingState();
-  const nodeTokens = await getXuiNodeTokens(state.nodeTokens);
-  const { monotonicTraffic, nodeResults, localGuid } = await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens);
-  const nodeNames = { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) };
+  const nodeTokens = panel ? await getXuiNodeTokens(state.nodeTokens) : {};
+  const { monotonicTraffic, nodeResults, localGuid } = panel ? await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens) : { monotonicTraffic: {}, nodeResults: {}, localGuid: "node:local" };
+  const nodeNames = {
+    ...(panel ? { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) } : {}),
+    ...Object.fromEntries((hubOverview?.machines || []).map(machine => [machine.guid, machine.name]))
+  };
   const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
   try {
     await updateSalesTrafficState(current => ({ ...current, nodeNames: { ...current.nodeNames, ...nodeNames } }), state);
@@ -4876,7 +5090,7 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   // per-day growth.
   const localHeld = Object.values(nodeResults).some(result => result.configured && result.error);
   try {
-    await dataStore.recordXuiTrafficSamples(chinaDateKey(), xuiTrafficSamples(monotonicTraffic, appUsersByEmail, nodeNames), localGuid, { localHeld });
+    if (panel) await dataStore.recordXuiTrafficSamples(chinaDateKey(), xuiTrafficSamples(monotonicTraffic, appUsersByEmail, nodeNames), localGuid, { localHeld });
   } catch (error) {
     console.warn(`[xui-traffic] Failed to record daily samples: ${error.message}`);
   }
@@ -4923,8 +5137,18 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   const depletedMails = [];
   const alertSettings = currentSalesSettings().alertSettings;
   const remoteEmails = new Set();
+  // node-hub only: every self-hosted user gets a ledger entry, standing in for the panel client
+  // (enable = allowed by plan and account; nothing is ever written to a panel for them).
+  const ledgerClients = panel ? (Array.isArray(clients) ? clients : []) : [...appUsersByEmail].map(([email, item]) => ({
+    email,
+    enable: xuiClientAllowed(item),
+    totalGB: 0,
+    expiryTime: Date.parse(item.expiresAt || "") || 0,
+    traffic: { up: 0, down: 0, enable: true },
+    backend: "node-hub"
+  }));
 
-  for (const remote of Array.isArray(clients) ? clients : []) {
+  for (const remote of ledgerClients) {
     const email = String(remote?.email || "").trim().toLowerCase();
     if (!email) continue;
     remoteEmails.add(email);
@@ -4967,7 +5191,9 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
       user.xuiClientPresent = true;
       delete user.xuiClientMissingAt;
       user.xuiWeightedTraffic = weightedTraffic;
-      user.xuiLastTraffic = xuiTrafficPayload(user, remote, clientIpsByGuid ? normalizeXuiConnectedIps(clientIpsByGuid, email).length : null);
+      const panelIpCount = clientIpsByGuid ? normalizeXuiConnectedIps(clientIpsByGuid, email).length : null;
+      const hubIpCount = hubPresence ? nodeHub.hubPresenceForEmail(hubPresence, email)?.ips?.length || 0 : null;
+      user.xuiLastTraffic = xuiTrafficPayload(user, remote, panelIpCount === null && hubIpCount === null ? null : (panelIpCount || 0) + (hubIpCount || 0));
       user.xuiLastSyncedAt = weightedTraffic.lastSyncedAt;
       user.xuiLastError = "";
       changedUsers.push(user);
@@ -4978,7 +5204,7 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
     // totalGB=0 (unlimited on the panel) so depletion is enforced solely by our bulkDisable/
     // bulkEnable below. Only fires while the panel still carries a finite total; enable state
     // is left untouched here and driven by the disable/enable batches.
-    if (!XUI_READ_ONLY && user && Number(remote.totalGB) !== 0 && !isUserAccountDisabled(user) && panelQuotaClears < XUI_PANEL_QUOTA_CLEAR_PER_SYNC) {
+    if (panel && !XUI_READ_ONLY && user && Number(remote.totalGB) !== 0 && !isUserAccountDisabled(user) && panelQuotaClears < XUI_PANEL_QUOTA_CLEAR_PER_SYNC) {
       try {
         await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable: remote.enable !== false }) });
         Object.assign(remote, { totalGB: 0, reset: 0, flow: XUI_VISION_FLOW });
@@ -4995,14 +5221,14 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   // Mirror applied enable changes onto the fetched client objects, so a caller sharing this
   // snapshot (syncXuiPanel's Catalog V2 step) diffs against the panel's current state.
   const remoteByEmail = new Map((Array.isArray(clients) ? clients : []).map(remote => [String(remote?.email || "").trim().toLowerCase(), remote]));
-  if (!XUI_READ_ONLY && disableEmails.length) {
+  if (panel && !XUI_READ_ONLY && disableEmails.length) {
     await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: disableEmails } });
     for (const email of disableEmails) {
       state.users[email].disabled = true;
       remoteByEmail.get(email).enable = false;
     }
   }
-  if (!XUI_READ_ONLY && enableEmails.length) {
+  if (panel && !XUI_READ_ONLY && enableEmails.length) {
     await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: enableEmails } });
     for (const email of enableEmails) remoteByEmail.get(email).enable = true;
   }
@@ -5039,7 +5265,8 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   }
   state.nodeResults = nodeResults;
   state.nodeNames = nodeNames;
-  state.presence = { ...normalizeXuiPresence(onlinesByGuid, lastOnline, nodes, status), checkedAt: new Date().toISOString() };
+  const panelPresence = panel ? normalizeXuiPresence(onlinesByGuid, lastOnline, nodes, status) : { onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} };
+  state.presence = { ...nodeHub.mergeHubPresence(panelPresence, hubPresence, hubOverview), checkedAt: new Date().toISOString() };
   await saveXuiBillingState(state);
   for (const user of baselineChangedUsers) if (!changedUsers.includes(user)) changedUsers.push(user);
   await Promise.all(changedUsers.map(saveUser));
@@ -5148,7 +5375,10 @@ async function xuiInboundIdsForUser(user, groupInboundIds = null, allInboundIds 
   let inheritedIds = groupInboundIds;
   if (!inheritedIds && planLineGroupId(user)) {
     const group = (await dataStore.listCatalogV2LineGroups()).find(item => item.id === planLineGroupId(user) && item.isEnabled);
-    const idsByKey = new Map((await xuiInboundRows()).map(inbound => [inbound.key, inbound.id]));
+    // Hub rows only matter for views (validIds then includes hub ids); 3x-ui writes pass the
+    // panel's id list, which filters them out.
+    const hubRows = hubConfigured() ? await hubInboundRows().catch(() => []) : [];
+    const idsByKey = new Map([...(await xuiInboundRows()), ...hubRows].map(inbound => [inbound.key, inbound.id]));
     inheritedIds = (group?.inboundKeys || []).map(key => idsByKey.get(key)).filter(Boolean);
   }
   const validIds = allInboundIds || await getAllXuiInboundIds();
@@ -5165,7 +5395,7 @@ async function applyUserCustomInbounds(user, inboundIds, { req = null, actor = "
   const addedIds = nextIds.filter(id => !previousIds.includes(id));
   const removedIds = previousIds.filter(id => !nextIds.includes(id));
   if (!addedIds.length && !removedIds.length) return { addedIds, removedIds, inboundNames: {} };
-  await refreshXuiInboundCatalog();
+  if (xuiPanelConfigured()) await refreshXuiInboundCatalog();
   const management = await xuiInboundManagementView();
   const inboundsById = new Map(management.inbounds.map(inbound => [inbound.id, inbound]));
   for (const id of addedIds) {
@@ -5173,12 +5403,17 @@ async function applyUserCustomInbounds(user, inboundIds, { req = null, actor = "
     if (!inbound) throw new Error(`入站 #${id} 不存在，无法新增授权。`);
     if (!inbound.enabled) throw new Error(`${inbound.name} 已停用，无法新增授权。`);
   }
-  const allInboundIds = management.inbounds.map(inbound => inbound.id);
-  const inheritedInboundIds = await xuiInboundIdsForUser({ ...user, xuiExtraInboundIds: [] }, null, allInboundIds);
-  const effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, nextIds, allInboundIds);
-  await syncXuiClientAccess([String(user.xuiClientEmail).toLowerCase()], effectiveInboundIds, allInboundIds);
+  // node-hub inbounds are granted through the hub entitlement; only 3x-ui ids go to the panel.
+  const panelInboundIds = management.inbounds.map(inbound => inbound.id).filter(id => !nodeHub.isHubInboundId(id));
+  let effectiveInboundIds = nextIds.filter(id => !nodeHub.isHubInboundId(id));
+  if (xuiPanelConfigured()) {
+    const inheritedInboundIds = await xuiInboundIdsForUser({ ...user, xuiExtraInboundIds: [] }, null, panelInboundIds);
+    effectiveInboundIds = effectiveXuiInboundIds(inheritedInboundIds, effectiveInboundIds, panelInboundIds);
+    await syncXuiClientAccess([String(user.xuiClientEmail).toLowerCase()], effectiveInboundIds, panelInboundIds);
+  }
   user.xuiExtraInboundIds = nextIds;
   user.xuiInboundIds = effectiveInboundIds;
+  if (hubConfigured()) await syncHubUser(user);
   user.xuiLastSyncedAt = new Date().toISOString();
   user.xuiLastError = "";
   const inboundName = id => inboundsById.get(id)?.name || `入站 #${id}`;
@@ -5322,9 +5557,31 @@ async function xuiInboundRows() {
 
 // Inbound management view (inbounds with their settings and latest probe result), read from the
 // app table.
+// node-hub nodes are appended as inbounds keyed "hub-m<machine>:<node>" with ids above
+// nodeHub.HUB_INBOUND_ID_OFFSET, so line groups, custom inbounds and node status include them.
+// A node-hub outage leaves the 3x-ui inbounds intact and reports hubError.
 async function xuiInboundManagementView() {
-  if (!XUI_BASE_URL || !XUI_API_TOKEN) return { configured: false, inbounds: [], checkedAt: "" };
+  let hubRows = [];
+  let hubError = "";
+  if (hubConfigured()) {
+    try {
+      hubRows = await hubInboundRows();
+    } catch (error) {
+      hubError = error.message;
+      hubLogger.warn({ error: error.message }, "node-hub overview unavailable");
+    }
+  }
+  const hubPart = hubConfigured() ? { hubConfigured: true, ...(hubError ? { hubError } : {}) } : {};
+  if (!XUI_BASE_URL || !XUI_API_TOKEN) {
+    if (!hubConfigured()) return { configured: false, inbounds: [], checkedAt: "" };
+    return { configured: true, checkedAt: hubRows.reduce((latest, row) => row.probeCheckedAt > latest ? row.probeCheckedAt : latest, ""), inbounds: hubRows, ...hubPart };
+  }
   const rows = await xuiInboundRows();
+  const view = await xuiPanelInboundView(rows);
+  return { ...view, inbounds: [...view.inbounds, ...hubRows], ...hubPart };
+}
+
+async function xuiPanelInboundView(rows) {
   return {
     configured: true,
     checkedAt: rows.reduce((latest, row) => row.probeCheckedAt > latest ? row.probeCheckedAt : latest, ""),
@@ -5491,6 +5748,15 @@ async function syncXuiPanel() {
       result.catalogV2Error = error;
       console.error("Catalog V2 to 3x-ui sync failed:", error);
     }
+    // node-hub gets this round's depletion and plan state right away.
+    if (hubConfigured()) {
+      try {
+        result.hubSync = await syncHubUsers({ reload: false });
+      } catch (error) {
+        result.hubSyncError = error;
+        console.error("node-hub entitlement sync failed:", error);
+      }
+    }
     return result;
   });
 }
@@ -5503,7 +5769,9 @@ const SYNC_JOB_MODULES = [
   { id: "subscriptions", name: "订阅" },
   { id: "orders", name: "订单" },
   { id: "referrals", name: "钱包与返利" },
-  { id: "addons", name: "附加服务" }
+  { id: "addons", name: "附加服务" },
+  // Listed only when node-hub is configured, so the job page is unchanged without it.
+  ...(NODE_HUB_URL && NODE_HUB_INTERNAL_TOKEN ? [{ id: "nodes", name: "node-hub 节点" }] : [])
 ];
 const SYNC_JOB_RETENTION_DAYS = 14;
 
@@ -5529,8 +5797,25 @@ const SYNC_JOBS = [
   },
   {
     id: "xui-traffic-prune", module: "traffic", name: "每日流量清理", description: `删除周期套餐用户超过 ${XUI_DAILY_TRAFFIC_RETENTION_DAYS} 天的每日流量记录，不限时套餐保留。`,
-    intervalMs: 24 * 60 * 60 * 1000, requiresXui: true,
+    intervalMs: 24 * 60 * 60 * 1000, requiresLine: true,
     run: async () => ({ status: "success", summary: await pruneXuiDailyTrafficRetention() })
+  },
+  {
+    id: "node-hub-sync", module: "nodes", name: "node-hub 授权同步", description: "把每个自研线路用户的可用节点、限速、设备数和启用状态全量推送到 node-hub；没有变化的轮次不记录。",
+    intervalMs: NODE_HUB_SYNC_INTERVAL_MS, requiresHub: true, recordOnlyWhenChanged: true,
+    run: async () => {
+      const summary = await syncHubUsers();
+      return { status: "success", summary, changed: summary.changed + summary.disabled > 0 };
+    }
+  },
+  {
+    id: "node-hub-billing", module: "nodes", name: "node-hub 流量计费", description: "未接 3x-ui 时，按每日流量表计算用户周期用量、告警和超额停用，再同步到 node-hub。",
+    intervalMs: XUI_TRAFFIC_SYNC_INTERVAL_MS, requiresHubOnly: true,
+    run: async () => {
+      await syncXuiWeightedTraffic();
+      const summary = await syncHubUsers({ reload: false });
+      return { status: "success", summary };
+    }
   },
   {
     id: "subscription-refresh", module: "subscriptions", name: "订阅池刷新", description: "刷新全部订阅池的上游配置，由外部定时任务调用 /api/cron/refresh 触发。",
@@ -5544,7 +5829,7 @@ const SYNC_JOBS = [
   },
   {
     id: "addon-service-expiry", module: "addons", name: "定制节点到期解绑", description: "移除已到期节点定制订单授权的个人入站；仍被其他有效订单覆盖的入站保留。未解绑任何入站的轮次不记录。",
-    intervalMs: 10 * 60 * 1000, requiresXui: true, recordOnlyWhenChanged: true,
+    intervalMs: 10 * 60 * 1000, requiresLine: true, recordOnlyWhenChanged: true,
     run: async () => {
       // Order and wallet changes go through the commerce lock so they cannot overwrite a concurrent purchase.
       const summary = await withCommerceOperation(() => releaseExpiredCustomNodes(), "job:addon-service-expiry");
@@ -5603,7 +5888,8 @@ function xuiPanelSyncJobResult(result) {
   const steps = [
     { id: "inbounds", name: "入站表", error: result.inboundCatalogError },
     { id: "traffic", name: "流量计费", error: result.trafficError },
-    { id: "catalogV2", name: "V2 权益", error: result.catalogV2Error }
+    { id: "catalogV2", name: "V2 权益", error: result.catalogV2Error },
+    ...(hubConfigured() ? [{ id: "nodeHub", name: "node-hub 授权", error: result.hubSyncError }] : [])
   ];
   const failedSteps = steps.filter(step => step.error);
   const report = result.catalogV2;
@@ -5623,6 +5909,9 @@ function xuiPanelSyncJobResult(result) {
 }
 
 function isSyncJobConfigured(job) {
+  if (job.requiresHub && !hubConfigured()) return false;
+  if (job.requiresHubOnly && (!hubConfigured() || xuiPanelConfigured())) return false;
+  if (job.requiresLine && !xuiPanelConfigured() && !hubConfigured()) return false;
   return !job.requiresXui || Boolean(XUI_BASE_URL && XUI_API_TOKEN);
 }
 
@@ -5868,6 +6157,7 @@ async function writeXuiClient(user, {
 }
 
 async function provisionXuiClientOnce(user, options = {}) {
+  if (!xuiConfigured() && hubConfigured()) return provisionHubOnlyUser(user);
   if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
   if (!accessGroupForUser(user)) throw new Error("Self-hosted user is missing a valid access group.");
   const allInboundIds = options.allInboundIds || await getAllXuiInboundIds();
@@ -5889,6 +6179,12 @@ async function provisionXuiClientOnce(user, options = {}) {
   user.xuiLastError = "";
   user.xuiMetadataSyncedAt = new Date().toISOString();
   await saveXuiClientProjection(user, desired.enable);
+  // With node-hub alongside 3x-ui, the same uuid is used on hub nodes, so a client config moves
+  // between the two without changes. The panel write already succeeded; a hub failure is
+  // repaired by the next full entitlement sync.
+  if (hubConfigured()) {
+    await syncHubUser(user, { uuid: remote?.uuid || remote?.id || desired.uuid || desired.id }).catch(error => hubLogger.warn({ userId: user.id, error: error.message }, "node-hub entitlement sync failed after 3x-ui provisioning"));
+  }
   return remote;
 }
 
@@ -6042,10 +6338,19 @@ async function connectXuiClient(user, { mode, email = "", importedIpLimit } = {}
 }
 
 async function disableXuiClient(user) {
-  if (!user?.xuiClientEmail || !XUI_BASE_URL || !XUI_API_TOKEN) return;
-  await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: [user.xuiClientEmail] } });
-  user.xuiLastSyncedAt = new Date().toISOString();
-  await saveXuiClientProjection(user, false);
+  if (!user?.xuiClientEmail) return;
+  if (XUI_BASE_URL && XUI_API_TOKEN) {
+    await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: [user.xuiClientEmail] } });
+    user.xuiLastSyncedAt = new Date().toISOString();
+    await saveXuiClientProjection(user, false);
+  }
+  if (hubConfigured()) {
+    const sync = syncHubUser(user, { forceDisabled: true });
+    // Hub-only: the hub is the only enforcement point, so its failure is the caller's failure.
+    if (!xuiPanelConfigured()) await sync;
+    else await sync.catch(error => hubLogger.warn({ userId: user.id, error: error.message }, "node-hub disable failed; the next full sync retries"));
+    user.xuiLastSyncedAt = new Date().toISOString();
+  }
 }
 
 function xuiTrafficPayload(user, remote, connectedIpCount = null) {
@@ -8516,8 +8821,28 @@ async function sendSubconverterSubscription({ req, res, user, relayRequestId, su
   }
 }
 
+// The user's node-hub proxies (Clash entries for every enabled hub node they are entitled to).
+async function fetchHubSubscriptionProxies(user) {
+  if (!hubConfigured()) return [];
+  const result = await requestNodeHub(`/internal/subscription/${encodeURIComponent(user.id)}`);
+  return (result?.proxies || []).map(item => item.proxy).filter(Boolean);
+}
+
 async function handleSelfHostedRelay(req, res, user, relayRequestId) {
-  if (!Array.isArray(user.xuiInboundIds) || !user.xuiInboundIds.length) {
+  const panelInboundIds = (Array.isArray(user.xuiInboundIds) ? user.xuiInboundIds : []).filter(id => !nodeHub.isHubInboundId(id));
+  let hubProxies = [];
+  if (hubConfigured()) {
+    try {
+      hubProxies = await fetchHubSubscriptionProxies(user);
+    } catch (error) {
+      relayLog("self-hosted-hub-proxies-failed", { relayRequestId, userId: user.id, error: error.message });
+      if (!panelInboundIds.length) {
+        sendSubscriptionMessage(res, 502, `自研线路订阅生成失败：${error.message}`);
+        return;
+      }
+    }
+  }
+  if (!panelInboundIds.length && !hubProxies.length) {
     sendPlaceholderSubscription(res, personalInfoPlaceholderSubscription(user));
     return;
   }
@@ -8525,13 +8850,23 @@ async function handleSelfHostedRelay(req, res, user, relayRequestId) {
     sendSubscriptionMessage(res, 503, "服务端未配置 SUB_CONVERTER_URL，无法转换自研线路订阅。");
     return;
   }
-  if (!xuiConfigured()) {
+  if (panelInboundIds.length && !xuiConfigured()) {
     sendSubscriptionMessage(res, 503, "自研线路尚未完成3x-ui配置，请联系客服。");
     return;
   }
   try {
-    const source = { id: `xui:${user.id}`, url: selfHostedSubscriptionUrl(user), sourceType: "url", serviceProvider: "3x-ui", enabled: true };
-    const liveConfig = await fetchSelfHostedSubscription(user);
+    const usePanel = panelInboundIds.length > 0;
+    const source = usePanel
+      ? { id: `xui:${user.id}`, url: selfHostedSubscriptionUrl(user), sourceType: "url", serviceProvider: "3x-ui", enabled: true }
+      : { id: `hub:${user.id}`, url: `${NODE_HUB_URL}/internal/subscription/${encodeURIComponent(user.id)}`, sourceType: "url", serviceProvider: "node-hub", enabled: true };
+    const liveConfig = usePanel
+      ? await fetchSelfHostedSubscription(user)
+      : { body: "", status: 200, client: "node-hub", sourceUrl: source.url, fetchedAt: new Date().toISOString(), contentType: "text/yaml; charset=utf-8", subscriptionUserinfo: selfHostedUserinfo(user), attempts: [], error: null };
+    if (hubProxies.length) {
+      liveConfig.body = nodeHub.mergeClashProxies(yaml, liveConfig.body, hubProxies);
+      liveConfig.score = liveConfig.body.length;
+      liveConfig.bodyLength = liveConfig.body.length;
+    }
     await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc: relaySubconverterConfig(source) });
   } catch (error) {
     relayLog("self-hosted-relay-failed", { relayRequestId, userId: user.id, error: error.message });
@@ -10238,6 +10573,12 @@ async function handleApi(req, res, pathname) {
     try {
       const payload = await readJson(req);
       const { id, enable } = normalizeXuiInboundEnable(xuiInboundEnableMatch[1], payload.enable);
+      if (nodeHub.isHubInboundId(id)) {
+        await requestNodeHub(`/internal/nodes/${nodeHub.hubNodeIdFromInboundId(id)}`, { method: "PUT", body: { enabled: enable } });
+        invalidateHubOverview();
+        sendJson(res, 200, { id, enabled: enable });
+        return;
+      }
       await xuiRequest(`/panel/api/inbounds/setEnable/${id}`, { method: "POST", body: { enable } });
       await dataStore.setXuiInboundEnabled(id, enable);
       sendJson(res, 200, { id, enabled: enable });
@@ -10252,6 +10593,13 @@ async function handleApi(req, res, pathname) {
   if (xuiInboundSettingsMatch && req.method === "PUT") {
     try {
       const key = decodeURIComponent(xuiInboundSettingsMatch[1]);
+      if (nodeHub.isHubInboundKey(key)) {
+        const settings = normalizeXuiInboundSettings(await readJson(req));
+        const node = await requestNodeHub(`/internal/nodes/${nodeHub.hubNodeIdFromKey(key)}`, { method: "PUT", body: settings });
+        invalidateHubOverview();
+        sendJson(res, 200, { key, region: node.region, networkLevel: node.networkLevel, inboundType: node.inboundType });
+        return;
+      }
       await importLegacyXuiInboundSettings();
       const settings = await dataStore.updateXuiInboundSettings(key, normalizeXuiInboundSettings(await readJson(req)));
       if (!settings) throw Object.assign(new Error("入站不存在或已从 3x-ui 删除，请刷新后重试。"), { statusCode: 404 });
@@ -10308,7 +10656,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/xui-presence" && req.method === "GET") {
-    if (!XUI_BASE_URL || !XUI_API_TOKEN) {
+    if ((!XUI_BASE_URL || !XUI_API_TOKEN) && !hubConfigured()) {
       sendJson(res, 200, { configured: false, checkedAt: new Date().toISOString(), onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} });
       return;
     }
@@ -10317,7 +10665,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/xui-presence/refresh" && req.method === "POST") {
-    if (!XUI_BASE_URL || !XUI_API_TOKEN) {
+    if ((!XUI_BASE_URL || !XUI_API_TOKEN) && !hubConfigured()) {
       sendJson(res, 200, { configured: false, checkedAt: new Date().toISOString(), onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} });
       return;
     }
@@ -10333,9 +10681,93 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  // node-hub management (admin only; the global admin gate above already applies). Machines are
+  // VPS running xboard-node; nodes are inbounds on a machine. Every write invalidates the cached
+  // overview and re-pushes entitlements, since node ids feed each user's access.
+  if (pathname.startsWith("/api/node-hub/")) {
+    // The admin page reads the overview first; without node-hub that is a state to show, not an error.
+    if (!hubConfigured() && pathname === "/api/node-hub/overview" && req.method === "GET") {
+      sendJson(res, 200, { configured: false, settings: null, machines: [], nodes: [] });
+      return;
+    }
+    if (!hubConfigured()) {
+      sendJson(res, 503, { error: "node-hub 尚未配置，请设置 NODE_HUB_URL 和 NODE_HUB_INTERNAL_TOKEN。" });
+      return;
+    }
+    const hubPath = pathname.slice("/api/node-hub".length);
+    const routes = [
+      ["GET", /^\/overview$/, () => "/internal/overview"],
+      ["POST", /^\/reality-keypair$/, () => "/internal/reality-keypair"],
+      ["GET", /^\/machines$/, () => "/internal/machines"],
+      ["POST", /^\/machines$/, () => "/internal/machines"],
+      ["GET", /^\/machines\/\d+$/, path => `/internal${path}`],
+      ["PUT", /^\/machines\/\d+$/, path => `/internal${path}`],
+      ["DELETE", /^\/machines\/\d+$/, path => `/internal${path}`],
+      ["POST", /^\/machines\/\d+\/reset-token$/, path => `/internal${path}`],
+      ["GET", /^\/nodes$/, () => "/internal/nodes"],
+      ["POST", /^\/nodes$/, () => "/internal/nodes"],
+      ["GET", /^\/nodes\/\d+$/, path => `/internal${path}`],
+      ["PUT", /^\/nodes\/\d+$/, path => `/internal${path}`],
+      ["DELETE", /^\/nodes\/\d+$/, path => `/internal${path}`]
+    ];
+    try {
+      if (hubPath === "/sync" && req.method === "POST") {
+        sendJson(res, 200, await syncHubUsers());
+        return;
+      }
+      const route = routes.find(([method, pattern]) => method === req.method && pattern.test(hubPath));
+      if (!route) {
+        sendJson(res, 404, { error: "接口不存在。" });
+        return;
+      }
+      const body = ["POST", "PUT"].includes(req.method) ? await readJson(req) : undefined;
+      const result = await requestNodeHub(route[2](hubPath), { method: req.method, body });
+      if (req.method !== "GET") {
+        invalidateHubOverview();
+        if (/^\/nodes/.test(hubPath)) syncHubUsers().catch(error => hubLogger.warn({ error: error.message }, "node-hub entitlement sync after node change failed"));
+      }
+      sendJson(res, req.method === "POST" && /^\/(machines|nodes)$/.test(hubPath) ? 201 : 200, result);
+    } catch (error) {
+      sendJson(res, error.statusCode && error.statusCode < 600 ? error.statusCode : 502, { error: error.message });
+    }
+    return;
+  }
+
+  const nodeSpeedLimitMatch = pathname.match(/^\/api\/users\/([^/]+)\/node-speed-limit$/);
+  if (nodeSpeedLimitMatch && req.method === "PUT") {
+    try {
+      const payload = await readJson(req);
+      const user = users.find(item => item.id === decodeURIComponent(nodeSpeedLimitMatch[1]));
+      if (!user) throw Object.assign(new Error("用户不存在。"), { statusCode: 404 });
+      const value = payload.speedLimitMbps;
+      if (value === null || value === "") delete user.nodeSpeedLimitMbps;
+      else {
+        const mbps = Number(value);
+        if (!Number.isSafeInteger(mbps) || mbps < 0 || mbps > 100000) throw Object.assign(new Error("限速必须是 0-100000 的整数（Mbps，0 为不限速）。"), { statusCode: 400 });
+        user.nodeSpeedLimitMbps = mbps;
+      }
+      if (hubConfigured() && user.xuiClientEmail) await syncHubUser(user);
+      await saveUser(user);
+      sendJson(res, 200, { userId: user.id, speedLimitMbps: userNodeSpeedLimitMbps(user), override: user.nodeSpeedLimitMbps ?? null });
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/xui-monitor" && req.method === "GET") {
     if (!XUI_BASE_URL || !XUI_API_TOKEN) {
-      sendJson(res, 200, { configured: false, system: null, nodes: [] });
+      if (!hubConfigured()) {
+        sendJson(res, 200, { configured: false, system: null, nodes: [] });
+        return;
+      }
+      try {
+        const startedAt = Date.now();
+        const nodes = await hubMonitorRows({ force: true });
+        sendJson(res, 200, { configured: true, backend: "node-hub", latency: Date.now() - startedAt, checkedAt: new Date().toISOString(), onlineUsers: nodes.reduce((sum, node) => sum + node.onlineCount, 0), system: null, nodes });
+      } catch (error) {
+        sendJson(res, 502, { error: `node-hub：${error.message}` });
+      }
       return;
     }
     try {
@@ -10392,6 +10824,13 @@ async function handleApi(req, res, pathname) {
         }
       });
       const onlineUsers = onlinesByGuid ? normalizeXuiPresence(onlinesByGuid, {}).onlineEmails.length : null;
+      if (hubConfigured()) {
+        try {
+          monitor.nodes.push(...await hubMonitorRows({ billing, salesTraffic }));
+        } catch (error) {
+          console.warn(`[xui-monitor] node-hub unavailable: ${error.message}`);
+        }
+      }
       sendJson(res, 200, { configured: true, latency: Date.now() - startedAt, checkedAt: new Date().toISOString(), onlineUsers, ...monitor });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
@@ -11194,7 +11633,8 @@ async function handleApi(req, res, pathname) {
 
   // ── Pricing ──
   if (pathname === "/api/catalog-v2/line-groups" && req.method === "GET") {
-    const [groups, inbounds] = await Promise.all([dataStore.listCatalogV2LineGroups(), dataStore.listXuiInbounds()]);
+    const [groups, panelInbounds, hubRows] = await Promise.all([dataStore.listCatalogV2LineGroups(), dataStore.listXuiInbounds(), hubInboundRows().catch(() => [])]);
+    const inbounds = [...panelInbounds, ...hubRows];
     // coverage feeds the comparison-row preview in the product editor.
     sendJson(res, 200, groups.map(group => ({ ...group, coverage: catalogV2LineGroupCoverage(group, inbounds) })));
     return;
@@ -11208,7 +11648,7 @@ async function handleApi(req, res, pathname) {
       // any saves without contacting 3x-ui.
       if (group.inboundKeys.length) {
         progress.step("validate", "running");
-        await refreshXuiInboundCatalog();
+        if (xuiPanelConfigured()) await refreshXuiInboundCatalog();
         const management = await xuiInboundManagementView();
         group = validateCatalogV2LineGroupInbounds(group, management.inbounds);
         progress.step("validate", "done");
@@ -11249,7 +11689,7 @@ async function handleApi(req, res, pathname) {
         const inboundKeysChanged = !sameKeys(existing.inboundKeys || [], group.inboundKeys);
         if (inboundKeysChanged) {
           progress.step("validate", "running");
-          await refreshXuiInboundCatalog();
+          if (xuiPanelConfigured()) await refreshXuiInboundCatalog();
           const management = await xuiInboundManagementView();
           group = validateCatalogV2LineGroupInbounds(group, management.inbounds, existing);
           progress.step("validate", "done");
@@ -11265,10 +11705,18 @@ async function handleApi(req, res, pathname) {
         if (inboundKeysChanged) {
           progress.step("sync", "running");
           try {
-            const report = await syncCatalogV2ToXui({ forceReload: true });
+            const report = xuiPanelConfigured() ? await syncCatalogV2ToXui({ forceReload: true }) : { updated: 0, skipped: 0, failed: [], conflicts: [] };
             xuiSync = { updated: report.updated, skipped: report.skipped, failed: report.failed.length + report.conflicts.length };
           } catch (error) {
             xuiSync = { error: error.message };
+          }
+          if (hubConfigured()) {
+            try {
+              const hubReport = await syncHubUsers();
+              xuiSync = { ...xuiSync, hubChanged: hubReport?.changed || 0 };
+            } catch (error) {
+              xuiSync = { ...xuiSync, error: [xuiSync.error, `node-hub：${error.message}`].filter(Boolean).join("；") };
+            }
           }
           progress.step("sync", xuiSync.error || xuiSync.failed ? "failed" : "done");
         } else {
@@ -12152,7 +12600,7 @@ async function handleApi(req, res, pathname) {
         // counter reset would skew the local-node derivation). The current cycle restarts at zero
         // from this instant through a cycle baseline; a client disabled for quota is re-enabled now.
         startXuiCycleBaseline(item, currentXuiCycleStartKey(item), Date.now());
-        if (xuiClientAllowed(item)) {
+        if (xuiPanelConfigured() && xuiClientAllowed(item)) {
           await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [xuiClientEmail(item)] } });
         }
         const now = new Date().toISOString();
@@ -12161,6 +12609,7 @@ async function handleApi(req, res, pathname) {
         item.xuiWeightedTraffic = { ...(item.xuiWeightedTraffic || {}), rawUsedBytes: 0, usedBytes: 0, totalBytes, remainingBytes: totalBytes || null, usagePercent: totalBytes ? 0 : null, depleted: false, nodes: [], lastSyncedAt: now };
         item.xuiLastTraffic = { ...(item.xuiLastTraffic || {}), available: true, status: "active", uploadBytes: 0, downloadBytes: 0, rawUsedBytes: 0, usedBytes: 0, totalBytes, remainingBytes: totalBytes || null, usagePercent: totalBytes ? 0 : null, nodes: [], lastSyncedAt: now };
         await clearXuiBillingLedger(xuiClientEmail(item));
+        await syncHubUserNow(item);
         const actor = currentSession(req)?.account || "admin";
         appendUserLogToUser(item, createUserLog({ event: "user-action", status: "recorded", reason: "traffic-reset", req, message: userActionMessage("traffic-reset", { actor }), details: { actor, resetId, totalBytes } }));
         await saveUsers();
@@ -12692,6 +13141,17 @@ async function main() {
   setInterval(() => scheduleSyncJob("referral-settlement"), 60 * 1000);
   scheduleSyncJob("order-fulfillment-retry", "startup");
   setInterval(() => scheduleSyncJob("order-fulfillment-retry"), 5 * 60 * 1000);
+  if (hubConfigured()) {
+    scheduleSyncJob("node-hub-sync", "startup");
+    setInterval(() => scheduleSyncJob("node-hub-sync"), NODE_HUB_SYNC_INTERVAL_MS);
+    if (!XUI_BASE_URL || !XUI_API_TOKEN) {
+      scheduleSyncJob("node-hub-billing", "startup");
+      setInterval(() => scheduleSyncJob("node-hub-billing"), XUI_TRAFFIC_SYNC_INTERVAL_MS);
+      setInterval(() => scheduleSyncJob("addon-service-expiry"), 10 * 60 * 1000);
+      scheduleSyncJob("xui-traffic-prune", "startup");
+      setInterval(() => scheduleSyncJob("xui-traffic-prune"), 24 * 60 * 60 * 1000);
+    }
+  }
   if (XUI_BASE_URL && XUI_API_TOKEN) {
     setInterval(() => scheduleSyncJob("addon-service-expiry"), 10 * 60 * 1000);
     // The first probe waits for the first panel sync to fill the inbound table.

@@ -4862,6 +4862,103 @@
         "page_errors": [],
         "checked_at": "2026-10-25"
       }
+    },
+    {
+      "id": "node-hub-xboard-node",
+      "name": "node-hub controls xboard-node on every VPS",
+      "description": "node-hub/ is a loopback service that speaks Xboard's node API to unmodified xboard-node (machine mode, per-machine tokens, ETag/304) and an internal API to server.js. The app pushes per-user entitlements (uuid, node ids from line groups and personal custom inbounds, speed limit, device limit, enabled) every 60s and on every provisioning change; node reports land as per-user deltas in xui_daily_traffic (node_guid hub-m<machine>, deduplicated by report id), so weighted billing, depletion, daily charts and profitability are unchanged. Hub nodes appear as inbounds (key hub-m<machine>:<node>, id 1e9+node) in inbound management, line groups, set-enable, settings, presence, monitor and subscriptions, and are never sent to 3x-ui. Works next to 3x-ui (reusing the 3x-ui uuid) or alone (hub-only billing job). scripts/migrate-xui-to-node-hub.js moves one 3x-ui VPS. Nothing runs when NODE_HUB_URL is unset.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "Unmodified xboard-node pulls config and users from node-hub and its traffic is billed within 5% of the bytes transferred.",
+        "Speed limit, device limit, depletion, re-enable and node disable reach the node.",
+        "Hub nodes work in line groups, inbound settings, custom inbounds, presence, monitor and subscriptions, alone or next to 3x-ui.",
+        "With node-hub unconfigured, existing 3x-ui behavior and tests are unchanged."
+      ],
+      "verification": [
+        "2026-10-25: npm run verify passed, now including npm run test:hub (test-node-hub.js: node API in machine and node mode, ETag, entitlements, traffic sums, duplicate reports, presence, status, subscriptions, internal API guards, migration dry run/apply/rerun/line-group switch; test-node-hub-app.js: the app with node-hub only and with a mock 3x-ui, covering provisioning, uuid reuse, no hub ids sent to 3x-ui, line groups, custom inbounds, speed limit, subscriptions, billing, depletion, presence, monitor, set-enable). npm run e2e:hub with xboard-node and xray built from source passed: VLESS, VLESS+REALITY+Vision and SS2022 served; 12,583,332 bytes billed for a 12,582,912-byte payload; 8 Mbps limit measured ~10.5 Mbps; 2x multiplier depleted the user, who was refused and reconnected after re-enable; a disabled node was stopped by the machine.",
+        "2026-10-26: fixed REALITY public key derivation from a private key alone (Node 24.22 rejects a JWK with an empty x; now imported as PKCS#8 DER) and the hub overview cache returning a pre-change snapshot from a request in flight when a node was created (test-node-hub-app.js failed ~1 in 3 runs; 10/10 after). npm run verify passed on Windows (Node 24.16); npm run e2e:hub and npm run test:hub passed in a Linux Docker container (Node 24.22.1, xboard-node 0a29338 and Xray 26.10.21 built from source, disposable postgres:16): 12,583,332 bytes billed for 12,582,912, 8 Mbps limit measured 10.5 Mbps, depletion, re-enable and node disable reached the node.",
+        "2026-10-26: existing 3x-ui customers now keep their panel uuid on the hub. Reproduced first: test-node-hub-app.js (mixed mode) seeds a customer provisioned on 3x-ui before node-hub and runs the node-hub-sync job; the hub generated a random uuid (1f62bdc3-…) instead of the panel one. syncHubUsers now reads /panel/api/clients/list once when a user has no hub uuid and leaves users without a panel client off the hub; syncHubUser looks up the single client. The migration dry run reports users already on the hub with their 3x-ui uuid and users whose hub uuid differs (test-node-hub.js). npm run test:hub, npm run verify and git diff --check passed.",
+        "2026-10-26: admin traffic gift, traffic reset, traffic pack and traffic_credit add-on now work with node-hub. Reproduced first in test-node-hub-app.js: hub-only returned 400 \"3x-ui 尚未配置\" for gift and reset (pack and add-on share enableXuiClientAfterTrafficIncrease), and with 3x-ui the depleted user stayed off the hub node after a gift. The panel calls now run only when 3x-ui is configured and each action pushes the user to the hub at once (syncHubUserNow: hub-only failures fail the action, next to 3x-ui they are logged and left to the full sync). test-node-hub-app.js now also drives a registered customer in both modes through plan purchase, traffic add-on, traffic pack, gift days, plan change, product buyer sync, account disable/enable, expiry and deletion, checking the hub entitlement and the node user list after each. npm run verify and git diff --check passed.",
+        "2026-10-27: hybrid mode against the real 3x-ui panel (XUI_READ_ONLY, isolated copy of the dev DB). Reproduced: the real panel returns id as the numeric row id and the credential in uuid, while the code read client.id first, so the full entitlement sync silently dropped all 308 existing customers. Mock panel in test-node-hub-app.js now returns the real shape (failed before the fix); panelUuidsByEmail, syncHubUser and the post-provision hub sync now read uuid first. After the fix: 305 users synced with uuids identical to the panel (0 mismatches), 3 left off because their panel credential is itself not a uuid (21/30/31), only panel GET/read-only POSTs and 0 blocked writes, a second sync changed nothing, and a real customer /sub merged 17 panel VLESS proxies with the hub node under the same uuid (echo subconverter). npm run verify and git diff --check passed.",
+        "2026-10-27: final /sub output through a real subconverter (ghcr.io/metacubex/subconverter v0.9.1-36573b3-mihomo in Docker, confirmed in its log fetching the loopback live-config) on the same isolated hybrid copy: a real customer got 12 panel nodes plus the hub node, and across all 13 template proxy groups the hub node is placed exactly like a real panel node (8 groups contain both, 5 neither). Containers and the isolated schema were removed afterwards."
+      ]
+    },
+    {
+      "id": "node-hub-admin-ui",
+      "name": "node-hub admin page for machines, nodes and speed limits",
+      "description": "A Node Hub sidebar item (/node-hub) gathers every node-hub admin task that had only an API: overview of machines and nodes with a sync button, machines (create, edit, enable, delete, reset token, install command, 24h load history) and nodes (create, edit, delete with per-protocol settings for VLESS/VMess/Trojan/Shadowsocks/Hysteria2/TUIC/AnyTLS, transports, TLS and REALITY with key generation, advanced JSON), plus per-user node speed limit overrides. Shows a not-configured state when NODE_HUB_URL is unset.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-xboard-node"
+      ],
+      "done_criteria": [
+        "Machines and nodes can be created, edited and deleted from the page, and a new machine shows its install command.",
+        "Node forms cover every protocol the hub accepts and round-trip existing settings without losing fields the form does not edit.",
+        "Per-user speed limit overrides can be set and cleared.",
+        "Without node-hub configured the page explains why it is empty."
+      ],
+      "verification": [
+        "2026-10-26: npm run check, npm run verify (build, core, 3x-ui, payment, wallet, catalog-v2, node-hub unit and app tests), npm run verify:harness and git diff --check passed. A temporary tsc run reports no errors in node-hub.tsx, node-hub-node-form.tsx, navigation.ts or types.ts (the 105 remaining are pre-existing). GET /api/node-hub/overview now answers 200 { configured: false } without node-hub (other node-hub routes keep 503) so the page shows a setup note instead of a failed request."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub",
+          "/node-hub?tab=machines",
+          "/node-hub?tab=nodes",
+          "/node-hub?tab=speed"
+        ],
+        "interactions": [
+          "Isolated stand: server.js on :3010 and node-hub on :3004 against schema hubtunnel of the test database, one real test VPS (xboard-node, machine mode) connected through a cloudflared quick tunnel; a second server.js on :3011 without node-hub. Desktop pane width and 375x812, light and dark theme.",
+          "Overview: online machine/node counts, the 内核未运行 issue for the VPS node (metrics.kernel_status false), node-hub settings; 同步用户授权 toasts 1 user synced.",
+          "Machines: 新建机器 shows the install command with the tunnel URL; drawer shows status, 24h CPU/memory chart from real samples, edits notes and saves; 重置 token changes the token in the command; 删除机器 removes the empty machine; DELETE on a machine with nodes returns 409 机器下仍有节点.",
+          "Nodes: the existing VLESS REALITY node round-trips every field in the editor; a Hysteria2 node created on a test machine with SNI, self-signed cert mode and advanced JSON (an unknown key shows the field error first) is stored with exactly those settings, edited to port 8443 without losing them, disabled from the row menu and deleted through the confirm dialog. Protocol switching renders the expected sections for VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC and AnyTLS. Choosing a machine fills its address as the connection address.",
+          "Speed limits: 1.5 shows the integer error; 50 Mbps saves and the node user list from node-hub shows speed_limit 50; 恢复套餐限速 clears it.",
+          "Fixed during the check: drawer horizontal overflow, misaligned form rows and oversized number fields, row menu closed by the 30s background refresh (columns now stable), metric card suffix spacing, and the 503 console error on the not-configured page.",
+          "Final pass in a fresh tab over all four tabs, the machine drawer, the node editor for every protocol and the not-configured page: no console errors or uncaught exceptions; the only console entry is a warning from the third-party Crisp chat widget's WebSocket."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-26"
+      }
+    },
+    {
+      "id": "node-hub-websocket-push",
+      "name": "node-hub pushes changes to xboard-node over WebSocket",
+      "description": "node-hub/push.js speaks Xboard's Workerman WebSocket protocol. The handshake advertises ws_url (<NODE_HUB_PUBLIC_URL>/api/v2/server/ws) unless NODE_HUB_WEBSOCKET=false; a machine connects once with its token and stops polling config and users. Each connection keeps per-node hashes of what it received and a reconcile (200 ms after any management write, plus every 30 s) pushes sync.nodes, sync.config, sync.users and sync.devices (global device IPs from report.devices). A node that loses its last user gets sync.user.delta 'resync' in machine mode (xboard-node's machine mailbox drops an emptied list, an unknown action makes it reconcile over REST) and 'remove' in node mode. Revoked credentials close the socket; app-level ping every 30 s, idle sockets dropped after 90 s. Traffic, presence and machine status stay on REST. The admin Node Hub page shows 实时推送 / 轮询 per machine and the push setting on the overview.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-xboard-node",
+        "node-hub-admin-ui"
+      ],
+      "done_criteria": [
+        "A stock xboard-node in machine mode connects to the push channel and receives node, config and user changes without polling.",
+        "Removing a node's last user, depletion, re-enable and node disable reach the node within seconds with REST polling stretched to 5 minutes.",
+        "Revoked machine credentials close the connection; REST polling keeps working when push is off.",
+        "The admin page shows which machines hold a push channel."
+      ],
+      "verification": [
+        "2026-10-26: test-node-hub.js covers the push protocol with a ws client: auth error and close code 4001, auth.success, sync.nodes/config/users on connect, resync delta when a node loses its last user, sync.users when it comes back, sync.config on node edits, sync.nodes on node create/delete, no resend of unchanged lists, no removal delta for a node created after connecting, report.devices -> sync.devices, node mode without sync.nodes, revocation on token reset, pushConnected in the overview. npm run e2e:hub in Docker (xboard-node 0a29338, Xray 26.10.21, Node 24.22.1) passed in both modes: WebSocket with REST polling at 300 s (depleted user refused after 3 ms, re-enabled after 4 ms, disabled node stopped by the machine after 1 s) and E2E_REST_ONLY=1 (2 s, 3 s, 39 s with 3 s polling). npm run verify, verify:harness and git diff --check passed; the temporary tsc run reports no errors in changed files. The ws package (^8.22.0) was added as a dependency."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub",
+          "/node-hub?tab=machines",
+          "/node-hub?tab=nodes"
+        ],
+        "interactions": [
+          "Isolated stand (server.js :3010, node-hub :3004 on schema hubtunnel of the test database) behind a new cloudflared quick tunnel whose filter proxy also passes WebSocket upgrades on /api/v2/server/ws only (/internal stays 404; a bad token over wss gets the error event and close 4001).",
+          "A stock xboard-node in Docker connected through the public tunnel: the machines tab shows Docker 测试机 as 在线 + 实时推送, the overview reads 实时推送（WebSocket） = 已开启 · 1 台机器已连接.",
+          "Disabling Docker VLESS from the nodes row menu at 08:52:42.283: the container logged sync.nodes at 08:52:42.685 and 'machine: stopping node 3' at 08:52:43.386. The test machine and node were deleted afterwards.",
+          "No console errors or uncaught exceptions in the tab."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-26"
+      }
     }
   ]
 }
