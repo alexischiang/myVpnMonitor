@@ -259,6 +259,29 @@ async function child(mode) {
     assert.ok(names.includes("Hub 01") && names.includes("Hub 定制"), names.join(","));
     assert.equal(names.includes("3x-ui 节点"), Boolean(xui));
 
+    // Node source: the per-user filter on which architecture's nodes the subscription carries.
+    const subNames = async () => {
+      const response = await fetch(`${origin}/sub/${user.subscriptionToken}`, { headers: { "user-agent": "clash.meta" } });
+      assert.equal(response.status, 200, await response.clone().text());
+      return (require("js-yaml").load(subconverterInput).proxies || []).map(proxy => proxy.name);
+    };
+    const setNodeSource = nodeSource => api(`/api/users/${user.id}/node-source`, { method: "PUT", body: { nodeSource } });
+    assert.equal((await setNodeSource("bogus").catch(error => error)) instanceof Error, true, "an unknown node source is rejected");
+    assert.equal((await api("/api/users")).find(item => item.id === user.id).nodeSource, undefined, "mix is the default and is not stored");
+    assert.deepEqual(await setNodeSource("nodehub"), { userId: user.id, nodeSource: "nodehub" });
+    const hubOnlyNames = await subNames();
+    assert.ok(hubOnlyNames.includes("Hub 01") && !hubOnlyNames.includes("3x-ui 节点"), `nodehub: ${hubOnlyNames.join(",")}`);
+    if (xui) {
+      await setNodeSource("3xui");
+      const panelOnlyNames = await subNames();
+      assert.ok(panelOnlyNames.includes("3x-ui 节点") && !panelOnlyNames.some(name => name.startsWith("Hub")), `3xui: ${panelOnlyNames.join(",")}`);
+    }
+    assert.deepEqual(await setNodeSource("mix"), { userId: user.id, nodeSource: "mix" });
+    assert.equal((await api("/api/users")).find(item => item.id === user.id).nodeSource, undefined);
+    const mixNames = await subNames();
+    assert.ok(mixNames.includes("Hub 01") && mixNames.includes("3x-ui 节点") === Boolean(xui), `mix: ${mixNames.join(",")}`);
+    assert.ok((await api("/api/users")).find(item => item.id === user.id).userLogs.some(log => log.reason === "node-source-changed"), "node source changes are logged");
+
     // Traffic -> billing -> depletion -> removal from the node.
     await nodeClient.report({ traffic: { [hubUser.id]: [MiB, 9 * MiB] }, online: { [hubUser.id]: 1 }, alive: { [hubUser.id]: ["203.0.113.8"] } });
     await runJob(xui ? "xui-panel-sync" : "node-hub-billing");

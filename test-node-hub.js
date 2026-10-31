@@ -400,6 +400,22 @@ async function main() {
     await migrate("--node-guid", "local", "--name", "LA-MIGRATED", "--host", "la2.example.com", "--switch-line-groups");
     const switched = (await appStore.pool.query("SELECT inbound_keys FROM catalog_v2_line_groups WHERE id = 'nh-migrate-test'")).rows[0].inbound_keys;
     assert.deepEqual(switched, [`hub-m${migratedMachine.id}:${migratedNodes[0].id}`, "node-hk:5", "other:9"], "only the migrated VPS's keys are switched");
+    // Side by side with 3x-ui on the same VPS: shifted ports, hub keys added next to the 3x-ui keys.
+    await appStore.pool.query("UPDATE catalog_v2_line_groups SET inbound_keys = $2::jsonb WHERE id = $1", ["nh-migrate-test", JSON.stringify(["panel-guid:1", "node-hk:5", "other:9"])]);
+    const coexist = (...args) => migrate("--node-guid", "local", "--host", "la2.example.com", "--name", "LA-COEXIST", "--port-offset", "10000", ...args);
+    await assert.rejects(migrate("--node-guid", "local", "--host", "la2.example.com", "--port-offset", "65200"), /smaller --port-offset/);
+    await assert.rejects(coexist("--switch-line-groups", "--add-to-line-groups"), /either/);
+    assert.match(await coexist(), /3x-ui ports \+ 10000/);
+    assert.match(await coexist("--apply"), /3x-ui keeps running; open the new ports 10443/);
+    const coexistMachine = (await store.listMachines()).find(item => item.name === "LA-COEXIST");
+    const coexistNodes = await store.listNodes({ machineId: coexistMachine.id });
+    assert.deepEqual(coexistNodes.map(item => [item.protocol, item.serverPort]), [["vless", 10443]]);
+    assert.match(await coexist("--apply"), /already exists/, "re-running with the same offset is safe");
+    await coexist("--add-to-line-groups");
+    const added = (await appStore.pool.query("SELECT inbound_keys FROM catalog_v2_line_groups WHERE id = 'nh-migrate-test'")).rows[0].inbound_keys;
+    assert.deepEqual(added, ["panel-guid:1", `hub-m${coexistMachine.id}:${coexistNodes[0].id}`, "node-hk:5", "other:9"], "the 3x-ui key stays and the hub key is added after it");
+    await coexist("--add-to-line-groups");
+    assert.deepEqual((await appStore.pool.query("SELECT inbound_keys FROM catalog_v2_line_groups WHERE id = 'nh-migrate-test'")).rows[0].inbound_keys, added, "adding twice changes nothing");
     await appStore.pool.query("DELETE FROM catalog_v2_line_groups WHERE id = 'nh-migrate-test'");
     await appStore.pool.query("DELETE FROM app_records WHERE collection = 'users' AND id = 'migrated-user'");
     await appStore.close?.();

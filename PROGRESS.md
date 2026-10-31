@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-27
-- Current Objective: node-hub：真实 3x-ui 面板混合模式验证（只读）
+- Last Updated: 2026-10-31
+- Current Objective: node-hub 用户节点来源与分组侧栏已上线
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -536,8 +536,12 @@
 
 - 2026-10-27: 混合模式真实面板：修复 client.id 优先导致老用户全部被跳过；305/305 uuid 与面板一致、0 次写请求被拦、二次同步无变化、订阅合并 17 个面板节点 + hub 节点同 uuid；npm run verify、verify:harness、git diff --check 通过
 
+- 2026-10-31: 新增用户节点来源（PUT /api/users/:id/node-source，详情页「管理用户」里的「设置节点来源」弹窗，资料卡钱包余额下显示），迁移脚本 --port-offset / --add-to-line-groups；test-node-hub-app.js、test-node-hub.js 补充用例，待 npm run verify 与 /users/detail 浏览器验证
+
+- 2026-10-31: verify 各步骤通过（payment/hub 用隔离 schema），/users 与 /users/detail 浏览器验证无控制台错误
+
 ## Next Session
 
-- Files: `.env.example`, `PROGRESS.md`, `README.md`, `feature_list.json`, `package-lock.json`, `package.json`, `scripts/dev-all.js`, `server.js`, `src/components/features/navigation.ts`, `src/main.tsx`, `src/types.ts`, `docs/agent/node-hub.md`, `node-hub/`, `scripts/e2e-xboard-node.js`, `scripts/migrate-xui-to-node-hub.js`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub.tsx`, `test-node-hub-app.js`, `test-node-hub.js`
+- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `feature_list.json`, `scripts/migrate-xui-to-node-hub.js`, `server.js`, `src/components/arc/button/button.module.css`, `src/components/arc/button/button.tsx`, `src/components/features/app-layout.tsx`, `src/components/features/app-shell.tsx`, `src/components/features/app-sidebar.tsx`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/site-header.tsx`, `src/styles.css`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`
 - Known risks: none
-- Recommended Next Step: 处理面板上 3 个 VLESS 凭据非 uuid 的客户（21/30/31）后提交 node-hub 改动
+- Recommended Next Step: 在生产按需为用户设置节点来源并用 --port-offset 迁移

@@ -25,6 +25,18 @@ VPS: xboard-node (machine 模式) ──HTTPS /api/v1|v2/server/*──> 反向�
 | `XUI_*` + `NODE_HUB_*` | 混合：用户同时拿到 3x-ui 入站和 hub 节点。hub 复用 3x-ui Client 的 uuid，VLESS/VMess 迁移后客户端无需更新：新开通用户直接传入面板 uuid；已有用户在第一次授权同步时从面板 client 列表读取 uuid，面板上找不到 client 的用户先不上 hub，等开通创建 client 后再同步。计费仍由 3x-ui 面板同步任务完成，同时计入 hub 流量。 |
 | 只配 `NODE_HUB_*` + `SUB_CONVERTER_URL` | 只用 hub：开通不再调用 3x-ui，计费由「node-hub 流量计费」任务完成。 |
 
+## 用户节点来源（混合模式下的逐个用户切换）
+
+用户详情页「节点来源」（`PUT /api/users/:id/node-source {nodeSource}`）决定 `/sub/<token>` 里放哪套架构的节点：
+
+| 节点来源 | 订阅内容 |
+| --- | --- |
+| `mix`（默认，不单独存储） | 3x-ui 面板节点 + node-hub 节点 |
+| `3xui` | 只有 3x-ui 面板节点 |
+| `nodehub` | 只有 node-hub 节点 |
+
+只过滤订阅：用户在 3x-ui 和 node-hub 上的开通与授权都不变，两边产生的流量都写入 `xui_daily_traffic` 并计费。变更会记入用户日志，用户更新订阅后生效。
+
 ## 功能对照（3x-ui → node-hub）
 
 | 3x-ui 用法 | node-hub |
@@ -69,6 +81,18 @@ npm run migrate:xui-to-hub -- --node-guid <guid> --apply                        
 npm run migrate:xui-to-hub -- --node-guid <guid> --switch-line-groups            # 线路组里的 3x-ui key 换成 hub key
 # 运行同步任务「node-hub 授权同步」，用户更新订阅
 ```
+
+### 同一台 VPS 上与 3x-ui 并存（换端口）
+
+```bash
+npm run migrate:xui-to-hub -- --node-guid <guid> --port-offset 10000                         # 计划：hub 端口 = 3x-ui 端口 + 10000
+npm run migrate:xui-to-hub -- --node-guid <guid> --port-offset 10000 --apply                 # 创建节点，3x-ui 的 xray 不用停
+# 在 VPS 防火墙放行新端口，执行安装命令，确认节点上线
+npm run migrate:xui-to-hub -- --node-guid <guid> --port-offset 10000 --add-to-line-groups    # hub key 加在 3x-ui key 旁边，不替换
+# 运行「node-hub 授权同步」；mix 用户的订阅同时有两套节点
+```
+
+同一台 VPS 的每次运行都要带同样的 `--port-offset`。确认没问题后可以把用户逐个改成 `nodehub`，全部切完再用 `--switch-line-groups` 去掉 3x-ui key、停掉 3x-ui。
 
 - 端口、协议、REALITY 私钥/公钥、第一个 shortId 和 serverName、flow、ws/grpc/xhttp/httpupgrade 传输保持不变；VLESS/VMess 用户沿用原 uuid。计划会列出三类用户：本次写入 3x-ui uuid 的、已经以 3x-ui uuid 在 hub 上的、hub uuid 与 3x-ui 不一致的（脚本不覆盖 hub 已在使用的凭据，这些用户需要更新订阅）。
 - Trojan 和 Shadowsocks 的密码由 node-hub 根据 uuid 生成，用户需要更新订阅。

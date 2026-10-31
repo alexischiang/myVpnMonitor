@@ -112,6 +112,8 @@ export type User = {
   xuiExtraInboundIds?: number[]
   /** node-hub: per-user speed limit override in Mbps (0 = unlimited); absent means the plan value applies. */
   nodeSpeedLimitMbps?: number | null
+  /** Which architecture's nodes the subscription carries; absent means "mix" (3x-ui and node-hub). */
+  nodeSource?: "3xui" | "nodehub" | "mix"
   hubNodeIds?: number[]
   hubUuid?: string
   xuiManagementMode?: "import" | "link"

@@ -3994,6 +3994,15 @@ async function hubInboundRows(options = {}) {
   return hubConfigured() ? nodeHub.hubManagementRows(await getHubOverview(options)) : [];
 }
 
+// Which architecture's nodes go into a self-hosted user's subscription: "3xui" (panel only),
+// "nodehub" (hub only) or "mix" (both, the default). It only filters the subscription; the user
+// stays provisioned and entitled on both sides, and traffic from either side is billed.
+const NODE_SOURCES = ["3xui", "nodehub", "mix"];
+
+function userNodeSource(user = {}) {
+  return NODE_SOURCES.includes(user.nodeSource) ? user.nodeSource : "mix";
+}
+
 function userNodeSpeedLimitMbps(user = {}) {
   return Math.max(0, Math.floor(Number(user.nodeSpeedLimitMbps ?? user.v2ProductSnapshot?.speedLimitMbps) || 0));
 }
@@ -7822,6 +7831,7 @@ const fallbackReasonText = {
 const userLogReasonText = {
   ...fallbackReasonText,
   "user-expired": "\u7528\u6237\u81ea\u8eab\u5df2\u5230\u671f",
+  "node-source-changed": "节点来源变更",
   "custom-url-disabled": "\u8be5 URL \u672a\u542f\u7528",
   "subconverter-not-configured": "\u8ba2\u9605\u8f6c\u6362\u670d\u52a1\u672a\u914d\u7f6e",
   "subconverter-failed": "\u8ba2\u9605\u8f6c\u6362\u5931\u8d25",
@@ -8829,9 +8839,10 @@ async function fetchHubSubscriptionProxies(user) {
 }
 
 async function handleSelfHostedRelay(req, res, user, relayRequestId) {
-  const panelInboundIds = (Array.isArray(user.xuiInboundIds) ? user.xuiInboundIds : []).filter(id => !nodeHub.isHubInboundId(id));
+  const nodeSource = userNodeSource(user);
+  const panelInboundIds = nodeSource === "nodehub" ? [] : (Array.isArray(user.xuiInboundIds) ? user.xuiInboundIds : []).filter(id => !nodeHub.isHubInboundId(id));
   let hubProxies = [];
-  if (hubConfigured()) {
+  if (hubConfigured() && nodeSource !== "3xui") {
     try {
       hubProxies = await fetchHubSubscriptionProxies(user);
     } catch (error) {
@@ -10749,6 +10760,28 @@ async function handleApi(req, res, pathname) {
       if (hubConfigured() && user.xuiClientEmail) await syncHubUser(user);
       await saveUser(user);
       sendJson(res, 200, { userId: user.id, speedLimitMbps: userNodeSpeedLimitMbps(user), override: user.nodeSpeedLimitMbps ?? null });
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, { error: error.message });
+    }
+    return;
+  }
+
+  const nodeSourceMatch = pathname.match(/^\/api\/users\/([^/]+)\/node-source$/);
+  if (nodeSourceMatch && req.method === "PUT") {
+    try {
+      const payload = await readJson(req);
+      const user = users.find(item => item.id === decodeURIComponent(nodeSourceMatch[1]));
+      if (!user) throw Object.assign(new Error("用户不存在。"), { statusCode: 404 });
+      const value = String(payload.nodeSource || "");
+      if (!NODE_SOURCES.includes(value)) throw Object.assign(new Error("节点来源必须是 3xui、nodehub 或 mix。"), { statusCode: 400 });
+      const previous = userNodeSource(user);
+      if (value === "mix") delete user.nodeSource;
+      else user.nodeSource = value;
+      if (previous !== value) {
+        appendUserLogToUser(user, createUserLog({ event: "user-action", status: "recorded", reason: "node-source-changed", message: `节点来源：${previous} → ${value}`, details: { from: previous, to: value } }));
+      }
+      await saveUser(user);
+      sendJson(res, 200, { userId: user.id, nodeSource: userNodeSource(user) });
     } catch (error) {
       sendJson(res, error.statusCode || 400, { error: error.message });
     }
