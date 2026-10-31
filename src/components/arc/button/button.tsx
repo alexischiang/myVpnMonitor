@@ -9,7 +9,7 @@ import { motionTokens } from "../lib/motion-tokens";
 import styles from "./button.module.css";
 
 // XELA extension: link, success and orange variants, square icon sizes, and asChild (see docs/agent/arc-migration.md).
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "link" | "success" | "orange" | "orange-soft" | "orange-outline" | "orange-ghost" | "orange-link";
+export type ButtonVariant = "primary" | "secondary" | "ghost" | "nav" | "danger" | "link" | "success" | "orange" | "orange-soft" | "orange-outline" | "orange-ghost" | "orange-link";
 export type ButtonSize = "sm" | "md" | "lg" | "icon" | "icon-sm";
 
 export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "onDrag" | "onDragEnd" | "onDragStart" | "onAnimationStart"> {
@@ -18,6 +18,7 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   loading?: boolean;
   /** Renders the single child element (a link, for example) with the button styles instead of a button. No press or label motion. */
   asChild?: boolean;
+  /** XELA extension: variant="nav" is a navigation row (left aligned, full width, current page via aria-current or data-active). */
   /** XELA extension: below 640px only the icon shows; the text stays for screen readers. For buttons that have an icon. */
   collapse?: boolean;
 }

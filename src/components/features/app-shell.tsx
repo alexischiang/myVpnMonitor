@@ -7,7 +7,7 @@ import { apiFetch, fetchJson } from "@/api"
 import { AppLayout } from "@/components/features/app-layout"
 import { AppSidebar } from "@/components/features/app-sidebar"
 import { useData } from "@/components/features/data-provider"
-import { getPageTitle, navItems } from "@/components/features/navigation"
+import { getPageTitle, navEntries } from "@/components/features/navigation"
 import { Alert } from "@/components/arc/alert/alert"
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
 
@@ -85,9 +85,9 @@ export function AppShell() {
         dark={dark}
         onToggleTheme={toggleTheme}
         onLogout={logout}
-        sidebar={<AppSidebar variant="inset" items={navItems} homeUrl="/dashboard" accountName={data.account || "admin"} accountDescription="Administrator" accountUrl="/dashboard" accountLabel="Dashboard" onLogout={logout} />}
+        sidebar={<AppSidebar items={navEntries} homeUrl="/dashboard" accountName={data.account || "admin"} accountDescription="Administrator" accountUrl="/dashboard" accountLabel="Dashboard" onLogout={logout} />}
       >
-        <div className="flex min-w-0 flex-col gap-4 md:gap-6 [&>div]:!px-0">
+        <div className="flex min-w-0 flex-col gap-4 md:gap-6 [&>*]:!px-0">
               {showHealthAlerts ? (
                 <div className="grid gap-2 px-4 lg:px-6">
                   {healthError && <Alert tone="danger" title={`服务监控 API 连接异常：${healthError}`} />}

@@ -244,7 +244,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 
 | 组件 | 扩展内容 |
 |---|---|
-| `button` | `link`、`success`、`orange` variant；`icon`、`icon-sm` 尺寸；`asChild` |
+| `button` | `link`、`success`、`orange` variant；`nav` variant（导航行：左对齐、占满宽度、`--space-3` 内边距和图标间距，`aria-current` 或 `data-active` 显示当前页；配 `icon` 尺寸时为方形图标导航）；`icon`、`icon-sm` 尺寸；`asChild` |
 | `action-button` | `pending`（由外部驱动进行中状态，用于表单提交）、`onClick`、`variant`、`size`、`arrow`；`onAction` 改为可选；默认文案改中文 |
 | `card` | `title`、`description` 改为可选且接受节点；`headerAction`；没有 `details` 时不做悬停抬起；正文外包一层带间距的容器 |
 | `metric-card` | `prefix`、`decimals`、`locale`；`value` 可为 `null`（显示占位符）；`context` 可选；`action`；`className` |

@@ -273,6 +273,9 @@ export function UserDetailPage() {
   const [referralRate, setReferralRate] = React.useState(10)
   const [recurringReferral, setRecurringReferral] = React.useState(false)
   const [referralSaving, setReferralSaving] = React.useState(false)
+  const [nodeSourceOpen, setNodeSourceOpen] = React.useState(false)
+  const [nodeSourceValue, setNodeSourceValue] = React.useState("mix")
+  const [nodeSourceSaving, setNodeSourceSaving] = React.useState(false)
   const [referralDetails, setReferralDetails] = React.useState<ReferralDetails | null>(null)
   const [referralDetailsError, setReferralDetailsError] = React.useState("")
   const [giftBalanceOpen, setGiftBalanceOpen] = React.useState(false)
@@ -492,6 +495,32 @@ export function UserDetailPage() {
       toast({ type: "error", title: error instanceof Error ? error.message : "账户认领邮件发送失败" })
     } finally {
       setInviteSending(false)
+    }
+  }
+
+  function openNodeSourceDialog() {
+    setNodeSourceValue(user?.nodeSource || "mix")
+    setNodeSourceOpen(true)
+  }
+
+  async function saveNodeSource(nodeSource: string) {
+    if (!user) return
+    if (nodeSource === (user.nodeSource || "mix")) {
+      setNodeSourceOpen(false)
+      return
+    }
+    setNodeSourceSaving(true)
+    try {
+      await runAsync(async () => {
+        await putJson(`/api/users/${encodeURIComponent(user.id)}/node-source`, { nodeSource })
+        await reload(["users"], { silent: true })
+        setNodeSourceOpen(false)
+        toast({ type: "success", title: "节点来源已保存", description: "用户下次更新订阅后生效" })
+      }, "保存节点来源...")
+    } catch (error) {
+      toast({ type: "error", title: error instanceof Error ? error.message : "保存失败" })
+    } finally {
+      setNodeSourceSaving(false)
     }
   }
 
@@ -929,6 +958,9 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
       <ArcDialog open={trafficResetOpen} onOpenChange={setTrafficResetOpen}>
         <ArcDialogContent title="确认重置用户流量？" description={`将清零 ${user.userId || user.email || "该用户"} 当前已使用流量，套餐额度、流量包和下次自动重置日期保持不变。操作完成后无法恢复。`}><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={trafficResetSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void resetTraffic() }} disabled={trafficResetSaving}>{trafficResetSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{trafficResetSaving ? "重置中..." : "确认重置流量"}</Button></ArcDialogClose></div></ArcDialogContent>
       </ArcDialog>
+      <ArcDialog open={nodeSourceOpen} onOpenChange={open => { if (!nodeSourceSaving) setNodeSourceOpen(open) }}>
+        <ArcDialogContent title="设置节点来源" description="决定订阅里下发哪套架构的节点。只影响订阅内容，用户在 3x-ui 和 node-hub 上的授权不变，两边的流量都会计费；用户更新订阅后生效。"><Select label="节点来源" value={nodeSourceValue} onValueChange={setNodeSourceValue} disabled={nodeSourceSaving} id="node-source" className="w-full" options={NODE_SOURCE_OPTIONS} /><div className="mt-4 flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button type="button" variant="secondary" disabled={nodeSourceSaving}>取消</Button></ArcDialogClose><ActionButton type="button" onClick={() => void saveNodeSource(nodeSourceValue)} label="保存节点来源" pendingLabel="保存中..." pending={nodeSourceSaving} /></div></ArcDialogContent>
+      </ArcDialog>
       <ArcDialog open={accountStatusOpen} onOpenChange={setAccountStatusOpen}>
         <ArcDialogContent title={user.accountStatus === "active" ? "确认停用账户？" : "确认恢复账户？"} description={user.accountStatus === "active" ? "停用后用户将无法登录，当前登录状态也会失效；订阅链接将返回停用提示，3x-ui 客户端也会停用。" : "恢复后用户可以重新登录账户；有效期内的自研线路 3x-ui 客户端也会恢复，原有订阅和余额保持不变。"}><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={accountStatusSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button variant="primary" onClick={event => { event.preventDefault(); void toggleAccountStatus() }} disabled={accountStatusSaving}>{accountStatusSaving ? <Loader2 className="animate-spin" /> : <Power />}{accountStatusSaving ? "处理中..." : user.accountStatus === "active" ? "确认停用" : "确认恢复"}</Button></ArcDialogClose></div></ArcDialogContent>
       </ArcDialog>
@@ -950,6 +982,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "disabled" ? "已停用" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
               <Info label="用户类型" value={userTypeLabels[userType(user)]} />
               <Info label="钱包余额" value={walletBalance === null ? "-" : formatMoney(walletBalance)} />
+              {user.lineType === "self_hosted" ? <Info label="节点来源" value={NODE_SOURCE_LABELS[user.nodeSource || "mix"]} /> : null}
             </div>
           </div>{user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : <ProfileActions items={[
             ...(user.accountStatus === "active" && user.accountId ? [{ label: "人工收款", icon: <Banknote />, onSelect: openManualPaymentDialog }] : []),
@@ -958,6 +991,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               ...(user.lineType === "self_hosted" ? [] : [{ label: "切换到自研线路", icon: <Network />, onSelect: () => setXuiOpen(true) }]),
               ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "管理个人定制入站", icon: <Network />, onSelect: () => void openCustomInbounds() }] : []),
               ...(user.lineType === "self_hosted" ? [{ label: "更改套餐", icon: <ArrowRightLeft />, onSelect: openPlanDialog }] : []),
+              ...(user.lineType === "self_hosted" ? [{ label: "设置节点来源", icon: <Network />, onSelect: openNodeSourceDialog }] : []),
               ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "重置流量", icon: <RotateCcw />, onSelect: () => setTrafficResetOpen(true) }] : []),
               ...(user.lineType === "self_hosted" ? [
                 { label: "单向赠送流量", icon: <Gift />, onSelect: () => { setTrafficGiftError(""); setTrafficGiftOpen(true) } },
@@ -1067,6 +1101,13 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
     </div>
   )
 }
+
+const NODE_SOURCE_OPTIONS = [
+  { value: "mix", label: "mix（3x-ui + node-hub）" },
+  { value: "3xui", label: "3xui（仅 3x-ui 面板节点）" },
+  { value: "nodehub", label: "nodehub（仅 node-hub 节点）" }
+]
+const NODE_SOURCE_LABELS: Record<string, string> = { mix: "mix", "3xui": "3xui", nodehub: "nodehub" }
 
 type ProfileAction = { label: string; icon: React.ReactNode; onSelect: () => void; destructive?: boolean; disabled?: boolean }
 

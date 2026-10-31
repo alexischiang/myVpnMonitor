@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-25
-- Current Objective: 赠送时长改为基于当前生效周期性套餐并先预览后确认
+- Last Updated: 2026-10-31
+- Current Objective: node-hub 用户节点来源与分组侧栏已上线
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -522,8 +522,26 @@
 
 - 2026-10-25: npm run check、verify:catalog-v2、verify:fast、git diff --check 通过；/users/detail 桌面与移动端验证无法赠送提示与预览流程，无新增控制台错误
 
+- 2026-10-25: npm run verify（含 test:hub：只用 node-hub 与 node-hub+3x-ui 两种模式）、npm run e2e:hub（真实 xboard-node + xray：VLESS、REALITY Vision、SS2022，计费误差 <0.01%，限速、耗尽、恢复、停用节点）、npm run verify:harness、git diff --check 通过
+
+- 2026-10-26: 2026-10-26: 修复 REALITY 只给私钥时公钥推导在 Node 24.22 失败、节点创建后 hub overview 缓存返回旧快照；npm run verify（Windows）通过；Docker Linux 容器内 e2e:hub（源码编译 xboard-node 0a29338 + Xray 26.10.21）与 test:hub 通过
+
+- 2026-10-26: 2026-10-26: npm run verify、verify:harness、git diff --check 通过；浏览器在隔离环境（真实测试 VPS 经 cloudflared 隧道接入）验证 /node-hub 四个标签页、机器与节点增删改、七种协议表单、用户限速和未配置状态，桌面与手机、浅色与深色，console_errors/page_errors 为空
+
+- 2026-10-26: 2026-10-26: npm run verify、verify:harness、git diff --check 通过；Docker e2e:hub 推送模式（轮询 300 s）耗尽 3 ms/恢复 4 ms/停用节点 1 s，纯轮询模式也通过；浏览器经公网隧道验证 Docker xboard-node 显示实时推送、停用节点 1.1 s 生效，console_errors/page_errors 为空
+
+- 2026-10-26: npm run verify、npm run test:hub、git diff --check 通过；test-node-hub-app.js 先复现老用户拿到随机 uuid，修复后通过
+
+- 2026-10-26: npm run verify、git diff --check 通过；test-node-hub-app.js 先复现赠送/重置流量失败，修复后两种模式通过
+
+- 2026-10-27: 混合模式真实面板：修复 client.id 优先导致老用户全部被跳过；305/305 uuid 与面板一致、0 次写请求被拦、二次同步无变化、订阅合并 17 个面板节点 + hub 节点同 uuid；npm run verify、verify:harness、git diff --check 通过
+
+- 2026-10-31: 新增用户节点来源（PUT /api/users/:id/node-source，详情页「管理用户」里的「设置节点来源」弹窗，资料卡钱包余额下显示），迁移脚本 --port-offset / --add-to-line-groups；test-node-hub-app.js、test-node-hub.js 补充用例，待 npm run verify 与 /users/detail 浏览器验证
+
+- 2026-10-31: verify 各步骤通过（payment/hub 用隔离 schema），/users 与 /users/detail 浏览器验证无控制台错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/user-bills-card.tsx`, `src/types.ts`, `src/utils.ts`, `test-payment.js`, `test.js`
+- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `feature_list.json`, `scripts/migrate-xui-to-node-hub.js`, `server.js`, `src/components/arc/button/button.module.css`, `src/components/arc/button/button.tsx`, `src/components/features/app-layout.tsx`, `src/components/features/app-shell.tsx`, `src/components/features/app-sidebar.tsx`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/site-header.tsx`, `src/styles.css`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`
 - Known risks: none
-- Recommended Next Step: 无
+- Recommended Next Step: 在生产按需为用户设置节点来源并用 --port-offset 迁移

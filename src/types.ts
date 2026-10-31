@@ -110,6 +110,12 @@ export type User = {
   xuiSubId?: string
   xuiInboundIds?: number[]
   xuiExtraInboundIds?: number[]
+  /** node-hub: per-user speed limit override in Mbps (0 = unlimited); absent means the plan value applies. */
+  nodeSpeedLimitMbps?: number | null
+  /** Which architecture's nodes the subscription carries; absent means "mix" (3x-ui and node-hub). */
+  nodeSource?: "3xui" | "nodehub" | "mix"
+  hubNodeIds?: number[]
+  hubUuid?: string
   xuiManagementMode?: "import" | "link"
   xuiMigrationStatus?: "completed" | "activation_required" | "failed"
   xuiMigrationSource?: "linked_existing" | "created"
@@ -559,4 +565,72 @@ export type PaymentSettings = {
 export type AppMeta = {
   version?: string
   updatedAt?: string
+}
+
+// node-hub (node-hub/app.js overview and store rows). Node settings keep Xboard's snake_case protocol_settings.
+export type NodeHubLoadStatus = {
+  cpu?: number
+  mem?: { used: number; total: number }
+  disk?: { used: number; total: number }
+  swap?: { used: number; total: number }
+  net?: { in_speed?: number; out_speed?: number }
+  updatedAt?: string
+}
+
+export type NodeHubLoadSample = { recordedAt: string; cpu: number; memTotal: number; memUsed: number; diskTotal: number; diskUsed: number; netIn: number | null; netOut: number | null }
+
+export type NodeHubMachine = {
+  id: number
+  name: string
+  notes: string
+  host: string
+  isActive: boolean
+  lastSeenAt: string
+  loadStatus: NodeHubLoadStatus | null
+  online?: boolean
+  /** The machine holds a live WebSocket push channel to node-hub. */
+  pushConnected?: boolean
+  guid?: string
+  nodeIds?: number[]
+  createdAt: string
+  updatedAt: string
+  /** Only on create, reset-token and the single-machine read. */
+  token?: string
+  installCommand?: string
+  loadHistory?: NodeHubLoadSample[]
+}
+
+export type NodeHubProtocol = "vless" | "vmess" | "trojan" | "shadowsocks" | "hysteria" | "tuic" | "anytls"
+
+export type NodeHubNode = {
+  id: number
+  machineId: number
+  name: string
+  protocol: NodeHubProtocol
+  host: string
+  serverPort: number
+  listenIp: string
+  settings: Record<string, unknown>
+  enabled: boolean
+  sortOrder: number
+  region: string
+  networkLevel: string
+  inboundType: "package" | "custom"
+  lastCheckAt: string
+  lastPushAt: string
+  metrics: Record<string, unknown> | null
+  loadStatus: NodeHubLoadStatus | null
+  guid?: string
+  machineName?: string
+  online?: boolean
+  userCount?: number
+  onlineCount?: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type NodeHubOverview = {
+  settings: { publicUrl: string; pushInterval: number; pullInterval: number; onlineGraceSeconds: number; websocket?: boolean }
+  machines: NodeHubMachine[]
+  nodes: NodeHubNode[]
 }

@@ -123,6 +123,16 @@ XUI_TIMEOUT_MS=15000
 
 自然月任务每月可重复调用，`userId + month` 保证只执行一次；付费流程只能在验签并确认订单已支付后调用，`paymentOrderId` 保证回调重试不会重复执行。成功时接口会同时清零 3x-ui Client 和本站加权流量账本，响应中的 `replayed` 表示是否命中幂等结果。
 
+## node-hub（xboard-node）
+
+`node-hub/` 是替代 3x-ui 主面板 / 子面板的节点控制服务：每台 VPS 运行 xboard-node，统一连接 node-hub，本站负责授权、计费、限速和订阅。未配置 `NODE_HUB_URL` 时完全不影响现有 3x-ui 行为。部署、迁移和限制见 [docs/agent/node-hub.md](docs/agent/node-hub.md)。
+
+```bash
+npm run start:hub            # 启动 node-hub（默认 127.0.0.1:3003）
+npm run migrate:xui-to-hub -- --node-guid <guid>   # 迁移一台 3x-ui VPS（默认只打印计划）
+npm run test:hub             # node-hub 测试
+```
+
 ## 常用命令
 
 ```bash
