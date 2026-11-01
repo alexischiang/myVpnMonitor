@@ -62,7 +62,7 @@ export function nodeSecurityLabel(node: Pick<NodeHubNode, "protocol" | "settings
 
 export function defaultNodeSettings(protocol: NodeHubProtocol): Settings {
   switch (protocol) {
-    case "vless": return { network: "tcp", tls: 2, flow: "xtls-rprx-vision", reality_settings: { server_name: "www.microsoft.com", server_port: 443, private_key: "", short_id: "" } }
+    case "vless": return { network: "tcp", tls: 2, flow: "xtls-rprx-vision", reality_settings: { server_name: "", server_port: 443, private_key: "", short_id: "" } }
     case "vmess": return { network: "tcp", tls: 0 }
     case "trojan": return { network: "tcp", tls: 1, tls_settings: { server_name: "" } }
     case "shadowsocks": return { cipher: "2022-blake3-aes-128-gcm" }
@@ -175,7 +175,7 @@ export function NodeHubNodeForm({ draft, onChange, machines, advancedText, onAdv
 
   function changeTls(next: number) {
     let settings = write(draft.settings, ["tls"], next)
-    if (next === 2 && !read(settings, ["reality_settings"])) settings = write(settings, ["reality_settings"], { server_name: "www.microsoft.com", server_port: 443, private_key: "", short_id: "" })
+    if (next === 2 && !read(settings, ["reality_settings"])) settings = write(settings, ["reality_settings"], { server_name: "", server_port: 443, private_key: "", short_id: "" })
     if (next === 1 && !read(settings, ["tls_settings"])) settings = write(settings, ["tls_settings"], { server_name: "" })
     if (next === 0 || network !== "tcp") settings = write(settings, ["flow"], protocol === "vless" ? "" : undefined)
     onChange({ ...draft, settings })
@@ -224,9 +224,9 @@ export function NodeHubNodeForm({ draft, onChange, machines, advancedText, onAdv
         <SwitchField id="node-tls-insecure" label="允许不安全证书" description="客户端跳过证书校验，只用于自签名证书。" checked={read(s, ["tls_settings", "allow_insecure"]) === true} onCheckedChange={checked => set(["tls_settings", "allow_insecure"], checked || undefined)} />
       </> : null}
       {tls === 2 ? <>
-        <Input label="伪装域名（server_name）" id="node-reality-sni" value={str(read(s, ["reality_settings", "server_name"]))} onChange={event => set(["reality_settings", "server_name"], event.target.value.trim())} placeholder="www.microsoft.com" />
+        <Input label="伪装域名（server_name）" id="node-reality-sni" description="用 3x-ui 节点上验证可用的伪装域名；www.microsoft.com 会让合法连接握手失败。" value={str(read(s, ["reality_settings", "server_name"]))} onChange={event => set(["reality_settings", "server_name"], event.target.value.trim())} placeholder="dl.example.com" />
         <NumberField size="md" label="伪装目标端口" id="node-reality-port" value={Number(read(s, ["reality_settings", "server_port"]) || 443)} onValueChange={value => set(["reality_settings", "server_port"], value)} min={1} max={65535} locale="zh-CN" formatOptions={{ useGrouping: false }} />
-        <Input label="伪装目标（dest）" id="node-reality-dest" description="留空时使用 伪装域名:端口。" value={str(read(s, ["reality_settings", "dest"]))} onChange={event => set(["reality_settings", "dest"], event.target.value.trim() || undefined)} placeholder="www.microsoft.com:443" />
+        <Input label="伪装目标（dest）" id="node-reality-dest" description="留空时使用 伪装域名:端口。" value={str(read(s, ["reality_settings", "dest"]))} onChange={event => set(["reality_settings", "dest"], event.target.value.trim() || undefined)} placeholder="dl.example.com:443" />
         <Input label="Short ID" id="node-reality-sid" value={str(read(s, ["reality_settings", "short_id"]))} onChange={event => set(["reality_settings", "short_id"], event.target.value.trim())} placeholder="不超过 16 位十六进制" maxLength={16} />
         <Input label="私钥" id="node-reality-private" value={str(read(s, ["reality_settings", "private_key"]))} onChange={event => onChange({ ...draft, settings: write(write(draft.settings, ["reality_settings", "private_key"], event.target.value.trim()), ["reality_settings", "public_key"], undefined) })} placeholder="点击生成密钥对" autoComplete="off" spellCheck={false} />
         <Input label="公钥" id="node-reality-public" description="保存时由私钥推导，写进用户订阅。" value={str(read(s, ["reality_settings", "public_key"]))} readOnly placeholder="保存后生成" />

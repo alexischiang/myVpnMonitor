@@ -1,6 +1,6 @@
 # node-hub：用本站控制每台 VPS 上的 xboard-node
 
-node-hub 让本站直接管理部署在每台 VPS 上的 [xboard-node](https://github.com/cedar2025/xboard-node)（fork：`alexischiang/nexora-node`，节点代码未改），替代 3x-ui 主面板 / 子面板架构。xboard-node 使用 Xboard 的原生节点 API，无需二次开发。
+node-hub 让本站直接管理部署在每台 VPS 上的 [xboard-node](https://github.com/cedar2025/xboard-node)（安装和升级都用 fork `alexischiang/nexora-node`：在上游 v1.13 上修复了「无用户启动后收不到用户」，见下文已知限制），替代 3x-ui 主面板 / 子面板架构。xboard-node 使用 Xboard 的原生节点 API，无需二次开发。
 
 ## 架构
 
@@ -127,6 +127,8 @@ xboard-node 启动时调 handshake；`NODE_HUB_PUBLIC_URL` 已设置且 `NODE_HU
 - xboard-node 的机器模式只在启动时 handshake 一次：已经在跑的机器要重启 xboard-node（`systemctl restart xboard-node`）才会切到推送。
 - 限速按节点生效；全局设备数只在 sing-box 内核上生效，xray 内核按单节点计算。
 - 3x-ui 中多个 shortId / serverName 只保留第一个。
+- 节点在没有任何授权用户时创建，xboard-node（v1.13）不启动内核；之后推送来的用户（`sync.users`、`add` 增量、只有用户变化的 REST 重新拉取）都会被 `ensureRunning()` 丢掉，因为它检查的 `lastUsers` 要等内核启动后才写入。节点会一直显示「内核未运行」，直到 `systemctl restart xboard-node`。fork `alexischiang/nexora-node` 已修复（内核空闲时先记下推送来的用户再启动内核），hub 的安装命令默认从 fork 安装；仍在用上游二进制的机器，先把节点加入线路组、确认有用户授权，再执行安装命令或重启 xboard-node。
+- REALITY 伪装域名不要用 `www.microsoft.com`：xray 和 sing-box 内核下合法连接都会以 `REALITY: processed invalid connection ... handshake did not complete successfully` 失败（2026-10-31 在新加坡测试节点上复现，换成 3x-ui 节点使用的伪装域名后立即连通）。新建节点表单不再预填它。
 
 ## 本地验证
 
