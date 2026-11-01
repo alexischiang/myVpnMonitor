@@ -5048,7 +5048,7 @@
       "id": "node-hub-proxy-protocol",
       "name": "Accept PROXY protocol on hub nodes behind a port-forwarding relay",
       "description": "For an entry VPS that forwards to landing VPS with realm, the landing node needs the users real address for device limits and online IPs. Hub nodes gain accept_proxy_protocol (VLESS, VMess, Trojan, Shadowsocks), passed to xboard-node as accept_proxy_protocol; it is only accepted with the Xray kernel because xboard-node does not apply it on sing-box. The node form shows a 接受 PROXY protocol switch under 内核 that also sets the kernel to Xray. docs/agent/node-hub.md describes the relay setup.",
-      "status": "in_progress",
+      "status": "passing",
       "ui": true,
       "dependencies": [
         "node-hub-admin-ui"
@@ -5059,7 +5059,8 @@
         "A user connecting through the gomami_hk realm relay reaches the legend-sg landing node, and the landing node sees the user address instead of the relay address."
       ],
       "verification": [
-        "2026-11-01: before the change normalizeNodeInput dropped accept_proxy_protocol (reproduced); test-node-hub.js covers pass-through, default off and rejection for no/sing-box kernel and TUIC. npm run check, test:hub on an isolated schema, verify:fast pass. Pending: relay test gomami_hk -> legend-sg."
+        "2026-11-01: before the change normalizeNodeInput dropped accept_proxy_protocol (reproduced); test-node-hub.js covers pass-through, default off and rejection for no/sing-box kernel and TUIC. npm run check, test:hub on an isolated schema, verify:fast pass. Pending: relay test gomami_hk -> legend-sg.",
+        "2026-11-01 production (97bc924, nexora-hub restarted): node 4 「[hub] 新加坡 中转」 on legend-sg saved with kernel xray and accept_proxy_protocol, host 141.11.77.154:61001, legend-sg ufw allows 61001 only from gomami_hk. realm 2.9.6 on gomami_hk (systemd realm.service, /etc/realm/config.toml, send_proxy v2) forwards 61001 to 217.116.170.144:61001. A test client on legend-sg through gomami:61001 got 204 in 0.28 s, exit IP 217.116.170.144, and the landing access log showed the connection from 217.116.170.144 (the client) rather than 141.11.77.154 (the relay). Temporary entitlement, client config and info logging were reverted; gomami 3x-ui on 443 unaffected."
       ],
       "browser_verification": {
         "routes": [
