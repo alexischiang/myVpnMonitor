@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-10-31
-- Current Objective: node-hub 用户节点来源与分组侧栏已上线
+- Last Updated: 2026-11-01
+- Current Objective: node-hub 改为从 nexora-node fork 安装（v1.13.1 修复 0 用户节点不起内核），REALITY 表单不再预填 www.microsoft.com，已上线
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -540,8 +540,10 @@
 
 - 2026-10-31: verify 各步骤通过（payment/hub 用隔离 schema），/users 与 /users/detail 浏览器验证无控制台错误
 
+- 2026-11-01: legend-sg 升级 v1.13.1 后 0 用户节点授权后 1 秒内起内核且未重启；production ddccbd0 部署成功，安装命令指向 fork
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `feature_list.json`, `scripts/migrate-xui-to-node-hub.js`, `server.js`, `src/components/arc/button/button.module.css`, `src/components/arc/button/button.tsx`, `src/components/features/app-layout.tsx`, `src/components/features/app-shell.tsx`, `src/components/features/app-sidebar.tsx`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/site-header.tsx`, `src/styles.css`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`
+- Files: none
 - Known risks: none
-- Recommended Next Step: 在生产按需为用户设置节点来源并用 --port-offset 迁移
+- Recommended Next Step: fork 的 ci.yml 镜像命名空间改动需带 workflow 权限的令牌推送；deploy.yml 不重启 nexora-hub，改 node-hub 代码后需手动 pm2 restart nexora-hub

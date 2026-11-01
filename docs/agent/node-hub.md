@@ -100,6 +100,14 @@ npm run migrate:xui-to-hub -- --node-guid <guid> --port-offset 10000 --add-to-li
 - 个人定制入站用户会被列出，切换后在用户页重新分配新的 hub 入站 id。
 - 每次迁移一台，确认流量、在线、计费正常后再迁移下一台；3x-ui 回退只需把线路组 key 改回。
 
+## 端口转发中转（入口机 → 落地机）
+
+入口机只做 TCP 转发（realm），用户的加密流量原样到落地机上的 hub 节点，入口机不解密。
+
+- 落地节点：「连接地址」填入口机的 IP 或域名（订阅写这个地址），端口与入口机转发端口一致（订阅端口就是监听端口）；打开「接受 PROXY protocol」（需要 Xray 内核，表单会自动切换），节点才能拿到用户真实 IP，设备数限制和在线 IP 才准确。开启后只接受带 PROXY 头的连接，直连会失败，所以落地机防火墙只放行入口机的 IP。
+- 入口机：realm 每个落地节点一条规则 `listen = "0.0.0.0:<端口>"`、`remote = "<落地机IP>:<端口>"`、`send_proxy = true`、`send_proxy_version = 2`；防火墙放行这些端口。
+- 流量、在线、计费都记在落地节点上。sing-box 内核不处理 PROXY protocol（xboard-node 里这段被注释），所以 hub 拒绝在非 Xray 内核上开启。
+
 ## 实时推送（WebSocket）
 
 xboard-node 启动时调 handshake；`NODE_HUB_PUBLIC_URL` 已设置且 `NODE_HUB_WEBSOCKET` 不为 `false` 时，node-hub 返回 `ws_url`（`wss://<公开地址>/api/v2/server/ws`），机器用自己的 token 建一条长连接，之后不再轮询配置和用户。协议与 Xboard 的 Workerman 服务一致：

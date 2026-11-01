@@ -152,6 +152,14 @@ function unitChecks() {
   assert.throws(() => nodeConfig.normalizeNodeInput({ ...vless, protocol: "wireguard" }), /不支持的协议/);
   assert.throws(() => nodeConfig.normalizeNodeInput({ name: "T", protocol: "trojan", host: "a.b", serverPort: 1, settings: { tls: 0 } }), /Trojan/);
 
+  // A node behind a port-forwarding relay accepts PROXY protocol; only the xray kernel applies it.
+  const relayed = nodeConfig.normalizeNodeInput({ ...vless, settings: { ...vless.settings, kernel_type: "xray", accept_proxy_protocol: true } });
+  assert.equal(nodeConfig.buildNodeConfig({ ...relayed, id: 2 }).accept_proxy_protocol, true, "PROXY protocol reaches the node config");
+  assert.equal(nodeConfig.buildNodeConfig({ ...vless, id: 1 }).accept_proxy_protocol, undefined, "PROXY protocol is off unless enabled");
+  assert.throws(() => nodeConfig.normalizeNodeInput({ ...vless, settings: { ...vless.settings, accept_proxy_protocol: true } }), /Xray/);
+  assert.throws(() => nodeConfig.normalizeNodeInput({ ...vless, settings: { ...vless.settings, kernel_type: "singbox", accept_proxy_protocol: true } }), /Xray/);
+  assert.throws(() => nodeConfig.normalizeNodeInput({ name: "T5", protocol: "tuic", host: "a.b", serverPort: 1, settings: { tls: { server_name: "a.b" }, kernel_type: "xray", accept_proxy_protocol: true } }), /PROXY protocol/);
+
   const built = nodeConfig.buildNodeConfig({ ...vless, id: 1 });
   assert.deepEqual(
     { protocol: built.protocol, port: built.server_port, tls: built.tls, flow: built.flow, sni: built.tls_settings.server_name, pk: built.tls_settings.private_key, sid: built.tls_settings.short_id, dest: built.tls_settings.dest },
