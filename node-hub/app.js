@@ -8,11 +8,14 @@
 //   allowRemoteInternal is set. Only /api/ should be exposed through the public reverse proxy.
 // - /api/v2/server/ws: WebSocket push to xboard-node (node-hub/push.js); attach handler.handleUpgrade
 //   to the server's "upgrade" event. The handshake advertises it when publicUrl is set.
+// - /api/v1/server/relay/*: relay machines (node-hub/relay.js) fetch their install script and pull
+//   their realm rules here (relay_id + per-relay token).
 const crypto = require("crypto");
 const { URL } = require("url");
 const { buildNodeConfig, clashProxy, normalizeNodeInput, generateRealityKeyPair } = require("./node-config");
 const { nodeGuid } = require("./store");
 const { createNodeHubPush, wsUrlFor } = require("./push");
+const { realmConfig, configHash, relayInstallCommand, INSTALL_SCRIPT, CONFIG_PATH: RELAY_CONFIG_PATH, INSTALL_PATH: RELAY_INSTALL_PATH } = require("./relay");
 
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
@@ -253,8 +256,41 @@ function createNodeHubHandler({
     throw httpError(404, "Not found");
   }
 
+  // A relay pulls every 30 seconds; three missed pulls is offline.
+  const RELAY_GRACE_MS = 90 * 1000;
+
+  async function relayView(relay, now = Date.now()) {
+    const { token, ...rest } = relay;
+    const endpoints = await store.relayEndpoints(relay.id);
+    const expected = configHash(realmConfig(relay, relay.isActive ? endpoints : []));
+    return {
+      ...rest,
+      online: relay.isActive && Boolean(relay.lastSeenAt) && now - Date.parse(relay.lastSeenAt) <= RELAY_GRACE_MS,
+      realmActive: relay.status?.realm === "active",
+      synced: relay.status?.applied === expected,
+      endpointCount: endpoints.length,
+      endpoints
+    };
+  }
+
+  // A node with relay entries is served only through them, so it must accept the relays' PROXY
+  // protocol header (xray kernel) and its machine needs an address for the relays to forward to.
+  async function relayModeInput(input, relayIds) {
+    if (!relayIds.length) return input;
+    for (const relayId of relayIds) if (!(await store.getRelay(relayId))) throw httpError(404, "中转机不存在。");
+    const machine = input.machineId ? await store.getMachine(input.machineId) : null;
+    if (!machine?.host) throw httpError(400, "经中转的节点需要所属机器填写地址，中转机会转发到这个地址。");
+    return { ...input, settings: { ...(input.settings || {}), kernel_type: "xray", accept_proxy_protocol: true } };
+  }
+
+  function relayIdsFrom(value) {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value)) throw httpError(400, "relayIds 必须是数组。");
+    return [...new Set(value.map(Number).filter(id => Number.isSafeInteger(id) && id > 0))];
+  }
+
   async function overview() {
-    const [machines, nodes, counts] = await Promise.all([store.listMachines(), store.listNodes(), store.nodeCounts()]);
+    const [machines, nodes, counts, relays, entries] = await Promise.all([store.listMachines(), store.listNodes(), store.nodeCounts(), store.listRelays(), store.listNodeRelays()]);
     const now = Date.now();
     const machinesById = new Map(machines.map(machine => [machine.id, machine]));
     const pushed = push ? push.status() : { machineIds: [], nodeIds: [] };
@@ -273,8 +309,10 @@ function createNodeHubHandler({
         machineName: machinesById.get(node.machineId)?.name || "",
         online: node.enabled && nodeOnline(node, now),
         userCount: counts[node.id]?.users || 0,
-        onlineCount: counts[node.id]?.online || 0
-      }))
+        onlineCount: counts[node.id]?.online || 0,
+        relays: entries.filter(entry => entry.nodeId === node.id)
+      })),
+      relays: await Promise.all(relays.map(relay => relayView(relay, now)))
     };
   }
 
@@ -321,18 +359,52 @@ function createNodeHubHandler({
       return send(res, 200, { ...machine, installCommand: installCommand({ installerUrl, publicUrl, machine }) });
     }
 
+    if (path === "/internal/relays" && method === "GET") return send(res, 200, (await overview()).relays);
+    if (path === "/internal/relays" && method === "POST") {
+      const relay = await store.createRelay(body);
+      return send(res, 201, { ...(await relayView(relay)), token: relay.token, installCommand: relayInstallCommand({ publicUrl, relay }) });
+    }
+    if ((match = path.match(/^\/internal\/relays\/(\d+)$/))) {
+      if (method === "GET") {
+        const relay = await store.getRelay(match[1]);
+        if (!relay) throw httpError(404, "中转机不存在。");
+        return send(res, 200, { ...(await relayView(relay)), installCommand: relayInstallCommand({ publicUrl, relay }) });
+      }
+      if (method === "PUT") {
+        const relay = await store.updateRelay(match[1], body);
+        if (!relay) throw httpError(404, "中转机不存在。");
+        return send(res, 200, await relayView(relay));
+      }
+      if (method === "DELETE") {
+        if (!(await store.deleteRelay(match[1]))) throw httpError(404, "中转机不存在。");
+        return send(res, 200, { ok: true });
+      }
+    }
+    if ((match = path.match(/^\/internal\/relays\/(\d+)\/reset-token$/)) && method === "POST") {
+      const relay = await store.resetRelayToken(match[1]);
+      if (!relay) throw httpError(404, "中转机不存在。");
+      return send(res, 200, { ...(await relayView(relay)), token: relay.token, installCommand: relayInstallCommand({ publicUrl, relay }) });
+    }
+
     if (path === "/internal/nodes" && method === "GET") return send(res, 200, (await overview()).nodes);
     if (path === "/internal/nodes" && method === "POST") {
       const machineId = body.machineId === null || body.machineId === undefined || body.machineId === "" ? null : Number(body.machineId);
       if (machineId === null && !serverToken) throw httpError(400, "请选择节点所属的机器（未配置 NODE_HUB_SERVER_TOKEN 时只支持机器模式）。");
-      const node = await store.createNode(machineId, normalizeNodeInput(body));
-      return send(res, 201, node);
+      const relayIds = relayIdsFrom(body.relayIds) || [];
+      const node = await store.createNode(machineId, normalizeNodeInput(await relayModeInput({ ...body, machineId }, relayIds)));
+      return send(res, 201, { ...node, relays: await store.setNodeRelays(node.id, relayIds) });
     }
     if ((match = path.match(/^\/internal\/nodes\/(\d+)$/))) {
       const existing = await store.getNode(match[1]);
       if (!existing) throw httpError(404, "节点不存在。");
-      if (method === "GET") return send(res, 200, existing);
-      if (method === "PUT") return send(res, 200, await store.updateNode(existing.id, normalizeNodeInput({ ...existing, ...body, settings: body.settings ?? existing.settings }, existing)));
+      if (method === "GET") return send(res, 200, { ...existing, relays: await store.listNodeRelays(existing.id) });
+      if (method === "PUT") {
+        // relayIds absent (e.g. the enable/disable toggle) keeps the node's current entries.
+        const relayIds = relayIdsFrom(body.relayIds) ?? (await store.listNodeRelays(existing.id)).map(entry => entry.relayId);
+        const merged = await relayModeInput({ ...existing, ...body, machineId: existing.machineId, settings: body.settings ?? existing.settings }, relayIds);
+        const node = await store.updateNode(existing.id, normalizeNodeInput(merged, existing));
+        return send(res, 200, { ...node, relays: await store.setNodeRelays(existing.id, relayIds) });
+      }
       if (method === "DELETE") {
         await store.deleteNode(existing.id);
         return send(res, 200, { ok: true });
@@ -365,10 +437,33 @@ function createNodeHubHandler({
       if (!user) return send(res, 200, { proxies: [] });
       const wanted = new Set(user.nodeIds);
       const nodes = (await store.listNodes({ enabledOnly: true })).filter(node => wanted.has(node.id));
-      return send(res, 200, { uuid: user.uuid, proxies: nodes.map(node => ({ nodeId: node.id, guid: nodeGuid(node), proxy: clashProxy(node, user.uuid) })).filter(item => item.proxy) });
+      const entries = await store.listNodeRelays();
+      // A relay-mode node is listed once per active relay (address and port of the relay) and never
+      // directly: it only accepts connections that carry the relay's PROXY protocol header.
+      const proxies = nodes.flatMap(node => {
+        const relays = entries.filter(entry => entry.nodeId === node.id);
+        if (!relays.length) return [{ nodeId: node.id, guid: nodeGuid(node), proxy: clashProxy(node, user.uuid) }];
+        return relays.filter(entry => entry.relayActive).map(entry => ({ nodeId: node.id, relayId: entry.relayId, guid: nodeGuid(node), proxy: clashProxy({ ...node, host: entry.relayHost, serverPort: entry.listenPort }, user.uuid, `${node.name} · ${entry.relayName}`) }));
+      });
+      return send(res, 200, { uuid: user.uuid, proxies: proxies.filter(item => item.proxy) });
     }
 
     throw httpError(404, "Not found");
+  }
+
+  // The relay's sync pulls its realm rules here and reports realm's state and the rules it applied.
+  async function handleRelayConfig(res, url) {
+    const relay = await store.authenticateRelay(url.searchParams.get("relay_id"), url.searchParams.get("token"));
+    if (!relay) throw httpError(401, "Relay not found or invalid token");
+    await store.recordRelaySeen(relay.id, {
+      realm: String(url.searchParams.get("realm") || "unknown").slice(0, 32),
+      applied: String(url.searchParams.get("applied") || "").slice(0, 64),
+      reportedAt: new Date().toISOString()
+    });
+    // A disabled relay gets no rules, so its sync stops realm instead of forwarding stale ones.
+    const text = realmConfig(relay, relay.isActive ? await store.relayEndpoints(relay.id) : []);
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-config-hash": configHash(text) });
+    res.end(text);
   }
 
   async function nodeHubHandler(req, res) {
@@ -380,6 +475,11 @@ function createNodeHubHandler({
         if (req.method !== "GET") push?.schedule();
         return;
       }
+      if (url.pathname === RELAY_INSTALL_PATH && req.method === "GET") {
+        res.writeHead(200, { "content-type": "text/x-shellscript; charset=utf-8", "cache-control": "no-store" });
+        return res.end(INSTALL_SCRIPT);
+      }
+      if (url.pathname === RELAY_CONFIG_PATH && req.method === "GET") return await handleRelayConfig(res, url);
       if (url.pathname.startsWith("/api/v1/server/") || url.pathname.startsWith("/api/v2/server/")) return await handleNodeApi(req, res, url);
       if (url.pathname === "/health") return send(res, 200, { ok: true });
       throw httpError(404, "Not found");

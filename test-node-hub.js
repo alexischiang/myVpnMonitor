@@ -9,6 +9,7 @@ const path = require("node:path");
 const { Pool } = require("pg");
 const { NodeHubStore, chinaDateKey } = require("./node-hub/store");
 const { createNodeHubHandler } = require("./node-hub/app");
+const { configHash } = require("./node-hub/relay");
 const nodeConfig = require("./node-hub/node-config");
 const { convertXuiInbound } = require("./node-hub/xui-import");
 const { execFile } = require("node:child_process");
@@ -215,12 +216,92 @@ function xuiFixture(keys) {
   };
 }
 
+// Relay machines: CRUD, port allocation, relay-mode nodes, the realm rules a relay pulls and the
+// per-relay subscription entries. Uses its own landing machine, nodes and user.
+async function relayChecks({ base, internal }) {
+  const relayConfig = async (relay, query = {}) => {
+    const params = new URLSearchParams({ relay_id: String(relay.id), token: relay.token, ...query });
+    const response = await fetch(`${base}/api/v1/server/relay/config?${params}`);
+    return { status: response.status, text: await response.text(), hash: response.headers.get("x-config-hash") };
+  };
+  const hk = await internal("POST", "/internal/relays", { name: "香港中转", host: "203.0.113.9" });
+  assert.equal(hk.status, 201, JSON.stringify(hk.body));
+  assert.match(hk.body.token, /^[0-9a-f]{48}$/);
+  assert.equal(hk.body.installCommand, `curl -fsSL https://hub.example.com/api/v1/server/relay/install.sh | sudo bash -s -- --hub https://hub.example.com --relay-id ${hk.body.id} --token ${hk.body.token}`);
+  const gz = (await internal("POST", "/internal/relays", { name: "广州中转", host: "[2001:db8::9]" })).body;
+  assert.equal(gz.host, "2001:db8::9", "brackets around an IPv6 relay address are dropped");
+  assert.equal((await internal("POST", "/internal/relays", { name: "bad", host: "a b" })).status, 400);
+  assert.equal((await internal("GET", "/internal/relays")).body.every(relay => relay.token === undefined), true, "relay tokens are never listed");
+
+  const keys = (await internal("POST", "/internal/reality-keypair")).body;
+  const reality = { network: "tcp", tls: 2, flow: "xtls-rprx-vision", reality_settings: { server_name: "dl.example.com", private_key: keys.privateKey, short_id: keys.shortId } };
+  const noHost = (await internal("POST", "/internal/machines", { name: "no address" })).body;
+  const refused = await internal("POST", "/internal/nodes", { machineId: noHost.id, name: "x", protocol: "vless", host: "x", serverPort: 9000, settings: reality, relayIds: [hk.body.id] });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.message, /地址/, "relays need the landing machine address");
+  await internal("DELETE", `/internal/machines/${noHost.id}`);
+  const landing = (await internal("POST", "/internal/machines", { name: "落地", host: "198.51.100.7" })).body;
+  assert.equal((await internal("POST", "/internal/nodes", { machineId: landing.id, name: "hy", protocol: "hysteria", host: "x", serverPort: 9100, settings: { tls: { server_name: "x" } }, relayIds: [hk.body.id] })).status, 400, "relay mode needs a PROXY protocol capable protocol");
+  assert.equal((await internal("POST", "/internal/nodes", { machineId: landing.id, name: "x", protocol: "vless", host: "x", serverPort: 9101, settings: reality, relayIds: [999999] })).status, 404);
+
+  const one = await internal("POST", "/internal/nodes", { machineId: landing.id, name: "Relay 01", protocol: "vless", host: "198.51.100.7", serverPort: 9443, settings: reality, relayIds: [hk.body.id, gz.id] });
+  assert.equal(one.status, 201, JSON.stringify(one.body));
+  assert.equal(one.body.settings.accept_proxy_protocol, true, "relay mode turns PROXY protocol on");
+  assert.equal(one.body.settings.kernel_type, "xray");
+  assert.deepEqual(one.body.relays.map(entry => [entry.relayId, entry.listenPort]), [[hk.body.id, 61001], [gz.id, 61001]], "each relay has its own port space");
+  const two = (await internal("POST", "/internal/nodes", { machineId: landing.id, name: "Relay 02", protocol: "vless", host: "198.51.100.7", serverPort: 9444, settings: reality, relayIds: [hk.body.id] })).body;
+  assert.deepEqual(two.relays.map(entry => entry.listenPort), [61002]);
+  const moved = (await internal("PUT", `/internal/nodes/${one.body.id}`, { relayIds: [gz.id] })).body;
+  assert.deepEqual(moved.relays.map(entry => [entry.relayId, entry.listenPort]), [[gz.id, 61001]], "a kept relay keeps its port");
+  const three = (await internal("POST", "/internal/nodes", { machineId: landing.id, name: "Relay 03", protocol: "vless", host: "198.51.100.7", serverPort: 9445, settings: reality, relayIds: [hk.body.id] })).body;
+  assert.deepEqual(three.relays.map(entry => entry.listenPort), [61001], "a freed port is handed out again");
+  await internal("PUT", `/internal/nodes/${two.id}`, { enabled: false });
+  assert.deepEqual((await internal("GET", `/internal/nodes/${two.id}`)).body.relays.map(entry => entry.listenPort), [61002], "a save without relayIds keeps the entries");
+
+  // The rules a relay pulls.
+  assert.equal((await relayConfig({ ...hk.body, token: "0".repeat(48) })).status, 401);
+  const pulled = await relayConfig(hk.body, { realm: "inactive", applied: "none" });
+  assert.equal(pulled.status, 200);
+  assert.equal(pulled.hash, configHash(pulled.text));
+  assert.match(pulled.text, /send_proxy = true\nsend_proxy_version = 2/);
+  assert.match(pulled.text, /# node \d+ Relay 03\n\[\[endpoints\]\]\nlisten = "0\.0\.0\.0:61001"\nremote = "198\.51\.100\.7:9445"/);
+  assert.doesNotMatch(pulled.text, /Relay 02/, "a disabled node is not forwarded");
+  let view = (await internal("GET", `/internal/relays/${hk.body.id}`)).body;
+  assert.deepEqual([view.online, view.realmActive, view.synced, view.endpointCount], [true, false, false, 1]);
+  await relayConfig(hk.body, { realm: "active", applied: pulled.hash });
+  view = (await internal("GET", `/internal/relays/${hk.body.id}`)).body;
+  assert.deepEqual([view.realmActive, view.synced], [true, true], "the relay reports it applied the current rules");
+  assert.ok(view.installCommand.includes(`--relay-id ${hk.body.id}`));
+
+  // Subscriptions: one entry per relay, never the landing address.
+  await internal("PUT", `/internal/nodes/${one.body.id}`, { relayIds: [hk.body.id, gz.id] });
+  const user = (await internal("PUT", "/internal/users/relay-user", { email: "relay@example.test", nodeIds: [one.body.id], enabled: true })).body;
+  const proxies = async () => (await internal("GET", "/internal/subscription/relay-user")).body.proxies.map(item => [item.relayId, item.proxy.name, item.proxy.server, item.proxy.port, item.proxy.uuid]);
+  const hkPort = (await internal("GET", `/internal/nodes/${one.body.id}`)).body.relays.find(entry => entry.relayId === hk.body.id).listenPort;
+  assert.deepEqual(await proxies(), [[hk.body.id, "Relay 01 · 香港中转", "203.0.113.9", hkPort, user.uuid], [gz.id, "Relay 01 · 广州中转", "2001:db8::9", 61001, user.uuid]]);
+  await internal("PUT", `/internal/relays/${hk.body.id}`, { isActive: false });
+  assert.deepEqual((await proxies()).map(item => item[0]), [gz.id], "a disabled relay leaves the subscription");
+  assert.doesNotMatch((await relayConfig(hk.body)).text, /\[\[endpoints\]\]/, "a disabled relay gets no rules, so realm stops");
+  assert.equal((await internal("DELETE", `/internal/relays/${gz.id}`)).status, 409, "a relay in use cannot be deleted");
+  await internal("PUT", `/internal/nodes/${one.body.id}`, { relayIds: [] });
+  assert.deepEqual((await proxies()).map(item => [item[0], item[2], item[3]]), [[undefined, "198.51.100.7", 9443]], "without relays the node is listed directly again");
+  for (const node of [one.body, two, three]) await internal("DELETE", `/internal/nodes/${node.id}`);
+  assert.equal((await internal("DELETE", `/internal/relays/${gz.id}`)).status, 200);
+  assert.equal((await internal("DELETE", `/internal/relays/${hk.body.id}`)).status, 200);
+  await internal("DELETE", `/internal/machines/${landing.id}`);
+
+  const script = await fetch(`${base}/api/v1/server/relay/install.sh`);
+  assert.equal(script.status, 200);
+  assert.match(script.headers.get("content-type"), /shellscript/);
+  assert.match(await script.text(), /^#!\/usr\/bin\/env bash[\s\S]*REALM_VERSION="v2\.9\.6"[\s\S]*nexora-relay-sync/);
+}
+
 async function main() {
   unitChecks();
   const databaseUrl = testDatabaseUrl();
   if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required for node-hub tests");
   const pool = new Pool({ connectionString: databaseUrl });
-  await pool.query("DROP TABLE IF EXISTS nh_presence, nh_machine_load, nh_report_ids, nh_users, nh_nodes, nh_machines, nh_schema_migrations CASCADE");
+  await pool.query("DROP TABLE IF EXISTS nh_node_relays, nh_relays, nh_presence, nh_machine_load, nh_report_ids, nh_users, nh_nodes, nh_machines, nh_schema_migrations CASCADE");
   await pool.query("DELETE FROM xui_daily_traffic WHERE node_guid LIKE 'hub-%'").catch(() => {});
   const store = new NodeHubStore(pool);
   await store.init();
@@ -429,8 +510,10 @@ async function main() {
     await appStore.close?.();
     fs.unlinkSync(fixturePath);
 
+    await relayChecks({ base, internal });
+
     if (process.env.NODE_HUB_CONTRACT_OUT) fs.writeFileSync(process.env.NODE_HUB_CONTRACT_OUT, JSON.stringify({ config, configHy: await new XboardNodeClient(base, { token: "global-node-token", nodeId: hkNode.id }).getConfig(), users: { users: vlessUsers }, machineNodes: listed, handshake: hs }));
-    console.log("node-hub checks passed: node API (machine and node mode, ETag), WebSocket push (auth, node list, config, users and removal deltas, global devices, revocation), traffic accounting, duplicate reports, presence, status, subscriptions, internal API guards and the 3x-ui migration script.");
+    console.log("node-hub checks passed: node API (machine and node mode, ETag), WebSocket push (auth, node list, config, users and removal deltas, global devices, revocation), traffic accounting, duplicate reports, presence, status, subscriptions, internal API guards, the 3x-ui migration script and relay machines (ports, realm rules, sync state, per-relay subscription entries).");
   } finally {
     handler.close();
     server.close();

@@ -1,138 +1,18 @@
 // PostgreSQL storage for node-hub: machines (VPS running xboard-node), nodes (inbounds on a
-// machine), node users (entitlements pushed by the main app), presence and load history.
+// machine), relays (realm port forwarders in front of nodes), node users (entitlements pushed by
+// the main app), presence and load history.
 // Traffic goes straight into the main app's xui_daily_traffic table, so billing, the account
 // chart and the profitability report read hub traffic exactly like 3x-ui traffic.
 const crypto = require("crypto");
 
-const SCHEMA_VERSION = 1;
+// First port handed out on a relay; each (node, relay) entry gets its own.
+const RELAY_PORT_START = 61001;
 const CHINA_TIME_OFFSET_MS = 8 * 60 * 60 * 1000;
 const MAX_SAFE_BYTES = Number.MAX_SAFE_INTEGER;
 
-function chinaDateKey(ms = Date.now()) {
-  return new Date(ms + CHINA_TIME_OFFSET_MS).toISOString().slice(0, 10);
-}
-
-function iso(value) {
-  return value instanceof Date ? value.toISOString() : value ? new Date(value).toISOString() : "";
-}
-
-function bytes(value) {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? Math.min(Math.floor(number), MAX_SAFE_BYTES) : 0;
-}
-
-// The billing node key for a node's traffic: one key per machine, matching 3x-ui where one key
-// is one VPS (multipliers and VPS cost settings are per machine).
-function nodeGuid(node) {
-  return node.machineId ? `hub-m${node.machineId}` : `hub-n${node.id}`;
-}
-
-function machineFromRow(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    notes: row.notes,
-    host: row.host,
-    isActive: row.is_active,
-    token: row.token,
-    lastSeenAt: iso(row.last_seen_at),
-    loadStatus: row.load_status || null,
-    createdAt: iso(row.created_at),
-    updatedAt: iso(row.updated_at)
-  };
-}
-
-function nodeFromRow(row) {
-  return {
-    id: row.id,
-    machineId: row.machine_id,
-    name: row.name,
-    protocol: row.protocol,
-    host: row.host,
-    serverPort: row.server_port,
-    listenIp: row.listen_ip,
-    settings: row.settings || {},
-    enabled: row.enabled,
-    sortOrder: row.sort_order,
-    region: row.region,
-    networkLevel: row.network_level,
-    inboundType: row.inbound_type,
-    lastCheckAt: iso(row.last_check_at),
-    lastPushAt: iso(row.last_push_at),
-    metrics: row.metrics || null,
-    loadStatus: row.load_status || null,
-    createdAt: iso(row.created_at),
-    updatedAt: iso(row.updated_at)
-  };
-}
-
-function userFromRow(row) {
-  return {
-    id: row.id,
-    userKey: row.user_key,
-    email: row.email,
-    uuid: row.uuid,
-    userLabel: row.user_label,
-    planId: row.plan_id,
-    nodeIds: (row.node_ids || []).map(Number),
-    speedLimit: row.speed_limit,
-    deviceLimit: row.device_limit,
-    enabled: row.enabled,
-    lastOnlineAt: iso(row.last_online_at),
-    updatedAt: iso(row.updated_at)
-  };
-}
-
-function normalizeUserInput(input = {}) {
-  const userKey = String(input.userKey || "").trim();
-  if (!userKey || userKey.length > 128) throw Object.assign(new Error("userKey 无效。"), { statusCode: 400 });
-  const email = String(input.email || "").trim().toLowerCase();
-  if (!email || email.length > 320) throw Object.assign(new Error(`用户 ${userKey} 缺少邮箱。`), { statusCode: 400 });
-  const uuid = String(input.uuid || "").trim().toLowerCase();
-  if (uuid && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) throw Object.assign(new Error(`用户 ${userKey} 的 uuid 格式无效。`), { statusCode: 400 });
-  const nodeIds = [...new Set((Array.isArray(input.nodeIds) ? input.nodeIds : []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0))].sort((a, b) => a - b);
-  return {
-    userKey,
-    email,
-    uuid,
-    userLabel: String(input.userLabel || "").slice(0, 200),
-    planId: String(input.planId || "").slice(0, 128),
-    nodeIds,
-    speedLimit: Math.max(0, Math.floor(Number(input.speedLimit) || 0)),
-    deviceLimit: Math.max(0, Math.floor(Number(input.deviceLimit) || 0)),
-    enabled: input.enabled === true
-  };
-}
-
-class NodeHubStore {
-  constructor(pool, { now = () => Date.now() } = {}) {
-    if (!pool) throw new Error("node-hub store requires a PostgreSQL pool.");
-    this.pool = pool;
-    this.now = now;
-  }
-
-  async transaction(operation) {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await operation(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
-      try { await client.query("ROLLBACK"); } catch {}
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async init() {
-    await this.transaction(async client => {
-      await client.query("SELECT pg_advisory_xact_lock(hashtext('nh_schema_migrations'))");
-      await client.query("CREATE TABLE IF NOT EXISTS nh_schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
-      const applied = await client.query("SELECT 1 FROM nh_schema_migrations WHERE version = $1", [SCHEMA_VERSION]);
-      if (applied.rows[0]) return;
-      await client.query(`
+// Applied in order, each once (nh_schema_migrations).
+const MIGRATIONS = [
+  { version: 1, sql: `
         CREATE TABLE IF NOT EXISTS nh_machines (
           id SERIAL PRIMARY KEY,
           name TEXT NOT NULL,
@@ -222,8 +102,182 @@ class NodeHubStore {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (date, email, node_guid)
         )
-      `);
-      await client.query("INSERT INTO nh_schema_migrations (version) VALUES ($1)", [SCHEMA_VERSION]);
+  ` },
+  // Relay machines run realm and forward one port per (node, relay) to the node's landing machine.
+  { version: 2, sql: `
+        CREATE TABLE IF NOT EXISTS nh_relays (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          host TEXT NOT NULL,
+          token TEXT NOT NULL UNIQUE,
+          notes TEXT NOT NULL DEFAULT '',
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          last_seen_at TIMESTAMPTZ,
+          status JSONB,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS nh_node_relays (
+          node_id INTEGER NOT NULL REFERENCES nh_nodes(id) ON DELETE CASCADE,
+          relay_id INTEGER NOT NULL REFERENCES nh_relays(id) ON DELETE RESTRICT,
+          listen_port INTEGER NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (node_id, relay_id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS nh_node_relays_port_idx ON nh_node_relays (relay_id, listen_port)
+  ` }
+];
+
+function chinaDateKey(ms = Date.now()) {
+  return new Date(ms + CHINA_TIME_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function iso(value) {
+  return value instanceof Date ? value.toISOString() : value ? new Date(value).toISOString() : "";
+}
+
+function bytes(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.min(Math.floor(number), MAX_SAFE_BYTES) : 0;
+}
+
+// The billing node key for a node's traffic: one key per machine, matching 3x-ui where one key
+// is one VPS (multipliers and VPS cost settings are per machine).
+function nodeGuid(node) {
+  return node.machineId ? `hub-m${node.machineId}` : `hub-n${node.id}`;
+}
+
+function machineFromRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    notes: row.notes,
+    host: row.host,
+    isActive: row.is_active,
+    token: row.token,
+    lastSeenAt: iso(row.last_seen_at),
+    loadStatus: row.load_status || null,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function nodeFromRow(row) {
+  return {
+    id: row.id,
+    machineId: row.machine_id,
+    name: row.name,
+    protocol: row.protocol,
+    host: row.host,
+    serverPort: row.server_port,
+    listenIp: row.listen_ip,
+    settings: row.settings || {},
+    enabled: row.enabled,
+    sortOrder: row.sort_order,
+    region: row.region,
+    networkLevel: row.network_level,
+    inboundType: row.inbound_type,
+    lastCheckAt: iso(row.last_check_at),
+    lastPushAt: iso(row.last_push_at),
+    metrics: row.metrics || null,
+    loadStatus: row.load_status || null,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function relayFromRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    host: row.host,
+    notes: row.notes,
+    isActive: row.is_active,
+    token: row.token,
+    lastSeenAt: iso(row.last_seen_at),
+    status: row.status || null,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+// A relay's public address: an IPv4/IPv6 address or a hostname, written into subscriptions.
+function relayHost(value) {
+  const host = String(value || "").trim().replace(/^\[|\]$/g, "");
+  if (!host || host.length > 255 || !/^[0-9A-Za-z.:-]+$/.test(host)) throw Object.assign(new Error("中转机地址必须是 IP 或域名。"), { statusCode: 400 });
+  return host;
+}
+
+function userFromRow(row) {
+  return {
+    id: row.id,
+    userKey: row.user_key,
+    email: row.email,
+    uuid: row.uuid,
+    userLabel: row.user_label,
+    planId: row.plan_id,
+    nodeIds: (row.node_ids || []).map(Number),
+    speedLimit: row.speed_limit,
+    deviceLimit: row.device_limit,
+    enabled: row.enabled,
+    lastOnlineAt: iso(row.last_online_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function normalizeUserInput(input = {}) {
+  const userKey = String(input.userKey || "").trim();
+  if (!userKey || userKey.length > 128) throw Object.assign(new Error("userKey 无效。"), { statusCode: 400 });
+  const email = String(input.email || "").trim().toLowerCase();
+  if (!email || email.length > 320) throw Object.assign(new Error(`用户 ${userKey} 缺少邮箱。`), { statusCode: 400 });
+  const uuid = String(input.uuid || "").trim().toLowerCase();
+  if (uuid && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) throw Object.assign(new Error(`用户 ${userKey} 的 uuid 格式无效。`), { statusCode: 400 });
+  const nodeIds = [...new Set((Array.isArray(input.nodeIds) ? input.nodeIds : []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0))].sort((a, b) => a - b);
+  return {
+    userKey,
+    email,
+    uuid,
+    userLabel: String(input.userLabel || "").slice(0, 200),
+    planId: String(input.planId || "").slice(0, 128),
+    nodeIds,
+    speedLimit: Math.max(0, Math.floor(Number(input.speedLimit) || 0)),
+    deviceLimit: Math.max(0, Math.floor(Number(input.deviceLimit) || 0)),
+    enabled: input.enabled === true
+  };
+}
+
+class NodeHubStore {
+  constructor(pool, { now = () => Date.now() } = {}) {
+    if (!pool) throw new Error("node-hub store requires a PostgreSQL pool.");
+    this.pool = pool;
+    this.now = now;
+  }
+
+  async transaction(operation) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await operation(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async init() {
+    await this.transaction(async client => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('nh_schema_migrations'))");
+      await client.query("CREATE TABLE IF NOT EXISTS nh_schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
+      const applied = new Set((await client.query("SELECT version FROM nh_schema_migrations")).rows.map(row => row.version));
+      for (const migration of MIGRATIONS) {
+        if (applied.has(migration.version)) continue;
+        await client.query(migration.sql);
+        await client.query("INSERT INTO nh_schema_migrations (version) VALUES ($1)", [migration.version]);
+      }
     });
   }
 
@@ -372,6 +426,112 @@ class NodeHubStore {
 
   async touchNode(id) {
     await this.pool.query("UPDATE nh_nodes SET last_check_at = NOW() WHERE id = $1", [Number(id)]);
+  }
+
+  // --- relays ------------------------------------------------------------
+
+  async listRelays() {
+    const result = await this.pool.query("SELECT * FROM nh_relays ORDER BY id");
+    return result.rows.map(relayFromRow);
+  }
+
+  async getRelay(id) {
+    const result = await this.pool.query("SELECT * FROM nh_relays WHERE id = $1", [Number(id)]);
+    return result.rows[0] ? relayFromRow(result.rows[0]) : null;
+  }
+
+  async authenticateRelay(id, token) {
+    const relayId = Number(id);
+    if (!Number.isSafeInteger(relayId) || relayId <= 0 || !token) return null;
+    const relay = await this.getRelay(relayId);
+    if (!relay) return null;
+    const a = Buffer.from(String(relay.token));
+    const b = Buffer.from(String(token));
+    return a.length === b.length && crypto.timingSafeEqual(a, b) ? relay : null;
+  }
+
+  async createRelay({ name, host, notes = "" }) {
+    const cleanName = String(name || "").trim().slice(0, 80);
+    if (!cleanName) throw Object.assign(new Error("中转机名称不能为空。"), { statusCode: 400 });
+    const result = await this.pool.query(
+      "INSERT INTO nh_relays (name, host, token, notes) VALUES ($1, $2, $3, $4) RETURNING *",
+      [cleanName, relayHost(host), crypto.randomBytes(24).toString("hex"), String(notes || "").slice(0, 500)]
+    );
+    return relayFromRow(result.rows[0]);
+  }
+
+  async updateRelay(id, input = {}) {
+    const existing = await this.getRelay(id);
+    if (!existing) return null;
+    const name = input.name === undefined ? existing.name : String(input.name || "").trim().slice(0, 80);
+    if (!name) throw Object.assign(new Error("中转机名称不能为空。"), { statusCode: 400 });
+    const result = await this.pool.query(
+      "UPDATE nh_relays SET name = $2, host = $3, notes = $4, is_active = $5, updated_at = NOW() WHERE id = $1 RETURNING *",
+      [existing.id, name, input.host === undefined ? existing.host : relayHost(input.host), input.notes === undefined ? existing.notes : String(input.notes || "").slice(0, 500), input.isActive === undefined ? existing.isActive : input.isActive === true]
+    );
+    return relayFromRow(result.rows[0]);
+  }
+
+  async resetRelayToken(id) {
+    const result = await this.pool.query("UPDATE nh_relays SET token = $2, updated_at = NOW() WHERE id = $1 RETURNING *", [Number(id), crypto.randomBytes(24).toString("hex")]);
+    return result.rows[0] ? relayFromRow(result.rows[0]) : null;
+  }
+
+  async deleteRelay(id) {
+    const used = await this.pool.query("SELECT 1 FROM nh_node_relays WHERE relay_id = $1 LIMIT 1", [Number(id)]);
+    if (used.rows.length) throw Object.assign(new Error("还有节点经过这台中转机，请先在节点里取消它。"), { statusCode: 409 });
+    const result = await this.pool.query("DELETE FROM nh_relays WHERE id = $1", [Number(id)]);
+    return result.rowCount > 0;
+  }
+
+  /** The relay's own report on each config pull: realm state and the hash of the rules it applied. */
+  async recordRelaySeen(id, status) {
+    await this.pool.query("UPDATE nh_relays SET last_seen_at = NOW(), status = $2::jsonb WHERE id = $1", [Number(id), JSON.stringify(status)]);
+  }
+
+  /** Relay entries of every node (or one node), with the relay's name and address. */
+  async listNodeRelays(nodeId = null) {
+    const result = await this.pool.query(
+      `SELECT nr.node_id, nr.relay_id, nr.listen_port, r.name, r.host, r.is_active
+       FROM nh_node_relays nr JOIN nh_relays r ON r.id = nr.relay_id
+       ${nodeId === null ? "" : "WHERE nr.node_id = $1"} ORDER BY nr.node_id, r.id`,
+      nodeId === null ? [] : [Number(nodeId)]
+    );
+    return result.rows.map(row => ({ nodeId: row.node_id, relayId: row.relay_id, relayName: row.name, relayHost: row.host, relayActive: row.is_active, listenPort: row.listen_port }));
+  }
+
+  // Makes a node's relay entries exactly relayIds. Kept relays keep their port; a new entry takes
+  // the lowest free port from RELAY_PORT_START on that relay. Relay rows are locked so two saves
+  // cannot pick the same port.
+  async setNodeRelays(nodeId, relayIds = []) {
+    const wanted = [...new Set(relayIds.map(Number).filter(id => Number.isSafeInteger(id) && id > 0))];
+    return this.transaction(async client => {
+      if (wanted.length) {
+        const found = await client.query("SELECT id FROM nh_relays WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE", [wanted]);
+        if (found.rows.length !== wanted.length) throw Object.assign(new Error("中转机不存在。"), { statusCode: 404 });
+      }
+      await client.query("DELETE FROM nh_node_relays WHERE node_id = $1 AND NOT (relay_id = ANY($2::int[]))", [Number(nodeId), wanted]);
+      const kept = new Set((await client.query("SELECT relay_id FROM nh_node_relays WHERE node_id = $1", [Number(nodeId)])).rows.map(row => row.relay_id));
+      for (const relayId of wanted.filter(id => !kept.has(id))) {
+        const used = new Set((await client.query("SELECT listen_port FROM nh_node_relays WHERE relay_id = $1", [relayId])).rows.map(row => row.listen_port));
+        let port = RELAY_PORT_START;
+        while (used.has(port)) port++;
+        if (port > 65535) throw Object.assign(new Error("这台中转机没有空闲端口了。"), { statusCode: 409 });
+        await client.query("INSERT INTO nh_node_relays (node_id, relay_id, listen_port) VALUES ($1, $2, $3)", [Number(nodeId), relayId, port]);
+      }
+    }).then(() => this.listNodeRelays(nodeId));
+  }
+
+  /** What a relay forwards: enabled nodes on active machines, each to the machine address and node port. */
+  async relayEndpoints(relayId) {
+    const result = await this.pool.query(
+      `SELECT nr.listen_port, n.id AS node_id, n.name AS node_name, n.server_port, m.host AS machine_host
+       FROM nh_node_relays nr JOIN nh_nodes n ON n.id = nr.node_id JOIN nh_machines m ON m.id = n.machine_id
+       WHERE nr.relay_id = $1 AND n.enabled = TRUE AND m.is_active = TRUE AND m.host <> ''
+       ORDER BY nr.listen_port`,
+      [Number(relayId)]
+    );
+    return result.rows.map(row => ({ listenPort: row.listen_port, nodeId: row.node_id, nodeName: row.node_name, remoteHost: row.machine_host, remotePort: row.server_port }));
   }
 
   // --- users -------------------------------------------------------------
@@ -566,4 +726,4 @@ class NodeHubStore {
   }
 }
 
-module.exports = { NodeHubStore, chinaDateKey, nodeGuid, normalizeUserInput };
+module.exports = { NodeHubStore, chinaDateKey, nodeGuid, normalizeUserInput, RELAY_PORT_START };
