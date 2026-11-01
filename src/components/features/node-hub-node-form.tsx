@@ -5,19 +5,21 @@ import { postJson } from "@/api"
 import { toast } from "@/components/features/toast"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Button } from "@/components/arc/button/button"
+import { Checkbox } from "@/components/arc/checkbox/checkbox"
 import { Input } from "@/components/arc/input/input"
 import { NumberField } from "@/components/arc/number-field/number-field"
 import { Select } from "@/components/arc/select/select"
 import { Switch } from "@/components/arc/switch/switch"
 import { Textarea } from "@/components/arc/textarea/textarea"
-import type { NodeHubMachine, NodeHubNode, NodeHubProtocol } from "@/types"
+import type { NodeHubMachine, NodeHubNode, NodeHubProtocol, NodeHubRelay, NodeHubRelayEntry } from "@/types"
 
 // The node editor for node-hub. Settings follow Xboard's protocol_settings (snake_case), the shape
 // node-hub/node-config.js validates; fields the form does not show stay in the draft untouched.
 
 type Settings = Record<string, unknown>
 
-export type NodeHubNodeDraft = Pick<NodeHubNode, "machineId" | "name" | "protocol" | "host" | "serverPort" | "listenIp" | "enabled" | "sortOrder" | "region" | "networkLevel" | "inboundType"> & { settings: Settings }
+/** access "relay": users reach the node only through the relays in relayIds (saved as relayIds: [] when direct). */
+export type NodeHubNodeDraft = Pick<NodeHubNode, "machineId" | "name" | "protocol" | "host" | "serverPort" | "listenIp" | "enabled" | "sortOrder" | "region" | "networkLevel" | "inboundType"> & { settings: Settings; access: "direct" | "relay"; relayIds: number[] }
 
 export const NODE_HUB_PROTOCOLS: { value: NodeHubProtocol; label: string }[] = [
   { value: "vless", label: "VLESS" },
@@ -73,12 +75,13 @@ export function defaultNodeSettings(protocol: NodeHubProtocol): Settings {
 }
 
 export function emptyNodeDraft(machineId = 0): NodeHubNodeDraft {
-  return { machineId, name: "", protocol: "vless", host: "", serverPort: 443, listenIp: "0.0.0.0", enabled: true, sortOrder: 1, region: "", networkLevel: "", inboundType: "package", settings: defaultNodeSettings("vless") }
+  return { machineId, name: "", protocol: "vless", host: "", serverPort: 443, listenIp: "0.0.0.0", enabled: true, sortOrder: 1, region: "", networkLevel: "", inboundType: "package", settings: defaultNodeSettings("vless"), access: "direct", relayIds: [] }
 }
 
 export function nodeDraftFrom(node: NodeHubNode): NodeHubNodeDraft {
   const { machineId, name, protocol, host, serverPort, listenIp, enabled, sortOrder, region, networkLevel, inboundType } = node
-  return { machineId, name, protocol, host, serverPort, listenIp, enabled, sortOrder, region, networkLevel, inboundType, settings: structuredClone(node.settings || {}) }
+  const relayIds = (node.relays || []).map(entry => entry.relayId)
+  return { machineId, name, protocol, host, serverPort, listenIp, enabled, sortOrder, region, networkLevel, inboundType, settings: structuredClone(node.settings || {}), access: relayIds.length ? "relay" : "direct", relayIds }
 }
 
 /** The advanced JSON box's text for a node's settings, empty when none of its keys are set. */
@@ -119,18 +122,21 @@ function write(settings: Settings, path: string[], value: unknown): Settings {
 
 const str = (value: unknown) => value === undefined || value === null ? "" : String(value)
 
-function SwitchField({ id, label, description, checked, onCheckedChange }: { id: string; label: string; description?: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {
-  return <Field orientation="horizontal" className="justify-between"><FieldContent><FieldLabel htmlFor={id}>{label}</FieldLabel>{description ? <FieldDescription>{description}</FieldDescription> : null}</FieldContent><Switch id={id} checked={checked} onCheckedChange={onCheckedChange} /></Field>
+function SwitchField({ id, label, description, checked, onCheckedChange, disabled }: { id: string; label: string; description?: string; checked: boolean; onCheckedChange: (checked: boolean) => void; disabled?: boolean }) {
+  return <Field orientation="horizontal" className="justify-between"><FieldContent><FieldLabel htmlFor={id}>{label}</FieldLabel>{description ? <FieldDescription>{description}</FieldDescription> : null}</FieldContent><Switch id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} /></Field>
 }
 
 function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
   return <section className="grid gap-3"><h3 className="text-sm font-semibold">{title}</h3><div className="grid items-start gap-3 sm:grid-cols-2">{children}</div></section>
 }
 
-export function NodeHubNodeForm({ draft, onChange, machines, advancedText, onAdvancedTextChange, advancedError, creating }: {
+export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntries = [], advancedText, onAdvancedTextChange, advancedError, creating }: {
   draft: NodeHubNodeDraft
   onChange: (draft: NodeHubNodeDraft) => void
   machines: NodeHubMachine[]
+  relays: NodeHubRelay[]
+  /** The saved node's relay entries, for showing the ports already assigned. */
+  relayEntries?: NodeHubRelayEntry[]
   advancedText: string
   onAdvancedTextChange: (text: string) => void
   advancedError?: string
@@ -150,6 +156,18 @@ export function NodeHubNodeForm({ draft, onChange, machines, advancedText, onAdv
   const tlsPath = streamProtocol ? ["tls_settings"] : ["tls"]
   const needsCertificate = streamProtocol ? tls === 1 : true
   const certMode = str(read(s, ["cert_config", "cert_mode"]) || "none")
+  const viaRelay = draft.access === "relay"
+
+  // Relay mode needs PROXY protocol on the xray kernel (the relays send the header); direct mode
+  // turns it off, since a node accepting PROXY protocol refuses direct connections.
+  function changeAccess(next: "direct" | "relay") {
+    if (next === "relay") onChange({ ...draft, access: "relay", settings: write(write(draft.settings, ["accept_proxy_protocol"], true), ["kernel_type"], "xray") })
+    else onChange({ ...draft, access: "direct", relayIds: [], settings: write(draft.settings, ["accept_proxy_protocol"], undefined) })
+  }
+
+  function toggleRelay(relayId: number, checked: boolean) {
+    onChange({ ...draft, relayIds: checked ? [...new Set([...draft.relayIds, relayId])] : draft.relayIds.filter(id => id !== relayId) })
+  }
 
   async function generateRealityKeys() {
     setGenerating(true)
@@ -193,7 +211,7 @@ export function NodeHubNodeForm({ draft, onChange, machines, advancedText, onAdv
       <Select label="所属机器" id="node-machine" className="w-full" value={draft.machineId ? String(draft.machineId) : ""} placeholder="选择机器" onValueChange={value => changeMachine(Number(value))} disabled={!creating} description={creating ? undefined : "节点创建后不能换机器。"} options={machines.map(machine => ({ value: String(machine.id), label: `${machine.name}${machine.host ? ` · ${machine.host}` : ""}` }))} />
       <Select label="协议" id="node-protocol" className="w-full" value={protocol} onValueChange={value => changeProtocol(value as NodeHubProtocol)} disabled={!creating} description={creating ? undefined : "协议创建后不能修改，需要换协议请新建节点。"} options={NODE_HUB_PROTOCOLS} />
       <Input label="节点名称" id="node-name" value={draft.name} onChange={event => field("name", event.target.value)} placeholder="香港 01" maxLength={80} />
-      <Input label="连接地址" id="node-host" description="写进用户订阅的域名或 IP。" value={draft.host} onChange={event => field("host", event.target.value.trim())} placeholder="hk.example.com" />
+      <Input label="连接地址" id="node-host" description={viaRelay ? "经中转时订阅使用各中转机的地址和端口，这里的地址不写进订阅。" : "写进用户订阅的域名或 IP。"} value={draft.host} onChange={event => field("host", event.target.value.trim())} placeholder="hk.example.com" />
       <NumberField size="md" label="端口" id="node-port" value={draft.serverPort} onValueChange={value => field("serverPort", value)} min={1} max={65535} locale="zh-CN" formatOptions={{ useGrouping: false }} />
       <Input label="监听地址" id="node-listen" description="节点在机器上监听的地址，一般保持 0.0.0.0。" value={draft.listenIp} onChange={event => field("listenIp", event.target.value.trim())} placeholder="0.0.0.0" />
       <Input label="地区" id="node-region" value={draft.region} onChange={event => field("region", event.target.value)} placeholder="例如：香港、美国、台湾" maxLength={64} />
@@ -202,7 +220,17 @@ export function NodeHubNodeForm({ draft, onChange, machines, advancedText, onAdv
       <NumberField size="md" label="排序" id="node-order" value={draft.sortOrder} onValueChange={value => field("sortOrder", value)} min={0} locale="zh-CN" />
       <SwitchField id="node-enabled" label="启用节点" description="停用后机器最长约 1 分钟内停止该节点。" checked={draft.enabled} onCheckedChange={enabled => field("enabled", enabled)} />
       <Select label="内核" id="node-kernel" className="w-full" value={str(s.kernel_type) || "default"} onValueChange={value => set(["kernel_type"], value === "default" ? undefined : value)} description="默认由 xboard-node 自己选择。" options={[{ value: "default", label: "默认" }, { value: "xray", label: "Xray" }, { value: "singbox", label: "sing-box" }]} />
-      {proxyProtocolCapable ? <SwitchField id="node-proxy-protocol" label="接受 PROXY protocol" description="经端口转发入口（如 realm）接入时开启，节点才能拿到用户真实 IP；开启后只接受带 PROXY 头的连接，直连会失败。需要 Xray 内核。" checked={s.accept_proxy_protocol === true} onCheckedChange={checked => onChange({ ...draft, settings: write(write(draft.settings, ["accept_proxy_protocol"], checked || undefined), ["kernel_type"], checked ? "xray" : s.kernel_type) })} /> : null}
+      {proxyProtocolCapable ? <SwitchField id="node-proxy-protocol" label="接受 PROXY protocol" description={viaRelay ? "经中转机接入时必须开启，节点才能拿到用户真实 IP。" : "经端口转发入口（如 realm）接入时开启，节点才能拿到用户真实 IP；开启后只接受带 PROXY 头的连接，直连会失败。需要 Xray 内核。"} checked={viaRelay || s.accept_proxy_protocol === true} disabled={viaRelay} onCheckedChange={checked => onChange({ ...draft, settings: write(write(draft.settings, ["accept_proxy_protocol"], checked || undefined), ["kernel_type"], checked ? "xray" : s.kernel_type) })} /> : null}
+    </FormSection>
+
+    <FormSection title="接入方式">
+      <Select label="接入方式" id="node-access" className="w-full" value={draft.access} onValueChange={value => changeAccess(value as "direct" | "relay")} disabled={!proxyProtocolCapable && !viaRelay} description={!proxyProtocolCapable ? "只有 VLESS、VMess、Trojan 和 Shadowsocks 能经中转机接入。" : viaRelay ? "用户只能经勾选的中转机连接，每台中转机在订阅里各有一个条目。" : "用户直接连接这台机器。"} options={[{ value: "direct", label: "直连" }, { value: "relay", label: "经中转机" }]} />
+      {viaRelay ? <div className="grid gap-3 sm:col-span-2">
+        {relays.length ? relays.map(relay => {
+          const entry = relayEntries.find(item => item.relayId === relay.id)
+          return <Checkbox key={relay.id} id={`node-relay-${relay.id}`} label={relay.name} description={`${relay.host} · ${entry && draft.relayIds.includes(relay.id) ? `端口 ${entry.listenPort}` : "保存后分配端口"}${relay.isActive ? "" : " · 已停用"}`} checked={draft.relayIds.includes(relay.id)} onCheckedChange={checked => toggleRelay(relay.id, checked === true)} />
+        }) : <p className="text-sm text-muted-foreground">还没有中转机，先在「中转机」标签页新建。</p>}
+      </div> : null}
     </FormSection>
 
     {streamProtocol ? <FormSection title="传输">

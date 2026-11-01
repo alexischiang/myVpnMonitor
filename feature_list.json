@@ -5048,7 +5048,7 @@
       "id": "node-hub-proxy-protocol",
       "name": "Accept PROXY protocol on hub nodes behind a port-forwarding relay",
       "description": "For an entry VPS that forwards to landing VPS with realm, the landing node needs the users real address for device limits and online IPs. Hub nodes gain accept_proxy_protocol (VLESS, VMess, Trojan, Shadowsocks), passed to xboard-node as accept_proxy_protocol; it is only accepted with the Xray kernel because xboard-node does not apply it on sing-box. The node form shows a 接受 PROXY protocol switch under 内核 that also sets the kernel to Xray. docs/agent/node-hub.md describes the relay setup.",
-      "status": "in_progress",
+      "status": "passing",
       "ui": true,
       "dependencies": [
         "node-hub-admin-ui"
@@ -5059,7 +5059,8 @@
         "A user connecting through the gomami_hk realm relay reaches the legend-sg landing node, and the landing node sees the user address instead of the relay address."
       ],
       "verification": [
-        "2026-11-01: before the change normalizeNodeInput dropped accept_proxy_protocol (reproduced); test-node-hub.js covers pass-through, default off and rejection for no/sing-box kernel and TUIC. npm run check, test:hub on an isolated schema, verify:fast pass. Pending: relay test gomami_hk -> legend-sg."
+        "2026-11-01: before the change normalizeNodeInput dropped accept_proxy_protocol (reproduced); test-node-hub.js covers pass-through, default off and rejection for no/sing-box kernel and TUIC. npm run check, test:hub on an isolated schema, verify:fast pass. Pending: relay test gomami_hk -> legend-sg.",
+        "2026-11-01 production (97bc924, nexora-hub restarted): node 4 「[hub] 新加坡 中转」 on legend-sg saved with kernel xray and accept_proxy_protocol, host 141.11.77.154:61001, legend-sg ufw allows 61001 only from gomami_hk. realm 2.9.6 on gomami_hk (systemd realm.service, /etc/realm/config.toml, send_proxy v2) forwards 61001 to 217.116.170.144:61001. A test client on legend-sg through gomami:61001 got 204 in 0.28 s, exit IP 217.116.170.144, and the landing access log showed the connection from 217.116.170.144 (the client) rather than 141.11.77.154 (the relay). Temporary entitlement, client config and info logging were reverted; gomami 3x-ui on 443 unaffected."
       ],
       "browser_verification": {
         "routes": [
@@ -5069,6 +5070,42 @@
           "Built dist on :3010 with a local node-hub on :3013 and a temporary local machine.",
           "新建节点 (VLESS REALITY) shows 接受 PROXY protocol off with 内核 默认; switching it on set 内核 to Xray; saving created a node whose stored settings have kernel_type xray and accept_proxy_protocol true. Node and machine deleted afterwards.",
           "No console errors or uncaught exceptions in the tab."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-01"
+      }
+    },
+    {
+      "id": "node-hub-relay-machines",
+      "name": "Relay machines: one-command realm relays whose forwarding rules come from node-hub",
+      "description": "Node Hub gets 中转机 (relay machines) next to machines. A relay is installed with one command (node-hub serves the install script): it installs realm and a systemd timer that pulls the relay forwarding rules from node-hub every 30 seconds and restarts realm when they change, reporting realm state and the applied rules. A node chooses 直连 or 经中转 with one or more relays; relay mode turns on PROXY protocol with the Xray kernel, each relay gets a free port from 61001 forwarding to the landing machine address and node port, and subscriptions list one entry per relay (node name · relay name) instead of the direct entry.",
+      "status": "in_progress",
+      "ui": true,
+      "dependencies": [
+        "node-hub-proxy-protocol"
+      ],
+      "done_criteria": [
+        "Relays can be created, edited, disabled, token-reset and deleted (not while nodes use them); creation shows an install command.",
+        "A node saved with relayIds gets one port per relay, PROXY protocol and the Xray kernel; removing a relay frees its port; relay rules only list enabled nodes on active machines.",
+        "The relay config endpoint authenticates the relay token, records realm state and the applied rules, and returns realm TOML that the sync script applies.",
+        "Subscriptions show one proxy per relay entry with the relay host and port and no direct entry for relay-mode nodes.",
+        "The admin UI has a 中转机 tab with status and install command, and the node form chooses 直连 / 经中转 with relays.",
+        "gomami_hk runs as a relay installed by the command and node 4 on legend-sg works through it."
+      ],
+      "verification": [
+        "2026-11-01 local: test-node-hub.js relayChecks covers relay CRUD and install command, IPv6 host normalisation, refusal without landing address / unsupported protocol / unknown relay, per-relay port allocation from 61001 with kept and reused ports, saves without relayIds keeping entries, disabled nodes left out of the rules, token check, realm TOML, x-config-hash = sha256 of the body, online/realmActive/synced from the relay report, one subscription proxy per active relay (name, host incl. IPv6, port) with no direct entry, disabled relay gets no rules and leaves subscriptions, delete refused while in use, and the served install script. test:hub (isolated schema), verify:fast, npm run check and git diff --check pass; a schema created by the previous store.js upgrades to versions [1,2]; bash -n on relay-install.sh passes."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=relays",
+          "/node-hub?tab=nodes"
+        ],
+        "interactions": [
+          "Built dist on :3010 with a local node-hub on :3013 (local database).",
+          "中转机 tab: 新建中转机 created 测试中转 and showed the install command with /api/v1/server/relay/install.sh, --relay-id and --token; after a simulated sync (config pull with realm=active and the served hash) the list showed 在线 + realm 运行中 with 1 rule and no 规则同步中, and the drawer listed 中转验证 :61001 -> 198.51.100.7:443.",
+          "Node form: switching 接入方式 to 经中转机 set the kernel to Xray and locked PROXY protocol on; saving with no relay ticked was refused with 请至少勾选一台中转机; ticking 测试中转 and saving created the node with relay port 61001 and the list showed 落地测试 · 经 测试中转; reopening showed the relay ticked with 端口 61001; switching back to 直连 and saving cleared the entries and turned PROXY protocol off.",
+          "No new console errors or page errors during the run (only connection-refused entries left in the tab from an earlier stopped server). Test node, relay and machine deleted afterwards."
         ],
         "console_errors": [],
         "page_errors": [],

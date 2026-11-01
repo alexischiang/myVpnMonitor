@@ -10719,7 +10719,13 @@ async function handleApi(req, res, pathname) {
       ["POST", /^\/nodes$/, () => "/internal/nodes"],
       ["GET", /^\/nodes\/\d+$/, path => `/internal${path}`],
       ["PUT", /^\/nodes\/\d+$/, path => `/internal${path}`],
-      ["DELETE", /^\/nodes\/\d+$/, path => `/internal${path}`]
+      ["DELETE", /^\/nodes\/\d+$/, path => `/internal${path}`],
+      ["GET", /^\/relays$/, () => "/internal/relays"],
+      ["POST", /^\/relays$/, () => "/internal/relays"],
+      ["GET", /^\/relays\/\d+$/, path => `/internal${path}`],
+      ["PUT", /^\/relays\/\d+$/, path => `/internal${path}`],
+      ["DELETE", /^\/relays\/\d+$/, path => `/internal${path}`],
+      ["POST", /^\/relays\/\d+\/reset-token$/, path => `/internal${path}`]
     ];
     try {
       if (hubPath === "/sync" && req.method === "POST") {
@@ -10737,7 +10743,7 @@ async function handleApi(req, res, pathname) {
         invalidateHubOverview();
         if (/^\/nodes/.test(hubPath)) syncHubUsers().catch(error => hubLogger.warn({ error: error.message }, "node-hub entitlement sync after node change failed"));
       }
-      sendJson(res, req.method === "POST" && /^\/(machines|nodes)$/.test(hubPath) ? 201 : 200, result);
+      sendJson(res, req.method === "POST" && /^\/(machines|nodes|relays)$/.test(hubPath) ? 201 : 200, result);
     } catch (error) {
       sendJson(res, error.statusCode && error.statusCode < 600 ? error.statusCode : 502, { error: error.message });
     }

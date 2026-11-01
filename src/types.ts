@@ -625,12 +625,41 @@ export type NodeHubNode = {
   online?: boolean
   userCount?: number
   onlineCount?: number
+  /** Relay entries: users reach the node through these relays (and not directly). */
+  relays?: NodeHubRelayEntry[]
   createdAt: string
   updatedAt: string
+}
+
+/** One (node, relay) entry: the relay forwards listenPort to the node's machine. */
+export type NodeHubRelayEntry = { nodeId: number; relayId: number; relayName: string; relayHost: string; relayActive: boolean; listenPort: number }
+
+/** A relay machine running realm; it pulls its forwarding rules from node-hub every 30 seconds. */
+export type NodeHubRelay = {
+  id: number
+  name: string
+  host: string
+  notes: string
+  isActive: boolean
+  lastSeenAt: string
+  /** The relay's last report: realm's systemd state and the hash of the rules it applied. */
+  status: { realm?: string; applied?: string; reportedAt?: string } | null
+  online?: boolean
+  realmActive?: boolean
+  /** The relay applied the rules node-hub currently serves. */
+  synced?: boolean
+  endpointCount?: number
+  endpoints?: { listenPort: number; nodeId: number; nodeName: string; remoteHost: string; remotePort: number }[]
+  createdAt: string
+  updatedAt: string
+  /** Only on create, reset-token and the single-relay read. */
+  token?: string
+  installCommand?: string
 }
 
 export type NodeHubOverview = {
   settings: { publicUrl: string; pushInterval: number; pullInterval: number; onlineGraceSeconds: number; websocket?: boolean }
   machines: NodeHubMachine[]
   nodes: NodeHubNode[]
+  relays?: NodeHubRelay[]
 }

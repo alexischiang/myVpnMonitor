@@ -59,6 +59,7 @@ VPS: xboard-node (machine 模式) ──HTTPS /api/v1|v2/server/*──> 反向�
 - `GET /api/node-hub/overview`、`POST /api/node-hub/reality-keypair`
 - `GET|POST /api/node-hub/machines`、`GET|PUT|DELETE /api/node-hub/machines/:id`、`POST /api/node-hub/machines/:id/reset-token`（返回安装命令）
 - `GET|POST /api/node-hub/nodes`、`GET|PUT|DELETE /api/node-hub/nodes/:id`（字段：machineId、name、protocol、host、serverPort、settings、inboundType、region、enabled…）
+- `GET|POST /api/node-hub/relays`、`GET|PUT|DELETE /api/node-hub/relays/:id`、`POST /api/node-hub/relays/:id/reset-token`（返回安装命令）；节点的 `relayIds` 决定它经过哪些中转机
 - `POST /api/node-hub/sync`：立即全量同步授权
 - `PUT /api/users/:id/node-speed-limit {speedLimitMbps}`（null 取消覆盖）
 
@@ -100,13 +101,15 @@ npm run migrate:xui-to-hub -- --node-guid <guid> --port-offset 10000 --add-to-li
 - 个人定制入站用户会被列出，切换后在用户页重新分配新的 hub 入站 id。
 - 每次迁移一台，确认流量、在线、计费正常后再迁移下一台；3x-ui 回退只需把线路组 key 改回。
 
-## 端口转发中转（入口机 → 落地机）
+## 中转机（入口机 → 落地机）
 
-入口机只做 TCP 转发（realm），用户的加密流量原样到落地机上的 hub 节点，入口机不解密。
+中转机是一台运行 realm 的 VPS：每个（节点，中转机）入口占中转机上的一个端口，原样转发到节点所在机器的地址和端口，并带上 PROXY protocol v2 头，让落地节点拿到用户真实 IP。中转机不解密流量，流量、在线、计费都记在落地节点上。
 
-- 落地节点：「连接地址」填入口机的 IP 或域名（订阅写这个地址），端口与入口机转发端口一致（订阅端口就是监听端口）；打开「接受 PROXY protocol」（需要 Xray 内核，表单会自动切换），节点才能拿到用户真实 IP，设备数限制和在线 IP 才准确。开启后只接受带 PROXY 头的连接，直连会失败，所以落地机防火墙只放行入口机的 IP。
-- 入口机：realm 每个落地节点一条规则 `listen = "0.0.0.0:<端口>"`、`remote = "<落地机IP>:<端口>"`、`send_proxy = true`、`send_proxy_version = 2`；防火墙放行这些端口。
-- 流量、在线、计费都记在落地节点上。sing-box 内核不处理 PROXY protocol（xboard-node 里这段被注释），所以 hub 拒绝在非 Xray 内核上开启。
+- 管理端「Node Hub → 中转机」：新建（名称、公网地址）后得到安装命令 `curl -fsSL <NODE_HUB_PUBLIC_URL>/api/v1/server/relay/install.sh | sudo bash -s -- --hub <公开地址> --relay-id <id> --token <token>`。脚本（`node-hub/relay-install.sh`，由 node-hub 直接提供）安装 realm（`/usr/local/bin/realm`，版本见脚本 `REALM_VERSION`）、`realm.service` 和 `nexora-relay-sync.timer`：每 30 秒从 `/api/v1/server/relay/config` 拉取 realm 规则写入 `/etc/realm/config.toml`，有变化就重启 realm，没有规则时停掉 realm，并上报 realm 状态和已应用规则的哈希。再次执行即原地升级、替换凭据；`--uninstall` 卸载。
+- 节点表单「接入方式」：直连 / 经中转机（勾选一台或多台）。经中转时自动开启「接受 PROXY protocol」并使用 Xray 内核；每台中转机从 61001 起分配一个空闲端口（保留已有端口，释放的端口会复用）；节点所在机器必须填写地址。订阅里每个入口一个条目「节点名 · 中转机名」（中转机地址和端口），不再有直连条目。改回直连会清空入口并关闭 PROXY protocol。
+- 规则只包含启用的节点和启用的机器；停用的中转机从订阅里移除，并在下次同步时拿到空规则、停掉 realm。仍有节点经过的中转机不能删除。
+- 中转机列表显示在线（90 秒内拉取过）、realm 是否运行、规则是否已同步（上报的哈希等于当前规则）。
+- 不经过中转机管理、手动配的 realm 也能用：节点手动打开「接受 PROXY protocol」，连接地址填入口机，realm 配置 `send_proxy = true`、`send_proxy_version = 2`。sing-box 内核不处理 PROXY protocol（xboard-node 里这段被注释），所以 hub 拒绝在非 Xray 内核上开启。
 
 ## 实时推送（WebSocket）
 

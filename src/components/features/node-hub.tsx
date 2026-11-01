@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/features/confirm-dialog"
 import { InfoList } from "@/components/features/shared"
 import { toast } from "@/components/features/toast"
 import { advancedSettingsText, applyAdvancedSettings, emptyNodeDraft, NODE_HUB_NETWORK_LEVELS, NODE_HUB_PROTOCOLS, NodeHubNodeForm, nodeDraftFrom, nodeSecurityLabel, protocolLabel, type NodeHubNodeDraft } from "@/components/features/node-hub-node-form"
+import { NodeHubRelaysTab } from "@/components/features/node-hub-relays"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Alert } from "@/components/arc/alert/alert"
@@ -29,10 +30,11 @@ import { Textarea } from "@/components/arc/textarea/textarea"
 import type { NodeHubLoadStatus, NodeHubMachine, NodeHubNode, NodeHubOverview, User } from "@/types"
 import { formatBytes, formatDateTime } from "@/utils"
 
-// Admin page for node-hub: the machines (VPS running xboard-node) and nodes it serves, and the
-// per-user node speed limit. Everything goes through the app's /api/node-hub/* proxy.
+// Admin page for node-hub: the machines (VPS running xboard-node), relay machines (realm in front
+// of nodes) and nodes it serves, and the per-user node speed limit. Everything goes through the
+// app's /api/node-hub/* proxy.
 
-const TABS = ["overview", "machines", "nodes", "speed"] as const
+const TABS = ["overview", "machines", "relays", "nodes", "speed"] as const
 type TabId = typeof TABS[number]
 type MachineDraft = { name: string; host: string; notes: string; isActive: boolean }
 const emptyMachineDraft = (): MachineDraft => ({ name: "", host: "", notes: "", isActive: true })
@@ -294,9 +296,14 @@ export function NodeHubPage() {
       toast({ type: "error", title: "请选择节点所属的机器" })
       return
     }
+    if (nodeDraft.access === "relay" && !nodeDraft.relayIds.length) {
+      toast({ type: "error", title: "请至少勾选一台中转机，或把接入方式改为直连" })
+      return
+    }
     setNodeSaving(true)
     try {
-      const body = { ...nodeDraft, settings }
+      const { access, ...draft } = nodeDraft
+      const body = { ...draft, settings, relayIds: access === "relay" ? draft.relayIds : [] }
       const saved = editingNode
         ? await putJson<NodeHubNode>(`/api/node-hub/nodes/${editingNode.id}`, body)
         : await postJson<NodeHubNode>("/api/node-hub/nodes", body)
@@ -367,6 +374,7 @@ export function NodeHubPage() {
 
   const machines = React.useMemo(() => data?.machines || [], [data])
   const nodes = React.useMemo(() => data?.nodes || [], [data])
+  const relays = React.useMemo(() => data?.relays || [], [data])
   const filteredNodes = React.useMemo(() => nodes.filter(node =>
     (machineFilter === "all" || String(node.machineId) === machineFilter)
     && (protocolFilter === "all" || node.protocol === protocolFilter)
@@ -376,7 +384,9 @@ export function NodeHubPage() {
     ...machines.filter(machine => machine.isActive && !machine.online).map(machine => ({ key: `m${machine.id}`, title: `机器「${machine.name}」${machine.lastSeenAt ? "离线" : "尚未连接"}`, detail: machine.lastSeenAt ? `最后上报 ${formatDateTime(machine.lastSeenAt)}` : "在 VPS 上执行安装命令后会自动上线。" })),
     ...nodes.filter(node => node.enabled && node.online && kernelRunning(node) === false).map(node => ({ key: `k${node.id}`, title: `节点「${node.name}」的内核未运行`, detail: "机器已拉取配置但代理内核没有启动，请在 VPS 上查看 journalctl -u xboard-node。" })),
     ...nodes.filter(node => node.enabled && !node.online && machines.find(machine => machine.id === node.machineId)?.online).map(node => ({ key: `n${node.id}`, title: `节点「${node.name}」离线`, detail: node.lastCheckAt ? `最后拉取 ${formatDateTime(node.lastCheckAt)}` : "机器还没有拉取这个节点，新节点最长约 1 分钟生效。" })),
-  ], [machines, nodes])
+    ...relays.filter(relay => relay.isActive && !relay.online).map(relay => ({ key: `r${relay.id}`, title: `中转机「${relay.name}」${relay.lastSeenAt ? "离线" : "尚未连接"}`, detail: relay.lastSeenAt ? `最后同步 ${formatDateTime(relay.lastSeenAt)}，经过它的入口不可用。` : "在中转机上执行安装命令后会自动上线。" })),
+    ...relays.filter(relay => relay.isActive && relay.online && relay.endpointCount && relay.synced && !relay.realmActive).map(relay => ({ key: `rr${relay.id}`, title: `中转机「${relay.name}」的 realm 未运行`, detail: "规则已同步但 realm 没有运行，请在中转机上查看 journalctl -u realm。" })),
+  ], [machines, nodes, relays])
 
   const machineColumns = React.useMemo<ColumnDef<NodeHubMachine>[]>(() => [
     { id: "machine", accessorFn: machine => `${machine.name} ${machine.host} ${machine.notes}`, header: DataTableColumnHeader({ title: "机器" }), meta: { label: "机器" }, cell: ({ row }) => <div className="grid min-w-0"><span className="truncate font-medium">{row.original.name}</span><span className="truncate text-xs text-muted-foreground">{row.original.host || "未填写地址"}</span></div> },
@@ -387,7 +397,7 @@ export function NodeHubPage() {
   ], [openMachine])
 
   const nodeColumns = React.useMemo<ColumnDef<NodeHubNode>[]>(() => [
-    { id: "node", accessorFn: node => `${node.name} ${node.machineName} ${node.host} ${node.region}`, header: DataTableColumnHeader({ title: "节点" }), meta: { label: "节点" }, cell: ({ row }) => <div className="grid min-w-0"><span className="truncate font-medium">{row.original.name}</span><span className="truncate text-xs text-muted-foreground">{row.original.machineName || `机器 ${row.original.machineId}`} · {row.original.host}</span></div> },
+    { id: "node", accessorFn: node => `${node.name} ${node.machineName} ${node.host} ${node.region} ${(node.relays || []).map(entry => entry.relayName).join(" ")}`, header: DataTableColumnHeader({ title: "节点" }), meta: { label: "节点" }, cell: ({ row }) => <div className="grid min-w-0"><span className="truncate font-medium">{row.original.name}</span><span className="truncate text-xs text-muted-foreground">{row.original.machineName || `机器 ${row.original.machineId}`} · {row.original.relays?.length ? `经 ${row.original.relays.map(entry => entry.relayName).join("、")}` : row.original.host}</span></div> },
     { id: "protocol", accessorFn: node => `${node.protocol} ${node.serverPort}`, header: DataTableColumnHeader({ title: "协议 / 端口" }), meta: { label: "协议 / 端口" }, cell: ({ row }) => <div className="flex flex-wrap items-center gap-1"><Badge>{protocolLabel(row.original.protocol)}</Badge>{nodeSecurityLabel(row.original) ? <Badge>{nodeSecurityLabel(row.original)}</Badge> : null}<span className="text-sm tabular-nums">{row.original.serverPort}</span></div> },
     { id: "status", accessorFn: node => node.enabled ? node.online ? "在线" : "离线" : "已停用", header: DataTableColumnHeader({ title: "状态" }), meta: { label: "状态" }, cell: ({ row }) => <NodeStatus node={row.original} /> },
     { id: "users", accessorFn: node => node.userCount || 0, header: DataTableColumnHeader({ title: "授权 / 在线" }), meta: { label: "授权 / 在线" }, cell: ({ row }) => <span className="tabular-nums">{row.original.userCount || 0} / {row.original.onlineCount || 0}</span> },
@@ -436,6 +446,7 @@ export function NodeHubPage() {
           <TabsList>
             <TabsTrigger value="overview">概览</TabsTrigger>
             <TabsTrigger value="machines">机器</TabsTrigger>
+            <TabsTrigger value="relays">中转机</TabsTrigger>
             <TabsTrigger value="nodes">节点</TabsTrigger>
             <TabsTrigger value="speed">用户限速</TabsTrigger>
           </TabsList>
@@ -466,6 +477,10 @@ export function NodeHubPage() {
 
         <TabsContent value="machines">
           <DataTableCard><DataTable columns={machineColumns} data={machines} searchKey="machine" searchPlaceholder="搜索机器名称、地址或备注" stateKey="machines" emptyTitle="还没有机器" emptyDescription="新建机器后，在 VPS 上执行安装命令即可接入。" pageSize={30} frame="card" renderMobileItem={machine => <Card title={machine.name} description={machine.host || "未填写地址"} headerAction={<Button variant="ghost" size="icon" onClick={() => void openMachine(machine)} aria-label={`管理 ${machine.name}`}><Pencil /></Button>}><div className="flex flex-wrap items-start justify-between gap-3"><MachineStatus machine={machine} /><LoadSummary load={machine.loadStatus} /></div></Card>} toolbar={<Button collapse onClick={() => { setMachineDraft(emptyMachineDraft()); setMachineCreateOpen(true) }}><Plus />新建机器</Button>} /></DataTableCard>
+        </TabsContent>
+
+        <TabsContent value="relays">
+          <NodeHubRelaysTab relays={relays} onChanged={() => void refresh(true)} />
         </TabsContent>
 
         <TabsContent value="nodes">
@@ -540,7 +555,7 @@ export function NodeHubPage() {
 
       <Dialog open={nodeEditorOpen} onOpenChange={open => { if (!nodeSaving) setNodeEditorOpen(open) }}>
         <DialogContent title={editingNode ? `编辑「${editingNode.name}」` : "新建节点"} description="保存后机器最长约 1 分钟内拉取新配置；加入线路组后才会分配给用户。" size="xl">
-          <NodeHubNodeForm draft={nodeDraft} onChange={setNodeDraft} machines={machines} advancedText={advancedText} onAdvancedTextChange={text => { setAdvancedText(text); setAdvancedError("") }} advancedError={advancedError} creating={!editingNode} />
+          <NodeHubNodeForm draft={nodeDraft} onChange={setNodeDraft} machines={machines} relays={relays} relayEntries={editingNode?.relays} advancedText={advancedText} onAdvancedTextChange={text => { setAdvancedText(text); setAdvancedError("") }} advancedError={advancedError} creating={!editingNode} />
           <div className="flex flex-wrap justify-end gap-2">
             {editingNode ? <Button variant="danger" className="mr-auto" onClick={() => setConfirmDeleteNode(editingNode)} disabled={nodeSaving}><Trash2 />删除节点</Button> : null}
             <Button variant="secondary" onClick={() => setNodeEditorOpen(false)} disabled={nodeSaving}>取消</Button>
