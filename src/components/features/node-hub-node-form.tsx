@@ -142,6 +142,8 @@ export function NodeHubNodeForm({ draft, onChange, machines, advancedText, onAdv
   const field = <K extends keyof NodeHubNodeDraft>(key: K, value: NodeHubNodeDraft[K]) => onChange({ ...draft, [key]: value })
   const protocol = draft.protocol
   const streamProtocol = protocol === "vless" || protocol === "vmess" || protocol === "trojan"
+  // xboard-node applies PROXY protocol on these protocols' xray inbounds only.
+  const proxyProtocolCapable = streamProtocol || protocol === "shadowsocks"
   const tls = Number(s.tls ?? (protocol === "trojan" ? 1 : 0))
   const network = str(s.network || "tcp")
   // Hysteria2, TUIC and AnyTLS keep their TLS block under settings.tls; the stream protocols use tls_settings.
@@ -200,6 +202,7 @@ export function NodeHubNodeForm({ draft, onChange, machines, advancedText, onAdv
       <NumberField size="md" label="排序" id="node-order" value={draft.sortOrder} onValueChange={value => field("sortOrder", value)} min={0} locale="zh-CN" />
       <SwitchField id="node-enabled" label="启用节点" description="停用后机器最长约 1 分钟内停止该节点。" checked={draft.enabled} onCheckedChange={enabled => field("enabled", enabled)} />
       <Select label="内核" id="node-kernel" className="w-full" value={str(s.kernel_type) || "default"} onValueChange={value => set(["kernel_type"], value === "default" ? undefined : value)} description="默认由 xboard-node 自己选择。" options={[{ value: "default", label: "默认" }, { value: "xray", label: "Xray" }, { value: "singbox", label: "sing-box" }]} />
+      {proxyProtocolCapable ? <SwitchField id="node-proxy-protocol" label="接受 PROXY protocol" description="经端口转发入口（如 realm）接入时开启，节点才能拿到用户真实 IP；开启后只接受带 PROXY 头的连接，直连会失败。需要 Xray 内核。" checked={s.accept_proxy_protocol === true} onCheckedChange={checked => onChange({ ...draft, settings: write(write(draft.settings, ["accept_proxy_protocol"], checked || undefined), ["kernel_type"], checked ? "xray" : s.kernel_type) })} /> : null}
     </FormSection>
 
     {streamProtocol ? <FormSection title="传输">

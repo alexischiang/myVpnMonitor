@@ -6,6 +6,8 @@ const crypto = require("crypto");
 
 const PROTOCOLS = ["vless", "vmess", "trojan", "shadowsocks", "hysteria", "tuic", "anytls"];
 const NETWORKS = ["tcp", "ws", "grpc", "h2", "httpupgrade", "xhttp"];
+// Protocols whose xray inbound honours accept_proxy_protocol in xboard-node.
+const PROXY_PROTOCOL_PROTOCOLS = ["vless", "vmess", "trojan", "shadowsocks"];
 const SS2022_KEY_SIZES = { "2022-blake3-aes-128-gcm": 16, "2022-blake3-aes-256-gcm": 32, "2022-blake3-chacha20-poly1305": 32 };
 const SS_CIPHERS = ["aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305", ...Object.keys(SS2022_KEY_SIZES)];
 
@@ -165,6 +167,13 @@ function normalizeNodeSettings(protocol, value = {}) {
   if (Array.isArray(input.custom_routes)) settings.custom_routes = input.custom_routes;
   if (Array.isArray(input.custom_route_rules)) settings.custom_route_rules = input.custom_route_rules;
   if (input.kernel_type === "xray" || input.kernel_type === "singbox") settings.kernel_type = input.kernel_type;
+  // For nodes reached through a port-forwarding relay that sends PROXY protocol, so the node sees
+  // the user's address (device limit, online IPs). xboard-node only applies it on the xray kernel.
+  if (input.accept_proxy_protocol === true) {
+    if (!PROXY_PROTOCOL_PROTOCOLS.includes(protocol)) throw badRequest("只有 VLESS、VMess、Trojan 和 Shadowsocks 支持 PROXY protocol。");
+    if (settings.kernel_type !== "xray") throw badRequest("PROXY protocol 只在 Xray 内核生效，请把内核设为 Xray。");
+    settings.accept_proxy_protocol = true;
+  }
   return settings;
 }
 
@@ -231,6 +240,7 @@ function buildNodeConfig(node) {
   if (s.custom_outbounds) config.custom_outbounds = s.custom_outbounds;
   if (s.custom_routes) config.custom_routes = s.custom_routes;
   if (s.custom_route_rules) config.custom_route_rules = s.custom_route_rules;
+  if (s.accept_proxy_protocol) config.accept_proxy_protocol = true;
   return config;
 }
 
