@@ -5080,7 +5080,7 @@
       "id": "node-hub-relay-machines",
       "name": "Relay machines: one-command realm relays whose forwarding rules come from node-hub",
       "description": "Node Hub gets 中转机 (relay machines) next to machines. A relay is installed with one command (node-hub serves the install script): it installs realm and a systemd timer that pulls the relay forwarding rules from node-hub every 30 seconds and restarts realm when they change, reporting realm state and the applied rules. A node chooses 直连 or 经中转 with one or more relays; relay mode turns on PROXY protocol with the Xray kernel, each relay gets a free port from 61001 forwarding to the landing machine address and node port, and subscriptions list one entry per relay (node name · relay name) instead of the direct entry.",
-      "status": "in_progress",
+      "status": "passing",
       "ui": true,
       "dependencies": [
         "node-hub-proxy-protocol"
@@ -5094,7 +5094,8 @@
         "gomami_hk runs as a relay installed by the command and node 4 on legend-sg works through it."
       ],
       "verification": [
-        "2026-11-01 local: test-node-hub.js relayChecks covers relay CRUD and install command, IPv6 host normalisation, refusal without landing address / unsupported protocol / unknown relay, per-relay port allocation from 61001 with kept and reused ports, saves without relayIds keeping entries, disabled nodes left out of the rules, token check, realm TOML, x-config-hash = sha256 of the body, online/realmActive/synced from the relay report, one subscription proxy per active relay (name, host incl. IPv6, port) with no direct entry, disabled relay gets no rules and leaves subscriptions, delete refused while in use, and the served install script. test:hub (isolated schema), verify:fast, npm run check and git diff --check pass; a schema created by the previous store.js upgrades to versions [1,2]; bash -n on relay-install.sh passes."
+        "2026-11-01 local: test-node-hub.js relayChecks covers relay CRUD and install command, IPv6 host normalisation, refusal without landing address / unsupported protocol / unknown relay, per-relay port allocation from 61001 with kept and reused ports, saves without relayIds keeping entries, disabled nodes left out of the rules, token check, realm TOML, x-config-hash = sha256 of the body, online/realmActive/synced from the relay report, one subscription proxy per active relay (name, host incl. IPv6, port) with no direct entry, disabled relay gets no rules and leaves subscriptions, delete refused while in use, and the served install script. test:hub (isolated schema), verify:fast, npm run check and git diff --check pass; a schema created by the previous store.js upgrades to versions [1,2]; bash -n on relay-install.sh passes.",
+        "2026-11-01 production (5ab6158 deployed, nexora-hub restarted, nh_schema_migrations [1,2], install.sh served publicly): relay 1 「香港中转」 (141.11.77.154) created; node 4 「[hub] 新加坡 中转」 set to relayIds [1] got port 61001. The install command on gomami_hk replaced the hand-made realm setup (old config kept in /root/realm-config.manual.bak): realm active from the node-hub generated config 61001 -> 217.116.170.144:61001, nexora-relay-sync.timer active, realm.service static, /etc/nexora-relay/env 600; the hub then showed the relay online, realm active and synced. The test account subscription listed 「[hub] 新加坡 中转 · 香港中转」 at 141.11.77.154:61001; a client on legend-sg through it got 204 in 0.28 s, exit IP 217.116.170.144, and the landing access log showed the client address 217.116.170.144. Temporary entitlement and info logging reverted; gomami 3x-ui on 443 unaffected."
       ],
       "browser_verification": {
         "routes": [
