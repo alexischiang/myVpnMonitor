@@ -4992,6 +4992,57 @@
         "page_errors": [],
         "checked_at": "2026-10-31"
       }
+    },
+    {
+      "id": "node-hub-reality-target-default",
+      "name": "Node form no longer prefills www.microsoft.com as the REALITY target",
+      "description": "A VLESS REALITY node on the Singapore test VPS refused every valid client (xray and sing-box kernels: REALITY processed invalid connection, handshake did not complete successfully) while the 3x-ui node on the same VPS with the same uuid worked; switching server_name/dest from www.microsoft.com to the 3x-ui target legendsg.solion.me fixed it at once. The node form now starts REALITY with an empty server_name (the hub already rejects saving without one), uses dl.example.com placeholders and warns against www.microsoft.com. docs/agent/node-hub.md records this and the xboard-node v1.13 limitation that a node created with no users never starts its kernel from pushed users until xboard-node restarts.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-admin-ui"
+      ],
+      "done_criteria": [
+        "New VLESS nodes and switching a node to REALITY start with an empty server_name and dest instead of www.microsoft.com.",
+        "The server_name field explains which target to use and warns against www.microsoft.com.",
+        "The known limitations in docs/agent/node-hub.md cover the REALITY target and the zero-user kernel start."
+      ],
+      "verification": [
+        "2026-10-31: npm run check passed; real connection test from gomami_hk through the hub node: www.microsoft.com target failed for every fingerprint/short_id/SNI variant, legendsg.solion.me target returned 204 in 0.15 s with exit IP 217.116.170.144; git diff --check and verify:harness passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=nodes"
+        ],
+        "interactions": [
+          "Built dist served by server.js on :3010 with a local node-hub on :3013 (local database), a temporary local machine created for the form and deleted afterwards.",
+          "新建节点 opens with protocol VLESS and security REALITY; 伪装域名 and 伪装目标 are empty with dl.example.com / dl.example.com:443 placeholders, and the warning against www.microsoft.com shows once under 伪装域名.",
+          "No console errors or uncaught exceptions in the tab."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-10-31"
+      }
+    },
+    {
+      "id": "node-hub-fork-idle-kernel-start",
+      "name": "Install xboard-node from the alexischiang/nexora-node fork, which starts an idle kernel from pushed users",
+      "description": "xboard-node v1.13 drops every user update that reaches a node whose kernel never started (node created before any user was entitled): applyUserUpdate and the add delta call ensureRunning(), which only looks at lastUsers, and lastUsers is written after that check. The fork records the pushed users and starts the kernel with them (startWithUsers), restores state if the start fails and only records users while no config has arrived. install.sh and xbctl upgrade download from the fork releases, CI pushes images to the fork owner namespace, and node-hub defaults NODE_HUB_INSTALLER_URL to the fork install.sh.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "node-hub-websocket-push"
+      ],
+      "done_criteria": [
+        "A node created with no users starts its kernel as soon as a user is entitled, without restarting xboard-node.",
+        "The install command shown for a machine installs the fork binary, and xbctl upgrade stays on the fork.",
+        "Existing behaviour (hot user updates, rollback on failed restart) is unchanged."
+      ],
+      "verification": [
+        "2026-11-01: fork internal/service tests for the idle-kernel paths fail on upstream v1.13 (4/4) and pass with the fix; go vet and go test -race ./internal/... (11 packages) pass. Fork made public, commit c84705c pushed to dev and tagged v1.13.1; CI test/build/release succeeded and releases/latest/download serves xboard-node-linux-amd64 and xbctl-linux-amd64 anonymously (the image job cannot push to ghcr.io/cedar2025; the ci.yml change to the owner namespace stays local because the git token lacks workflow scope).",
+        "2026-11-01 on legend-sg (217.116.170.144): install.sh from the fork ran upgrade, xboard-node and xbctl report v1.13.1, config.yml kept, node 1 still returns 204 through the test client. A new custom node on port 60001 started with users=0 and logged no users, kernel will not start; after PUT /internal/users entitled one user to it, the node logged [vless:60001] started, 1 users within a second and listened on 60001 with the same xboard-node PID (no restart). Test node deleted and the entitlement reverted afterwards.",
+        "Hub: test:hub on an isolated schema, verify:fast, verify:harness and git diff --check pass; the installer URL default reaches production with the next deploy."
+      ]
     }
   ]
 }

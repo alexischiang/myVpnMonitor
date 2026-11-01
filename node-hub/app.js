@@ -101,7 +101,7 @@ function createNodeHubHandler({
   internalToken,
   serverToken = "",
   publicUrl = "",
-  installerUrl = "https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh",
+  installerUrl = "https://raw.githubusercontent.com/alexischiang/nexora-node/dev/install.sh",
   pushInterval = 60,
   pullInterval = 60,
   onlineGraceSeconds = 0,

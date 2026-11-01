@@ -236,7 +236,7 @@ async function main() {
     assert.equal(created.status, 201);
     const machine = created.body;
     assert.match(machine.token, /^[0-9a-f]{48}$/);
-    assert.equal(machine.installCommand, `curl -fsSL https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh | sudo bash -s -- --mode machine --panel https://hub.example.com --token ${machine.token} --machine-id ${machine.id}`);
+    assert.equal(machine.installCommand, `curl -fsSL https://raw.githubusercontent.com/alexischiang/nexora-node/dev/install.sh | sudo bash -s -- --mode machine --panel https://hub.example.com --token ${machine.token} --machine-id ${machine.id}`);
     const otherMachine = (await internal("POST", "/internal/machines", { name: "HK" })).body;
     const keys = (await internal("POST", "/internal/reality-keypair")).body;
     const vlessNode = await internal("POST", "/internal/nodes", { machineId: machine.id, name: "美国 01", protocol: "vless", host: "la.example.com", serverPort: 443, region: "美国", networkLevel: "premium", settings: { network: "tcp", tls: 2, flow: "xtls-rprx-vision", reality_settings: { server_name: "www.apple.com", private_key: keys.privateKey, short_id: keys.shortId } } });
