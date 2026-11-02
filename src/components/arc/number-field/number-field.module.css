@@ -1,4 +1,4 @@
-.field { --nf-height: var(--control-height-md); --nf-step: 34px; --nf-inset: 3px; --nf-text: var(--text-base); --nf-width: var(--number-field-width, 196px); --nf-limit: color-mix(in oklab, var(--warning) 72%, var(--foreground)); display: grid; min-width: 0; }
+.field { --nf-height: var(--control-height-md); --nf-step: calc(var(--nf-height) - 2 * var(--nf-inset) - 2px); --nf-inset: 3px; --nf-text: var(--text-base); --nf-width: var(--number-field-width, 196px); --nf-limit: color-mix(in oklab, var(--warning) 72%, var(--foreground)); display: grid; min-width: 0; }
 .field[data-size="sm"] { --nf-height: var(--control-height-sm); --nf-step: 28px; --nf-inset: 3px; --nf-text: var(--text-sm); --nf-width: var(--number-field-width, 164px); }
 .field[data-size="lg"] { --nf-height: var(--control-height-lg); --nf-step: 40px; --nf-inset: 4px; --nf-text: var(--text-lg); --nf-width: var(--number-field-width, 228px); }
 :root[data-theme="dark"] .field { --nf-limit: color-mix(in oklab, var(--warning) 88%, var(--foreground)); }

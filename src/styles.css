@@ -70,6 +70,12 @@
   --color-usage-100: #ff594c;
 }
 
+/* Scrolls without showing a scrollbar (long dialogs whose content already signals more below). */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
 /* Poster-style display text: white fill, a thick dark outline and a long diagonal block extrusion; sizes in em so it scales with the font.
    The outline is a ring of text-shadows (Chrome drops -webkit-text-stroke once a shadow or filter is present). The extrusion is a
    drop-shadow chain applied to the outlined glyphs: offsets 1+2+4+8+16+5 (x0.01em) cover every step up to 0.36em, so its edges stay straight. */
