@@ -97,9 +97,9 @@ export function NodeHubRelaysTab({ relays, onChanged }: { relays: NodeHubRelay[]
     if (!detail) return
     setSaving(true)
     try {
-      await putJson<NodeHubRelay>(`/api/node-hub/relays/${detail.id}`, draft)
+      const saved = await putJson<NodeHubRelay & { rulesChanged?: boolean }>(`/api/node-hub/relays/${detail.id}`, draft)
       setDetail(null)
-      toast({ type: "success", title: "中转机设置已保存", description: "地址改动会写进用户订阅；规则 30 秒内同步到中转机。" })
+      toast({ type: "success", title: "中转机设置已保存", description: saved.rulesChanged ? "转发规则 30 秒内同步到中转机。" : "转发规则不变，中转机不会重启 realm；地址改动会写进用户订阅。" })
       onChanged()
     } catch (saveError) {
       toast({ type: "error", title: errorMessage(saveError, "保存中转机失败") })
@@ -149,7 +149,7 @@ export function NodeHubRelaysTab({ relays, onChanged }: { relays: NodeHubRelay[]
     <Dialog open={createOpen} onOpenChange={open => { if (!saving) setCreateOpen(open) }}>
       <DialogContent title="新建中转机" description="中转机运行 realm，把用户连接转发到落地机上的节点。创建后会生成它专用的安装命令。">
         <div className="grid gap-3">
-          <Input label="名称" id="relay-name" description="用户订阅里显示为「节点名 · 中转机名」。" value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="香港中转" maxLength={80} />
+          <Input label="名称" id="relay-name" description="订阅里显示节点名；经过多台中转机时加上中转机名区分。" value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="香港中转" maxLength={80} />
           <Input label="公网地址" id="relay-host" description="用户连接的 IP 或域名，写进订阅。" value={draft.host} onChange={event => setDraft(current => ({ ...current, host: event.target.value.trim() }))} placeholder="203.0.113.10" />
           <Textarea label="备注" id="relay-notes" value={draft.notes} onChange={event => setDraft(current => ({ ...current, notes: event.target.value }))} rows={2} maxLength={500} />
         </div>

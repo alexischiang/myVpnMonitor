@@ -244,6 +244,28 @@ function buildNodeConfig(node) {
   return config;
 }
 
+/** JSON with object keys sorted, so jsonb's key order never counts as a change. */
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+/**
+ * What the node's machine and relays act on: whether it runs, the kernel config it gets and the
+ * relays forwarding to it. Name, region, network level, sort order and inbound type only change
+ * subscriptions and the admin, so they are left out.
+ */
+function nodeRuntimeFingerprint(node, relayIds = []) {
+  const enabled = node.enabled !== false;
+  return stableJson({ enabled, config: enabled ? buildNodeConfig(node) : null, relayIds: [...relayIds].map(Number).sort((a, b) => a - b) });
+}
+
+/** True when an edit has to reach the machine (xray restarts on a config change) or the relays (realm restarts). */
+function nodeRuntimeChanged(before, after, beforeRelayIds = [], afterRelayIds = []) {
+  return nodeRuntimeFingerprint(before, beforeRelayIds) !== nodeRuntimeFingerprint(after, afterRelayIds);
+}
+
 function appendTransport(proxy, s) {
   switch (s.network) {
     case "ws":
@@ -356,4 +378,4 @@ function clashProxy(node, uuid, name = node.name) {
   }
 }
 
-module.exports = { PROTOCOLS, normalizeNodeInput, normalizeNodeSettings, buildNodeConfig, clashProxy, generateRealityKeyPair, realityPublicKey, shadowsocksServerKey, shadowsocksUserPassword };
+module.exports = { PROTOCOLS, normalizeNodeInput, normalizeNodeSettings, buildNodeConfig, nodeRuntimeChanged, clashProxy, generateRealityKeyPair, realityPublicKey, shadowsocksServerKey, shadowsocksUserPassword };

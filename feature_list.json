@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-02T17:31:25.477Z",
+  "updated_at": "2026-11-02T18:24:07.917Z",
   "required_fields": [
     "id",
     "name",
@@ -5166,6 +5166,119 @@
         "2026-11-03 local: node test-node-hub.js passes with --kernel xray in the machine install command and the 3x-ui migration output; npm run verify:fast and git diff --check pass.",
         "2026-11-03 production bage-hk (machine 3): config.yml kernel.type singbox -> xray (backup backups/config.yml.20261103-singbox), restarted xboard-node; log shows Xray 26.3.27 started, 68 users, accepting PROXY protocol. From aws-jp, TLS through realm 127.0.0.1:61001 and the public 3.113.22.110:61001 completes (CN hk-bage.mylovebaby.top) where it failed before; direct 185.241.40.165:60000 now fails as expected; no realm errors after the restart. A full VLESS client connection through the relay was not tested."
       ]
+    },
+    {
+      "id": "node-hub-node-form-tabs",
+      "name": "Node Hub node dialog: two tabs, xray by default, relay-aware fields and aligned controls",
+      "description": "The new/edit node dialog splits into 基本设置 (basics incl. 接入方式, transport) and 安全与高级 (security, protocol settings, certificate, advanced JSON) tabs. New nodes default to the Xray kernel (the 默认 option is gone). 接入方式 sits in 基本信息; through relays the connection address input is hidden (it follows the machine address, subscriptions use relay addresses) and the relay checklist takes its place, while the port stays with a note that relays forward to it. The dialog scrolls without a scrollbar (new scrollbar-none utility). Number fields fill their grid cell and Arc number-field md derives its step size from the control height so it matches Input (36px with a mouse).",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-relay-machines"
+      ],
+      "done_criteria": [
+        "New nodes default to kernel_type xray.",
+        "The dialog has two tabs; security and advanced settings share the second.",
+        "接入方式 is part of 基本信息; relay mode hides the connection address and still saves with the machine address.",
+        "The node dialog shows no scrollbar but still scrolls.",
+        "Number fields are as tall and wide as the text inputs in the same grid."
+      ],
+      "verification": [
+        "2026-11-03 local: npm run check passes (tsc, lint, build).",
+        "Isolated server.js + node-hub on the test DB: the new node dialog shows the tabs, Xray kernel, no scrollbar (scrollbar-width none, still scrollable); every control in 基本信息 measures 36x409 at 1280px and 40x301 at 375px with matching row tops; switching to 经中转机 hides 连接地址, shows the relay checklist, locks the kernel to Xray and turns PROXY protocol on; creating a relay-mode node saved host = machine host, kernel xray, accept_proxy_protocol and relay port 61001; editing it shows 端口 61001 and switching back to 直连 shows 连接地址 again. Sales settings coupon drawer number fields measure 36px like its inputs. Test node and relay removed afterwards."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=nodes",
+          "/sales-settings"
+        ],
+        "interactions": [
+          "Open 新建节点; switch 接入方式 to 经中转机; switch tabs 安全与高级 and back",
+          "Create a relay-mode node; open its edit dialog; switch back to 直连; close without saving",
+          "Resize to 375px and measure controls",
+          "Open 添加优惠码 and measure number fields"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-02T18:00:54.236Z"
+      }
+    },
+    {
+      "id": "node-hub-runtime-change-push",
+      "name": "Node edits only push when the machine or relays must change",
+      "description": "nodeRuntimeChanged (node-hub/node-config.js) compares a node runtime fingerprint before and after an edit: enabled, the kernel config from buildNodeConfig (stable key order) and the relays it goes through. A node PUT that only changes name, region, network level, sort order or inbound type no longer schedules a push. The sync.nodes list hash covers only id and protocol sorted by id, so renames and re-sorting never send sync.nodes, and realm TOML comments carry ids only, so renaming a node or relay leaves the relay config byte-identical and realm is not restarted.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "node-hub-relay-machines"
+      ],
+      "done_criteria": [
+        "Cosmetic node edits push neither sync.config nor sync.nodes, also on a later reconcile.",
+        "Port, settings, enable/disable and relay changes still count as runtime changes.",
+        "Renaming a node or relay leaves the realm config unchanged."
+      ],
+      "verification": [
+        "2026-11-03 local: node test-node-hub.js passes with new checks: nodeRuntimeChanged false for name/region/networkLevel/sortOrder/inboundType and jsonb key order, true for port, settings, disabling and relay set; a machine socket gets no sync.config/sync.nodes after a cosmetic PUT, also after a later write triggers a reconcile; realm config text is identical after renaming a node and its relay. Mutation check: restoring the old name-including list hash makes the test fail. npm run verify:fast and git diff --check pass."
+      ]
+    },
+    {
+      "id": "node-hub-relay-entry-name",
+      "name": "Relay subscription entries keep the node name",
+      "description": "A relay-mode node is listed in subscriptions under its own name. Only a node behind more than one active relay adds \" · <relay name>\", because Clash needs unique proxy names and neither server.js nor subconverter dedupes them. The relay form hint and docs/agent/node-hub.md describe this.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-relay-machines"
+      ],
+      "done_criteria": [
+        "One active relay: the entry name is the node name.",
+        "Several active relays: each entry is node name · relay name.",
+        "The relay form hint states the rule and fits its field."
+      ],
+      "verification": [
+        "2026-11-03 local: node test-node-hub.js passes; the existing two-relay case still yields \"Relay 01 · 香港中转\" / \"Relay 01 · 广州中转\", and after disabling one relay the remaining entry is named \"Relay 01\". npm run check and git diff --check pass."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=relays"
+        ],
+        "interactions": [
+          "Open 新建中转机 and read the 名称 hint; its description measures scrollWidth 390 = clientWidth 390 (no overflow)"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-02T18:18:19.062Z"
+      }
+    },
+    {
+      "id": "node-hub-realm-rules-change",
+      "name": "Relay edits only change realm when forwarding changes",
+      "description": "realmRules (node-hub/relay.js) is the forwarding a relay acts on: nothing when disabled, else each listen port and its remote. realmConfig renders the TOML from it alone, so relay or node names, notes and the relay public address never change the file the relay sync compares byte for byte, and realm is not restarted. realmRulesChanged judges an edit; a relay PUT returns rulesChanged and no longer schedules a machine push (machines never see relays). The relay save toast says whether rules will sync.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-relay-machines",
+        "node-hub-runtime-change-push"
+      ],
+      "done_criteria": [
+        "Renaming a relay, editing notes or its public address keeps the realm config identical and returns rulesChanged false.",
+        "Enabling/disabling a relay, a new node port, landing address or entry count as rule changes.",
+        "The relay save toast reflects rulesChanged."
+      ],
+      "verification": [
+        "2026-11-03 local: node test-node-hub.js passes with new checks (relay PUT of name/notes/host returns rulesChanged false and the pulled config text is unchanged; isActive toggles return true; realmRulesChanged unit cases incl. endpoint order and node names). Mutation check: putting the relay name back into the TOML header makes the test fail. npm run check and npm run verify pass."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=relays"
+        ],
+        "interactions": [
+          "Open a relay, change only 备注, save: toast shows 转发规则不变，中转机不会重启 realm"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-02T18:24:07.917Z"
+      }
     }
   ]
 }

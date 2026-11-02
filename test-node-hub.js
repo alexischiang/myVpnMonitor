@@ -9,7 +9,7 @@ const path = require("node:path");
 const { Pool } = require("pg");
 const { NodeHubStore, chinaDateKey } = require("./node-hub/store");
 const { createNodeHubHandler } = require("./node-hub/app");
-const { configHash } = require("./node-hub/relay");
+const { configHash, realmRulesChanged } = require("./node-hub/relay");
 const nodeConfig = require("./node-hub/node-config");
 const { convertXuiInbound } = require("./node-hub/xui-import");
 const { execFile } = require("node:child_process");
@@ -106,6 +106,16 @@ async function wsChecks({ base, internal, machine, otherMachine, vlessNodeId, hy
   assert.equal((await ws.next(event("sync.config", vlessNodeId), "edited config")).data.config.server_port, 8445);
   await internal("PUT", `/internal/nodes/${vlessNodeId}`, { serverPort: 8444 });
   await ws.next(event("sync.config", vlessNodeId), "restored config");
+  // Renaming, regions and ordering never reach the machine, so its xray keeps running.
+  const original = (await internal("GET", `/internal/nodes/${vlessNodeId}`)).body;
+  const seen = ws.messages.length;
+  await internal("PUT", `/internal/nodes/${vlessNodeId}`, { name: "WS 改名", region: "日本", networkLevel: "premium", sortOrder: 7 });
+  await new Promise(resolve => setTimeout(resolve, 600));
+  // A later reconcile (another write, or the periodic safety net) still finds nothing to send.
+  await internal("POST", "/internal/reality-keypair");
+  await new Promise(resolve => setTimeout(resolve, 600));
+  assert.deepEqual(ws.messages.slice(seen).filter(message => ["sync.config", "sync.nodes"].includes(message.event)), [], "a cosmetic edit pushes nothing");
+  await internal("PUT", `/internal/nodes/${vlessNodeId}`, { name: original.name, region: original.region, networkLevel: original.networkLevel, sortOrder: original.sortOrder });
   const extra = (await internal("POST", "/internal/nodes", { machineId: machine.id, name: "WS 测试", protocol: "shadowsocks", host: "la.example.com", serverPort: 9443, settings: { cipher: "aes-128-gcm" } })).body;
   assert.deepEqual((await ws.next(event("sync.nodes"), "node added")).data.nodes.map(item => item.id), [vlessNodeId, hyNodeId, extra.id]);
   await internal("DELETE", `/internal/nodes/${extra.id}`);
@@ -160,6 +170,19 @@ function unitChecks() {
   assert.throws(() => nodeConfig.normalizeNodeInput({ ...vless, settings: { ...vless.settings, accept_proxy_protocol: true } }), /Xray/);
   assert.throws(() => nodeConfig.normalizeNodeInput({ ...vless, settings: { ...vless.settings, kernel_type: "singbox", accept_proxy_protocol: true } }), /Xray/);
   assert.throws(() => nodeConfig.normalizeNodeInput({ name: "T5", protocol: "tuic", host: "a.b", serverPort: 1, settings: { tls: { server_name: "a.b" }, kernel_type: "xray", accept_proxy_protocol: true } }), /PROXY protocol/);
+
+  // Only edits the machine or the relays act on count as runtime changes.
+  const running = { ...vless, id: 1, enabled: true };
+  for (const cosmetic of [{ name: "改名" }, { region: "日本" }, { networkLevel: "premium" }, { sortOrder: 9 }, { inboundType: "custom" }]) {
+    assert.equal(nodeConfig.nodeRuntimeChanged(running, { ...running, ...cosmetic }, [1], [1]), false, `${Object.keys(cosmetic)[0]} is not a runtime change`);
+  }
+  const reordered = { ...running, settings: Object.fromEntries(Object.entries(running.settings).reverse()) };
+  assert.equal(nodeConfig.nodeRuntimeChanged(running, reordered), false, "jsonb key order is not a change");
+  assert.equal(nodeConfig.nodeRuntimeChanged(running, { ...running, serverPort: 8446 }), true, "port");
+  assert.equal(nodeConfig.nodeRuntimeChanged(running, { ...running, settings: { ...running.settings, flow: "" } }), true, "settings");
+  assert.equal(nodeConfig.nodeRuntimeChanged(running, { ...running, enabled: false }), true, "disabling");
+  assert.equal(nodeConfig.nodeRuntimeChanged(running, running, [1], [1, 2]), true, "relays");
+  assert.equal(nodeConfig.nodeRuntimeChanged(running, running, [2, 1], [1, 2]), false, "relay order is not a change");
 
   const built = nodeConfig.buildNodeConfig({ ...vless, id: 1 });
   assert.deepEqual(
@@ -264,8 +287,24 @@ async function relayChecks({ base, internal }) {
   assert.equal(pulled.status, 200);
   assert.equal(pulled.hash, configHash(pulled.text));
   assert.match(pulled.text, /send_proxy = true\nsend_proxy_version = 2/);
-  assert.match(pulled.text, /# node \d+ Relay 03\n\[\[endpoints\]\]\nlisten = "0\.0\.0\.0:61001"\nremote = "198\.51\.100\.7:9445"/);
-  assert.doesNotMatch(pulled.text, /Relay 02/, "a disabled node is not forwarded");
+  assert.match(pulled.text, new RegExp(`# node ${three.id}\\n\\[\\[endpoints\\]\\]\\nlisten = "0\\.0\\.0\\.0:61001"\\nremote = "198\\.51\\.100\\.7:9445"`));
+  assert.doesNotMatch(pulled.text, new RegExp(`# node ${two.id}\\n`), "a disabled node is not forwarded");
+  // realm restarts whenever the file changes, so renaming a node or the relay leaves the rules as they are.
+  await internal("PUT", `/internal/nodes/${three.id}`, { name: "Relay 03 改名" });
+  const cosmeticRelay = await internal("PUT", `/internal/relays/${hk.body.id}`, { name: "香港中转 改名", notes: "备注", host: "203.0.113.99" });
+  assert.equal(cosmeticRelay.body.rulesChanged, false, "name, notes and public address are not realm rules");
+  assert.equal((await relayConfig(hk.body)).text, pulled.text, "renames, notes and the public address do not touch the realm rules");
+  await internal("PUT", `/internal/relays/${hk.body.id}`, { name: hk.body.name, notes: hk.body.notes || "", host: hk.body.host });
+  assert.equal((await internal("PUT", `/internal/relays/${hk.body.id}`, { isActive: false })).body.rulesChanged, true, "disabling a relay empties its rules");
+  assert.equal((await internal("PUT", `/internal/relays/${hk.body.id}`, { isActive: true })).body.rulesChanged, true, "re-enabling restores them");
+  // The judge itself: only the forwarding counts, in any endpoint order.
+  const rule = { nodeId: 7, listenPort: 61001, remoteHost: "198.51.100.7", remotePort: 9445, nodeName: "A" };
+  const second = { nodeId: 8, listenPort: 61002, remoteHost: "198.51.100.8", remotePort: 9446, nodeName: "B" };
+  const on = { id: 1, isActive: true, name: "x", host: "203.0.113.1" };
+  assert.equal(realmRulesChanged(on, { ...on, name: "y", host: "203.0.113.2", notes: "n" }, [rule, second], [{ ...second, nodeName: "B2" }, rule]), false);
+  assert.equal(realmRulesChanged(on, on, [rule], [{ ...rule, remotePort: 9999 }]), true, "a new node port");
+  assert.equal(realmRulesChanged(on, on, [rule], [{ ...rule, remoteHost: "198.51.100.9" }]), true, "a new landing address");
+  assert.equal(realmRulesChanged(on, on, [rule], [rule, second]), true, "a new entry");
   let view = (await internal("GET", `/internal/relays/${hk.body.id}`)).body;
   assert.deepEqual([view.online, view.realmActive, view.synced, view.endpointCount], [true, false, false, 1]);
   await relayConfig(hk.body, { realm: "active", applied: pulled.hash });
@@ -281,6 +320,7 @@ async function relayChecks({ base, internal }) {
   assert.deepEqual(await proxies(), [[hk.body.id, "Relay 01 · 香港中转", "203.0.113.9", hkPort, user.uuid], [gz.id, "Relay 01 · 广州中转", "2001:db8::9", 61001, user.uuid]]);
   await internal("PUT", `/internal/relays/${hk.body.id}`, { isActive: false });
   assert.deepEqual((await proxies()).map(item => item[0]), [gz.id], "a disabled relay leaves the subscription");
+  assert.equal((await proxies())[0][1], "Relay 01", "a node behind one active relay keeps its own name");
   assert.doesNotMatch((await relayConfig(hk.body)).text, /\[\[endpoints\]\]/, "a disabled relay gets no rules, so realm stops");
   assert.equal((await internal("DELETE", `/internal/relays/${gz.id}`)).status, 409, "a relay in use cannot be deleted");
   await internal("PUT", `/internal/nodes/${one.body.id}`, { relayIds: [] });

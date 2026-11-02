@@ -554,7 +554,7 @@ export function NodeHubPage() {
       <ConfirmDialog open={confirmDeleteMachine} onOpenChange={setConfirmDeleteMachine} title={`删除机器「${machineDetail?.name || ""}」？`} description="机器下还有节点时不能删除，请先删除节点。删除后不能恢复。" confirmLabel="删除机器" onConfirm={deleteMachine} />
 
       <Dialog open={nodeEditorOpen} onOpenChange={open => { if (!nodeSaving) setNodeEditorOpen(open) }}>
-        <DialogContent title={editingNode ? `编辑「${editingNode.name}」` : "新建节点"} description="保存后机器最长约 1 分钟内拉取新配置；加入线路组后才会分配给用户。" size="xl">
+        <DialogContent title={editingNode ? `编辑「${editingNode.name}」` : "新建节点"} description="保存后机器最长约 1 分钟内拉取新配置；加入线路组后才会分配给用户。" size="xl" className="scrollbar-none">
           <NodeHubNodeForm draft={nodeDraft} onChange={setNodeDraft} machines={machines} relays={relays} relayEntries={editingNode?.relays} advancedText={advancedText} onAdvancedTextChange={text => { setAdvancedText(text); setAdvancedError("") }} advancedError={advancedError} creating={!editingNode} />
           <div className="flex flex-wrap justify-end gap-2">
             {editingNode ? <Button variant="danger" className="mr-auto" onClick={() => setConfirmDeleteNode(editingNode)} disabled={nodeSaving}><Trash2 />删除节点</Button> : null}

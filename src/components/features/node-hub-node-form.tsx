@@ -10,6 +10,7 @@ import { Input } from "@/components/arc/input/input"
 import { NumberField } from "@/components/arc/number-field/number-field"
 import { Select } from "@/components/arc/select/select"
 import { Switch } from "@/components/arc/switch/switch"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs"
 import { Textarea } from "@/components/arc/textarea/textarea"
 import type { NodeHubMachine, NodeHubNode, NodeHubProtocol, NodeHubRelay, NodeHubRelayEntry } from "@/types"
 
@@ -75,7 +76,8 @@ export function defaultNodeSettings(protocol: NodeHubProtocol): Settings {
 }
 
 export function emptyNodeDraft(machineId = 0): NodeHubNodeDraft {
-  return { machineId, name: "", protocol: "vless", host: "", serverPort: 443, listenIp: "0.0.0.0", enabled: true, sortOrder: 1, region: "", networkLevel: "", inboundType: "package", settings: defaultNodeSettings("vless"), access: "direct", relayIds: [] }
+  // Hub machines are installed with the xray kernel, so new nodes say so too.
+  return { machineId, name: "", protocol: "vless", host: "", serverPort: 443, listenIp: "0.0.0.0", enabled: true, sortOrder: 1, region: "", networkLevel: "", inboundType: "package", settings: { ...defaultNodeSettings("vless"), kernel_type: "xray" }, access: "direct", relayIds: [] }
 }
 
 export function nodeDraftFrom(node: NodeHubNode): NodeHubNodeDraft {
@@ -130,6 +132,11 @@ function FormSection({ title, children }: { title: string; children: React.React
   return <section className="grid gap-3"><h3 className="text-sm font-semibold">{title}</h3><div className="grid items-start gap-3 sm:grid-cols-2">{children}</div></section>
 }
 
+/** A number field that fills its grid cell like the text inputs next to it. */
+function WideNumberField(props: React.ComponentProps<typeof NumberField>) {
+  return <div className="min-w-0" style={{ "--number-field-width": "100%" } as React.CSSProperties}><NumberField size="md" locale="zh-CN" {...props} /></div>
+}
+
 export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntries = [], advancedText, onAdvancedTextChange, advancedError, creating }: {
   draft: NodeHubNodeDraft
   onChange: (draft: NodeHubNodeDraft) => void
@@ -143,6 +150,9 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
   creating: boolean
 }) {
   const [generating, setGenerating] = React.useState(false)
+  const [tab, setTab] = React.useState("basic")
+  // The advanced JSON lives on the second tab: show it when saving rejected it.
+  React.useEffect(() => { if (advancedError) setTab("security") }, [advancedError])
   const s = draft.settings
   const set = (path: string[], value: unknown) => onChange({ ...draft, settings: write(draft.settings, path, value) })
   const field = <K extends keyof NodeHubNodeDraft>(key: K, value: NodeHubNodeDraft[K]) => onChange({ ...draft, [key]: value })
@@ -159,9 +169,11 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
   const viaRelay = draft.access === "relay"
 
   // Relay mode needs PROXY protocol on the xray kernel (the relays send the header); direct mode
-  // turns it off, since a node accepting PROXY protocol refuses direct connections.
+  // turns it off, since a node accepting PROXY protocol refuses direct connections. Subscriptions
+  // use the relays' addresses then, so the hidden connection address just follows the machine.
   function changeAccess(next: "direct" | "relay") {
-    if (next === "relay") onChange({ ...draft, access: "relay", settings: write(write(draft.settings, ["accept_proxy_protocol"], true), ["kernel_type"], "xray") })
+    const machineHost = machines.find(machine => machine.id === draft.machineId)?.host || ""
+    if (next === "relay") onChange({ ...draft, access: "relay", host: draft.host || machineHost, settings: write(write(draft.settings, ["accept_proxy_protocol"], true), ["kernel_type"], "xray") })
     else onChange({ ...draft, access: "direct", relayIds: [], settings: write(draft.settings, ["accept_proxy_protocol"], undefined) })
   }
 
@@ -206,31 +218,35 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
     : [{ value: "1", label: "TLS" }, { value: "2", label: "REALITY" }]
   const flowError = protocol === "vless" && s.flow && (network !== "tcp" || tls === 0) ? "xtls-rprx-vision 需要 TCP 传输并启用 TLS 或 REALITY。" : undefined
 
-  return <div className="grid gap-6">
+  return <Tabs value={tab} onValueChange={setTab}>
+    <TabsList>
+      <TabsTrigger value="basic">基本设置</TabsTrigger>
+      <TabsTrigger value="security">安全与高级</TabsTrigger>
+    </TabsList>
+
+    <TabsContent value="basic" className="grid gap-6 pt-4">
     <FormSection title="基本信息">
       <Select label="所属机器" id="node-machine" className="w-full" value={draft.machineId ? String(draft.machineId) : ""} placeholder="选择机器" onValueChange={value => changeMachine(Number(value))} disabled={!creating} description={creating ? undefined : "节点创建后不能换机器。"} options={machines.map(machine => ({ value: String(machine.id), label: `${machine.name}${machine.host ? ` · ${machine.host}` : ""}` }))} />
       <Select label="协议" id="node-protocol" className="w-full" value={protocol} onValueChange={value => changeProtocol(value as NodeHubProtocol)} disabled={!creating} description={creating ? undefined : "协议创建后不能修改，需要换协议请新建节点。"} options={NODE_HUB_PROTOCOLS} />
       <Input label="节点名称" id="node-name" value={draft.name} onChange={event => field("name", event.target.value)} placeholder="香港 01" maxLength={80} />
-      <Input label="连接地址" id="node-host" description={viaRelay ? "经中转时订阅使用各中转机的地址和端口，这里的地址不写进订阅。" : "写进用户订阅的域名或 IP。"} value={draft.host} onChange={event => field("host", event.target.value.trim())} placeholder="hk.example.com" />
-      <NumberField size="md" label="端口" id="node-port" value={draft.serverPort} onValueChange={value => field("serverPort", value)} min={1} max={65535} locale="zh-CN" formatOptions={{ useGrouping: false }} />
-      <Input label="监听地址" id="node-listen" description="节点在机器上监听的地址，一般保持 0.0.0.0。" value={draft.listenIp} onChange={event => field("listenIp", event.target.value.trim())} placeholder="0.0.0.0" />
       <Input label="地区" id="node-region" value={draft.region} onChange={event => field("region", event.target.value)} placeholder="例如：香港、美国、台湾" maxLength={64} />
-      <Select label="网络级别" id="node-level" className="w-full" value={draft.networkLevel || "unset"} onValueChange={value => field("networkLevel", value === "unset" ? "" : value)} options={[{ value: "unset", label: "未设置" }, ...NODE_HUB_NETWORK_LEVELS.map(level => ({ value: level.value, label: level.label }))]} />
-      <Select label="入站类型" id="node-type" className="w-full" value={draft.inboundType} onValueChange={value => field("inboundType", value as "package" | "custom")} description="定制节点只能在用户页单独授权，不参与线路组。" options={[{ value: "package", label: "套餐节点" }, { value: "custom", label: "定制节点" }]} />
-      <NumberField size="md" label="排序" id="node-order" value={draft.sortOrder} onValueChange={value => field("sortOrder", value)} min={0} locale="zh-CN" />
-      <SwitchField id="node-enabled" label="启用节点" description="停用后机器最长约 1 分钟内停止该节点。" checked={draft.enabled} onCheckedChange={enabled => field("enabled", enabled)} />
-      <Select label="内核" id="node-kernel" className="w-full" value={str(s.kernel_type) || "default"} onValueChange={value => set(["kernel_type"], value === "default" ? undefined : value)} description="默认由 xboard-node 自己选择。" options={[{ value: "default", label: "默认" }, { value: "xray", label: "Xray" }, { value: "singbox", label: "sing-box" }]} />
-      {proxyProtocolCapable ? <SwitchField id="node-proxy-protocol" label="接受 PROXY protocol" description={viaRelay ? "经中转机接入时必须开启，节点才能拿到用户真实 IP。" : "经端口转发入口（如 realm）接入时开启，节点才能拿到用户真实 IP；开启后只接受带 PROXY 头的连接，直连会失败。需要 Xray 内核。"} checked={viaRelay || s.accept_proxy_protocol === true} disabled={viaRelay} onCheckedChange={checked => onChange({ ...draft, settings: write(write(draft.settings, ["accept_proxy_protocol"], checked || undefined), ["kernel_type"], checked ? "xray" : s.kernel_type) })} /> : null}
-    </FormSection>
-
-    <FormSection title="接入方式">
-      <Select label="接入方式" id="node-access" className="w-full" value={draft.access} onValueChange={value => changeAccess(value as "direct" | "relay")} disabled={!proxyProtocolCapable && !viaRelay} description={!proxyProtocolCapable ? "只有 VLESS、VMess、Trojan 和 Shadowsocks 能经中转机接入。" : viaRelay ? "用户只能经勾选的中转机连接，每台中转机在订阅里各有一个条目。" : "用户直接连接这台机器。"} options={[{ value: "direct", label: "直连" }, { value: "relay", label: "经中转机" }]} />
-      {viaRelay ? <div className="grid gap-3 sm:col-span-2">
+      <Select label="接入方式" id="node-access" className="w-full" value={draft.access} onValueChange={value => changeAccess(value as "direct" | "relay")} disabled={!proxyProtocolCapable && !viaRelay} description={!proxyProtocolCapable ? "只有 VLESS、VMess、Trojan 和 Shadowsocks 能经中转机接入。" : viaRelay ? "订阅里每台中转机各有一个条目。" : undefined} options={[{ value: "direct", label: "直连" }, { value: "relay", label: "经中转机" }]} />
+      {/* Through relays, subscriptions carry each relay's address and port, so there is no connection address to fill in. */}
+      {viaRelay ? <div role="group" aria-labelledby="node-relays-label" className="grid gap-2">
+        <span id="node-relays-label" className="text-sm font-medium">中转机</span>
         {relays.length ? relays.map(relay => {
           const entry = relayEntries.find(item => item.relayId === relay.id)
           return <Checkbox key={relay.id} id={`node-relay-${relay.id}`} label={relay.name} description={`${relay.host} · ${entry && draft.relayIds.includes(relay.id) ? `端口 ${entry.listenPort}` : "保存后分配端口"}${relay.isActive ? "" : " · 已停用"}`} checked={draft.relayIds.includes(relay.id)} onCheckedChange={checked => toggleRelay(relay.id, checked === true)} />
         }) : <p className="text-sm text-muted-foreground">还没有中转机，先在「中转机」标签页新建。</p>}
-      </div> : null}
+      </div> : <Input label="连接地址" id="node-host" description="写进用户订阅的域名或 IP。" value={draft.host} onChange={event => field("host", event.target.value.trim())} placeholder="hk.example.com" />}
+      <WideNumberField label="端口" id="node-port" description={viaRelay ? "节点在机器上监听的端口，中转机转发到这里。" : undefined} value={draft.serverPort} onValueChange={value => field("serverPort", value)} min={1} max={65535} formatOptions={{ useGrouping: false }} />
+      <Input label="监听地址" id="node-listen" value={draft.listenIp} onChange={event => field("listenIp", event.target.value.trim())} placeholder="0.0.0.0" />
+      <Select label="网络级别" id="node-level" className="w-full" value={draft.networkLevel || "unset"} onValueChange={value => field("networkLevel", value === "unset" ? "" : value)} options={[{ value: "unset", label: "未设置" }, ...NODE_HUB_NETWORK_LEVELS.map(level => ({ value: level.value, label: level.label }))]} />
+      <Select label="入站类型" id="node-type" className="w-full" value={draft.inboundType} onValueChange={value => field("inboundType", value as "package" | "custom")} description="定制节点只能在用户页单独授权，不参与线路组。" options={[{ value: "package", label: "套餐节点" }, { value: "custom", label: "定制节点" }]} />
+      <WideNumberField label="排序" id="node-order" value={draft.sortOrder} onValueChange={value => field("sortOrder", value)} min={0} />
+      <Select label="内核" id="node-kernel" className="w-full" value={str(s.kernel_type) || "xray"} onValueChange={value => set(["kernel_type"], value)} disabled={viaRelay} options={[{ value: "xray", label: "Xray" }, { value: "singbox", label: "sing-box" }]} />
+      <SwitchField id="node-enabled" label="启用节点" checked={draft.enabled} onCheckedChange={enabled => field("enabled", enabled)} />
+      {proxyProtocolCapable ? <SwitchField id="node-proxy-protocol" label="接受 PROXY protocol" description={viaRelay ? "经中转机接入时必须开启。" : "经端口转发入口接入时开启，开启后直连会失败。需要 Xray 内核。"} checked={viaRelay || s.accept_proxy_protocol === true} disabled={viaRelay} onCheckedChange={checked => onChange({ ...draft, settings: write(write(draft.settings, ["accept_proxy_protocol"], checked || undefined), ["kernel_type"], checked ? "xray" : s.kernel_type) })} /> : null}
     </FormSection>
 
     {streamProtocol ? <FormSection title="传输">
@@ -246,7 +262,9 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
       </> : null}
       {network === "xhttp" ? <Select label="XHTTP 模式" id="node-xhttp-mode" className="w-full" value={str(read(s, ["network_settings", "mode"])) || "auto"} onValueChange={value => set(["network_settings", "mode"], value === "auto" ? undefined : value)} options={["auto", "packet-up", "stream-up", "stream-one"].map(value => ({ value, label: value }))} /> : null}
     </FormSection> : null}
+    </TabsContent>
 
+    <TabsContent value="security" className="grid gap-6 pt-4">
     {streamProtocol ? <FormSection title="安全">
       <Select label="安全类型" id="node-tls" className="w-full" value={String(tls)} onValueChange={value => changeTls(Number(value))} options={tlsOptions} />
       {protocol === "vless" ? <Select label="Flow" id="node-flow" className="w-full" value={str(s.flow) || "none"} onValueChange={value => set(["flow"], value === "none" ? "" : value)} description={flowError} options={[{ value: "none", label: "无" }, { value: "xtls-rprx-vision", label: "xtls-rprx-vision" }]} /> : null}
@@ -256,7 +274,7 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
       </> : null}
       {tls === 2 ? <>
         <Input label="伪装域名（server_name）" id="node-reality-sni" description="用 3x-ui 节点上验证可用的伪装域名；www.microsoft.com 会让合法连接握手失败。" value={str(read(s, ["reality_settings", "server_name"]))} onChange={event => set(["reality_settings", "server_name"], event.target.value.trim())} placeholder="dl.example.com" />
-        <NumberField size="md" label="伪装目标端口" id="node-reality-port" value={Number(read(s, ["reality_settings", "server_port"]) || 443)} onValueChange={value => set(["reality_settings", "server_port"], value)} min={1} max={65535} locale="zh-CN" formatOptions={{ useGrouping: false }} />
+        <WideNumberField label="伪装目标端口" id="node-reality-port" value={Number(read(s, ["reality_settings", "server_port"]) || 443)} onValueChange={value => set(["reality_settings", "server_port"], value)} min={1} max={65535} locale="zh-CN" formatOptions={{ useGrouping: false }} />
         <Input label="伪装目标（dest）" id="node-reality-dest" description="留空时使用 伪装域名:端口。" value={str(read(s, ["reality_settings", "dest"]))} onChange={event => set(["reality_settings", "dest"], event.target.value.trim() || undefined)} placeholder="dl.example.com:443" />
         <Input label="Short ID" id="node-reality-sid" value={str(read(s, ["reality_settings", "short_id"]))} onChange={event => set(["reality_settings", "short_id"], event.target.value.trim())} placeholder="不超过 16 位十六进制" maxLength={16} />
         <Input label="私钥" id="node-reality-private" value={str(read(s, ["reality_settings", "private_key"]))} onChange={event => onChange({ ...draft, settings: write(write(draft.settings, ["reality_settings", "private_key"], event.target.value.trim()), ["reality_settings", "public_key"], undefined) })} placeholder="点击生成密钥对" autoComplete="off" spellCheck={false} />
@@ -276,8 +294,8 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
       <Input label="证书域名（SNI）" id="node-sni" value={str(read(s, ["tls", "server_name"]))} onChange={event => set(["tls", "server_name"], event.target.value.trim())} placeholder="node.example.com" />
       <SwitchField id="node-insecure" label="允许不安全证书" description="客户端跳过证书校验，只用于自签名证书。" checked={read(s, ["tls", "allow_insecure"]) === true} onCheckedChange={checked => set(["tls", "allow_insecure"], checked || undefined)} />
       {protocol === "hysteria" ? <>
-        <NumberField size="md" label="上行带宽" id="node-hy-up" value={Number(read(s, ["bandwidth", "up"]) || 0)} onValueChange={value => set(["bandwidth", "up"], value)} min={0} suffix=" Mbps" description="0 表示不限制。" locale="zh-CN" />
-        <NumberField size="md" label="下行带宽" id="node-hy-down" value={Number(read(s, ["bandwidth", "down"]) || 0)} onValueChange={value => set(["bandwidth", "down"], value)} min={0} suffix=" Mbps" description="0 表示不限制。" locale="zh-CN" />
+        <WideNumberField label="上行带宽" id="node-hy-up" value={Number(read(s, ["bandwidth", "up"]) || 0)} onValueChange={value => set(["bandwidth", "up"], value)} min={0} suffix=" Mbps" description="0 表示不限制。" locale="zh-CN" />
+        <WideNumberField label="下行带宽" id="node-hy-down" value={Number(read(s, ["bandwidth", "down"]) || 0)} onValueChange={value => set(["bandwidth", "down"], value)} min={0} suffix=" Mbps" description="0 表示不限制。" locale="zh-CN" />
         <SwitchField id="node-hy-obfs" label="Salamander 混淆" checked={read(s, ["obfs", "open"]) === true} onCheckedChange={checked => set(["obfs", "open"], checked)} />
         {read(s, ["obfs", "open"]) === true ? <Input label="混淆密码" id="node-hy-obfs-password" value={str(read(s, ["obfs", "password"]))} onChange={event => set(["obfs", "password"], event.target.value)} autoComplete="off" /> : null}
       </> : null}
@@ -294,7 +312,7 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
         <Input label="证书域名" id="node-cert-domain" value={str(read(s, ["cert_config", "domain"]))} onChange={event => set(["cert_config", "domain"], event.target.value.trim())} placeholder="node.example.com" />
         <Input label="ACME 邮箱" id="node-cert-email" type="email" value={str(read(s, ["cert_config", "email"]))} onChange={event => set(["cert_config", "email"], event.target.value.trim())} placeholder="admin@example.com" />
       </> : null}
-      {certMode === "http" ? <NumberField size="md" label="HTTP-01 端口" id="node-cert-http-port" value={Number(read(s, ["cert_config", "http_port"]) || 80)} onValueChange={value => set(["cert_config", "http_port"], value)} min={1} max={65535} locale="zh-CN" formatOptions={{ useGrouping: false }} /> : null}
+      {certMode === "http" ? <WideNumberField label="HTTP-01 端口" id="node-cert-http-port" value={Number(read(s, ["cert_config", "http_port"]) || 80)} onValueChange={value => set(["cert_config", "http_port"], value)} min={1} max={65535} locale="zh-CN" formatOptions={{ useGrouping: false }} /> : null}
       {certMode === "dns" ? <>
         <Input label="DNS 服务商" id="node-cert-dns-provider" value={str(read(s, ["cert_config", "dns_provider"]))} onChange={event => set(["cert_config", "dns_provider"], event.target.value.trim())} placeholder="cloudflare、alidns" />
         <Textarea label="DNS 环境变量" id="node-cert-dns-env" description="每行一个 KEY=VALUE，例如 CF_DNS_API_TOKEN=..." value={Object.entries((read(s, ["cert_config", "dns_env"]) as Record<string, string>) || {}).map(([key, value]) => `${key}=${value}`).join("\n")} onChange={event => set(["cert_config", "dns_env"], Object.fromEntries(event.target.value.split("\n").map(line => line.split("=")).filter(parts => parts[0]?.trim()).map(([key, ...value]) => [key.trim(), value.join("=").trim()])))} rows={3} spellCheck={false} />
@@ -313,5 +331,6 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
       <h3 className="text-sm font-semibold">高级设置</h3>
       <Textarea label="高级设置（JSON）" hideLabel id="node-advanced" description={`可选，JSON 对象，只能包含 ${ADVANCED_KEYS.join("、")}，原样下发给 xboard-node。`} value={advancedText} onChange={event => onAdvancedTextChange(event.target.value)} error={advancedError} rows={5} spellCheck={false} className="font-mono" />
     </section>
-  </div>
+    </TabsContent>
+  </Tabs>
 }

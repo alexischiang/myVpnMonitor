@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-11-03
-- Current Objective: Fix aws-jp -> bage-hk relay; machine installs default to xray kernel
+- Current Objective: Node Hub: node dialog tabs, runtime-change pushes, relay entry names, realm rules judge; commit and deploy
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -546,8 +546,16 @@
 
 - 2026-11-03: test-node-hub.js and verify:fast pass; bage-hk relay handshake via aws-jp:61001 succeeds after switching to xray
 
+- 2026-11-03: npm run check, verify:harness pass; browser-verified /node-hub dialog and /sales-settings coupon drawer with no console errors
+
+- 2026-11-03: test-node-hub.js (new runtime-change checks, mutation-verified) and verify:fast pass
+
+- 2026-11-03: test-node-hub.js, npm run check pass; relay form hint browser-checked
+
+- 2026-11-03: npm run verify, npm run check, verify:harness pass; browser checks of node dialog, relay form and relay save toast
+
 ## Next Session
 
-- Files: `.env.example`, `PROGRESS.md`, `README.md`, `database.js`, `docs/agent/node-hub.md`, `feature_list.json`, `node-hub/app.js`, `server.js`, `src/components/features/data-provider.tsx`, `src/components/features/details.tsx`, `src/components/features/provider-badge.tsx`, `src/components/features/subconverter.tsx`, `src/components/features/subscription-pool-select.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/types.ts`, `src/utils.ts`, `test-fallback.js`, `test-node-hub.js`, `test-payment.js`, `test-super-account.js`, `test.js`
+- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `feature_list.json`, `node-hub/app.js`, `node-hub/node-config.js`, `node-hub/push.js`, `node-hub/relay.js`, `src/components/arc/number-field/number-field.module.css`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub-relays.tsx`, `src/components/features/node-hub.tsx`, `src/styles.css`, `test-node-hub.js`
 - Known risks: none
-- Recommended Next Step: Check other hub machines installed before 2026-11-03 for kernel.type singbox in /etc/xboard-node/config.yml and switch them to xray; deploy the install-command change when asked
+- Recommended Next Step: After deploy each relay rewrites its realm comments once (one realm restart per relay); Arc CJK description wrap is a separate proposed task
