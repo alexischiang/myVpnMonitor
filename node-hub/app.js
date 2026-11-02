@@ -12,10 +12,10 @@
 //   their realm rules here (relay_id + per-relay token).
 const crypto = require("crypto");
 const { URL } = require("url");
-const { buildNodeConfig, clashProxy, normalizeNodeInput, generateRealityKeyPair } = require("./node-config");
+const { buildNodeConfig, clashProxy, normalizeNodeInput, nodeRuntimeChanged, generateRealityKeyPair } = require("./node-config");
 const { nodeGuid } = require("./store");
 const { createNodeHubPush, wsUrlFor } = require("./push");
-const { realmConfig, configHash, relayInstallCommand, INSTALL_SCRIPT, CONFIG_PATH: RELAY_CONFIG_PATH, INSTALL_PATH: RELAY_INSTALL_PATH } = require("./relay");
+const { realmConfig, realmRulesChanged, configHash, relayInstallCommand, INSTALL_SCRIPT, CONFIG_PATH: RELAY_CONFIG_PATH, INSTALL_PATH: RELAY_INSTALL_PATH } = require("./relay");
 
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
@@ -374,9 +374,14 @@ function createNodeHubHandler({
         return send(res, 200, { ...(await relayView(relay)), installCommand: relayInstallCommand({ publicUrl, relay }) });
       }
       if (method === "PUT") {
-        const relay = await store.updateRelay(match[1], body);
-        if (!relay) throw httpError(404, "中转机不存在。");
-        return send(res, 200, await relayView(relay));
+        const existing = await store.getRelay(match[1]);
+        if (!existing) throw httpError(404, "中转机不存在。");
+        const endpoints = await store.relayEndpoints(existing.id);
+        const relay = await store.updateRelay(existing.id, body);
+        send(res, 200, { ...(await relayView(relay)), rulesChanged: realmRulesChanged(existing, relay, endpoints) });
+        // Relays pull their rules and machines never see relays, so a relay edit has nothing to push:
+        // a rename, notes or a new public address leave realm's file byte for byte as it was.
+        return { push: false };
       }
       if (method === "DELETE") {
         if (!(await store.deleteRelay(match[1]))) throw httpError(404, "中转机不存在。");
@@ -403,10 +408,13 @@ function createNodeHubHandler({
       if (method === "GET") return send(res, 200, { ...existing, relays: await store.listNodeRelays(existing.id) });
       if (method === "PUT") {
         // relayIds absent (e.g. the enable/disable toggle) keeps the node's current entries.
-        const relayIds = relayIdsFrom(body.relayIds) ?? (await store.listNodeRelays(existing.id)).map(entry => entry.relayId);
+        const previousRelayIds = (await store.listNodeRelays(existing.id)).map(entry => entry.relayId);
+        const relayIds = relayIdsFrom(body.relayIds) ?? previousRelayIds;
         const merged = await relayModeInput({ ...existing, ...body, machineId: existing.machineId, settings: body.settings ?? existing.settings }, relayIds);
         const node = await store.updateNode(existing.id, normalizeNodeInput(merged, existing));
-        return send(res, 200, { ...node, relays: await store.setNodeRelays(existing.id, relayIds) });
+        send(res, 200, { ...node, relays: await store.setNodeRelays(existing.id, relayIds) });
+        // Renaming or re-sorting a node must not restart xray on its machine or realm on its relays.
+        return { push: nodeRuntimeChanged(existing, node, previousRelayIds, relayIds) };
       }
       if (method === "DELETE") {
         await store.deleteNode(existing.id);
@@ -442,11 +450,14 @@ function createNodeHubHandler({
       const nodes = (await store.listNodes({ enabledOnly: true })).filter(node => wanted.has(node.id));
       const entries = await store.listNodeRelays();
       // A relay-mode node is listed once per active relay (address and port of the relay) and never
-      // directly: it only accepts connections that carry the relay's PROXY protocol header.
+      // directly: it only accepts connections that carry the relay's PROXY protocol header. It keeps
+      // its own name; only a node behind several relays adds the relay's name, since Clash needs
+      // proxy names to be unique.
       const proxies = nodes.flatMap(node => {
         const relays = entries.filter(entry => entry.nodeId === node.id);
         if (!relays.length) return [{ nodeId: node.id, guid: nodeGuid(node), proxy: clashProxy(node, user.uuid) }];
-        return relays.filter(entry => entry.relayActive).map(entry => ({ nodeId: node.id, relayId: entry.relayId, guid: nodeGuid(node), proxy: clashProxy({ ...node, host: entry.relayHost, serverPort: entry.listenPort }, user.uuid, `${node.name} · ${entry.relayName}`) }));
+        const active = relays.filter(entry => entry.relayActive);
+        return active.map(entry => ({ nodeId: node.id, relayId: entry.relayId, guid: nodeGuid(node), proxy: clashProxy({ ...node, host: entry.relayHost, serverPort: entry.listenPort }, user.uuid, active.length > 1 ? `${node.name} · ${entry.relayName}` : node.name) }));
       });
       return send(res, 200, { uuid: user.uuid, proxies: proxies.filter(item => item.proxy) });
     }
@@ -473,9 +484,10 @@ function createNodeHubHandler({
     const url = new URL(req.url, "http://node-hub.local");
     try {
       if (url.pathname.startsWith("/internal/")) {
-        await handleInternal(req, res, url);
-        // Any management write may change what a connected node should hold.
-        if (req.method !== "GET") push?.schedule();
+        const outcome = await handleInternal(req, res, url);
+        // Any management write may change what a connected node should hold, unless the handler
+        // knows it did not (a node edit that only touched names, regions or ordering).
+        if (req.method !== "GET" && outcome?.push !== false) push?.schedule();
         return;
       }
       if (url.pathname === RELAY_INSTALL_PATH && req.method === "GET") {

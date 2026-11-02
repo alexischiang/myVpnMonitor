@@ -109,7 +109,8 @@ function createNodeHubPush({ store, serverToken = "", baseConfig, logger = conso
     const nodes = conn.machineId ? await store.listNodes({ machineId: conn.machineId, enabledOnly: true }) : [await store.getNode(conn.nodeId)].filter(Boolean);
     if (conn.machineId) {
       const list = nodes.map(node => ({ id: node.id, type: node.protocol, name: node.name }));
-      const listHash = hash(list);
+      // xboard-node only starts and stops nodes from this list (as a set): a renamed or re-sorted node is not news to it.
+      const listHash = hash(list.map(({ id, type }) => ({ id, type })).sort((a, b) => a.id - b.id));
       if (conn.sent.nodes !== listHash) {
         // A node that appears in a later list was created after the machine connected and holds no users yet.
         if (conn.sent.nodes) for (const item of list) if (!conn.sent.perNode.has(item.id)) conn.sent.perNode.set(item.id, { config: "", users: "", userIds: new Set(), devices: "" });

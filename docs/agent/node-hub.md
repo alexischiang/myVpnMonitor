@@ -106,9 +106,10 @@ npm run migrate:xui-to-hub -- --node-guid <guid> --port-offset 10000 --add-to-li
 中转机是一台运行 realm 的 VPS：每个（节点，中转机）入口占中转机上的一个端口，原样转发到节点所在机器的地址和端口，并带上 PROXY protocol v2 头，让落地节点拿到用户真实 IP。中转机不解密流量，流量、在线、计费都记在落地节点上。
 
 - 管理端「Node Hub → 中转机」：新建（名称、公网地址）后得到安装命令 `curl -fsSL <NODE_HUB_PUBLIC_URL>/api/v1/server/relay/install.sh | sudo bash -s -- --hub <公开地址> --relay-id <id> --token <token>`。脚本（`node-hub/relay-install.sh`，由 node-hub 直接提供）安装 realm（`/usr/local/bin/realm`，版本见脚本 `REALM_VERSION`）、`realm.service` 和 `nexora-relay-sync.timer`：每 30 秒从 `/api/v1/server/relay/config` 拉取 realm 规则写入 `/etc/realm/config.toml`，有变化就重启 realm，没有规则时停掉 realm，并上报 realm 状态和已应用规则的哈希。再次执行即原地升级、替换凭据；`--uninstall` 卸载。
-- 节点表单「接入方式」：直连 / 经中转机（勾选一台或多台）。经中转时自动开启「接受 PROXY protocol」并使用 Xray 内核；每台中转机从 61001 起分配一个空闲端口（保留已有端口，释放的端口会复用）；节点所在机器必须填写地址。订阅里每个入口一个条目「节点名 · 中转机名」（中转机地址和端口），不再有直连条目。改回直连会清空入口并关闭 PROXY protocol。
+- 节点表单「接入方式」：直连 / 经中转机（勾选一台或多台）。经中转时自动开启「接受 PROXY protocol」并使用 Xray 内核；每台中转机从 61001 起分配一个空闲端口（保留已有端口，释放的端口会复用）；节点所在机器必须填写地址。订阅里每个入口一个条目（中转机地址和端口），不再有直连条目；条目名就是节点名，只有同时经过多台启用的中转机时才写成「节点名 · 中转机名」（Clash 要求节点名唯一，主站和 subconverter 不去重）。改回直连会清空入口并关闭 PROXY protocol。
 - 规则只包含启用的节点和启用的机器；停用的中转机从订阅里移除，并在下次同步时拿到空规则、停掉 realm。仍有节点经过的中转机不能删除。
 - 中转机列表显示在线（90 秒内拉取过）、realm 是否运行、规则是否已同步（上报的哈希等于当前规则）。
+- 只在必要时打断连接：编辑节点时 `nodeRuntimeChanged`（`node-hub/node-config.js`）比较改前改后的「运行指纹」（是否启用、`buildNodeConfig` 下发的内核配置、经过的中转机），只改名称、地区、网络级别、排序、入站类型时不触发推送。推送里的节点列表哈希只算 id 和协议并按 id 排序，改名、改排序不会发 `sync.nodes`；realm 规则文件只由 `realmRules`（`node-hub/relay.js`：中转机是否启用、每个监听端口转发到哪里）生成，注释只写 id，所以改节点名、中转机名、备注或中转机公网地址都不会改变文件，中转机也就不会重启 realm；`realmRulesChanged` 判断一次编辑是否改变规则，保存中转机时随响应返回 `rulesChanged`（后台提示据此说明是否会同步），中转机编辑本身不触发对机器的推送。xboard-node 收到配置后自己也按哈希判断，配置或用户列表变化时 xray 才整体重启。
 - 不经过中转机管理、手动配的 realm 也能用：节点手动打开「接受 PROXY protocol」，连接地址填入口机，realm 配置 `send_proxy = true`、`send_proxy_version = 2`。sing-box 内核不处理 PROXY protocol（xboard-node 里这段被注释），所以 hub 拒绝在非 Xray 内核上开启。
 
 ## 实时推送（WebSocket）
