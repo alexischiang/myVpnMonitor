@@ -40,13 +40,8 @@ const BUILD_META_FILE = process.env.BUILD_META_FILE || path.join(__dirname, "bui
 // Standalone docs site (separate repo/VPS): /docs/* redirects there and its announcement feed is merged into the account overview.
 const DOCS_SITE_URL = (process.env.DOCS_SITE_URL || "https://docs.webprovider.top").replace(/\/+$/, "");
 const DOCS_ANNOUNCEMENTS_TTL_MS = 5 * 60 * 1000;
-const LOW_TRAFFIC_BYTES = Number(process.env.LOW_TRAFFIC_BYTES || 10 * 1024 * 1024 * 1024);
 const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS || 3);
-const RELAY_BEFORE_EXPIRY_DAYS = Number(process.env.RELAY_BEFORE_EXPIRY_DAYS || 10);
-const RELAY_AFTER_EXPIRY_DAYS = Number(process.env.RELAY_AFTER_EXPIRY_DAYS || 10);
 const RELAY_DEBUG_LOGS = process.env.RELAY_DEBUG_LOGS === "true";
-const POOL_CONFIG_CACHE_TTL_MS = Number(process.env.POOL_CONFIG_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
-const REFRESH_CONCURRENCY = Math.max(1, Number(process.env.REFRESH_CONCURRENCY || 5));
 const SUB_CONVERTER_URL = (process.env.SUB_CONVERTER_URL || "").replace(/\/+$/, "");
 const XUI_BASE_URL = (process.env.XUI_BASE_URL || "").replace(/\/+$/, "");
 const XUI_API_TOKEN = String(process.env.XUI_API_TOKEN || "").trim();
@@ -94,7 +89,6 @@ const SUBCONVERTER_BOOLEAN_DEFAULTS = Object.freeze({
   append_info: true,
   strict: false
 });
-const DEFAULT_SERVICE_PROVIDER = "YKK Cloud";
 const FRIENDS_PRODUCT_ID = "friends-lifetime-unlimited";
 const LEGACY_CUSTOM_PRODUCT_ID = "legacy-custom-entitlement";
 const DEFAULT_PRICING = [
@@ -540,8 +534,6 @@ const DEFAULT_PRICING_FAQS = [
 ];
 const DEFAULT_PAYMENT_API_BASE_URL = "http://RfBseViEKZlMAmu7ArWO.itxt002.xyz";
 const USER_GROUPS = ["basic", "pro", "ultra"];
-const VENDOR_RATINGS = ["S", "A", "B", "C"];
-const RATING_OVERRIDE_WINDOW_DAYS = 20;
 const AUTH_COOKIE_NAME = "xela_session";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
@@ -553,77 +545,12 @@ const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 const REMEMBER_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 const PAYMENT_ORDER_TTL_MS = 15 * 60 * 1000;
 const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || SESSION_SECRET.slice(0, 32);
-const LIVE_POOL_CONFIG_TTL_MS = Number(process.env.LIVE_POOL_CONFIG_TTL_MS || 60 * 1000);
-const livePoolConfigs = new Map();
+const LIVE_CONFIG_TTL_MS = Number(process.env.LIVE_CONFIG_TTL_MS || 60 * 1000);
+const liveConfigs = new Map();
 let cachedAppMeta = null;
-const REQUEST_PROFILES = [
-  {
-    name: "shadowrocket",
-    headers: {
-      "User-Agent": "Shadowrocket/2.2.48 CFNetwork/1496.0.7 Darwin/23.5.0",
-      "Accept": "*/*",
-      "Accept-Language": "zh-CN,zh-Hans;q=0.9,en;q=0.8"
-    }
-  },
-  {
-    name: "clash",
-    headers: {
-      "User-Agent": "ClashforWindows/0.20.39",
-      "Accept": "text/plain, application/yaml, */*",
-      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
-    }
-  },
-  {
-    name: "clash-meta",
-    headers: {
-      "User-Agent": "ClashMetaForAndroid/2.11.3.Meta",
-      "Accept": "text/plain, application/yaml, */*"
-    }
-  },
-  {
-    name: "stash",
-    headers: {
-      "User-Agent": "Stash/2.5.11",
-      "Accept": "*/*",
-      "Accept-Language": "zh-Hans-CN;q=1"
-    }
-  },
-  {
-    name: "surge",
-    headers: {
-      "User-Agent": "Surge iOS/2998",
-      "Accept": "*/*",
-      "Accept-Language": "zh-CN,zh-Hans;q=0.9,en;q=0.8"
-    }
-  },
-  {
-    name: "quantumult-x",
-    headers: {
-      "User-Agent": "Quantumult%20X/1.0.30",
-      "Accept": "*/*"
-    }
-  },
-  {
-    name: "sing-box",
-    headers: {
-      "User-Agent": "SFA/1.11.0",
-      "Accept": "text/plain, application/yaml, */*"
-    }
-  },
-  {
-    name: "default",
-    headers: {
-      "User-Agent": "VPNSubscriptionMonitor/1.0",
-      "Accept": "text/plain, application/octet-stream, application/yaml, */*"
-    }
-  }
-];
-
-let subscriptions = [];
 let users = [];
 let accounts = [];
 let bills = [];
-let vendors = [];
 let placeholderNodes = [];
 let presets = [];
 let embyUsers = [];
@@ -720,11 +647,9 @@ async function ensureProductCatalog() {
 async function initializeDataFile() {
   await dataStore.init();
   const state = await dataStore.loadAll();
-  subscriptions = state.subscriptions;
   users = state.users;
   accounts = state.accounts || [];
   bills = state.bills;
-  vendors = state.vendors || [];
   presets = state.presets || [];
   placeholderNodes = state.placeholderNodes || [];
   embyUsers = state.embyUsers || [];
@@ -756,53 +681,19 @@ async function initializeDataFile() {
   }
   if (embyVendorsMigrated) await saveEmbyVendors();
 
-  if (ensureSubscriptionServiceProviders()) await saveData();
   const usersMigrated = ensureUserRelayTokens();
   const cashValuesMigrated = ensureUserCashValues();
   if (usersMigrated || cashValuesMigrated) await saveUsers();
 
-  // 预设解耦迁移：将 vendor.defaultSubconverterConfig 拆为全局预设 + 供应商覆盖字段
   const existingPreset = presets.find(p => p.id === "default");
   if (!existingPreset?.target) {
-    const source = vendors.find(v => v.defaultSubconverterConfig);
-    if (source) {
-      const raw = source.defaultSubconverterConfig;
-      const sc = raw.subconverterConfig ? { ...raw.subconverterConfig, target: raw.subconverterConfig.target || raw.target } : raw;
-      if (existingPreset) {
-        existingPreset.target = sc.target || DEFAULT_SUBCONVERTER_TARGET;
-      } else {
-        presets.push({ id: "default", target: sc.target || DEFAULT_SUBCONVERTER_TARGET, config: sc.config || "", emoji: sc.emoji !== false, udp: sc.udp !== false, scv: Boolean(sc.scv), sort: Boolean(sc.sort) });
-      }
-    } else if (existingPreset) {
+    if (existingPreset) {
       existingPreset.target = DEFAULT_SUBCONVERTER_TARGET;
     } else {
       presets.push({ id: "default", target: DEFAULT_SUBCONVERTER_TARGET, config: "", emoji: true, udp: true, scv: false, sort: false });
     }
     await savePresets();
   }
-  let vendorMigrated = false;
-  for (const v of vendors) {
-    if (v.defaultSubconverterConfig) {
-      const raw = v.defaultSubconverterConfig;
-      const sc = raw.subconverterConfig ? { ...raw.subconverterConfig } : raw;
-      v.overrideExclude = sc.exclude || "";
-      v.overrideInclude = sc.include || "";
-      v.overrideRename = sc.rename || "";
-      delete v.defaultSubconverterConfig;
-      vendorMigrated = true;
-    }
-  }
-  if (vendorMigrated) await saveVendors();
-  let userMigrated = false;
-  for (const u of users) {
-    if (u.scMode || u.vendorId || u.subconverterConfig) {
-      delete u.scMode;
-      delete u.vendorId;
-      delete u.subconverterConfig;
-      userMigrated = true;
-    }
-  }
-  if (userMigrated) await saveUsers();
 }
 
 function ensurePurchaseCountFields() {
@@ -851,11 +742,9 @@ function _doLoad({ strict = false } = {}) {
   const gen = _writeGen;
   _loadingPromise = dataStore.loadAll().then(state => {
     if (gen !== _writeGen) return;
-    subscriptions = state.subscriptions;
     users = state.users;
     accounts = state.accounts || [];
     bills = state.bills;
-    vendors = state.vendors || [];
     presets = state.presets || [];
     placeholderNodes = state.placeholderNodes || [];
     embyUsers = state.embyUsers || [];
@@ -906,11 +795,6 @@ async function loadLatestUsersAndAccounts({ force = false } = {}) {
 
 function _markWritten() { _writeGen++; lastLoadedAt = Date.now(); }
 
-async function saveData() {
-  _markWritten();
-  await dataStore.saveCollection("subscriptions", subscriptions);
-}
-
 async function saveUsers() {
   _markWritten();
   await dataStore.saveCollection("users", users);
@@ -929,11 +813,6 @@ async function saveAccounts() {
 async function saveBills() {
   _markWritten();
   await dataStore.saveCollection("bills", bills);
-}
-
-async function saveVendors() {
-  _markWritten();
-  await dataStore.saveCollection("vendors", vendors);
 }
 
 async function savePresets() {
@@ -987,18 +866,6 @@ async function saveTicket(ticket) {
 }
 
 
-async function writePoolCachedBody(item, body) {
-  const text = String(body || "");
-  return { body: text, bodyFile: null, bodyLength: text.length };
-}
-
-async function readPoolCachedBody(item) {
-  const cache = item?.cachedConfig || null;
-  if (!cache) return "";
-  if (typeof cache.body === "string") return cache.body;
-  return "";
-}
-
 function relayToken() {
   return crypto.randomBytes(18).toString("base64url");
 }
@@ -1008,61 +875,6 @@ function ensureUserRelayTokens() {
   for (const user of users) {
     if (!user.subscriptionToken) {
       user.subscriptionToken = relayToken();
-      changed = true;
-    }
-  }
-  return changed;
-}
-
-function normalizeServiceProvider(input = {}, existing = {}) {
-  return String(
-    input.serviceProvider
-    || input.provider
-    || existing.serviceProvider
-    || existing.provider
-    || DEFAULT_SERVICE_PROVIDER
-  ).trim() || DEFAULT_SERVICE_PROVIDER;
-}
-
-function normalizeServiceProviderWebsite(input = {}, existing = {}, serviceProvider = DEFAULT_SERVICE_PROVIDER) {
-  const hasInput = Object.prototype.hasOwnProperty.call(input, "serviceProviderWebsite")
-    || Object.prototype.hasOwnProperty.call(input, "providerWebsite");
-  const raw = hasInput
-    ? (input.serviceProviderWebsite ?? input.providerWebsite ?? "")
-    : (existing.serviceProvider === serviceProvider ? existing.serviceProviderWebsite || existing.providerWebsite || "" : "");
-  const value = String(raw || "").trim();
-  if (value && !/^https?:\/\//i.test(value)) throw new Error("服务商官网需以 http 或 https 开头。");
-  return value;
-}
-
-function normalizeVendorRating(value) {
-  const rating = String(value || "").trim().toUpperCase();
-  return VENDOR_RATINGS.includes(rating) ? rating : "";
-}
-
-function vendorRatingByName(name) {
-  const vendor = vendors.find(item => item.name === name);
-  return !vendor || vendor.rating === undefined ? "C" : normalizeVendorRating(vendor.rating);
-}
-
-function vendorRatingIndex() {
-  const ratings = new Map(subscriptions.map(item => [normalizeServiceProvider({}, item), "C"]));
-  for (const vendor of vendors) ratings.set(vendor.name, vendor.rating === undefined ? "C" : normalizeVendorRating(vendor.rating));
-  return ratings;
-}
-
-function vendorRatingRank(rating) {
-  const index = VENDOR_RATINGS.indexOf(normalizeVendorRating(rating));
-  return index < 0 ? VENDOR_RATINGS.length : index;
-}
-
-function ensureSubscriptionServiceProviders() {
-  let changed = false;
-  for (const item of subscriptions) {
-    const nextProvider = normalizeServiceProvider({}, item);
-    if (item.serviceProvider !== nextProvider) {
-      item.serviceProvider = nextProvider;
-      item.updatedAt = item.updatedAt || new Date().toISOString();
       changed = true;
     }
   }
@@ -1329,8 +1141,7 @@ function publicTicket(ticket, { admin = false } = {}) {
   if (!ticket) return null;
   const account = accounts.find(item => item.id === ticket.accountId);
   const linkedUser = users.find(item => item.id === account?.linkedUserId);
-  const linkedSubscription = subscriptions.find(item => item.id === linkedUser?.subscriptionId);
-  const linkedTraffic = linkedUser && (isSelfHostedUser(linkedUser) ? linkedUser.xuiLastTraffic || linkedUser.xuiWeightedTraffic : linkedSubscription?.metrics);
+  const linkedTraffic = linkedUser && (linkedUser.xuiLastTraffic || linkedUser.xuiWeightedTraffic);
   const relatedOrder = paymentOrders.find(item => item.id === ticket.relatedOrderId && item.accountId === ticket.accountId);
   return {
     ...ticket,
@@ -1347,7 +1158,7 @@ function publicTicket(ticket, { admin = false } = {}) {
           usedBytes: linkedTraffic?.usedBytes ?? null,
           totalBytes: linkedTraffic?.totalBytes ?? null,
           usagePercent: linkedTraffic?.usagePercent ?? null,
-          lastSyncedAt: linkedTraffic?.lastSyncedAt || linkedSubscription?.lastCheckedAt || ""
+          lastSyncedAt: linkedTraffic?.lastSyncedAt || ""
         } : null,
         devices: linkedUser ? {
           connected: linkedUser.xuiLastTraffic?.connectedIpCount ?? null,
@@ -1637,11 +1448,6 @@ function publicPaymentOrder(order) {
   const currentVipSpend = userVipSpend(userForAccount(accounts.find(item => item.id === order.accountId)));
   const vipSpendAfter = Number.isFinite(Number(order.vipSpendAfter)) ? Number(order.vipSpendAfter) : currentVipSpend;
   const money = paymentMoneyBreakdown(order);
-  const poolFulfillmentError = {
-    "没有可用的池 URL。": `目前没有可用 ${order.planName} 池发放。`,
-    "池 URL 缺少到期时间，请手动选择。": `${order.planName} 池缺少有效到期时间，暂时无法发放。`,
-    "没有匹配的池 URL，请手动选择。": `目前没有匹配 ${order.planName} 套餐期限的池发放。`
-  }[order.fulfillmentError];
   return {
     id: order.id,
     merOrderTid: order.merOrderTid,
@@ -1701,7 +1507,7 @@ function publicPaymentOrder(order) {
     fulfilledAt: order.fulfilledAt || "",
     deliveryNote: order.deliveryNote || "",
     services: addonServices.serviceRecords(order),
-    fulfillmentError: poolFulfillmentError || (order.fulfillmentError ? (order.purpose === "recharge" ? "充值暂未成功入账。" : order.purpose === "traffic_pack" ? "流量包暂未成功发放。" : order.purpose === "addon" ? "附加服务暂未进入交付流程。" : "套餐暂未成功发放。") : ""),
+    fulfillmentError: order.fulfillmentError ? (order.purpose === "recharge" ? "充值暂未成功入账。" : order.purpose === "traffic_pack" ? "流量包暂未成功发放。" : order.purpose === "addon" ? "附加服务暂未进入交付流程。" : "套餐暂未成功发放。") : "",
     paymentError: order.paymentError || "",
     createdAt: order.createdAt,
     expiresAt: paymentOrderExpiresAt(order),
@@ -2920,9 +2726,7 @@ async function fulfillPaymentOrderOnce(order, req) {
           cashValueAmount: planCashValueAmount,
           duration: selectedOption.duration,
           ...(selectedOption.duration === "custom" && selectedOption.durationDays ? { expiresAt: new Date(Date.parse(purchasedAt) + selectedOption.durationDays * 86400000).toISOString() } : {}),
-          lineType: "self_hosted",
-          replace: order.purchaseAction === "replace",
-          subscriptionId: ""
+          replace: order.purchaseAction === "replace"
         });
         bindUserProductFromOrder(user, order);
         await provisionXuiClient(user);
@@ -2987,14 +2791,9 @@ async function fulfillPaymentOrderOnce(order, req) {
       duration: selectedOption.duration,
       lineType: "self_hosted",
       cashValue: planCashValueAmount,
-      cashValueAt: purchasedAt,
-      subscriptionId: "",
-      outputMode: "subconverter",
-       blockUserinfo: false
+      cashValueAt: purchasedAt
     }, item);
     user.userLogs = dedupeUserLogs(account?.userLogs);
-    user.outputMode = "subconverter";
-    user.blockUserinfo = false;
     bindUserProductFromOrder(user, order);
     user.xuiTrafficLimitBytes = selectedTrafficBytes;
     await provisionXuiClient(user);
@@ -3549,137 +3348,6 @@ async function closeLegacyPendingPaymentOrders() {
   return legacy.length;
 }
 
-function subscriptionSourceType(item = {}) {
-  const sourceType = String(item.sourceType || "").trim().toLowerCase();
-  return sourceType === "manual" || sourceType === "yaml" ? sourceType : "url";
-}
-
-function isManualSubscription(item = {}) {
-  return subscriptionSourceType(item) !== "url";
-}
-
-function subscriptionHasUsableSource(item = {}) {
-  return isManualSubscription(item) ? Boolean(item.manualContent) : Boolean(item.url);
-}
-
-function normalizeManualSubscriptionContent(value) {
-  const content = String(value || "").replace(/\s+/g, "");
-  if (!content) throw new Error("请粘贴 Base64 订阅内容。");
-  if (content.length > 750_000) throw new Error("Base64 订阅内容不能超过 750 KB。");
-  if (!/^[A-Za-z0-9+/_=-]+$/.test(content)) throw new Error("手动订阅内容不是有效的 Base64。");
-
-  const decoded = Buffer.from(content.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
-  if (!/(?:^|\s)(?:ss|ssr|vmess|vless|trojan|hysteria2?|tuic):\/\//im.test(decoded)) {
-    throw new Error("Base64 内容中没有识别到可用的代理节点。");
-  }
-  return content;
-}
-
-function normalizeManualYamlContent(value) {
-  const content = String(value || "").trim();
-  if (!content) throw new Error("请粘贴完整的 YAML 配置。");
-  if (Buffer.byteLength(content, "utf8") > 750_000) throw new Error("手动 YAML 配置不能超过 750 KB。");
-  let doc;
-  try {
-    doc = yaml.load(content);
-  } catch (error) {
-    throw new Error(`手动 YAML 配置无法解析：${error.message}`);
-  }
-  if (!doc || typeof doc !== "object") throw new Error("手动 YAML 配置必须是一个配置对象。");
-  normalizeClashKeys(doc);
-  if (!Array.isArray(doc.proxies) || !doc.proxies.length) throw new Error("手动 YAML 配置中没有找到 proxies 节点。");
-  return content;
-}
-
-function normalizeManualContent(item, value = item?.manualContent) {
-  return subscriptionSourceType(item) === "yaml"
-    ? normalizeManualYamlContent(value)
-    : normalizeManualSubscriptionContent(value);
-}
-
-function normalizeManualExpiry(value) {
-  const input = String(value || "").trim();
-  if (!input) return "";
-  const timestamp = Date.parse(input);
-  if (!Number.isFinite(timestamp)) throw new Error("手动订阅到期日无效。");
-  return /^\d{4}-\d{2}-\d{2}$/.test(input) ? `${input}T23:59:59.999Z` : new Date(timestamp).toISOString();
-}
-
-function normalizeSubscription(input, existing = {}) {
-  if (input.sourceType !== undefined && !["url", "manual", "yaml"].includes(String(input.sourceType).trim().toLowerCase())) {
-    throw new Error("配置来源必须是远程 URL、手动 Base64 或手动 YAML。");
-  }
-  const sourceType = input.sourceType !== undefined
-    ? subscriptionSourceType({ sourceType: input.sourceType })
-    : subscriptionSourceType(existing);
-  const rawUrl = sourceType === "url" ? String(input.url ?? existing.url ?? "").trim() : "";
-  const email = String(input.email || existing.email || "").trim();
-  const generatedName = email || safeHostName(rawUrl) || existing.name || (sourceType === "yaml" ? "手动 YAML 配置" : sourceType === "manual" ? "手动订阅" : "");
-  const name = String(input.name || generatedName).trim();
-  const url = sourceType === "url" ? rawUrl : "";
-  const manualContent = isManualSubscription({ sourceType })
-    ? normalizeManualContent({ sourceType }, input.manualContent ?? existing.manualContent ?? "")
-    : "";
-  const serviceProvider = normalizeServiceProvider(input, existing);
-  const serviceProviderWebsite = normalizeServiceProviderWebsite(input, existing, serviceProvider);
-  const customer = String(input.customer || existing.customer || "").trim();
-  const note = String(input.note || existing.note || "").trim();
-  const enabled = input.enabled !== undefined ? Boolean(input.enabled) : existing.enabled !== false;
-  const excludeFromAutoSwitch = input.excludeFromAutoSwitch !== undefined
-    ? Boolean(input.excludeFromAutoSwitch)
-    : Boolean(existing.excludeFromAutoSwitch);
-  const useCachedConfigForFallback = input.useCachedConfigForFallback !== undefined
-    ? Boolean(input.useCachedConfigForFallback)
-    : Boolean(existing.useCachedConfigForFallback);
-  const manualTrafficDepleted = isManualSubscription({ sourceType })
-    ? Boolean(input.manualTrafficDepleted ?? existing.manualTrafficDepleted)
-    : false;
-  const maxUsers = Number(input.maxUsers ?? existing.maxUsers ?? 15);
-  const manualExpiryRequired = isManualSubscription({ sourceType }) && (!existing.id || input.sourceType !== undefined || input.manualContent !== undefined);
-  const manualExpireAt = isManualSubscription({ sourceType })
-    ? normalizeManualExpiry(input.expiresAt ?? existing.metrics?.expireAt)
-    : "";
-  const metrics = manualExpireAt ? { ...(existing.metrics || {}), expireAt: manualExpireAt } : existing.metrics || null;
-  const allowedGroups = [...new Set((Array.isArray(input.allowedGroups) ? input.allowedGroups : (Array.isArray(existing.allowedGroups) ? existing.allowedGroups : USER_GROUPS))
-    .map(value => String(value).trim().toLowerCase())
-    .filter(value => USER_GROUPS.includes(value)))];
-
-  if (sourceType === "url" && (!url || !/^https?:\/\//i.test(url))) throw new Error("请填写 http 或 https 开头的订阅 URL。");
-  if (manualExpiryRequired && !manualExpireAt) throw new Error("请填写手动订阅的到期日。");
-  if (!allowedGroups.length) throw new Error("至少选择一个允许的套餐等级。");
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("请填写该订阅绑定的有效邮箱。");
-  if (!Number.isSafeInteger(maxUsers) || maxUsers <= 0) throw new Error("人数上限必须是大于 0 的整数。");
-
-  return {
-    ...existing,
-    name,
-    sourceType,
-    url,
-    manualContent,
-    metrics,
-    email,
-    serviceProvider,
-    serviceProviderWebsite,
-    customer,
-    note,
-    enabled,
-    excludeFromAutoSwitch,
-    useCachedConfigForFallback,
-    manualTrafficDepleted,
-    maxUsers,
-    allowedGroups,
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function safeHostName(value) {
-  try {
-    return new URL(value).host;
-  } catch {
-    return "";
-  }
-}
-
 function durationDays(duration) {
   const values = {
     monthly: 30,
@@ -3732,7 +3400,7 @@ function planOptionLabel(user = {}) {
   return snapshot.durationDays ? `${snapshot.durationDays} 天` : "不限时";
 }
 
-// The plan tier used for pool selection and revenue reports, from the snapshot's line group.
+// The plan tier used for revenue reports, from the snapshot's line group.
 function activeUserGroup(user = {}) {
   return normalizeUserGroup(planLineGroupId(user), "pro");
 }
@@ -5775,7 +5443,6 @@ async function syncXuiPanel() {
 const SYNC_JOB_MODULES = [
   { id: "xui", name: "3x-ui" },
   { id: "traffic", name: "流量" },
-  { id: "subscriptions", name: "订阅" },
   { id: "orders", name: "订单" },
   { id: "referrals", name: "钱包与返利" },
   { id: "addons", name: "附加服务" },
@@ -5824,16 +5491,6 @@ const SYNC_JOBS = [
       await syncXuiWeightedTraffic();
       const summary = await syncHubUsers({ reload: false });
       return { status: "success", summary };
-    }
-  },
-  {
-    id: "subscription-refresh", module: "subscriptions", name: "订阅池刷新", description: "刷新全部订阅池的上游配置，由外部定时任务调用 /api/cron/refresh 触发。",
-    intervalMs: null, requiresXui: false,
-    run: async () => {
-      await loadLatestData();
-      await refreshAll();
-      const failed = subscriptions.filter(item => item.lastError).length;
-      return { status: failed ? "partial" : "success", summary: { total: subscriptions.length, failed } };
     }
   },
   {
@@ -6244,13 +5901,12 @@ async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
   return withXuiUserMigrationLock(user.id, async () => {
     if (isSelfHostedUser(user)) return { status: "completed", inboundIds: user.xuiInboundIds || [] };
     const email = nexoraUserEmail(user);
-    const fromSubscription = subscriptions.find(item => item.id === user.subscriptionId) || null;
     if (!email) {
       if (user.xuiMigrationStatus !== "activation_required") {
         user.xuiMigrationStatus = "activation_required";
         user.xuiMigrationError = "缺少有效邮箱";
         user.xuiMigrationUpdatedAt = new Date().toISOString();
-        appendUserLogToUser(user, createUserLog({ event: "subscription-request", status: "blocked", reason: "xui-migration-activation-required", fromSubscription, req, stage: "xui-migration", message: "旧套餐迁移暂停：缺少有效邮箱，请联系客服激活账户。" }));
+        appendUserLogToUser(user, createUserLog({ event: "subscription-request", status: "blocked", reason: "xui-migration-activation-required", req, stage: "xui-migration", message: "旧套餐迁移暂停：缺少有效邮箱，请联系客服激活账户。" }));
         await saveUsers();
       }
       return { status: "activation_required", inboundIds: [] };
@@ -6278,7 +5934,6 @@ async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
         event: "subscription-request",
         status: "recorded",
         reason: "xui-migration-completed",
-        fromSubscription,
         req,
         stage: "xui-migration",
         message: existing ? "旧套餐已关联现有3x-ui Client并完成迁移。" : "旧套餐已创建3x-ui Client并完成迁移。",
@@ -6289,7 +5944,7 @@ async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
     } catch (error) {
       Object.keys(user).forEach(key => delete user[key]);
       Object.assign(user, previous, { xuiMigrationStatus: "failed", xuiMigrationError: error.message, xuiMigrationUpdatedAt: new Date().toISOString() });
-      appendUserLogToUser(user, createUserLog({ event: "subscription-request", status: "failed", reason: "xui-migration-failed", fromSubscription, req, stage: "xui-migration", message: `旧套餐迁移失败：${error.message}`, details: { email, group: activeUserGroup(user), flow: XUI_VISION_FLOW } }));
+      appendUserLogToUser(user, createUserLog({ event: "subscription-request", status: "failed", reason: "xui-migration-failed", req, stage: "xui-migration", message: `旧套餐迁移失败：${error.message}`, details: { email, group: activeUserGroup(user), flow: XUI_VISION_FLOW } }));
       await saveUsers();
       throw error;
     }
@@ -6391,10 +6046,6 @@ function xuiTrafficPayload(user, remote, connectedIpCount = null) {
   };
 }
 
-function poolSelectionGroup(user = {}) {
-  return user.isSuperAccount ? "" : activeUserGroup(user);
-}
-
 function calculateExpiry(purchasedAt, duration) {
   if (duration === "lifetime") return LIFETIME_EXPIRES_AT;
   const days = durationDays(duration);
@@ -6443,7 +6094,7 @@ function calculateGiftExpiry(user, days, now = new Date()) {
   return base.toISOString();
 }
 
-// Gifted days extend the active recurring V2 plan only; the line and pool binding stay as they are,
+// Gifted days extend the active recurring V2 plan only; the line binding stays as it is,
 // and a queued early renewal starts later by the same days.
 function giftDaysPreview(user, days, now = new Date()) {
   const giftDays = Number(days);
@@ -6465,23 +6116,6 @@ function giftDaysPreview(user, days, now = new Date()) {
   };
 }
 
-function batchGiftTargets({ days, group = "", allowDisabled = false } = {}) {
-  const giftDays = Number(days);
-  if (!Number.isSafeInteger(giftDays) || giftDays <= 0) throw new Error("赠送天数必须是正整数。");
-  const selectedGroup = ["basic", "pro", "ultra"].includes(String(group)) ? String(group) : "";
-  return users
-    .filter(user => {
-      const expiresAt = Date.parse(user.expiresAt || "");
-      return !isSelfHostedUser(user) && Number.isFinite(expiresAt) && expiresAt > Date.now() && (!selectedGroup || activeUserGroup(user) === selectedGroup);
-    })
-    .map(user => {
-      const expiresAt = calculateGiftExpiry(user, giftDays);
-      const currentPool = subscriptions.find(item => item.id === user.subscriptionId);
-      const recommendation = recommendSubscriptionForExpiry(expiresAt, { ignoredUserId: user.id, group: poolSelectionGroup(user), allowDisabled });
-      return { user, giftDays, expiresAt, toSubscription: currentPool || recommendation.subscription };
-    });
-}
-
 function userHasClaimedAccount(userId) {
   return accounts.some(account => account.linkedUserId === userId && ["active", "disabled"].includes(account.status));
 }
@@ -6490,245 +6124,6 @@ function startOfUtcDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-}
-
-function subscriptionCustomerCount(subscriptionId, ignoredUserId = "") {
-  return users.filter(user => user.subscriptionId === subscriptionId && user.id !== ignoredUserId).length;
-}
-
-function subscriptionAtCapacity(subscription, ignoredUserId = "") {
-  return subscriptionCustomerCount(subscription.id, ignoredUserId) >= Number(subscription.maxUsers ?? 15);
-}
-
-function subscriptionAllowsGroup(subscription, group = "") {
-  const allowedGroups = Array.isArray(subscription.allowedGroups) ? subscription.allowedGroups : USER_GROUPS;
-  return !group || allowedGroups.includes(normalizeUserGroup(group));
-}
-
-function subscriptionsByLatestExpiry() {
-  return [...subscriptions].sort((a, b) => {
-    const timeA = a.metrics?.expireAt ? new Date(a.metrics.expireAt).getTime() : 0;
-    const timeB = b.metrics?.expireAt ? new Date(b.metrics.expireAt).getTime() : 0;
-    return timeB - timeA;
-  });
-}
-
-function recommendSubscriptionForExpiry(expiresAt, { ignoredUserId = "", group = "", allowDisabled = false } = {}) {
-  const userExpiryTime = startOfUtcDate(expiresAt);
-  const dayMs = 86400000;
-  const ratings = vendorRatingIndex();
-  let noExpiry = 0;
-  let outOfWindow = 0;
-  let ungraded = 0;
-  const eligibleSubscriptions = subscriptions.filter(item => {
-    const provider = normalizeServiceProvider({}, item);
-    if (!ratings.get(provider)) { ungraded++; return false; }
-    const unavailableReason = poolMetricUnavailableReason(item.enabled === false && allowDisabled ? { ...item, enabled: true } : item);
-    return !unavailableReason && !item.excludeFromAutoSwitch && subscriptionAllowsGroup(item, group) && !subscriptionAtCapacity(item, ignoredUserId) && Date.parse(item.metrics?.expireAt || "") > Date.now();
-  });
-  const candidates = eligibleSubscriptions
-    .map(item => {
-      const expireTime = item.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
-      if (!Number.isFinite(expireTime) || !Number.isFinite(userExpiryTime)) {
-        noExpiry++;
-        return null;
-      }
-      const diffDays = (expireTime - userExpiryTime) / dayMs;
-      if (diffDays < -RELAY_BEFORE_EXPIRY_DAYS || diffDays > RELAY_AFTER_EXPIRY_DAYS) {
-        outOfWindow++;
-        return null;
-      }
-      return { item, diffDays, absDiffDays: Math.abs(diffDays), rating: ratings.get(normalizeServiceProvider({}, item)) };
-    })
-    .filter(Boolean)
-    .map(c => ({ ...c, customerCount: subscriptionCustomerCount(c.item.id, ignoredUserId) }));
-
-  const sorted = candidates.sort((a, b) => {
-    const aWithin = a.absDiffDays <= RATING_OVERRIDE_WINDOW_DAYS;
-    const bWithin = b.absDiffDays <= RATING_OVERRIDE_WINDOW_DAYS;
-    if (aWithin !== bWithin) return aWithin ? -1 : 1;
-    return vendorRatingRank(a.rating) - vendorRatingRank(b.rating)
-      || a.absDiffDays - b.absDiffDays
-      || a.customerCount - b.customerCount;
-  });
-
-  if (sorted.length) {
-    const candidate = sorted[0];
-    return {
-      subscription: candidate.item,
-      reason: candidate.absDiffDays <= RATING_OVERRIDE_WINDOW_DAYS
-        ? `供应商评级 ${candidate.rating} 优先（到期差 ${Math.round(candidate.absDiffDays)} 天）`
-        : `所有候选池到期差均超过 ${RATING_OVERRIDE_WINDOW_DAYS} 天，按供应商评级 ${candidate.rating} 兜底`,
-      details: {
-        provider: normalizeServiceProvider({}, candidate.item),
-        rating: candidate.rating,
-        expiryDiffDays: candidate.absDiffDays,
-        withinRatingOverrideWindow: candidate.absDiffDays <= RATING_OVERRIDE_WINDOW_DAYS,
-        ungradedExcluded: ungraded,
-        candidateCount: candidates.length
-      }
-    };
-  }
-
-  if (outOfWindow > 0) {
-    const latest = subscriptionsByLatestExpiry().find(item => eligibleSubscriptions.includes(item));
-    if (latest) return { subscription: latest, reason: "用户到期日远超所有池，已推荐最晚到期的池。" };
-  }
-
-  const reason = eligibleSubscriptions.length === 0 && ungraded > 0
-    ? "没有可用的已评级池 URL，未评级供应商不会自动推荐。"
-    : eligibleSubscriptions.length === 0
-    ? "没有可用的池 URL。"
-    : noExpiry > 0
-    ? "池 URL 缺少到期时间，请手动选择。"
-    : "没有匹配的池 URL，请手动选择。";
-  return { subscription: null, reason };
-}
-
-function clearSubscriptionSourceState(item) {
-  const manualExpireAt = isManualSubscription(item) ? item.metrics?.expireAt : "";
-  item.metrics = manualExpireAt ? { expireAt: manualExpireAt } : null;
-  item.lastCheckedAt = null;
-  item.lastError = null;
-  item.httpStatus = null;
-  item.lastRefreshResults = null;
-  item.cachedConfig = null;
-}
-
-function classifyCurrentPoolFit({
-  poolExists = true,
-  enabled = true,
-  health = "ok",
-  healthReason = "",
-  groupAllowed = true,
-  group = "",
-  userExpiryValid = true,
-  poolExpiryValid = true,
-  poolExpired = false,
-  expiryDiffDays = 0,
-  customerCount = 0,
-  maxUsers = 15,
-  excludedFromAutoSwitch = false,
-  rated = true
-} = {}) {
-  const priority = { high: 0, usable: 1, adjust: 2, unknown: 3, incompatible: 4 };
-  let status = "high";
-  const reasons = [];
-  const add = (nextStatus, reason) => {
-    if (priority[nextStatus] > priority[status]) status = nextStatus;
-    reasons.push(reason);
-  };
-
-  if (!poolExists) return { status: "incompatible", reasons: ["当前用户未绑定有效的池 URL。"] };
-  if (!enabled) add("incompatible", "当前池已停用，不能参与自动推荐。");
-  if (poolExpired) add("incompatible", "当前池已经到期，无法继续正常使用。");
-  if (health === "invalid") add("incompatible", healthReason ? `当前池状态异常：${healthReason}` : "当前池状态异常，无法提供有效订阅内容。");
-  if (health === "depleted") add("incompatible", "当前池剩余流量为 0，无法继续正常使用。");
-  if (health === "low_traffic") add("adjust", "当前池剩余流量不足，建议关注并准备换池。");
-  if (!groupAllowed) add("incompatible", `当前池不支持用户的 ${String(group || "当前").toUpperCase()} 套餐。`);
-
-  if (!userExpiryValid) add("unknown", "用户缺少有效到期时间，暂时无法判断到期适配度。");
-  if (!poolExpiryValid) add("unknown", "当前池缺少有效到期时间，暂时无法判断到期适配度。");
-  if (userExpiryValid && poolExpiryValid && expiryDiffDays < -RATING_OVERRIDE_WINDOW_DAYS) {
-    add("incompatible", `当前池比用户早到期 ${Math.abs(Math.round(expiryDiffDays))} 天，超过 ${RATING_OVERRIDE_WINDOW_DAYS} 天边界，存在服务中断风险。`);
-  } else if (userExpiryValid && poolExpiryValid && expiryDiffDays > RATING_OVERRIDE_WINDOW_DAYS) {
-    add("adjust", `当前池比用户晚到期 ${Math.round(expiryDiffDays)} 天，超过 ${RATING_OVERRIDE_WINDOW_DAYS} 天边界，供应商评级不再覆盖该差异。`);
-  }
-
-  if (customerCount > maxUsers) add("adjust", `当前池已有 ${customerCount} 人，超过 ${maxUsers} 人上限。`);
-  if (excludedFromAutoSwitch) add("adjust", "当前池已设置为禁止自动切入，不会进入自动推荐候选。");
-  if (!rated) add("adjust", "当前池供应商未评级，不会进入自动推荐候选。");
-  return { status, reasons };
-}
-
-function poolExpiryDifference(pool, userExpiryTime) {
-  const poolExpiryTime = pool?.metrics?.expireAt ? startOfUtcDate(pool.metrics.expireAt) : NaN;
-  return Number.isFinite(poolExpiryTime) && Number.isFinite(userExpiryTime)
-    ? Math.round((poolExpiryTime - userExpiryTime) / 86400000)
-    : null;
-}
-
-function poolCompatibilityLabel(pool) {
-  const provider = normalizeServiceProvider({}, pool);
-  const identifier = pool?.email || pool?.name;
-  return provider && identifier ? `${provider} · ${identifier}` : provider || identifier || pool?.url || "未命名池";
-}
-
-function currentPoolCompatibility(user) {
-  if (isSelfHostedUser(user)) return null;
-  if (!user || user.registeredOnly) return null;
-  const currentPool = subscriptions.find(item => item.id === user.subscriptionId);
-  if (!currentPool) return {
-    status: "incompatible",
-    statusText: "不适配",
-    reasons: ["当前用户未绑定有效的池 URL。"],
-    recommendedPool: null
-  };
-
-  const userExpiryTime = startOfUtcDate(user.expiresAt);
-  const expiryDiffDays = poolExpiryDifference(currentPool, userExpiryTime);
-  const customerCount = subscriptionCustomerCount(currentPool.id);
-  const maxUsers = Number(currentPool.maxUsers ?? 15);
-  const provider = normalizeServiceProvider({}, currentPool);
-  const rating = vendorRatingByName(provider);
-  const health = statusFor(currentPool, customerCount);
-  const assessment = classifyCurrentPoolFit({
-    enabled: currentPool.enabled !== false,
-    health,
-    healthReason: currentPool.lastError || "",
-    groupAllowed: subscriptionAllowsGroup(currentPool, poolSelectionGroup(user)),
-    group: activeUserGroup(user),
-    userExpiryValid: Number.isFinite(userExpiryTime),
-    poolExpiryValid: expiryDiffDays !== null,
-    poolExpired: Date.parse(currentPool.metrics?.expireAt || "") <= Date.now(),
-    expiryDiffDays: expiryDiffDays ?? 0,
-    customerCount,
-    maxUsers,
-    excludedFromAutoSwitch: currentPool.excludeFromAutoSwitch === true,
-    rated: Boolean(rating)
-  });
-  const recommendation = Number.isFinite(userExpiryTime)
-    ? recommendSubscriptionForExpiry(user.expiresAt, { ignoredUserId: user.id, group: poolSelectionGroup(user) })
-    : { subscription: null };
-  const recommended = recommendation.subscription;
-
-  if (assessment.status === "high" && recommended?.id !== currentPool.id) {
-    assessment.status = "usable";
-    if (recommended) {
-      const recommendedProvider = normalizeServiceProvider({}, recommended);
-      assessment.reasons.push(
-        `当前池满足基本条件，但按当前规则更推荐“${poolCompatibilityLabel(recommended)}”（供应商 ${vendorRatingByName(recommendedProvider) || "未评级"} 级，到期差 ${Math.abs(poolExpiryDifference(recommended, userExpiryTime) ?? 0)} 天）；当前池为 ${rating || "未评级"} 级，到期差 ${Math.abs(expiryDiffDays ?? 0)} 天。`
-      );
-    } else {
-      assessment.reasons.push("当前池满足基本绑定条件，但当前自动推荐规则没有可用候选。");
-    }
-  }
-
-  const latestBindingLog = (Array.isArray(user.userLogs) ? user.userLogs : [])
-    .find(log => log.toSubscriptionId === currentPool.id && ["manual-pool-changed", "purchase-pool-changed", "user-created"].includes(log.reason));
-  const statusText = { high: "高适配", usable: "可以使用", adjust: "建议调整", unknown: "暂无法评估", incompatible: "不适配" }[assessment.status];
-  return {
-    ...assessment,
-    statusText,
-    provider,
-    rating: rating || null,
-    poolExpiresAt: currentPool.metrics?.expireAt || null,
-    expiryDiffDays,
-    customerCount,
-    maxUsers,
-    groupAllowed: subscriptionAllowsGroup(currentPool, poolSelectionGroup(user)),
-    binding: latestBindingLog ? {
-      type: latestBindingLog.reason === "manual-pool-changed" ? "manual" : "system",
-      at: latestBindingLog.at || null
-    } : null,
-    recommendedPool: recommended && recommended.id !== currentPool.id ? {
-      id: recommended.id,
-      label: poolCompatibilityLabel(recommended),
-      provider: normalizeServiceProvider({}, recommended),
-      rating: vendorRatingByName(normalizeServiceProvider({}, recommended)) || null,
-      expiryDiffDays: poolExpiryDifference(recommended, userExpiryTime)
-    } : null
-  };
 }
 
 function normalizeUser(input, existing = {}) {
@@ -6740,7 +6135,6 @@ function normalizeUser(input, existing = {}) {
   const imessageId = imessageIds[0] || "";
   const purchasedAt = String(input.purchasedAt || existing.purchasedAt || new Date().toISOString()).trim();
   const duration = String(input.duration || existing.duration || "monthly").trim();
-  const requestedSubscriptionId = String(input.subscriptionId || existing.subscriptionId || "").trim();
   const actualPaid = normalizePaymentAmount(input.actualPaid ?? existing.actualPaid ?? "");
   const vipSpend = normalizePaymentAmount(input.vipSpend !== undefined ? input.vipSpend : input.actualPaid !== undefined ? input.actualPaid : existing.vipSpend ?? actualPaid ?? "");
   const calculatedExpiresAt = calculateExpiry(purchasedAt, duration);
@@ -6753,11 +6147,8 @@ function normalizeUser(input, existing = {}) {
       : calculatedExpiresAt);
   const lineType = String(input.lineType || existing.lineType || "upstream");
   if (!["upstream", "self_hosted"].includes(lineType)) throw new Error("请选择有效的线路类型。");
-  const selfHosted = lineType === "self_hosted";
-  const subscription = selfHosted ? null : subscriptions.find(item => item.id === requestedSubscriptionId);
 
   if (!userId) throw new Error("请填写用户 ID。");
-  if (!selfHosted && !subscription) throw new Error("请选择已添加的 URL。");
   if (!isValidDuration(duration)) throw new Error("请选择套餐时长。");
   if (!expiresAt) throw new Error(duration === "custom" ? "请选择到期日期。" : "购买时间格式不正确。");
   if (requestedExpiresAt && (!requestedExpiresDate || Number.isNaN(requestedExpiresDate.getTime()))) throw new Error("到期时间格式不正确。");
@@ -6791,7 +6182,6 @@ function normalizeUser(input, existing = {}) {
     isFamilyFriend,
     isSuperAccount,
     lineType,
-    subscriptionId: subscription?.id || "",
     subscriptionToken: existing.subscriptionToken || relayToken(),
     planExpiresAt: existing.planExpiresAt || expiresAt,
     giftedDays: Number.isSafeInteger(existing.giftedDays) ? existing.giftedDays : 0,
@@ -6898,7 +6288,6 @@ function renewUser(user, input) {
   const duration = String(input.duration || "monthly").trim();
   const actualPaid = normalizePaymentAmount(input.actualPaid ?? "");
   const renewedAt = new Date(input.purchasedAt || new Date().toISOString());
-  const requestedSubscriptionId = String(input.subscriptionId || user.subscriptionId || "").trim();
   const currentExpiry = user.expiresAt ? new Date(user.expiresAt) : null;
   const previousPaid = Number(user.actualPaid) || 0;
   const vipSpendAmount = normalizePaymentAmount(input.vipSpendAmount ?? actualPaid);
@@ -6922,10 +6311,7 @@ function renewUser(user, input) {
   } else {
     expiresAt = nextUserExpiry(user, renewedAt.toISOString(), duration, replace);
   }
-  const selfHosted = input.lineType === "self_hosted";
-  const subscription = selfHosted ? null : subscriptions.find(item => item.id === requestedSubscriptionId);
   if (!expiresAt) throw new Error("续费时间格式不正确。");
-  if (!selfHosted && !subscription) throw new Error("请选择已添加的 URL。");
 
   // The caller books VIP growth in the wallet and copies the wallet total onto the user.
   Object.assign(user, {
@@ -6934,8 +6320,8 @@ function renewUser(user, input) {
     actualPaid: Math.round((previousPaid + actualPaid) * 100) / 100,
     cashValue: Math.round((replace ? addedCashValue : currentCashValue + addedCashValue) * 100) / 100,
     cashValueAt: renewedAt.toISOString(),
-    lineType: selfHosted ? "self_hosted" : "upstream",
-    subscriptionId: subscription?.id || "",
+    lineType: "self_hosted",
+    subscriptionId: "",
     subscriptionToken: user.subscriptionToken || relayToken(),
     expiresAt,
     updatedAt: new Date().toISOString()
@@ -6945,203 +6331,8 @@ function renewUser(user, input) {
   return { user, amount: actualPaid, vipSpendAmount, renewedAt: renewedAt.toISOString(), beforeExpiresAt: currentExpiry?.toISOString() || null, afterExpiresAt: expiresAt };
 }
 
-function parseSubscriptionUserInfo(value) {
-  if (!value) return null;
-  const pairs = {};
-  for (const segment of value.split(";")) {
-    const [key, rawValue] = segment.trim().split("=");
-    if (!key || rawValue === undefined) continue;
-    const numericValue = Number(rawValue.trim());
-    if (Number.isFinite(numericValue)) pairs[key.trim().toLowerCase()] = numericValue;
-  }
-
-  const upload = pairs.upload || 0;
-  const download = pairs.download || 0;
-  const total = pairs.total || null;
-  const expire = pairs.expire || null;
-  const used = upload + download;
-
-  if (!total && !expire) return null;
-
-  return {
-    uploadBytes: upload,
-    downloadBytes: download,
-    usedBytes: used,
-    totalBytes: total,
-    remainingBytes: total ? Math.max(total - used, 0) : null,
-    expireAt: expire ? new Date(expire * 1000).toISOString() : null,
-    source: "subscription-userinfo"
-  };
-}
-
-function parseBodyHints(text) {
-  const source = normalizeSubscriptionBody(text);
-  const statusMatch = source.match(/STATUS\s*=([^\r\n]*)/i);
-  if (!statusMatch) return null;
-
-  const statusText = statusMatch[1];
-  const uploadMatch = statusText.match(/↑\s*:?\s*(\d+(?:\.\d+)?)\s*(tb|gb|mb|kb|tib|gib|mib|kib)?/i);
-  const downloadMatch = statusText.match(/↓\s*:?\s*(\d+(?:\.\d+)?)\s*(tb|gb|mb|kb|tib|gib|mib|kib)?/i);
-  const totalMatch = statusText.match(/TOT\s*:?\s*(\d+(?:\.\d+)?)\s*(tb|gb|mb|kb|tib|gib|mib|kib)?/i);
-  const expireMatch = statusText.match(/Expires\s*:?\s*(\d{10,13}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/i);
-
-  if (!uploadMatch || !downloadMatch || !totalMatch || !expireMatch) return null;
-
-  const uploadBytes = toBytes(Number(uploadMatch[1]), uploadMatch[2] || "gb");
-  const downloadBytes = toBytes(Number(downloadMatch[1]), downloadMatch[2] || "gb");
-  const totalBytes = toBytes(Number(totalMatch[1]), totalMatch[2] || "gb");
-  const usedBytes = uploadBytes + downloadBytes;
-  const rawExpire = expireMatch[1];
-  const timestamp = Number(rawExpire);
-
-  return {
-    uploadBytes,
-    downloadBytes,
-    usedBytes,
-    totalBytes,
-    remainingBytes: Math.max(totalBytes - usedBytes, 0),
-    expireAt: Number.isFinite(timestamp)
-      ? new Date(String(rawExpire).length === 13 ? timestamp : timestamp * 1000).toISOString()
-      : new Date(rawExpire.replace(/[/.]/g, "-")).toISOString(),
-    source: "status-field"
-  };
-}
-
-function parseAccountUnavailable(text) {
-  for (const variant of decodeBodyVariants(text)) {
-    try {
-      const parsed = JSON.parse(variant);
-      if (String(parsed?.message || "").trim().toLowerCase() === "account unavailable") {
-        return {
-          uploadBytes: null,
-          downloadBytes: null,
-          usedBytes: null,
-          totalBytes: null,
-          remainingBytes: null,
-          expireAt: new Date(0).toISOString(),
-          unavailable: true,
-          source: "account-unavailable"
-        };
-      }
-    } catch {
-      // Ignore non-JSON subscription bodies.
-    }
-  }
-
-  return null;
-}
-
-function normalizeSubscriptionBody(text) {
-  const raw = String(text || "");
-  const candidates = [raw];
-  const compact = raw.replace(/\s+/g, "");
-
-  if (/^[A-Za-z0-9+/=_-]+$/.test(compact) && compact.length > 20) {
-    for (const value of [compact, compact.replace(/-/g, "+").replace(/_/g, "/")]) {
-      try {
-        candidates.push(Buffer.from(value, "base64").toString("utf8"));
-      } catch {
-        // Ignore malformed base64 bodies.
-      }
-    }
-  }
-
-  try {
-    candidates.push(decodeURIComponent(raw));
-  } catch {
-    // Ignore malformed URI-encoded bodies.
-  }
-
-  return candidates
-    .filter(Boolean)
-    .join("\n")
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
-}
-
-function toBytes(value, unit) {
-  const units = {
-    kb: 1024,
-    kib: 1024,
-    mb: 1024 ** 2,
-    mib: 1024 ** 2,
-    gb: 1024 ** 3,
-    gib: 1024 ** 3,
-    tb: 1024 ** 4,
-    tib: 1024 ** 4
-  };
-  return Math.round(value * (units[String(unit).toLowerCase()] || 1));
-}
-
-function statusFor(item, customerCount = 0) {
-  if (isManualSubscription(item)) {
-    if (item.lastError || !item.manualContent) return "invalid";
-    if (item.manualTrafficDepleted) return "depleted";
-    return Date.parse(item.metrics?.expireAt || "") <= Date.now() ? "expired" : "ok";
-  }
-  const metrics = item.metrics;
-  if (item.lastError || metrics?.unavailable) return "invalid";
-  if (!metrics) return "unknown";
-
-  const expiresAt = metrics.expireAt ? new Date(metrics.expireAt).getTime() : NaN;
-  const remaining = Number(metrics.remainingBytes);
-  if (!Number.isFinite(expiresAt) || !Number.isFinite(remaining)) return "unknown";
-
-  if (remaining <= 0) return "depleted";
-  if (expiresAt <= Date.now()) return "expired";
-
-  const daysLeft = (expiresAt - Date.now()) / 86400000;
-  if (daysLeft <= EXPIRING_SOON_DAYS) return "expiring";
-  if (remaining <= LOW_TRAFFIC_BYTES) return "low_traffic";
-
-  return "ok";
-}
-
-function metricScore(metrics) {
-  if (!metrics) return 0;
-  if (metrics.unavailable) return 1000;
-
-  let score = 0;
-  if (metrics.expireAt) score += 40;
-  if (metrics.totalBytes !== null && metrics.totalBytes !== undefined) score += 50;
-  if (metrics.remainingBytes !== null && metrics.remainingBytes !== undefined) score += 50;
-  if (metrics.usedBytes !== null && metrics.usedBytes !== undefined) score += 50;
-  if (metrics.uploadBytes !== null && metrics.uploadBytes !== undefined) score += 25;
-  if (metrics.downloadBytes !== null && metrics.downloadBytes !== undefined) score += 25;
-
-  if (metrics.totalBytes !== undefined && metrics.usedBytes !== undefined && metrics.remainingBytes !== undefined) score += 60;
-  if (metrics.totalBytes !== undefined && metrics.uploadBytes !== undefined && metrics.downloadBytes !== undefined) score += 40;
-
-  return score;
-}
-
-function customerCountBySubscriptionId() {
-  const counts = new Map();
-  for (const user of users) {
-    if (!user.subscriptionId) continue;
-    counts.set(user.subscriptionId, (counts.get(user.subscriptionId) || 0) + 1);
-  }
-  return counts;
-}
-
-function subscriptionById() {
-  return new Map(subscriptions.map(item => [item.id, item]));
-}
-
 function userById() {
   return new Map(users.map(item => [item.id, item]));
-}
-
-function publicItem(item, customerCount = null) {
-  const resolvedCustomerCount = customerCount ?? users.filter(user => user.subscriptionId === item.id).length;
-  const publicFields = { ...item };
-  delete publicFields.cachedConfig;
-  return {
-    ...publicFields,
-    serviceProvider: normalizeServiceProvider({}, item),
-    serviceProviderRating: vendorRatingByName(normalizeServiceProvider({}, item)) || null,
-    customerCount: resolvedCustomerCount,
-    status: item.enabled === false ? "disabled" : statusFor(item, resolvedCustomerCount)
-  };
 }
 
 function publicRegisteredAccount(account) {
@@ -7158,8 +6349,6 @@ function publicRegisteredAccount(account) {
     actualPaid: 0,
     vipSpend: 0,
     vipLevel: "vip1",
-    subscriptionId: "",
-    subscription: null,
     activeGroup: "",
     expiresAt: null,
     userLogs: publicUserLogs(account)
@@ -7167,35 +6356,10 @@ function publicRegisteredAccount(account) {
 }
 
 function publicUserLogs(user) {
-  const logs = Array.isArray(user.userLogs) ? user.userLogs : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []);
-  let currentSubscription = null;
-  return logs.slice().reverse().map(log => {
-    const target = log.toSubscriptionId || log.toSubscriptionLabel
-      ? { id: log.toSubscriptionId || "", label: log.toSubscriptionLabel || "" }
-      : null;
-    let output = log;
-    if (log.reason === "user-renewed" && !log.fromSubscriptionId && currentSubscription && target
-      && (currentSubscription.id || currentSubscription.label) !== (target.id || target.label)) {
-      output = {
-        ...log,
-        status: "switched",
-        statusText: userLogStatusText.switched,
-        reason: "purchase-pool-changed",
-        reasonText: userLogReasonText["purchase-pool-changed"],
-        fromSubscriptionId: currentSubscription.id,
-        fromSubscriptionLabel: currentSubscription.label,
-        message: `\u7eed\u8d39\u89e6\u53d1\u81ea\u52a8\u6362\u6c60\uff1a${currentSubscription.label || "-"} -> ${target.label || "-"}`
-      };
-    }
-    if (target) currentSubscription = target;
-    return output;
-  }).reverse();
+  return Array.isArray(user.userLogs) ? user.userLogs : (Array.isArray(user.fallbackLogs) ? user.fallbackLogs : []);
 }
 
-function publicUser(user, subscriptionMap = null) {
-  const subscription = subscriptionMap
-    ? subscriptionMap.get(user.subscriptionId)
-    : subscriptions.find(item => item.id === user.subscriptionId);
+function publicUser(user) {
   const linkedAccount = accounts.find(item => item.linkedUserId === user.id);
   const publicFields = { ...user };
   delete publicFields.fallbackLogs;
@@ -7212,15 +6376,7 @@ function publicUser(user, subscriptionMap = null) {
     referralRate: Number(linkedAccount?.referralRate ?? 10),
     recurringReferral: linkedAccount?.recurringReferral === true,
     userLogs: publicUserLogs(user),
-    relayPath: user.subscriptionToken ? `/sub/${user.subscriptionToken}` : "",
-    subscription: subscription ? {
-      id: subscription.id,
-      url: subscription.url,
-      email: subscription.email || "",
-      serviceProvider: normalizeServiceProvider({}, subscription),
-      serviceProviderWebsite: subscription.serviceProviderWebsite || "",
-      name: subscription.name || ""
-    } : null
+    relayPath: user.subscriptionToken ? `/sub/${user.subscriptionToken}` : ""
   };
 }
 
@@ -7323,517 +6479,35 @@ function publicBillDetail(bill) {
   return { ...publicBill(bill), payment: publicPaymentOrder(paymentOrderForBill(bill)) };
 }
 
-async function refreshSubscription(item) {
-  try {
-    await fetchLivePoolConfig(item);
-  } catch {
-    // The unified fetch records the failure while preserving the last usable data.
-  }
-  return item;
-}
-
-function decodeBodyVariants(text) {
-  const raw = String(text || "");
-  const variants = [raw];
-  const compact = raw.replace(/\s+/g, "");
-
-  if (/^[A-Za-z0-9+/=_-]+$/.test(compact) && compact.length > 20) {
-    for (const value of [compact, compact.replace(/-/g, "+").replace(/_/g, "/")]) {
-      try {
-        variants.push(Buffer.from(value, "base64").toString("utf8"));
-      } catch {
-        // Ignore malformed base64 bodies.
-      }
-    }
-  }
-
-  try {
-    variants.push(decodeURIComponent(raw));
-  } catch {
-    // Ignore malformed URI-encoded bodies.
-  }
-
-  return [...new Set(variants)].filter(Boolean);
-}
-
-function sanitizeDebugText(value, limit = 4000) {
-  return String(value || "")
-    .replace(/https?:\/\/[^\s"'<>]+/g, "[url-redacted]")
-    .replace(/(?:ss|ssr|vmess|vless|trojan|hysteria2?|tuic):\/\/[^\s"'<>]+/gi, "[node-redacted]")
-    .replace(/[A-Za-z0-9_-]{24,}/g, "[token-redacted]")
-    .slice(0, limit);
-}
-
-function interestingDebugLines(text) {
-  return (String(text || "").match(/.{0,40}(剩余|流量|用量|已用|使用|总量|到期|过期|expire|traffic|upload|download|total|used|remain|left).{0,120}/gi) || [])
-    .slice(0, 30)
-    .map(line => sanitizeDebugText(line, 300));
-}
-
-function maybeParseJson(text) {
-  try {
-    const parsed = JSON.parse(text);
-    return sanitizeDebugValue(parsed);
-  } catch {
-    return null;
-  }
-}
-
-function sanitizeDebugValue(value) {
-  if (Array.isArray(value)) return value.slice(0, 20).map(sanitizeDebugValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).slice(0, 80).map(([key, val]) => [key, sanitizeDebugValue(val)]));
-  }
-  if (typeof value === "string") return sanitizeDebugText(value, 600);
-  return value;
-}
-
-async function debugSubscription(url) {
-  const results = [];
-
-  for (const profile of REQUEST_PROFILES) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
-      const response = await fetch(url, {
-        method: "GET",
-        redirect: "follow",
-        signal: controller.signal,
-        headers: {
-          ...profile.headers,
-          "Cache-Control": "no-cache",
-          "Pragma": "no-cache"
-        }
-      });
-      clearTimeout(timer);
-
-      const body = await response.text();
-      const variants = decodeBodyVariants(body);
-      const headers = {};
-      for (const [key, value] of response.headers) headers[key] = sanitizeDebugText(value, 1000);
-
-      results.push({
-        client: profile.name,
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-        bodyLength: body.length,
-        bodyVariants: variants.map((variant, index) => ({
-          index,
-          length: variant.length,
-          parsedJson: maybeParseJson(variant),
-          interestingLines: interestingDebugLines(variant),
-          preview: sanitizeDebugText(variant, 2500)
-        }))
-      });
-    } catch (error) {
-      results.push({
-        client: profile.name,
-        error: error.name === "AbortError" ? "检查超时。" : error.message
-      });
-    }
-  }
-
-  return results;
-}
-
-function cacheIsFresh(cache, now = Date.now()) {
-  const fetchedAt = cache?.bodyFetchedAt || cache?.fetchedAt;
-  const fetchedTime = fetchedAt ? new Date(fetchedAt).getTime() : 0;
-  const body = typeof cache?.body === "string" ? extractClashConfigBody(cache.body) : cache?.bodyFile;
-  return Boolean(body) && Number.isFinite(fetchedTime) && now - fetchedTime < POOL_CONFIG_CACHE_TTL_MS;
-}
-
-function batchItems(items, size) {
-  const batchSize = Math.max(1, Math.floor(Number(size) || 1));
-  return Array.from({ length: Math.ceil(items.length / batchSize) }, (_, index) => items.slice(index * batchSize, (index + 1) * batchSize));
-}
-
-async function refreshSubscriptions(items) {
-  for (const batch of batchItems(items, REFRESH_CONCURRENCY)) {
-    await Promise.all(batch.map(item => refreshSubscription(item)));
-  }
-}
-
-async function liveConfigFromCachedPoolConfig(item, { allowStale = false } = {}) {
-  if (!allowStale && !cacheIsFresh(item?.cachedConfig)) return null;
-  const body = extractClashConfigBody(await readPoolCachedBody(item));
-  if (!body) return null;
-  return {
-    body,
-    status: item.cachedConfig.status || 200,
-    client: `${item.cachedConfig.client || "pool"}-cache`,
-    fetchedAt: item.cachedConfig.fetchedAt,
-    contentType: item.cachedConfig.contentType || "text/plain; charset=utf-8",
-    subscriptionUserinfo: item.cachedConfig.subscriptionUserinfo || "",
-    score: item.cachedConfig.score || clashConfigScore(body),
-    bodyLength: body.length,
-    attempts: item.cachedConfig.attempts || [],
-    error: null,
-    cached: true
-  };
-}
-
-function clashConfigScore(body) {
-  const text = String(body || "");
-  let score = Math.min(text.length, 100000) / 1000;
-  if (/^proxies:\s*\[\s*\]\s*$/m.test(text)) score -= 500;
-  if (/^proxies:\s*\r?\n\s*-\s+/m.test(text)) score += 1000;
-  if (/^proxy-groups:\s*\r?\n\s*-\s+/m.test(text)) score += 500;
-  if (/^rules:\s*\r?\n\s*-\s+/m.test(text)) score += 200;
-  if (/^(mixed-port|port|socks-port):\s*/m.test(text)) score += 100;
-  return score;
-}
-
-function extractClashConfigBody(body) {
-  const text = String(body || "").replace(/\r\n/g, "\n");
-  if (!text.trim()) return "";
-  if (/^\s*<(?:!doctype\s+html|html)\b/i.test(text)) return "";
-
-  const lines = text.split("\n");
-  const startIndex = lines.findIndex(line => /^(mixed-port|port|socks-port|redir-port|tproxy-port|allow-lan|mode|log-level|external-controller|proxies):\s*/.test(line));
-  const trimmedStart = startIndex >= 0 ? startIndex : 0;
-  const scopedLines = lines.slice(trimmedStart);
-  const rulesIndex = scopedLines.findIndex(line => /^rules:\s*$/.test(line));
-  if (rulesIndex === -1) return scopedLines.join("\n").trimEnd() + "\n";
-
-  let endIndex = scopedLines.length;
-  for (let index = rulesIndex + 1; index < scopedLines.length; index += 1) {
-    const line = scopedLines[index];
-    if (/^[A-Za-z0-9_-]+:\s*/.test(line)) {
-      endIndex = index;
-      break;
-    }
-  }
-
-  return scopedLines.slice(0, endIndex).join("\n").trimEnd() + "\n";
-}
-
-function registerLivePoolConfig(config) {
+function registerLiveConfig(config) {
   const id = crypto.randomBytes(18).toString("base64url");
-  livePoolConfigs.set(id, {
+  liveConfigs.set(id, {
     ...config,
-    expiresAt: Date.now() + LIVE_POOL_CONFIG_TTL_MS
+    expiresAt: Date.now() + LIVE_CONFIG_TTL_MS
   });
   return id;
 }
 
-function readLivePoolConfig(id) {
-  const config = livePoolConfigs.get(id);
+function readLiveConfig(id) {
+  const config = liveConfigs.get(id);
   if (!config) return null;
   if (Date.now() > config.expiresAt) {
-    livePoolConfigs.delete(id);
+    liveConfigs.delete(id);
     return null;
   }
   return config;
 }
 
-function cleanupLivePoolConfigs() {
+function cleanupLiveConfigs() {
   const now = Date.now();
-  for (const [id, config] of livePoolConfigs) {
-    if (now > config.expiresAt) livePoolConfigs.delete(id);
+  for (const [id, config] of liveConfigs) {
+    if (now > config.expiresAt) liveConfigs.delete(id);
   }
 }
-
-function livePoolConfigFailure(results, best) {
-  const message = results.find(result => result.error)?.error
-    || (best?.status ? `池 URL 获取失败（HTTP ${best.status}）。` : "没有获取到可用的 Clash YAML 配置。");
-  const error = new Error(message);
-  error.attempts = results.map(result => ({
-    client: result.client,
-    status: result.status,
-    score: result.score,
-    bodyLength: result.body.length,
-    rawBodyLength: result.rawBodyLength,
-    error: result.error
-  }));
-  return error;
-}
-
-function poolRefreshAttempts(results) {
-  return results.map(result => ({
-    client: result.client,
-    status: result.status,
-    score: result.score,
-    bodyLength: result.body.length,
-    rawBodyLength: result.rawBodyLength,
-    error: result.error
-  }));
-}
-
-function updatePoolMetrics(item, result, fetchedAt) {
-  const existingScore = metricScore(item.metrics);
-  const nextScore = metricScore(result?.metrics);
-
-  item.lastCheckedAt = fetchedAt;
-  item.httpStatus = result?.status ?? null;
-  item.lastClient = result?.client || "";
-  item.lastRefreshResults = result ? [{
-    client: result.client,
-    status: result.status,
-    score: nextScore,
-    hasExpire: Boolean(result.metrics?.expireAt),
-    hasTotal: result.metrics?.totalBytes !== undefined && result.metrics?.totalBytes !== null,
-    hasUsed: result.metrics?.usedBytes !== undefined && result.metrics?.usedBytes !== null,
-    hasRemaining: result.metrics?.remainingBytes !== undefined && result.metrics?.remainingBytes !== null
-  }] : [];
-
-  if (isManualSubscription(item) && result?.body) {
-    const manualExpireAt = item.metrics?.expireAt;
-    item.metrics = result.metrics || item.metrics || null;
-    if (manualExpireAt) item.metrics = { ...(item.metrics || {}), expireAt: manualExpireAt };
-    item.lastError = null;
-  } else if (result?.metrics && (nextScore >= existingScore || result.metrics.expireAt)) {
-    item.metrics = result.metrics;
-    item.lastError = null;
-  } else if (result?.metrics && item.metrics) {
-    item.lastError = null;
-  } else if (result?.body) {
-    item.metrics = null;
-    item.lastError = null;
-  }
-}
-
-async function applyPoolRefreshResult(item, result, results, fetchedAt) {
-  updatePoolMetrics(item, result, fetchedAt);
-  const storedBody = await writePoolCachedBody(item, result.body);
-  item.cachedConfig = {
-    ...storedBody,
-    status: result.status,
-    client: result.client,
-    fetchedAt,
-    bodyFetchedAt: fetchedAt,
-    contentType: result.contentType,
-    subscriptionUserinfo: result.subscriptionUserinfo,
-    score: result.score,
-    attempts: poolRefreshAttempts(results),
-    error: null
-  };
-}
-
-function applyPoolRefreshFailure(item, results, error, fetchedAt) {
-  const best = results[0] || null;
-  updatePoolMetrics(item, best, fetchedAt);
-  item.lastError = error.name === "AbortError" ? "检查超时。" : error.message || "请求失败。";
-  item.cachedConfig = {
-    ...(item.cachedConfig || {}),
-    fetchedAt,
-    bodyFetchedAt: item.cachedConfig?.bodyFetchedAt || item.cachedConfig?.fetchedAt || null,
-    attempts: poolRefreshAttempts(results),
-    error: error.message || "没有获取到可用的订阅配置。"
-  };
-}
-
-async function fetchLivePoolConfig(item) {
-  if (isManualSubscription(item)) {
-    const sourceType = subscriptionSourceType(item);
-    const body = normalizeManualContent(item);
-    const fetchedAt = new Date().toISOString();
-    const result = {
-      body,
-      client: sourceType === "yaml" ? "manual-yaml" : "manual-base64",
-      status: 200,
-      score: clashConfigScore(body),
-      rawBodyLength: body.length,
-      contentType: "text/plain; charset=utf-8",
-      subscriptionUserinfo: "",
-      metrics: parseBodyHints(body),
-      error: null
-    };
-    await applyPoolRefreshResult(item, result, [result], fetchedAt);
-    return {
-      ...result,
-      fetchedAt,
-      bodyLength: body.length,
-      attempts: poolRefreshAttempts([result])
-    };
-  }
-
-  const profiles = REQUEST_PROFILES.filter(profile => profile.name === "clash-meta");
-  const results = [];
-  relayLog("live-pool-fetch-start", {
-    pool: poolLogInfo(item),
-    profiles: profiles.map(profile => profile.name)
-  });
-  for (const profile of profiles) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    const requestHeaders = {
-      ...profile.headers,
-      "Cache-Control": "no-cache",
-      "Pragma": "no-cache"
-    };
-    relayLog("live-pool-fetch-request", {
-      poolId: item?.id || "",
-      url: item?.url || "",
-      method: "GET",
-      profile: profile.name,
-      headers: headersForLog(requestHeaders)
-    });
-    try {
-      const response = await fetch(item.url, {
-        method: "GET",
-        redirect: "follow",
-        signal: controller.signal,
-        headers: requestHeaders
-      });
-      const rawBody = await response.text();
-      const body = response.ok ? extractClashConfigBody(rawBody) : "";
-      const subscriptionUserinfo = response.headers.get("subscription-userinfo") || response.headers.get("Subscription-Userinfo") || "";
-      const metrics = parseSubscriptionUserInfo(subscriptionUserinfo) || parseAccountUnavailable(rawBody) || parseBodyHints(rawBody);
-      const score = response.ok ? clashConfigScore(body) : -1000;
-      relayLog("live-pool-fetch-response", {
-        poolId: item?.id || "",
-        profile: profile.name,
-        ok: response.ok,
-        status: response.status,
-        headers: responseHeadersForLog(response),
-        rawBodyLength: rawBody.length,
-        extractedBodyLength: body.length,
-        score,
-        subscriptionUserinfo,
-        rawBodyPreview: bodyPreview(rawBody),
-        extractedBodyPreview: bodyPreview(body)
-      });
-      results.push({
-        body,
-        client: profile.name,
-        status: response.status,
-        score,
-        rawBodyLength: rawBody.length,
-        contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
-        subscriptionUserinfo,
-        metrics,
-        error: response.ok
-          ? (body ? null : "响应不是有效的订阅配置。")
-          : `池 URL 获取失败（HTTP ${response.status}）：${rawBody.slice(0, 200)}`
-      });
-    } catch (error) {
-      relayLog("live-pool-fetch-error", {
-        poolId: item?.id || "",
-        profile: profile.name,
-        errorName: error.name,
-        errorMessage: error.message
-      });
-      results.push({
-        body: "",
-        client: profile.name,
-        status: null,
-        score: -1000,
-        rawBodyLength: 0,
-        contentType: "text/plain; charset=utf-8",
-        subscriptionUserinfo: "",
-        error: error.name === "AbortError" ? "池 URL 请求超时。" : `池 URL 请求失败：${error.message}`
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  const best = results.sort((a, b) => b.score - a.score)[0];
-  relayLog("live-pool-fetch-best", {
-    poolId: item?.id || "",
-    best: best ? {
-      client: best.client,
-      status: best.status,
-      score: best.score,
-      bodyLength: best.body.length,
-      rawBodyLength: best.rawBodyLength,
-      error: best.error
-    } : null
-  });
-  if (!best?.body) {
-    relayLog("live-pool-fetch-failed", {
-      poolId: item?.id || "",
-      attempts: results.map(result => ({
-        client: result.client,
-        status: result.status,
-        score: result.score,
-        bodyLength: result.body.length,
-        rawBodyLength: result.rawBodyLength,
-        error: result.error
-      }))
-    });
-    const error = livePoolConfigFailure(results, best);
-    applyPoolRefreshFailure(item, results, error, new Date().toISOString());
-    throw error;
-  }
-
-  const fetchedAt = new Date().toISOString();
-  const liveConfig = {
-    body: best.body,
-    status: best.status,
-    client: best.client,
-    fetchedAt,
-    contentType: best.contentType,
-    subscriptionUserinfo: best.subscriptionUserinfo,
-    score: best.score,
-    bodyLength: best.body.length,
-    attempts: results.map(result => ({
-      client: result.client,
-      status: result.status,
-      score: result.score,
-      bodyLength: result.body.length,
-      rawBodyLength: result.rawBodyLength,
-      error: result.error
-    })),
-    error: null
-  };
-  await applyPoolRefreshResult(item, best, results, fetchedAt);
-  return liveConfig;
-}
-
-function poolMetricUnavailableReason(item, now = Date.now()) {
-  if (item?.enabled === false) return "pool-disabled";
-  const expireTime = item?.metrics?.expireAt ? new Date(item.metrics.expireAt).getTime() : NaN;
-  if (Number.isFinite(expireTime) && expireTime <= now) return "pool-expired";
-  if (item && isManualSubscription(item) && item.manualTrafficDepleted) return "pool-depleted";
-  const remaining = item?.metrics?.remainingBytes;
-  if (remaining !== null && remaining !== undefined && Number(remaining) <= 0) return "pool-depleted";
-  return "";
-}
-
-function evaluatePool(item, userOrGroup = {}, { fetchFailed = false } = {}) {
-  const group = typeof userOrGroup === "string" ? userOrGroup : poolSelectionGroup(userOrGroup || {});
-  const exitReason = item?.enabled === false
-    ? "pool-disabled"
-    : !subscriptionHasUsableSource(item)
-      ? "pool-missing"
-      : !subscriptionAllowsGroup(item, group)
-        ? "pool-group-mismatch"
-        : poolMetricUnavailableReason(item) || (fetchFailed ? "pool-fetch-failed" : "");
-  const entryBlockReason = exitReason
-    || (item?.excludeFromAutoSwitch ? "pool-auto-entry-disabled" : "")
-    || (item && subscriptionAtCapacity(item, userOrGroup && typeof userOrGroup === "object" ? userOrGroup.id || "" : "") ? "pool-full" : "");
-  const status = !item ? "invalid" : item.enabled === false ? "disabled" : statusFor(item);
-  return {
-    canServeCurrent: !exitReason,
-    canAutoEnter: !entryBlockReason,
-    exitReason,
-    entryBlockReason,
-    warning: ["low_traffic", "expiring", "unknown"].includes(status) ? status : ""
-  };
-}
-
-function initialPoolFallbackReason(item, _useSubconverter, group = "") {
-  return evaluatePool(item, group).exitReason;
-}
-
-const fallbackReasonText = {
-  "pool-disabled": "\u539f\u6c60 URL \u5df2\u505c\u7528",
-  "pool-expired": "\u539f\u6c60 URL \u5df2\u5230\u671f",
-  "pool-depleted": "\u539f\u6c60 URL \u6d41\u91cf\u5df2\u7528\u5c3d",
-  "pool-fetch-failed": "\u539f\u6c60 URL \u5b9e\u65f6\u83b7\u53d6\u5931\u8d25",
-  "pool-group-mismatch": "\u539f\u6c60 URL \u4e0d\u9002\u7528\u4e8e\u5f53\u524d\u5957\u9910\u7b49\u7ea7",
-  "pool-missing": "\u539f\u6c60 URL \u4e0d\u5b58\u5728"
-};
 
 const userLogReasonText = {
-  ...fallbackReasonText,
   "user-expired": "\u7528\u6237\u81ea\u8eab\u5df2\u5230\u671f",
   "node-source-changed": "节点来源变更",
-  "custom-url-disabled": "\u8be5 URL \u672a\u542f\u7528",
-  "subconverter-not-configured": "\u8ba2\u9605\u8f6c\u6362\u670d\u52a1\u672a\u914d\u7f6e",
   "subconverter-failed": "\u8ba2\u9605\u8f6c\u6362\u5931\u8d25",
   "subconverter-timeout": "\u8ba2\u9605\u8f6c\u6362\u8d85\u65f6",
   "subconverter-request-failed": "\u8ba2\u9605\u8f6c\u6362\u8bf7\u6c42\u5931\u8d25",
@@ -7841,7 +6515,6 @@ const userLogReasonText = {
   "user-renewed": "\u7528\u6237\u7eed\u8d39",
   "queued-plan-activated": "\u7eed\u8d39\u5957\u9910\u751f\u6548",
   "user-gifted": "\u8d60\u9001\u65f6\u957f",
-  "purchase-pool-changed": "\u8d2d\u4e70\u540e\u81ea\u52a8\u6362\u6c60",
   "user-updated": "\u7528\u6237\u8d44\u6599\u66f4\u65b0",
   "email-changed": "换绑邮箱",
   "plan-changed": "\u5957\u9910\u53d8\u66f4",
@@ -7849,7 +6522,6 @@ const userLogReasonText = {
   "plan-change-rolled-back": "\u64a4\u9500\u5957\u9910\u53d8\u66f4",
   "traffic-reset": "\u6d41\u91cf\u91cd\u7f6e",
   "custom-inbounds-updated": "\u4e2a\u4eba\u5b9a\u5236\u5165\u7ad9\u53d8\u66f4",
-  "manual-pool-changed": "\u624b\u52a8\u6362\u6c60",
   "xui-migration-activation-required": "\u7b49\u5f85\u6fc0\u6d3b\u8d26\u6237",
   "xui-migration-completed": "\u65e7\u5957\u9910\u8fc1\u79fb\u5b8c\u6210",
   "xui-migration-failed": "\u65e7\u5957\u9910\u8fc1\u79fb\u5931\u8d25",
@@ -7860,24 +6532,13 @@ const userLogReasonText = {
 };
 
 const userLogStatusText = {
-  switched: "\u5df2\u81ea\u52a8\u6362\u6c60",
-  no_usable_pool: "\u6682\u65e0\u53ef\u7528\u6c60",
   blocked: "\u5df2\u62e6\u622a",
   failed: "\u8bf7\u6c42\u5931\u8d25",
-  kept_current: "\u7ee7\u7eed\u4f7f\u7528\u539f\u6c60",
   pending: "\u5f85\u4ed8\u6b3e",
   recorded: "\u5df2\u8bb0\u5f55"
 };
 
 const USER_LOG_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
-
-function subscriptionLogLabel(item) {
-  if (!item) return "";
-  const provider = normalizeServiceProvider({}, item);
-  const label = item.email || item.name || item.url || item.id || "";
-  if (provider && label) return `${provider} - ${label}`;
-  return provider || label;
-}
 
 function relayLog(event, details = {}) {
   if (!RELAY_DEBUG_LOGS) return;
@@ -7916,22 +6577,10 @@ function bodyPreview(body, length = 500) {
   return String(body || "").slice(0, length).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
 
-function poolLogInfo(item) {
-  return {
-    id: item?.id || "",
-    label: subscriptionLogLabel(item),
-    url: item?.url || "",
-    metrics: item?.metrics || null,
-    metricUnavailableReason: poolMetricUnavailableReason(item) || ""
-  };
-}
-
 function createUserLog({
   event = "subscription-request",
   status = "failed",
   reason = "",
-  fromSubscription = null,
-  toSubscription = null,
   req = null,
   target = "",
   stage = "",
@@ -7946,10 +6595,6 @@ function createUserLog({
     statusText: userLogStatusText[status] || status,
     reason,
     reasonText: userLogReasonText[reason] || reason,
-    fromSubscriptionId: fromSubscription?.id || "",
-    fromSubscriptionLabel: subscriptionLogLabel(fromSubscription),
-    toSubscriptionId: toSubscription?.id || "",
-    toSubscriptionLabel: subscriptionLogLabel(toSubscription),
     requestPath: req?.url || "",
     target
   };
@@ -7968,8 +6613,6 @@ function dedupeUserLogs(logs = []) {
       log.status || "",
       log.reason || "",
       log.stage || "",
-      log.fromSubscriptionId || "",
-      log.toSubscriptionId || "",
       log.requestPath || ""
     ].join("|");
     if (seen.has(key)) return false;
@@ -7999,8 +6642,6 @@ async function recordUserLog(user, options = {}) {
     && latest.status === log.status
     && latest.reason === log.reason
     && latest.stage === log.stage
-    && latest.fromSubscriptionId === log.fromSubscriptionId
-    && latest.toSubscriptionId === log.toSubscriptionId
     && latest.requestPath === log.requestPath
     && Number.isFinite(latestAt)
     && logAt - latestAt <= USER_LOG_DEDUPE_WINDOW_MS;
@@ -8066,9 +6707,6 @@ function userSnapshotForLog(user = {}) {
     currentProductSource: user.currentProductSource || "",
     actualPaid: Number(user.actualPaid) || 0,
     expiresAt: user.expiresAt || "",
-    subscriptionId: user.subscriptionId || "",
-    outputMode: user.outputMode || "subconverter",
-    blockUserinfo: user.blockUserinfo !== false,
     placeholderTag: user.placeholderTag || "",
     showUserInfo: user.showUserInfo !== false,
     useDefaultPlaceholder: user.useDefaultPlaceholder !== false
@@ -8097,9 +6735,6 @@ function summarizeUserChanges(before = {}, after = {}) {
     currentProductSource: "商品绑定来源",
     actualPaid: "\u5b9e\u4ed8\u91d1\u989d",
     expiresAt: "\u5230\u671f\u65f6\u95f4",
-    subscriptionId: "\u7ed1\u5b9a\u6c60",
-    outputMode: "\u6295\u9012\u6a21\u5f0f",
-    blockUserinfo: "\u5c4f\u853d userinfo",
     placeholderTag: "\u5360\u4f4d\u8282\u70b9",
     showUserInfo: "\u663e\u793a\u7528\u6237\u4fe1\u606f",
     useDefaultPlaceholder: "\u4f7f\u7528\u9ed8\u8ba4\u5360\u4f4d\u8282\u70b9"
@@ -8131,13 +6766,6 @@ function userActionMessage(reason, details = {}) {
     const added = Array.isArray(details.addedNames) && details.addedNames.length ? `\u65b0\u589e\uff1a${details.addedNames.join("\u3001")}` : "";
     const removed = Array.isArray(details.removedNames) && details.removedNames.length ? `\u53d6\u6d88\uff1a${details.removedNames.join("\u3001")}` : "";
     return `\u4e2a\u4eba\u5b9a\u5236\u5165\u7ad9\u53d8\u66f4\uff1a${[added, removed].filter(Boolean).join("\uff1b")}\uff1b\u64cd\u4f5c\u4eba ${details.actor || "admin"}`;
-  }
-  if (reason === "purchase-pool-changed") return `\u7eed\u8d39\u89e6\u53d1\u81ea\u52a8\u6362\u6c60\uff1a${details.fromSubscriptionLabel || "-"} -> ${details.toSubscriptionLabel || "-"}`;
-  if (reason === "manual-pool-changed") {
-    const changeText = (details.changes || [])
-      .map(item => `${item.label}: ${item.before || "-"} -> ${item.after || "-"}`)
-      .join("\uff1b");
-    return `\u624b\u52a8\u6362\u6c60\uff1a${details.fromSubscriptionLabel || "-"} -> ${details.toSubscriptionLabel || "-"}${changeText ? `\uff1b${changeText}` : ""}`;
   }
   if (reason === "user-updated") {
     const changeText = (details.changes || [])
@@ -8176,156 +6804,6 @@ function appendBillActionLog(bill, reason, req) {
     message: userActionMessage(reason, details),
     details
   }));
-}
-
-function fallbackCandidateRank(item, user) {
-  if (item?.enabled === false) return null;
-  const userTime = user?.expiresAt ? startOfUtcDate(user.expiresAt) : null;
-  const poolTime = item?.metrics?.expireAt ? startOfUtcDate(item.metrics.expireAt) : null;
-  const dayMs = 86400000;
-  if (!Number.isFinite(userTime) || !Number.isFinite(poolTime)) {
-    return { group: 4, distance: Number.POSITIVE_INFINITY };
-  }
-  const diffDays = (poolTime - userTime) / dayMs;
-  return {
-    group: Math.abs(diffDays) <= 10 ? (diffDays >= 0 ? 0 : 1) : (diffDays >= 0 ? 2 : 3),
-    distance: Math.abs(diffDays)
-  };
-}
-
-function fallbackCandidates(user, currentSubscription) {
-  const candidates = subscriptions
-    .filter(item => item.id !== currentSubscription?.id && evaluatePool(item, user).canAutoEnter)
-    .map(item => {
-      const rank = fallbackCandidateRank(item, user);
-      if (rank === null) return null;
-      const metricReason = poolMetricUnavailableReason(item);
-      return {
-        item,
-        rank: {
-          ...rank,
-          metricPenalty: metricReason ? 1 : 0,
-          metricReason
-        }
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) =>
-      a.rank.group - b.rank.group
-      || a.rank.metricPenalty - b.rank.metricPenalty
-      || a.rank.distance - b.rank.distance);
-  relayLog("fallback-candidates", {
-    userId: user?.id || "",
-    userExpiresAt: user?.expiresAt || "",
-    currentPool: poolLogInfo(currentSubscription),
-    candidates: candidates.map(candidate => ({
-      pool: poolLogInfo(candidate.item),
-      rank: candidate.rank
-    }))
-  });
-  return candidates.map(candidate => candidate.item);
-}
-
-async function findFallbackSubscription(user, currentSubscription) {
-  const errors = [];
-  relayLog("fallback-search-start", {
-    userId: user?.id || "",
-    currentPool: poolLogInfo(currentSubscription)
-  });
-  for (const candidate of fallbackCandidates(user, currentSubscription)) {
-    relayLog("fallback-candidate-validate-start", {
-      userId: user?.id || "",
-      candidatePool: poolLogInfo(candidate)
-    });
-    try {
-      const liveConfig = candidate.useCachedConfigForFallback
-        ? await liveConfigFromCachedPoolConfig(candidate, { allowStale: true }) || await fetchLivePoolConfig(candidate)
-        : await fetchLivePoolConfig(candidate);
-      const entryBlockReason = evaluatePool(candidate, user).entryBlockReason;
-      if (entryBlockReason) throw new Error(fallbackReasonText[entryBlockReason] || entryBlockReason);
-      relayLog("fallback-candidate-validate-ok", {
-        userId: user?.id || "",
-        candidatePool: poolLogInfo(candidate),
-        liveConfig: {
-          status: liveConfig.status,
-          client: liveConfig.client,
-          score: liveConfig.score,
-          bodyLength: liveConfig.bodyLength,
-          subscriptionUserinfo: liveConfig.subscriptionUserinfo
-        }
-      });
-      return { subscription: candidate, liveConfig, errors };
-    } catch (error) {
-      relayLog("fallback-candidate-validate-failed", {
-        userId: user?.id || "",
-        candidatePool: poolLogInfo(candidate),
-        error: error.message,
-        attempts: error.attempts || []
-      });
-      errors.push({
-        subscriptionId: candidate.id,
-        subscriptionLabel: subscriptionLogLabel(candidate),
-        error: error.message
-      });
-    }
-  }
-  relayLog("fallback-search-empty", {
-    userId: user?.id || "",
-    currentPool: poolLogInfo(currentSubscription),
-    errors
-  });
-  return { subscription: null, liveConfig: null, errors };
-}
-
-async function switchUserSubscription(user, fromSubscription, toSubscription, reason, req, target = "") {
-  const log = createUserLog({
-    event: "subscription-request",
-    status: "switched",
-    reason,
-    fromSubscription,
-    toSubscription,
-    req,
-    target
-  });
-  user.subscriptionId = toSubscription.id;
-  user.lastFallbackAt = log.at;
-  user.lastFallbackFromSubscriptionId = log.fromSubscriptionId;
-  user.lastFallbackReason = reason;
-  appendUserLogToUser(user, log);
-  user.fallbackLogs = dedupeUserLogs([log, ...(Array.isArray(user.fallbackLogs) ? user.fallbackLogs : [])]).slice(0, 50);
-  user.updatedAt = log.at;
-  await saveUser(user);
-  relayLog("fallback-switch-saved", {
-    userId: user?.id || "",
-    log,
-    nextSubscriptionId: user.subscriptionId
-  });
-  return log;
-}
-
-async function refreshPoolConfigCache(item, { force = false } = {}) {
-  if (!force && cacheIsFresh(item.cachedConfig)) return item.cachedConfig;
-  await refreshSubscription(item);
-  return item.cachedConfig;
-}
-
-async function cachedPoolConfig(item) {
-  const cached = await liveConfigFromCachedPoolConfig(item);
-  if (cached) return cached;
-
-  const cache = await refreshPoolConfigCache(item);
-  await saveData();
-  const refreshed = await liveConfigFromCachedPoolConfig(item);
-  if (refreshed) return refreshed;
-
-  const error = new Error(cache?.error || "\u6ca1\u6709\u83b7\u53d6\u5230\u53ef\u7528\u7684\u8ba2\u9605\u914d\u7f6e\u3002");
-  error.attempts = cache?.attempts || [];
-  throw error;
-}
-
-async function refreshAllPoolConfigCaches() {
-  await refreshSubscriptions(subscriptions);
-  await saveData();
 }
 
 function sendSubscriptionMessage(res, status, message) {
@@ -8523,14 +7001,6 @@ function expiredPlaceholderSubscription(user) {
   return placeholderSubscription(user, "\u8ba2\u9605\u5df2\u5230\u671f-\u8bf7\u8054\u7cfb\u5ba2\u670d");
 }
 
-function unavailablePoolPlaceholderSubscription(user) {
-  return placeholderSubscription(user, "\u6682\u65e0\u53ef\u7528\u6c60-\u8bf7\u8054\u7cfb\u5ba2\u670d");
-}
-
-function disabledCustomUrlPlaceholderSubscription(user) {
-  return placeholderSubscription(user, "\u8be5URL\u672a\u542f\u7528-\u8bf7\u8054\u7cfb\u5ba2\u670d");
-}
-
 function disabledAccountPlaceholderSubscription(user) {
   return placeholderSubscription(user, "\u8be5\u8d26\u6237\u5df2\u505c\u7528\uff0c\u8bf7\u8054\u7cfb\u5b98\u7f51\u5ba2\u670d\u3002");
 }
@@ -8560,28 +7030,6 @@ function sendExpiredPlaceholderSubscription(res, user) {
   res.end(placeholder.body);
 }
 
-function sendUnavailablePoolPlaceholderSubscription(res, user) {
-  const placeholder = unavailablePoolPlaceholderSubscription(user);
-  res.writeHead(200, {
-    "content-type": placeholder.contentType,
-    "cache-control": "no-store, max-age=0",
-    "pragma": "no-cache",
-    "expires": "0"
-  });
-  res.end(placeholder.body);
-}
-
-function sendDisabledCustomUrlPlaceholderSubscription(res, user) {
-  const placeholder = disabledCustomUrlPlaceholderSubscription(user);
-  res.writeHead(200, {
-    "content-type": placeholder.contentType,
-    "cache-control": "no-store, max-age=0",
-    "pragma": "no-cache",
-    "expires": "0"
-  });
-  res.end(placeholder.body);
-}
-
 function sendDisabledAccountPlaceholderSubscription(res, user) {
   const placeholder = disabledAccountPlaceholderSubscription(user);
   res.writeHead(200, {
@@ -8596,17 +7044,6 @@ function sendDisabledAccountPlaceholderSubscription(res, user) {
 function isUserExpired(user, now = Date.now()) {
   const expiresAt = user?.expiresAt ? new Date(user.expiresAt).getTime() : NaN;
   return !Number.isFinite(expiresAt) || expiresAt <= now;
-}
-
-function forwardedSubscriptionHeaders(req) {
-  const headers = {
-    "User-Agent": req.headers["user-agent"] || REQUEST_PROFILES[0].headers["User-Agent"],
-    "Accept": req.headers.accept || "text/plain, application/yaml, */*",
-    "Accept-Language": req.headers["accept-language"] || "zh-CN,zh;q=0.9,en;q=0.8",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache"
-  };
-  return headers;
 }
 
 function isBrowserNavigationRequest(req) {
@@ -8636,66 +7073,8 @@ function defaultSubconverterPreset() {
   };
 }
 
-function relaySubconverterConfig(subscription, vendorList = vendors) {
-  const config = { ...defaultSubconverterPreset(), target: DEFAULT_SUBCONVERTER_TARGET, include: "", exclude: "", rename: "" };
-  const provider = String(subscription?.serviceProvider || "").trim().toLowerCase();
-  const vendor = vendorList.find(item => String(item.name || "").trim().toLowerCase() === provider);
-  if (vendor?.overrideExclude) config.exclude = vendor.overrideExclude;
-  if (vendor?.overrideInclude) config.include = vendor.overrideInclude;
-  if (vendor?.overrideRename) config.rename = vendor.overrideRename;
-  return config;
-}
-
-function userOutputMode(user = {}) {
-  return String(user.outputMode || "subconverter").trim().toLowerCase() === "direct"
-    ? "direct"
-    : "subconverter";
-}
-
-function copyUpstreamHeaders(response, req) {
-  const browserInline = isBrowserNavigationRequest(req);
-  const headers = {
-    "cache-control": "no-store, max-age=0",
-    "pragma": "no-cache",
-    "expires": "0",
-    "content-disposition": browserInline ? "inline; filename*=UTF-8''NEXORA.yaml" : "attachment; filename*=UTF-8''NEXORA"
-  };
-  for (const name of ["content-type", "subscription-userinfo", "profile-update-interval"]) {
-    const value = response.headers.get(name);
-    if (value) headers[name] = value;
-  }
-  if (!headers["content-type"]) headers["content-type"] = "text/plain; charset=utf-8";
-  if (browserInline) {
-    headers["content-type"] = "text/plain; charset=utf-8";
-    headers["x-content-type-options"] = "nosniff";
-  }
-  return headers;
-}
-
-function subscriptionCanBeManuallyAssigned(subscription, now = Date.now()) {
-  if (isManualSubscription(subscription)) return Boolean(subscription?.manualContent);
-  const expiresAt = Date.parse(subscription?.metrics?.expireAt || "");
-  return Number.isFinite(expiresAt) && expiresAt > now;
-}
-
-function manualSubscriptionHeaders(req, subscription) {
-  const browserInline = isBrowserNavigationRequest(req);
-  const extension = subscriptionSourceType(subscription) === "yaml" ? "yaml" : "txt";
-  return {
-    "content-type": "text/plain; charset=utf-8",
-    "cache-control": "no-store, max-age=0",
-    "pragma": "no-cache",
-    "expires": "0",
-    "content-disposition": browserInline ? `inline; filename*=UTF-8''NEXORA.${extension}` : "attachment; filename*=UTF-8''NEXORA"
-  };
-}
-
-async function fallbackToUsableSubscription(user, currentSubscription, reason, req, target = "") {
-  const fallback = await findFallbackSubscription(user, currentSubscription);
-  if (!fallback.subscription) return fallback;
-  await switchUserSubscription(user, currentSubscription, fallback.subscription, reason, req, target);
-  console.log(`[relay] fallback switched user=${user.id} from=${currentSubscription?.id || ""} to=${fallback.subscription.id} reason=${reason}`);
-  return fallback;
+function relaySubconverterConfig() {
+  return { ...defaultSubconverterPreset(), target: DEFAULT_SUBCONVERTER_TARGET, include: "", exclude: "", rename: "" };
 }
 
 function selfHostedUserinfo(user) {
@@ -8729,19 +7108,19 @@ async function fetchSelfHostedSubscription(user) {
   }
 }
 
-async function sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc }) {
-  const liveConfigId = registerLivePoolConfig(liveConfig);
-  cleanupLivePoolConfigs();
+async function sendSubconverterSubscription({ req, res, user, relayRequestId, source, liveConfig, sc }) {
+  const liveConfigId = registerLiveConfig(liveConfig);
+  cleanupLiveConfigs();
   relayLog("subconverter-live-config-registered", {
     relayRequestId,
     userId: user.id,
-    pool: poolLogInfo(subscription),
+    source: source?.id || "",
     liveConfigId,
-    liveConfigTtlMs: LIVE_POOL_CONFIG_TTL_MS,
+    liveConfigTtlMs: LIVE_CONFIG_TTL_MS,
     bodyLength: liveConfig.bodyLength,
     bodyPreview: bodyPreview(liveConfig.body)
   });
-  const liveConfigUrl = `http://127.0.0.1:${PORT}/api/internal/pool-live/${liveConfigId}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
+  const liveConfigUrl = `http://127.0.0.1:${PORT}/api/internal/live-config/${liveConfigId}?token=${encodeURIComponent(INTERNAL_TOKEN)}`;
   const params = new URLSearchParams({ target: sc.target, url: liveConfigUrl });
   if (sc.config) params.set("config", sc.config);
   if (sc.include) params.set("include", sc.include);
@@ -8775,7 +7154,6 @@ async function sendSubconverterSubscription({ req, res, user, relayRequestId, su
       await recordUserLog(user, {
         status: "failed",
         reason: "subconverter-failed",
-        fromSubscription: subscription,
         req,
         target: sc.target,
         stage: "subconverter-response",
@@ -8802,7 +7180,7 @@ async function sendSubconverterSubscription({ req, res, user, relayRequestId, su
       "cache-control": "no-store, max-age=0",
       "pragma": "no-cache",
       "expires": "0",
-      ...(liveConfig.subscriptionUserinfo && (isSelfHostedUser(user) || user.blockUserinfo === false) ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
+      ...(liveConfig.subscriptionUserinfo ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
     };
     if (browserInline) {
       responseHeaders["content-disposition"] = "inline; filename*=UTF-8''NEXORA.txt";
@@ -8817,7 +7195,6 @@ async function sendSubconverterSubscription({ req, res, user, relayRequestId, su
     await recordUserLog(user, {
       status: "failed",
       reason: error.name === "AbortError" ? "subconverter-timeout" : "subconverter-request-failed",
-      fromSubscription: subscription,
       req,
       target: sc.target,
       stage: "subconverter-request",
@@ -8878,96 +7255,11 @@ async function handleSelfHostedRelay(req, res, user, relayRequestId) {
       liveConfig.score = liveConfig.body.length;
       liveConfig.bodyLength = liveConfig.body.length;
     }
-    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription: source, liveConfig, sc: relaySubconverterConfig(source) });
+    await sendSubconverterSubscription({ req, res, user, relayRequestId, source, liveConfig, sc: relaySubconverterConfig() });
   } catch (error) {
     relayLog("self-hosted-relay-failed", { relayRequestId, userId: user.id, error: error.message });
     sendSubscriptionMessage(res, 502, `自研线路订阅生成失败：${error.message}`);
   }
-}
-
-async function findDirectFallbackSubscription(user, currentSubscription, req) {
-  const errors = [];
-  const headers = forwardedSubscriptionHeaders(req);
-  relayLog("direct-fallback-search-start", {
-    userId: user?.id || "",
-    currentPool: poolLogInfo(currentSubscription),
-    forwardedHeaders: headersForLog(headers)
-  });
-  for (const candidate of fallbackCandidates(user, currentSubscription)) {
-    if (isManualSubscription(candidate)) {
-      try {
-        const body = Buffer.from(normalizeManualContent(candidate), "utf8");
-        return { subscription: candidate, body, headers: manualSubscriptionHeaders(req, candidate), errors };
-      } catch (error) {
-        errors.push({ subscriptionId: candidate.id, subscriptionLabel: subscriptionLogLabel(candidate), error: error.message });
-        continue;
-      }
-    }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    relayLog("direct-fallback-request", {
-      userId: user?.id || "",
-      candidatePool: poolLogInfo(candidate),
-      method: "GET",
-      url: candidate.url,
-      headers: headersForLog(headers)
-    });
-    try {
-      const response = await fetch(candidate.url, {
-        method: "GET",
-        redirect: "follow",
-        signal: controller.signal,
-        headers
-      });
-      if (!response.ok) throw new Error(`Fallback pool URL returned HTTP ${response.status}`);
-      const body = Buffer.from(await response.arrayBuffer());
-      const rawBody = body.toString("utf8");
-      const subscriptionUserinfo = response.headers.get("subscription-userinfo") || "";
-      updatePoolMetrics(candidate, {
-        body: rawBody,
-        status: response.status,
-        client: "direct",
-        metrics: parseSubscriptionUserInfo(subscriptionUserinfo) || parseAccountUnavailable(rawBody) || parseBodyHints(rawBody)
-      }, new Date().toISOString());
-      const entryBlockReason = evaluatePool(candidate, user).entryBlockReason;
-      if (entryBlockReason) throw new Error(fallbackReasonText[entryBlockReason] || entryBlockReason);
-      await saveData();
-      relayLog("direct-fallback-response-ok", {
-        userId: user?.id || "",
-        candidatePool: poolLogInfo(candidate),
-        status: response.status,
-        headers: responseHeadersForLog(response),
-        bodyLength: body.length,
-        bodyPreview: bodyPreview(body.toString("utf8"))
-      });
-      return {
-        subscription: candidate,
-        body,
-        headers: copyUpstreamHeaders(response, req),
-        errors
-      };
-    } catch (error) {
-      relayLog("direct-fallback-response-failed", {
-        userId: user?.id || "",
-        candidatePool: poolLogInfo(candidate),
-        errorName: error.name,
-        errorMessage: error.message
-      });
-      errors.push({
-        subscriptionId: candidate.id,
-        subscriptionLabel: subscriptionLogLabel(candidate),
-        error: error.name === "AbortError" ? "Fallback pool URL request timed out" : error.message
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  relayLog("direct-fallback-search-empty", {
-    userId: user?.id || "",
-    currentPool: poolLogInfo(currentSubscription),
-    errors
-  });
-  return { subscription: null, body: null, headers: null, errors };
 }
 
 async function handleRelaySubscription(req, res, token) {
@@ -9023,10 +7315,9 @@ async function handleRelaySubscription(req, res, token) {
     await recordUserLog(user, {
       status: "blocked",
       reason: "user-expired",
-      fromSubscription: subscriptions.find(item => item.id === user.subscriptionId),
       req,
       stage: "user-date-check",
-      message: "\u7528\u6237\u8ba2\u9605\u5df2\u5230\u671f\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
+      message: "\u7528\u6237\u8ba2\u9605\u5df2\u5230\u671f\u3002"
     });
     sendExpiredPlaceholderSubscription(res, user);
     return;
@@ -9046,288 +7337,7 @@ async function handleRelaySubscription(req, res, token) {
     }
   }
 
-  if (isSelfHostedUser(user)) {
-    await handleSelfHostedRelay(req, res, user, relayRequestId);
-    return;
-  }
-
-  let subscription = subscriptions.find(item => item.id === user.subscriptionId);
-  const outputMode = userOutputMode(user);
-  let sc = (() => {
-    // 用户可显式选择直链模式，绕过订阅转换
-    return outputMode === "direct" ? null : relaySubconverterConfig(subscription);
-  })();
-  let precheckedLiveConfig = null;
-  const initialFallbackReason = initialPoolFallbackReason(subscription, Boolean(sc?.target), poolSelectionGroup(user));
-  relayLog("current-pool-selected", {
-    relayRequestId,
-    userId: user.id,
-    outputMode,
-    useSubconverter: Boolean(sc?.target),
-    subconverterConfig: sc || null,
-    currentPool: poolLogInfo(subscription),
-    initialFallbackReason
-  });
-  if (outputMode !== "direct" && !sc?.target) {
-    relayLog("response-placeholder-custom-url-disabled", {
-      relayRequestId,
-      userId: user.id,
-      outputMode,
-      currentPool: poolLogInfo(subscription)
-    });
-    await recordUserLog(user, {
-      status: "blocked",
-      reason: "custom-url-disabled",
-      fromSubscription: subscription,
-      req,
-      stage: "output-mode-check",
-      message: "\u5f53\u524d\u8ba2\u9605\u94fe\u63a5\u672a\u542f\u7528\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
-    });
-    sendDisabledCustomUrlPlaceholderSubscription(res, user);
-    return;
-  }
-  if (initialFallbackReason) {
-    const fallback = await fallbackToUsableSubscription(user, subscription, initialFallbackReason, req, sc?.target || "");
-    if (!fallback.subscription) {
-      relayLog("response-placeholder-unavailable", {
-        relayRequestId,
-        userId: user.id,
-        stage: "initial-fallback",
-        reason: initialFallbackReason,
-        fallbackErrors: fallback.errors || []
-      });
-      await recordUserLog(user, {
-        status: "no_usable_pool",
-        reason: initialFallbackReason,
-        fromSubscription: subscription,
-        req,
-        target: sc?.target || "",
-        stage: "initial-fallback",
-        message: "\u539f\u6c60\u4e0d\u53ef\u7528\uff0c\u4f46\u672a\u627e\u5230\u53ef\u81ea\u52a8\u5207\u6362\u7684\u5907\u7528\u6c60\u3002",
-        details: { fallbackErrors: fallback.errors || [] }
-      });
-      sendUnavailablePoolPlaceholderSubscription(res, user);
-      return;
-    }
-    subscription = fallback.subscription;
-    if (sc) sc = relaySubconverterConfig(subscription);
-    precheckedLiveConfig = fallback.liveConfig;
-    relayLog("current-pool-replaced-by-fallback", {
-      relayRequestId,
-      userId: user.id,
-      reason: initialFallbackReason,
-      nextPool: poolLogInfo(subscription)
-    });
-  }
-  if (!subscriptionHasUsableSource(subscription)) {
-    relayLog("response-error-no-pool-url", {
-      relayRequestId,
-      userId: user.id,
-      currentPool: poolLogInfo(subscription)
-    });
-    await recordUserLog(user, {
-      status: "no_usable_pool",
-      reason: "pool-missing",
-      fromSubscription: subscription,
-      req,
-      target: sc?.target || "",
-      stage: "pool-url-check",
-      message: "\u7528\u6237\u5f53\u524d\u7ed1\u5b9a\u7684\u6c60\u914d\u7f6e\u4e0d\u5b58\u5728\u3002"
-    });
-    sendSubscriptionMessage(res, 503, "订阅暂时不可用，请联系客服处理。");
-    return;
-  }
-
-  // subconverter 路径：用户配置了 target 且服务端有 SUB_CONVERTER_URL
-  if (sc?.target && !SUB_CONVERTER_URL) {
-    relayLog("subconverter-not-configured", {
-      relayRequestId,
-      userId: user.id,
-      target: sc.target
-    });
-    await recordUserLog(user, {
-      status: "failed",
-      reason: "subconverter-not-configured",
-      fromSubscription: subscription,
-      req,
-      target: sc.target,
-      stage: "subconverter-config-check",
-      message: "\u5df2\u9009\u62e9\u8ba2\u9605\u8f6c\u6362\u6a21\u5f0f\uff0c\u4f46\u670d\u52a1\u7aef\u672a\u914d\u7f6e SUB_CONVERTER_URL\u3002"
-    });
-    sendSubscriptionMessage(res, 503, "服务端未配置 SUB_CONVERTER_URL，无法进行订阅转换。请联系管理员。");
-    return;
-  }
-  if (sc?.target && SUB_CONVERTER_URL) {
-    relayLog("subconverter-flow-start", {
-      relayRequestId,
-      userId: user.id,
-      pool: poolLogInfo(subscription),
-      config: sc
-    });
-    let liveConfig = precheckedLiveConfig;
-    try {
-      if (!liveConfig) liveConfig = await cachedPoolConfig(subscription);
-      const refreshedReason = evaluatePool(subscription, user).exitReason;
-      if (refreshedReason) throw Object.assign(new Error(fallbackReasonText[refreshedReason]), { fallbackReason: refreshedReason });
-    } catch (error) {
-      relayLog("subconverter-current-live-fetch-failed", {
-        relayRequestId,
-        userId: user.id,
-        pool: poolLogInfo(subscription),
-        error: error.message,
-        attempts: error.attempts || []
-      });
-      liveConfig = error.fallbackReason ? null : await liveConfigFromCachedPoolConfig(subscription);
-      if (liveConfig) {
-        relayLog("subconverter-current-cache-fallback-ok", {
-          relayRequestId,
-          userId: user.id,
-          pool: poolLogInfo(subscription),
-          cachedConfig: {
-            client: liveConfig.client,
-            fetchedAt: liveConfig.fetchedAt,
-            score: liveConfig.score,
-            bodyLength: liveConfig.bodyLength,
-            subscriptionUserinfo: liveConfig.subscriptionUserinfo
-          }
-        });
-        await recordUserLog(user, {
-          status: "kept_current",
-          reason: "pool-fetch-failed",
-          fromSubscription: subscription,
-          req,
-          target: sc.target,
-          stage: "subconverter-cache-fallback",
-          message: "\u539f\u6c60 URL \u5b9e\u65f6\u83b7\u53d6\u5931\u8d25\uff0c\u4f46\u5df2\u4f7f\u7528\u65b0\u9c9c\u7f13\u5b58\u7ee7\u7eed\u8f6c\u6362\uff0c\u672a\u6267\u884c\u81ea\u52a8\u6362\u6c60\u3002"
-        });
-      }
-      if (!liveConfig) {
-      const fallbackReason = error.fallbackReason || "pool-fetch-failed";
-      const fallback = await fallbackToUsableSubscription(user, subscription, fallbackReason, req, sc.target);
-      if (!fallback.subscription) {
-        relayLog("response-placeholder-unavailable", {
-          relayRequestId,
-          userId: user.id,
-          stage: "subconverter-live-fetch",
-          reason: fallbackReason,
-          fallbackErrors: fallback.errors || []
-        });
-        await recordUserLog(user, {
-          status: "no_usable_pool",
-          reason: fallbackReason,
-          fromSubscription: subscription,
-          req,
-          target: sc.target,
-          stage: "subconverter-live-fetch",
-          message: "\u539f\u6c60 URL \u5b9e\u65f6\u83b7\u53d6\u5931\u8d25\uff0c\u4e14\u672a\u627e\u5230\u53ef\u81ea\u52a8\u5207\u6362\u7684\u5907\u7528\u6c60\u3002",
-          details: { fallbackErrors: fallback.errors || [] }
-        });
-        sendUnavailablePoolPlaceholderSubscription(res, user);
-        return;
-      }
-      subscription = fallback.subscription;
-      sc = relaySubconverterConfig(subscription);
-      liveConfig = fallback.liveConfig;
-      relayLog("subconverter-using-fallback-pool", {
-        relayRequestId,
-        userId: user.id,
-        pool: poolLogInfo(subscription),
-        liveConfig: {
-          status: liveConfig.status,
-          client: liveConfig.client,
-          score: liveConfig.score,
-          bodyLength: liveConfig.bodyLength,
-          subscriptionUserinfo: liveConfig.subscriptionUserinfo
-        }
-      });
-      }
-    }
-    await sendSubconverterSubscription({ req, res, user, relayRequestId, subscription, liveConfig, sc });
-    return;
-  }
-
-  if (isManualSubscription(subscription)) {
-    try {
-      const body = Buffer.from(normalizeManualContent(subscription), "utf8");
-      res.writeHead(200, manualSubscriptionHeaders(req, subscription));
-      res.end(body);
-    } catch (error) {
-      sendSubscriptionMessage(res, 502, `手动订阅内容无效：${error.message}`);
-    }
-    return;
-  }
-
-  relayLog("direct-current-cache", {
-    relayRequestId,
-    userId: user.id,
-    pool: poolLogInfo(subscription)
-  });
-  try {
-    const liveConfig = await cachedPoolConfig(subscription);
-    const refreshedReason = evaluatePool(subscription, user).exitReason;
-    if (refreshedReason) throw Object.assign(new Error(fallbackReasonText[refreshedReason]), { fallbackReason: refreshedReason });
-    relayLog("direct-current-cache-ok", {
-      relayRequestId,
-      userId: user.id,
-      pool: poolLogInfo(subscription),
-      fetchedAt: liveConfig.fetchedAt,
-      bodyLength: liveConfig.bodyLength,
-      bodyPreview: bodyPreview(liveConfig.body)
-    });
-    res.writeHead(200, {
-      ...manualSubscriptionHeaders(req, { sourceType: "yaml" }),
-      "content-type": isBrowserNavigationRequest(req) ? "text/plain; charset=utf-8" : (liveConfig.contentType || "text/plain; charset=utf-8"),
-      "profile-update-interval": String(Math.max(1, Math.round(POOL_CONFIG_CACHE_TTL_MS / 3600000))),
-      ...(liveConfig.subscriptionUserinfo ? { "subscription-userinfo": liveConfig.subscriptionUserinfo } : {})
-    });
-    res.end(liveConfig.body);
-  } catch (error) {
-    relayLog("direct-current-response-failed", {
-      relayRequestId,
-      userId: user.id,
-      pool: poolLogInfo(subscription),
-      errorName: error.name,
-      errorMessage: error.message
-    });
-    const fallbackReason = error.fallbackReason || "pool-fetch-failed";
-    const fallback = await findDirectFallbackSubscription(user, subscription, req);
-    if (!fallback.subscription) {
-      relayLog("response-placeholder-unavailable", {
-        relayRequestId,
-        userId: user.id,
-        stage: "direct-fallback",
-        reason: fallbackReason,
-        fallbackErrors: fallback.errors || []
-      });
-      await recordUserLog(user, {
-        status: "no_usable_pool",
-        reason: fallbackReason,
-        fromSubscription: subscription,
-        req,
-        stage: "direct-fallback",
-        message: "\u539f\u6c60 URL \u76f4\u8fde\u83b7\u53d6\u5931\u8d25\uff0c\u4e14\u672a\u627e\u5230\u53ef\u81ea\u52a8\u5207\u6362\u7684\u5907\u7528\u6c60\u3002",
-        details: { fallbackErrors: fallback.errors || [] }
-      });
-      sendUnavailablePoolPlaceholderSubscription(res, user);
-      return;
-    }
-    await switchUserSubscription(user, subscription, fallback.subscription, fallbackReason, req);
-    relayLog("response-direct-fallback-ok", {
-      relayRequestId,
-      userId: user.id,
-      fromPool: poolLogInfo(subscription),
-      toPool: poolLogInfo(fallback.subscription),
-      bodyLength: fallback.body.length,
-      bodyPreview: bodyPreview(fallback.body.toString("utf8"))
-    });
-    res.writeHead(200, fallback.headers);
-    res.end(fallback.body);
-  }
-}
-
-async function refreshAll() {
-  await refreshSubscriptions(subscriptions);
-  await saveData();
+  await handleSelfHostedRelay(req, res, user, relayRequestId);
 }
 
 function isLocalRequest(req) {
@@ -9383,7 +7393,7 @@ function telegramHelpText() {
     "/u <keyword> - same as /user",
     "查询用户 <关键词>",
     "",
-    "Keyword can be user ID, WeChat name, iMessage ID, or bound pool email."
+    "Keyword can be user ID, WeChat name, email or iMessage ID."
   ].join("\n");
 }
 
@@ -9441,26 +7451,22 @@ function publicDeliveryPayload(user, req) {
 function findUsersForTelegram(query) {
   const needle = String(query || "").trim().toLowerCase();
   if (!needle) return [];
-  const subscriptionMap = subscriptionById();
   return users
-    .map(user => ({ user, subscription: subscriptionMap.get(user.subscriptionId) || null }))
-    .filter(({ user, subscription }) => {
+    .map(user => ({ user }))
+    .filter(({ user }) => {
       const haystack = [
         user.userId,
         user.wechatName,
+        user.email,
         user.imessageId,
-        ...userImessageIds(user),
-        subscription?.email,
-        subscription?.serviceProvider,
-        subscription?.provider,
-        subscription?.url
+        ...userImessageIds(user)
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(needle);
     })
     .slice(0, 5);
 }
 
-function formatTelegramUserResult({ user, subscription }) {
+function formatTelegramUserResult({ user }) {
   return [
     `User: ${user.userId || user.wechatName || user.id}`,
     `Status: ${userTelegramStatus(user)}`,
@@ -9468,12 +7474,7 @@ function formatTelegramUserResult({ user, subscription }) {
     `Duration: ${user.duration || "-"}`,
     `Line group: ${accessGroupForUser(user) || "-"}`,
     `Paid: ${user.actualPaid ?? "-"}`,
-    `iMessage: ${userImessageIds(user).join(", ") || "-"}`,
-    `Pool: ${subscription?.email || subscription?.name || "-"}`,
-    `Provider: ${normalizeServiceProvider({}, subscription || {})}`,
-    `Pool expires: ${formatTelegramDate(subscription?.metrics?.expireAt)}`,
-    `Remaining: ${notifier.formatBytes(subscription?.metrics?.remainingBytes)}`,
-    `Mode: ${user.outputMode || "subconverter"}`
+    `iMessage: ${userImessageIds(user).join(", ") || "-"}`
   ].join("\n");
 }
 
@@ -9657,7 +7658,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const internalLiveMatch = pathname.match(/^\/api\/internal\/pool-live\/([^/]+)$/);
+  const internalLiveMatch = pathname.match(/^\/api\/internal\/live-config\/([^/]+)$/);
   if (internalLiveMatch && req.method === "GET") {
     const url = new URL(`http://x${pathname}${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`);
     relayLog("internal-live-request", {
@@ -9675,7 +7676,7 @@ async function handleApi(req, res, pathname) {
       res.end("Forbidden");
       return;
     }
-    const config = readLivePoolConfig(internalLiveMatch[1]);
+    const config = readLiveConfig(internalLiveMatch[1]);
     if (!config) {
       relayLog("internal-live-expired-or-missing", {
         id: internalLiveMatch[1]
@@ -9696,28 +7697,6 @@ async function handleApi(req, res, pathname) {
       ...(config.subscriptionUserinfo ? { "subscription-userinfo": config.subscriptionUserinfo } : {})
     });
     res.end(config.body);
-    return;
-  }
-
-  // 内部端点：供 subconverter 拉取池 URL 的缓存 YAML（不需要 session，用 INTERNAL_TOKEN 鉴权）
-  const internalCacheMatch = pathname.match(/^\/api\/internal\/pool-cache\/([^/]+)$/);
-  if (internalCacheMatch && req.method === "GET") {
-    const url = new URL(`http://x${pathname}${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`);
-    if (url.searchParams.get("token") !== INTERNAL_TOKEN) {
-      res.writeHead(403, { "content-type": "text/plain" });
-      res.end("Forbidden");
-      return;
-    }
-    await loadLatestData();
-    const sub = subscriptions.find(s => s.id === internalCacheMatch[1]);
-    if (!sub) { res.writeHead(404); res.end("Not found"); return; }
-    const body = await readPoolCachedBody(sub);
-    if (!body) { res.writeHead(503); res.end("Cache empty"); return; }
-    res.writeHead(200, {
-      "content-type": sub.cachedConfig?.contentType || "text/plain; charset=utf-8",
-      ...(sub.cachedConfig?.subscriptionUserinfo ? { "subscription-userinfo": sub.cachedConfig.subscriptionUserinfo } : {})
-    });
-    res.end(body);
     return;
   }
 
@@ -10134,31 +8113,9 @@ async function handleApi(req, res, pathname) {
     sendJson(res, 200, {
       ok: allOk,
       dataStore: dataStore.kind,
-      subscriptions: subscriptions.length,
       users: users.length,
       services
     });
-    return;
-  }
-
-  if (pathname === "/api/cron/refresh" && (req.method === "GET" || req.method === "POST")) {
-    const expectedSecret = process.env.CRON_SECRET || "";
-    if (!expectedSecret) {
-      sendJson(res, 503, { error: "CRON_SECRET 未配置，接口已禁用。" });
-      return;
-    }
-    const authorization = req.headers.authorization || "";
-    if (authorization !== `Bearer ${expectedSecret}`) {
-      sendJson(res, 401, { error: "Unauthorized." });
-      return;
-    }
-
-    const result = await runTrackedSyncJob("subscription-refresh", "cron");
-    if (result.status === "failed") {
-      sendJson(res, 500, { error: result.error });
-      return;
-    }
-    sendJson(res, 200, { ok: true, refreshed: subscriptions.length });
     return;
   }
 
@@ -10486,17 +8443,13 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/admin-data" && req.method === "GET") {
-    const customerCounts = customerCountBySubscriptionId();
-    const subscriptionsById = subscriptionById();
     const usersById = userById();
     const registeredAccounts = accounts
       .filter(account => ["active", "disabled"].includes(account.status) && !userForAccount(account))
       .map(publicRegisteredAccount);
     sendJson(res, 200, {
-      subscriptions: subscriptions.map(item => publicItem(item, customerCounts.get(item.id) || 0)),
-      users: [...users.map(user => ({ ...publicUser(user, subscriptionsById), userLogs: [] })), ...registeredAccounts],
+      users: [...users.map(user => ({ ...publicUser(user), userLogs: [] })), ...registeredAccounts],
       bills: bills.map(bill => publicBill(bill, usersById)).sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)),
-      vendors,
       presets,
       placeholderNodes,
       embyUsers,
@@ -11107,69 +9060,13 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (pathname === "/api/subscriptions" && req.method === "GET") {
-    const customerCounts = customerCountBySubscriptionId();
-    sendJson(res, 200, subscriptions.map(item => publicItem(item, customerCounts.get(item.id) || 0)));
-    return;
-  }
-
-  if (pathname === "/api/subscriptions" && req.method === "POST") {
-    try {
-      const payload = await readJson(req);
-      const item = {
-        id: crypto.randomUUID(),
-        createdAt: new Date().toISOString(),
-        metrics: null,
-        lastCheckedAt: null,
-        lastError: null,
-        httpStatus: null
-      };
-      const normalized = normalizeSubscription(payload, item);
-      subscriptions.unshift(normalized);
-      // 不在此处同步抓取订阅指标：抓取需请求外部链接、可能耗时数十秒，会阻塞创建请求。
-      // 改为保存后由前端显式调用 /refresh 实时拉取流量/到期信息。
-      await saveData();
-      sendJson(res, 201, publicItem(normalized));
-    } catch (error) {
-      sendJson(res, 400, { error: error.message });
-    }
-    return;
-  }
-
-  if (pathname === "/api/subscriptions/cache-refresh" && req.method === "POST") {
-    await refreshAll();
-    sendJson(res, 200, { ok: true, refreshed: subscriptions.length });
-    return;
-  }
-
-  if (pathname === "/api/subscriptions/recommend" && req.method === "POST") {
-    const payload = await readJson(req);
-    const expiresAt = payload.expiresAt || calculateExpiry(payload.purchasedAt || new Date().toISOString(), payload.duration || "monthly");
-    if (!expiresAt) {
-      sendJson(res, 400, { error: "参数不正确。" });
-      return;
-    }
-    const recommendation = recommendSubscriptionForExpiry(expiresAt, {
-      ignoredUserId: payload.ignoredUserId || "",
-      group: payload.group || ""
-    });
-    sendJson(res, 200, {
-      subscription: recommendation.subscription ? publicItem(recommendation.subscription) : null,
-      reason: recommendation.reason,
-      recommendation: recommendation.details || null,
-      expiresAt
-    });
-    return;
-  }
-
 
   if (pathname === "/api/users" && req.method === "GET") {
     await loadLatestData();
-    const subscriptionsById = subscriptionById();
     const registeredAccounts = accounts
       .filter(account => ["active", "disabled"].includes(account.status) && !userForAccount(account))
       .map(publicRegisteredAccount);
-    sendJson(res, 200, [...users.map(user => publicUser(user, subscriptionsById)), ...registeredAccounts]);
+    sendJson(res, 200, [...users.map(user => publicUser(user)), ...registeredAccounts]);
     return;
   }
 
@@ -11408,7 +9305,6 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/users" && req.method === "POST") {
     try {
       const payload = await readJson(req);
-      if (payload.lineType !== "self_hosted" || payload.subscriptionId) throw new Error("池 URL 分配入口已停用，请创建自研线路用户。");
       const item = {
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString()
@@ -11419,7 +9315,6 @@ async function handleApi(req, res, pathname) {
       const normalized = normalizeUser({
         ...payload,
         lineType: "self_hosted",
-        subscriptionId: "",
         duration: option.duration,
         expiresAt: option.lifetime ? undefined : new Date(purchasedTime + option.durationDays * 86400000).toISOString(),
         actualPaid: payload.actualPaid ?? option.amount
@@ -11427,8 +9322,6 @@ async function handleApi(req, res, pathname) {
       bindUserProductFromOrder(normalized, { id: "", paidAt: normalized.purchasedAt, paymentProvider: "manual", catalogVersion: 2, optionId: option.optionId, productSnapshot: { ...option, v2: option.productSnapshotV2 } });
       normalized.currentProductSource = "admin_create";
       normalized.xuiTrafficLimitBytes = Math.max(0, Number(option.trafficBytes) || 0);
-      normalized.outputMode = userOutputMode(payload);
-      normalized.blockUserinfo = false;
       users.unshift(normalized);
       try {
         await provisionXuiClient(normalized);
@@ -11459,7 +9352,6 @@ async function handleApi(req, res, pathname) {
         event: "user-action",
         status: "recorded",
         reason: "user-created",
-        toSubscription: subscriptions.find(entry => entry.id === normalized.subscriptionId),
         req,
         message: userActionMessage("user-created"),
         details: {
@@ -11574,70 +9466,6 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    sendJson(res, 405, { error: "Method not allowed." });
-    return;
-  }
-
-  const match = pathname.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|debug|cache|refresh-cache))?$/);
-
-  if (pathname === "/api/vendors" && req.method === "GET") {
-    sendJson(res, 200, vendors);
-    return;
-  }
-
-  if (pathname === "/api/vendors" && req.method === "POST") {
-    try {
-      const payload = await readJson(req);
-      const name = (payload.name || "").trim();
-      if (payload.rating && !normalizeVendorRating(payload.rating)) { sendJson(res, 400, { error: "供应商评级必须是 S、A、B 或 C。" }); return; }
-      if (!name) { sendJson(res, 400, { error: "供应商名称不能为空。" }); return; }
-      if (vendors.find(v => v.name === name)) { sendJson(res, 400, { error: "供应商已存在。" }); return; }
-      const vendor = {
-        id: `vendor-${Date.now()}`,
-        name,
-        overrideExclude: String(payload.overrideExclude || "").trim(),
-        overrideInclude: String(payload.overrideInclude || "").trim(),
-        overrideRename: String(payload.overrideRename || "").trim(),
-        rating: payload.rating === undefined ? "C" : normalizeVendorRating(payload.rating)
-      };
-      vendors.push(vendor);
-      await saveVendors();
-      sendJson(res, 201, vendor);
-    } catch (error) {
-      sendJson(res, 400, { error: error.message });
-    }
-    return;
-  }
-
-  const vendorMatch = pathname.match(/^\/api\/vendors\/([^/]+)$/);
-  if (vendorMatch) {
-    const vendor = vendors.find(v => v.id === vendorMatch[1]);
-    if (!vendor) { sendJson(res, 404, { error: "没有找到该供应商。" }); return; }
-    if (req.method === "PUT") {
-      const payload = await readJson(req);
-      const name = (payload.name || "").trim();
-      if (name && name !== vendor.name && vendors.find(v => v.name === name)) {
-        sendJson(res, 400, { error: "供应商名称已存在。" }); return;
-      }
-      if (name) vendor.name = name;
-      if (payload.overrideExclude !== undefined) vendor.overrideExclude = String(payload.overrideExclude || "").trim();
-      if (payload.overrideInclude !== undefined) vendor.overrideInclude = String(payload.overrideInclude || "").trim();
-      if (payload.overrideRename !== undefined) vendor.overrideRename = String(payload.overrideRename || "").trim();
-      if (payload.rating !== undefined) {
-        const rating = normalizeVendorRating(payload.rating);
-        if (payload.rating && !rating) { sendJson(res, 400, { error: "供应商评级必须是 S、A、B 或 C。" }); return; }
-        vendor.rating = rating;
-      }
-      await saveVendors();
-      sendJson(res, 200, vendor);
-      return;
-    }
-    if (req.method === "DELETE") {
-      vendors = vendors.filter(v => v.id !== vendorMatch[1]);
-      await saveVendors();
-      sendJson(res, 200, { ok: true });
-      return;
-    }
     sendJson(res, 405, { error: "Method not allowed." });
     return;
   }
@@ -12275,52 +10103,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (pathname === "/api/users/batch-gift" && req.method === "POST") {
-    try {
-      const payload = await readJson(req);
-      const targets = batchGiftTargets(payload);
-      const unavailable = targets.filter(target => !target.toSubscription);
-      if (payload.preview === true) {
-        sendJson(res, 200, {
-          eligibleCount: targets.length,
-          readyCount: targets.length,
-          unavailableCount: unavailable.length,
-          unavailableUsers: unavailable.map(target => target.user.userId || target.user.email || target.user.id),
-          days: Number(payload.days),
-          group: ["basic", "pro", "ultra"].includes(String(payload.group)) ? String(payload.group) : ""
-        });
-        return;
-      }
-      const batchId = crypto.randomUUID();
-      for (const target of targets) {
-        const { user, toSubscription, expiresAt, giftDays } = target;
-        const beforeExpiresAt = user.expiresAt || null;
-        const fromSubscription = subscriptions.find(entry => entry.id === user.subscriptionId) || null;
-        user.planExpiresAt ||= beforeExpiresAt;
-        user.giftedDays = (Number(user.giftedDays) || 0) + giftDays;
-        user.expiresAt = expiresAt;
-        if (toSubscription) user.subscriptionId = toSubscription.id;
-        user.updatedAt = new Date().toISOString();
-        appendUserLogToUser(user, createUserLog({
-          event: "user-action",
-          status: "recorded",
-          reason: "user-gifted",
-          fromSubscription,
-          toSubscription,
-          req,
-          message: userActionMessage("user-gifted", { days: giftDays, beforeExpiresAt, afterExpiresAt: expiresAt }),
-          details: { days: giftDays, beforeExpiresAt, afterExpiresAt: expiresAt, batchId }
-        }));
-      }
-      await saveUsers();
-      sendJson(res, 200, { batchId, updatedCount: targets.length });
-    } catch (error) {
-      sendJson(res, 400, { error: error.message });
-    }
-    return;
-  }
-
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|pool|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -12337,7 +10120,7 @@ async function handleApi(req, res, pathname) {
       const billing = userBillingSummary(registeredAccount ? `account:${registeredAccount.id}` : item.id);
       sendJson(res, 200, registeredAccount
         ? { ...publicRegisteredAccount(registeredAccount), ...billing }
-        : { ...publicUser(item), poolCompatibility: currentPoolCompatibility(item), ...billing });
+        : { ...publicUser(item), ...billing });
       return;
     }
 
@@ -12782,11 +10565,6 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    if (action === "pool" && req.method === "POST") {
-      sendJson(res, 410, { error: "池 URL 分配入口已停用。" });
-      return;
-    }
-
     if (action) {
       sendJson(res, 405, { error: "Method not allowed." });
       return;
@@ -12796,39 +10574,23 @@ async function handleApi(req, res, pathname) {
       const previousUserState = structuredClone(item);
       try {
         const payload = await readJson(req);
-        if (userHasClaimedAccount(item.id)) throw new Error("已认领账户仅允许换池或赠送时长。");
-        if (payload.lineType === "upstream" || (payload.subscriptionId !== undefined && String(payload.subscriptionId || "") !== String(item.subscriptionId || ""))) throw new Error("池 URL 分配入口已停用。");
+        if (userHasClaimedAccount(item.id)) throw new Error("已认领账户仅允许赠送时长。");
         const linkedAccount = accounts.find(account => account.linkedUserId === item.id);
         const before = userSnapshotForLog(item);
-        const fromSubscription = subscriptions.find(entry => entry.id === item.subscriptionId);
         // Editing covers identity only; plan, expiry and spend change through the V2 plan change, gifts and orders.
         const identity = Object.fromEntries(["userId", "wechatName", "email", "imessage", "imessageId", "imessageIds"].filter(key => payload[key] !== undefined).map(key => [key, payload[key]]));
         const normalized = normalizeUser({ ...identity, expiresAt: item.expiresAt }, item);
-        const toSubscription = subscriptions.find(entry => entry.id === normalized.subscriptionId);
-        if (fromSubscription?.id !== toSubscription?.id && toSubscription && subscriptionAtCapacity(toSubscription, item.id) && payload.allowFull !== true) throw new Error("该URL使用人数已满，请勾选使用满人池。");
         Object.assign(item, normalized);
-        if (isSelfHostedUser(item)) {
-          if (xuiProvisioningChanged(previousUserState, item)) await provisionXuiClient(item);
-        } else if (item.xuiClientEmail) await disableXuiClient(item);
-        if (payload.outputMode !== undefined) item.outputMode = userOutputMode(payload);
-        if (isSelfHostedUser(item)) item.blockUserinfo = false;
-        else if (payload.blockUserinfo !== undefined) item.blockUserinfo = payload.blockUserinfo !== false;
+        if (isSelfHostedUser(item) && xuiProvisioningChanged(previousUserState, item)) await provisionXuiClient(item);
         const after = userSnapshotForLog(item);
         const changes = summarizeUserChanges(before, after);
         if (changes.length) {
-          const poolChanged = before.subscriptionId !== after.subscriptionId;
           appendUserLogToUser(item, createUserLog({
             event: "user-action",
             status: "recorded",
-            reason: poolChanged ? "manual-pool-changed" : "user-updated",
-            fromSubscription,
-            toSubscription,
+            reason: "user-updated",
             req,
-            message: userActionMessage(poolChanged ? "manual-pool-changed" : "user-updated", {
-              changes,
-              fromSubscriptionLabel: subscriptionLogLabel(fromSubscription),
-              toSubscriptionLabel: subscriptionLogLabel(toSubscription)
-            }),
+            message: userActionMessage("user-updated", { changes }),
             details: { changes }
           }));
         }
@@ -12872,101 +10634,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  if (!match) {
-    sendJson(res, 404, { error: "Not found." });
-    return;
-  }
-
-  const id = match[1];
-  const item = subscriptions.find(entry => entry.id === id);
-  if (!item) {
-    sendJson(res, 404, { error: "没有找到这条订阅。" });
-    return;
-  }
-
-  if (pathname.endsWith("/refresh") && req.method === "POST") {
-    await refreshSubscription(item);
-    await saveData();
-    sendJson(res, 200, publicItem(item));
-    return;
-  }
-
-  if (pathname.endsWith("/debug") && req.method === "GET") {
-    if (isManualSubscription(item)) {
-      try {
-        const body = normalizeManualContent(item);
-        sendJson(res, 200, [{ client: subscriptionSourceType(item) === "yaml" ? "manual-yaml" : "manual-base64", status: 200, bodyLength: body.length }]);
-      } catch (error) {
-        sendJson(res, 400, { error: error.message });
-      }
-    } else {
-      sendJson(res, 200, await debugSubscription(item.url));
-    }
-    return;
-  }
-
-  if (pathname.endsWith("/cache") && req.method === "GET") {
-    const url = new URL(`http://x${req.url}`);
-    const force = url.searchParams.get("force") === "true";
-
-    try {
-      const wasFresh = !force && cacheIsFresh(item.cachedConfig);
-      const cache = await refreshPoolConfigCache(item, { force });
-      if (!wasFresh) await saveData();
-      const body = extractClashConfigBody(await readPoolCachedBody(item));
-      sendJson(res, 200, {
-        status: cache.status || null,
-        client: cache.client || "",
-        score: cache.score || null,
-        attempts: cache.attempts || [],
-        storage: wasFresh ? "cached" : "live",
-        bodyFile: "",
-        fetchedAt: cache.fetchedAt || null,
-        bodyFetchedAt: cache.bodyFetchedAt || cache.fetchedAt || null,
-        contentType: cache.contentType || "",
-        subscriptionUserinfo: cache.subscriptionUserinfo || "",
-        error: cache.error || null,
-        body,
-        bodyLength: cache.bodyLength || body.length,
-        truncated: false
-      });
-    } catch (error) {
-      sendJson(res, 502, {
-        error: error.message,
-        attempts: error.attempts || []
-      });
-    }
-    return;
-  }
-
-  if (req.method === "PUT") {
-    try {
-      const payload = await readJson(req);
-      const previousSourceType = subscriptionSourceType(item);
-      const previousUrl = item.url;
-      const previousManualContent = item.manualContent || "";
-      Object.assign(item, normalizeSubscription(payload, item));
-      if (subscriptionSourceType(item) !== previousSourceType || item.url !== previousUrl || item.manualContent !== previousManualContent) {
-        // 订阅链接已变更：旧 metrics/状态属于上一个链接，清空避免展示陈旧信息。
-        // 实时重新拉取由前端保存后显式调用 /refresh 完成，避免保存请求长时间阻塞。
-        clearSubscriptionSourceState(item);
-      }
-      await saveData();
-      sendJson(res, 200, publicItem(item));
-    } catch (error) {
-      sendJson(res, 400, { error: error.message });
-    }
-    return;
-  }
-
-  if (req.method === "DELETE") {
-    subscriptions = subscriptions.filter(entry => entry.id !== id);
-    await saveData();
-    sendJson(res, 200, { ok: true });
-    return;
-  }
-
-  sendJson(res, 405, { error: "Method not allowed." });
+  sendJson(res, 404, { error: "Not found." });
 }
 
 const COMPRESSIBLE_EXTS = new Set([".html", ".css", ".js", ".json", ".svg", ".xml", ".txt"]);
@@ -13218,27 +10886,13 @@ module.exports = Object.assign(requestHandler, {
   ensureDataFile,
   handleApi,
   sendJson,
-  refreshSubscription,
-  parseSubscriptionUserInfo,
-  parseBodyHints,
-  parseAccountUnavailable,
   calculateExpiry,
   calculateGiftExpiry,
   giftDaysPreview,
-  poolSelectionGroup,
-  extractClashConfigBody,
-  statusFor,
-  toBytes,
   isBrowserNavigationRequest,
-  copyUpstreamHeaders,
   normalizeSubconverterConfigParam,
   defaultSubconverterPreset,
   relaySubconverterConfig,
-  userOutputMode,
-  poolMetricUnavailableReason,
-  evaluatePool,
-  initialPoolFallbackReason,
-  fallbackCandidateRank,
   injectPlaceholderNodes,
   normalizeTicketAttachments,
   ticketStatusForReply,
@@ -13246,7 +10900,6 @@ module.exports = Object.assign(requestHandler, {
   ticketReplyMessage,
   toggleTicketReaction,
   validateTicketText,
-  liveConfigFromCachedPoolConfig,
   startOfUtcDate,
   remainingPlanCashValue,
   billTypeForPurchaseAction,
@@ -13275,12 +10928,8 @@ module.exports = Object.assign(requestHandler, {
   normalizePaymentSettings,
   publicInviterLabel,
   adminReferralDetails,
-  batchItems,
   customerIDFromUUID,
   publicRegisteredAccount,
-  subscriptionSourceType,
-  normalizeManualSubscriptionContent,
-  normalizeSubscription,
   normalizeXuiClientResult,
   xuiTrafficFromNodes,
   selfHostedSubscriptionUrl,
@@ -13350,10 +10999,6 @@ module.exports = Object.assign(requestHandler, {
   markMissingXuiClients,
   grantTrafficPack,
   expireUserTrafficPacks,
-  clearSubscriptionSourceState,
-  subscriptionCanBeManuallyAssigned,
-  subscriptionHasUsableSource,
-  classifyCurrentPoolFit,
   restoreUpstreamClashConfig,
   injectPlaceholderNodes,
   postSubconverter,

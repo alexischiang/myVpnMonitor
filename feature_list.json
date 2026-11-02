@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-31",
+  "updated_at": "2026-11-02T17:31:25.477Z",
   "required_fields": [
     "id",
     "name",
@@ -5080,7 +5080,7 @@
       "id": "node-hub-relay-machines",
       "name": "Relay machines: one-command realm relays whose forwarding rules come from node-hub",
       "description": "Node Hub gets 中转机 (relay machines) next to machines. A relay is installed with one command (node-hub serves the install script): it installs realm and a systemd timer that pulls the relay forwarding rules from node-hub every 30 seconds and restarts realm when they change, reporting realm state and the applied rules. A node chooses 直连 or 经中转 with one or more relays; relay mode turns on PROXY protocol with the Xray kernel, each relay gets a free port from 61001 forwarding to the landing machine address and node port, and subscriptions list one entry per relay (node name · relay name) instead of the direct entry.",
-      "status": "in_progress",
+      "status": "passing",
       "ui": true,
       "dependencies": [
         "node-hub-proxy-protocol"
@@ -5094,7 +5094,8 @@
         "gomami_hk runs as a relay installed by the command and node 4 on legend-sg works through it."
       ],
       "verification": [
-        "2026-11-01 local: test-node-hub.js relayChecks covers relay CRUD and install command, IPv6 host normalisation, refusal without landing address / unsupported protocol / unknown relay, per-relay port allocation from 61001 with kept and reused ports, saves without relayIds keeping entries, disabled nodes left out of the rules, token check, realm TOML, x-config-hash = sha256 of the body, online/realmActive/synced from the relay report, one subscription proxy per active relay (name, host incl. IPv6, port) with no direct entry, disabled relay gets no rules and leaves subscriptions, delete refused while in use, and the served install script. test:hub (isolated schema), verify:fast, npm run check and git diff --check pass; a schema created by the previous store.js upgrades to versions [1,2]; bash -n on relay-install.sh passes."
+        "2026-11-01 local: test-node-hub.js relayChecks covers relay CRUD and install command, IPv6 host normalisation, refusal without landing address / unsupported protocol / unknown relay, per-relay port allocation from 61001 with kept and reused ports, saves without relayIds keeping entries, disabled nodes left out of the rules, token check, realm TOML, x-config-hash = sha256 of the body, online/realmActive/synced from the relay report, one subscription proxy per active relay (name, host incl. IPv6, port) with no direct entry, disabled relay gets no rules and leaves subscriptions, delete refused while in use, and the served install script. test:hub (isolated schema), verify:fast, npm run check and git diff --check pass; a schema created by the previous store.js upgrades to versions [1,2]; bash -n on relay-install.sh passes.",
+        "2026-11-01 production (5ab6158 deployed, nexora-hub restarted, nh_schema_migrations [1,2], install.sh served publicly): relay 1 「香港中转」 (141.11.77.154) created; node 4 「[hub] 新加坡 中转」 set to relayIds [1] got port 61001. The install command on gomami_hk replaced the hand-made realm setup (old config kept in /root/realm-config.manual.bak): realm active from the node-hub generated config 61001 -> 217.116.170.144:61001, nexora-relay-sync.timer active, realm.service static, /etc/nexora-relay/env 600; the hub then showed the relay online, realm active and synced. The test account subscription listed 「[hub] 新加坡 中转 · 香港中转」 at 141.11.77.154:61001; a client on legend-sg through it got 204 in 0.28 s, exit IP 217.116.170.144, and the landing access log showed the client address 217.116.170.144. Temporary entitlement and info logging reverted; gomami 3x-ui on 443 unaffected."
       ],
       "browser_verification": {
         "routes": [
@@ -5111,6 +5112,60 @@
         "page_errors": [],
         "checked_at": "2026-11-01"
       }
+    },
+    {
+      "id": "remove-subscription-pool-code",
+      "name": "Remove leftover subscription pool code",
+      "description": "All subscription pool (订阅池) code is removed: upstream pool refresh and caching, the /api/subscriptions and /api/vendors routes, /api/cron/refresh and the subscription-refresh sync job, pool fallback switching and recommendation, the dead pool branch of /sub, manual 换池, pool-based batch gift, pool fit (poolCompatibility), vendor overrides on /subconverter, the pool fields in user payloads, logs and Telegram lookup, and the pool UI (subscription-pool-select, provider badge, the /urls detail page). The subscriptions and vendors collections are no longer loaded; their database rows are left untouched. Kept: the one-time legacy pool user to self-hosted migration on /sub and 切换到自研线路. The live-config registry the self-hosted subconverter path uses is renamed from pool-live to live-config.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "No server route, job, export or UI reads pool data; pool routes return 404.",
+        "A legacy pool user requesting /sub is still migrated to self-hosted delivery.",
+        "User list, user detail and /subconverter render without pool actions and without console errors."
+      ],
+      "verification": [
+        "2026-11-02: server.js analysed with @babel/traverse: no undefined identifiers, only pre-existing unused top-level symbols remain. test.js drops the pool unit tests; test-fallback.js and test-super-account.js (pool-only, not in npm scripts) are deleted. test-payment.js now asserts the pool routes, /api/vendors, /api/users/batch-gift and /api/cron/refresh return 404 and still covers the legacy pool user migration on /sub. npm run verify (check, core, 3x-ui, checkout, payment, wallet, catalog-v2, node-hub) and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users",
+          "/users/detail/verify-legacy-pool-user",
+          "/users/detail/verify-self-hosted-user",
+          "/subconverter",
+          "/dashboard"
+        ],
+        "interactions": [
+          "Isolated server.js on the test DB (NODE_ENV=test, no 3x-ui, own admin login) at 1280x900, seeded with one legacy upstream user (stale subscriptionId, outputMode direct, an old 手动换池 log) and one self-hosted user.",
+          "/users: toolbar shows only 新增用户; the legacy user row menu lists only 编辑 and 删除; requests are users, pricing, catalog, presence, none to /api/subscriptions or /api/vendors.",
+          "Legacy user detail: actions are 设置用户类型, 切换到自研线路, 赠送时长, 换绑邮箱, 发送账户认领邮件; no 推荐适配度 card; the 用户日志 tab shows the old pool log by its stored message; the 设置用户类型 dialog opens without the pool description.",
+          "Self-hosted user detail: no pool text; /subconverter shows only 转换预设 and 占位节点 tabs and loads presets and placeholder nodes.",
+          "/dashboard reloaded: every page API request returned 200. The only console errors in the tab were the three 404s from manually probing /api/subscriptions, /api/vendors and /api/cron/refresh."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-02"
+      }
+    },
+    {
+      "id": "node-hub-machine-xray-kernel",
+      "name": "Node Hub machine install command always uses the xray kernel",
+      "description": "In machine mode xboard-node takes the kernel from its config.yml and ignores the node kernel_type, and the installer defaults to sing-box, which does not handle PROXY protocol, so nodes behind a relay failed every handshake (bage-hk node 5 behind aws-jp). The machine install command now passes --kernel xray; docs/agent/node-hub.md explains how to switch machines installed by the old command.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "node-hub-relay-machines"
+      ],
+      "done_criteria": [
+        "The machine install command includes --kernel xray.",
+        "Tests asserting the install command and the migration script output are updated.",
+        "docs/agent/node-hub.md describes the machine-level kernel and the fix for machines already installed with sing-box."
+      ],
+      "verification": [
+        "2026-11-03 local: node test-node-hub.js passes with --kernel xray in the machine install command and the 3x-ui migration output; npm run verify:fast and git diff --check pass.",
+        "2026-11-03 production bage-hk (machine 3): config.yml kernel.type singbox -> xray (backup backups/config.yml.20261103-singbox), restarted xboard-node; log shows Xray 26.3.27 started, 68 users, accepting PROXY protocol. From aws-jp, TLS through realm 127.0.0.1:61001 and the public 3.113.22.110:61001 completes (CN hk-bage.mylovebaby.top) where it failed before; direct 185.241.40.165:60000 now fails as expected; no realm errors after the restart. A full VLESS client connection through the relay was not tested."
+      ]
     }
   ]
 }

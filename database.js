@@ -1,4 +1,4 @@
-const COLLECTIONS = ["subscriptions", "users", "accounts", "bills", "vendors", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "paymentOrders", "salesSettings", "paymentSettings", "referralRewards", "tickets", "checkoutSettings"];
+const COLLECTIONS = ["users", "accounts", "bills", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "paymentOrders", "salesSettings", "paymentSettings", "referralRewards", "tickets", "checkoutSettings"];
 const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
 const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
 const { appendXuiAuditLog, initXuiAudit, listXuiAuditLogs } = require("./xui-audit");

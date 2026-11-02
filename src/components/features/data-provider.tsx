@@ -2,14 +2,12 @@
 import { useLocation, useNavigate } from "react-router-dom"
 
 import { fetchJson } from "@/api"
-import type { AppMeta, Bill, EmbyUser, EmbyVendor, PlaceholderNode, Preset, PricingRow, Subscription, User, Vendor } from "@/types"
+import type { AppMeta, Bill, EmbyUser, EmbyVendor, PlaceholderNode, Preset, PricingRow, User } from "@/types"
 
 type DataState = {
   account: string
-  subscriptions: Subscription[]
   users: User[]
   bills: Bill[]
-  vendors: Vendor[]
   presets: Preset[]
   placeholderNodes: PlaceholderNode[]
   embyUsers: EmbyUser[]
@@ -26,10 +24,8 @@ type DataState = {
 type Collection = Exclude<keyof DataState, "account" | "loading" | "error" | "busy" | "reload" | "runAsync">
 
 const apis: Record<Collection, string> = {
-  subscriptions: "/api/subscriptions",
   users: "/api/users",
   bills: "/api/bills",
-  vendors: "/api/vendors",
   presets: "/api/presets",
   placeholderNodes: "/api/placeholder-nodes",
   embyUsers: "/api/emby-users",
@@ -40,10 +36,8 @@ const apis: Record<Collection, string> = {
 
 const initialState: Omit<DataState, "reload" | "runAsync"> = {
   account: "",
-  subscriptions: [],
   users: [],
   bills: [],
-  vendors: [],
   presets: [],
   placeholderNodes: [],
   embyUsers: [],
@@ -55,17 +49,15 @@ const initialState: Omit<DataState, "reload" | "runAsync"> = {
   busy: "",
 }
 
-const defaultCollections: Collection[] = ["subscriptions", "users", "bills", "meta"]
+const defaultCollections: Collection[] = ["users", "bills", "meta"]
 const pageCollections: [string, Collection[]][] = [
-  ["/users/detail/", ["users", "subscriptions", "bills", "pricing"]],
-  ["/users", ["users", "subscriptions", "pricing"]],
-  ["/urls/detail/", ["subscriptions", "users"]],
-  ["/urls", ["subscriptions", "vendors"]],
+  ["/users/detail/", ["users", "bills", "pricing"]],
+  ["/users", ["users", "pricing"]],
   ["/dashboard", ["users", "bills"]],
   ["/sales-analytics", ["users", "bills"]],
   ["/pricing-settings", ["pricing"]],
   ["/emby", ["embyUsers", "embyVendors"]],
-  ["/subconverter", ["presets", "subscriptions", "vendors", "placeholderNodes"]],
+  ["/subconverter", ["presets", "placeholderNodes"]],
 ]
 const focusRefreshIntervalMs = 60_000
 const loadedCollections = new Set<Collection>()

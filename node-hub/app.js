@@ -94,9 +94,12 @@ function normalizeStatus(value) {
   };
 }
 
+// Machines always run the xray kernel: in machine mode xboard-node takes the kernel from its own
+// config.yml and ignores a node's kernel_type, and the installer defaults to sing-box, which drops
+// PROXY protocol and breaks nodes behind a relay.
 function installCommand({ installerUrl, publicUrl, machine }) {
   if (!publicUrl) return "";
-  return `curl -fsSL ${installerUrl} | sudo bash -s -- --mode machine --panel ${publicUrl} --token ${machine.token} --machine-id ${machine.id}`;
+  return `curl -fsSL ${installerUrl} | sudo bash -s -- --mode machine --kernel xray --panel ${publicUrl} --token ${machine.token} --machine-id ${machine.id}`;
 }
 
 function createNodeHubHandler({

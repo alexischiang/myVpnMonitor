@@ -1,7 +1,6 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
-import type { ColumnDef } from "@tanstack/react-table"
-import { AlertCircle, ArrowRightLeft, AtSign, Banknote, Eye, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, Settings2, UserCog } from "lucide-react"
+import { AlertCircle, ArrowRightLeft, AtSign, Banknote, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, Settings2, UserCog } from "lucide-react"
 import { toast } from "@/components/features/toast"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -10,17 +9,15 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
-import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
 import { useData } from "@/components/features/data-provider"
-import { EmptyState, PageHeader, StatusBadge, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
-import { SubscriptionPoolSelect } from "@/components/features/subscription-pool-select"
+import { EmptyState, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
 import { UserBillsCard } from "@/components/features/user-bills-card"
 import { NodeTrafficList } from "@/components/features/node-traffic-list"
 import { BackButton } from "@/components/features/back-button"
 import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalogPurchaseOptionsFor, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
 import type { PlanSnapshot, User, XuiCustomInboundManagement } from "@/types"
-import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, planSnapshotName, planSnapshotOptionId, userStatus } from "@/utils"
+import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, planSnapshotName, planSnapshotOptionId } from "@/utils"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Alert } from "@/components/arc/alert/alert"
 import { Badge } from "@/components/arc/badge/badge"
@@ -82,18 +79,6 @@ function planChangeExpiresAt(user: User, toDays: number) {
   return shift(user.expiresAt, toDays - fromDays)
 }
 
-function formatPoolExpiryDifference(days?: number | null) {
-  if (days === null || days === undefined) return "暂无法判断"
-  if (days === 0) return "与用户同日到期"
-  return days > 0 ? `池比用户晚到期 ${days} 天` : `池比用户早到期 ${Math.abs(days)} 天`
-}
-
-function poolDisplayName(pool?: User["subscription"] | null) {
-  const provider = pool?.serviceProvider || pool?.provider
-  const identifier = pool?.email || pool?.name
-  return provider && identifier ? `${provider} · ${identifier}` : provider || identifier || pool?.url || "未绑定"
-}
-
 const userTypeLabels = { regular: "普通账户", family: "亲友账户", business: "企业账户", super: "超级账户" } as const
 const xuiMigrationLabels = {
   completed: { label: "已完成", variant: "success" },
@@ -122,145 +107,11 @@ function xuiMigrationSource(user: User) {
   return "-"
 }
 
-export function SubscriptionDetailPage() {
-  const { id } = useParams()
-  const { subscriptions, users, reload, runAsync } = useData()
-  const [cache, setCache] = React.useState<{ body?: string; error?: string; fetchedAt?: string; bodyFetchedAt?: string; bodyLength?: number; storage?: string } | null>(null)
-  const [refreshing, setRefreshing] = React.useState(false)
-  const [refreshingCache, setRefreshingCache] = React.useState(false)
-  const [togglingAutoSwitch, setTogglingAutoSwitch] = React.useState(false)
-  const item = subscriptions.find(entry => entry.id === id)
-  const boundUsers = users.filter(user => user.subscriptionId === id)
-
-  React.useEffect(() => {
-    if (!id) return
-    fetchJson<typeof cache>(`/api/subscriptions/${id}/cache`).then(setCache).catch(error => setCache({ error: error.message }))
-  }, [id])
-
-  const boundUserColumns = React.useMemo<ColumnDef<User>[]>(() => [
-    {
-      id: "user",
-      accessorFn: user => `${user.customerID || ""} ${user.userId || ""} ${user.wechatName || ""} ${user.email || ""}`,
-      header: DataTableColumnHeader({ title: "用户" }),
-      meta: { label: "用户" },
-      cell: ({ row }) => row.original.customerID || row.original.userId || row.original.wechatName || "-",
-    },
-    {
-      accessorKey: "expiresAt",
-      header: DataTableColumnHeader({ title: "到期" }),
-      meta: { label: "到期" },
-      cell: ({ row }) => formatUserExpiry(row.original),
-    },
-    {
-      id: "status",
-      accessorFn: user => userStatus(user),
-      header: DataTableColumnHeader({ title: "状态" }),
-      meta: { label: "状态" },
-      cell: ({ row }) => <UserStatusBadge user={row.original} />,
-    },
-    {
-      id: "actions",
-      header: "操作",
-      cell: ({ row }) => <DataTableRowActions detail={<Button asChild variant="ghost" size="icon"><Link to={`/users/detail/${row.original.id}`} aria-label="查看用户详情"><Eye /></Link></Button>} />,
-      enableHiding: false,
-      enableSorting: false,
-    },
-  ], [])
-
-  if (!item) return <EmptyState scene="map" compact={false} title="未找到订阅" description="该订阅不存在或已被删除。" />
-
-  async function refresh() {
-    setRefreshing(true)
-    try {
-      await runAsync(async () => {
-        await postJson(`/api/subscriptions/${item.id}/refresh`, {})
-        const payload = await fetchJson<typeof cache>(`/api/subscriptions/${item.id}/cache`)
-        setCache(payload)
-        await reload(["subscriptions"])
-      }, "刷新配置和指标...")
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  async function refreshCache() {
-    setRefreshingCache(true)
-    try {
-      const payload = await fetchJson<typeof cache>(`/api/subscriptions/${item.id}/cache?force=true`).catch(error => ({ error: error.message }))
-      setCache(payload)
-      await reload(["subscriptions"])
-    } finally {
-      setRefreshingCache(false)
-    }
-  }
-
-  async function toggleAutoSwitch() {
-    setTogglingAutoSwitch(true)
-    try {
-      await runAsync(async () => {
-        await putJson(`/api/subscriptions/${item.id}`, { excludeFromAutoSwitch: !item.excludeFromAutoSwitch })
-        await reload(["subscriptions"])
-        toast({ type: "success", title: item.excludeFromAutoSwitch ? "已恢复自动换池切入" : "已禁止自动换池切入" })
-      }, item.excludeFromAutoSwitch ? "恢复自动换池切入..." : "禁止自动换池切入...")
-    } finally {
-      setTogglingAutoSwitch(false)
-    }
-  }
-
-  return (
-    <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
-      <PageHeader
-        title="订阅详情"
-        description={item.email || item.serviceProvider || item.url || "手动 Base64 订阅"}
-        actions={
-          <>
-            <BackButton fallback="/urls" size="sm" />
-            {item.sourceType === "url" ? <ActionButton variant="secondary" size="sm" onClick={toggleAutoSwitch} label={item.excludeFromAutoSwitch ? "恢复自动切入" : "禁止自动切入"} pending={togglingAutoSwitch} /> : null}
-            <ActionButton size="sm" onClick={refresh} label="刷新" pending={refreshing} />
-          </>
-        }
-      />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="基础信息"><div className="grid gap-4">
-            {item.sourceType === "manual" ? <Info label="配置来源" value="手动 Base64" /> : item.sourceType === "yaml" ? <Info label="配置来源" value="手动 YAML" /> : <UrlCell value={item.url} />}
-            <div className="grid gap-3">
-              <Info label="HTTP" value={item.httpStatus || "-"} />
-              <Info label="最后检查" value={formatDateTime(item.lastCheckedAt)} />
-              <Info label="到期" value={formatDate(item.metrics?.expireAt)} />
-              <Info label="已用流量" value={formatBytes(item.metrics?.usedBytes)} />
-              <Info label="剩余流量" value={<TrafficProgress remaining={item.metrics?.remainingBytes} total={item.metrics?.totalBytes} />} />
-              <Info label="状态" value={<StatusBadge status={item.status} />} />
-            </div>
-            {item.lastError && (
-              <Alert tone="danger" title={item.lastError} />
-            )}
-          </div></Card>
-
-        <Card title="实时配置"><ActionButton variant="secondary" size="sm" onClick={refreshCache} label="刷新缓存" pending={refreshingCache} /><div className="grid gap-3">
-            <p className="text-sm text-muted-foreground">
-              {cache?.body ? `缓存时间：${formatDateTime(cache.bodyFetchedAt || cache.fetchedAt)} - ${formatBytes(cache.bodyLength)}` : cache?.fetchedAt ? `最近尝试：${formatDateTime(cache.fetchedAt)}` : "未加载"}
-            </p>
-            {cache?.error ? <Alert tone="danger" title={`最新配置拉取失败：${cache.error}${cache.body ? ` 当前显示的是 ${formatDateTime(cache.bodyFetchedAt || cache.fetchedAt)} 的缓存配置。` : " 当前没有可显示的缓存配置。"}`} /> : null}
-            <pre className="max-h-96 overflow-auto rounded-lg border bg-muted p-3 text-xs">{cache?.body || "(empty)"}</pre>
-          </div></Card>
-
-        <Card className="lg:col-span-2" title="绑定用户"><DataTable
-              columns={boundUserColumns}
-              data={boundUsers}
-              searchKey="user"
-              searchPlaceholder="搜索绑定用户..."
-              emptyTitle="暂无绑定用户"
-            /></Card>
-      </div>
-    </div>
-  )
-}
-
 export function UserDetailPage() {
   const { id } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
-  const { users, subscriptions, bills, reload, runAsync } = useData()
+  const { users, bills, reload, runAsync } = useData()
   const summaryUser = users.find(entry => entry.id === id)
   const [loadedUser, setLoadedUser] = React.useState<User | null>(null)
   const user = summaryUser && loadedUser?.id === id
@@ -300,11 +151,6 @@ export function UserDetailPage() {
   const [manualPaymentError, setManualPaymentError] = React.useState("")
   const [manualPaymentLoading, setManualPaymentLoading] = React.useState(false)
   const [manualPaymentSaving, setManualPaymentSaving] = React.useState(false)
-  const [poolOpen, setPoolOpen] = React.useState(false)
-  const [poolId, setPoolId] = React.useState("")
-  const [poolSaving, setPoolSaving] = React.useState(false)
-  const [allowDisabledPool, setAllowDisabledPool] = React.useState(false)
-  const [allowFullPool, setAllowFullPool] = React.useState(false)
   const [giftOpen, setGiftOpen] = React.useState(false)
   const [giftDays, setGiftDays] = React.useState("")
   const [giftPreview, setGiftPreview] = React.useState<GiftPreview | null>(null)
@@ -338,7 +184,6 @@ export function UserDetailPage() {
   const [customInboundSaving, setCustomInboundSaving] = React.useState(false)
   const [walletBalance, setWalletBalance] = React.useState<number | null>(null)
   const catalogV2Products = useCatalogV2Products()
-  const currentPool = subscriptions.find(item => item.id === user?.subscriptionId)
   const userBills = bills.filter(item => item.userId === user?.id || item.user?.id === user?.id)
   const purchaseCount = userBills.filter(item => !item.reversedAt).length
 
@@ -405,7 +250,7 @@ export function UserDetailPage() {
     if (!id || id.startsWith("account:")) return
     const [detail] = await Promise.all([
       fetchJson<User>(`/api/users/${id}`),
-      reload(["users", "subscriptions"])
+      reload(["users"])
     ])
     setLoadedUser(detail)
   }
@@ -610,29 +455,6 @@ export function UserDetailPage() {
     }
   }
 
-  function openPoolDialog() {
-    setPoolId("")
-    setAllowDisabledPool(false)
-    setAllowFullPool(false)
-    setPoolOpen(true)
-  }
-
-  async function changePool(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!poolId || poolId === user.subscriptionId) return
-    setPoolSaving(true)
-    try {
-      await postJson(`/api/users/${user.id}/pool`, { subscriptionId: poolId, allowDisabled: allowDisabledPool, allowFull: allowFullPool })
-      await refreshUserDetails()
-      setPoolOpen(false)
-      toast({ type: "success", title: "用户订阅池已更新" })
-    } catch (error) {
-      toast({ type: "error", title: error instanceof Error ? error.message : "换池失败" })
-    } finally {
-      setPoolSaving(false)
-    }
-  }
-
   function openGiftDialog() {
     setGiftDays("")
     setGiftPreview(null)
@@ -832,7 +654,7 @@ export function UserDetailPage() {
         amount,
       })
       setManualPaymentOpen(false)
-      await reload(["users", "subscriptions", "bills"])
+      await reload(["users", "bills"])
       toast({ type: "success", title: "人工收款已完成，套餐已生效" })
       if (user.registeredOnly && order.userId) navigate(`/users/detail/${order.userId}`)
       else await refreshUserDetails()
@@ -886,12 +708,6 @@ export function UserDetailPage() {
             <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={inviteSending}>取消</Button></DialogClose><ActionButton type="submit" label="发送邮件" pendingLabel="发送中..." pending={inviteSending} /></div>
           </form></DialogContent>
       </Dialog>
-      <Dialog open={poolOpen} onOpenChange={setPoolOpen}>
-        <DialogContent title="手动换池" description={`当前订阅池：${poolDisplayName(currentPool)}`} size="lg"><form className="grid gap-4" onSubmit={changePool} noValidate>
-            <SubscriptionPoolSelect id="detail-manual-pool" label="目标订阅池" subscriptions={subscriptions} value={poolId} onValueChange={setPoolId} allowDisabled={allowDisabledPool} onAllowDisabledChange={setAllowDisabledPool} allowFull={allowFullPool} onAllowFullChange={setAllowFullPool} group={user.isSuperAccount ? undefined : user.v2ProductSnapshot?.lineGroupId || undefined} />
-            <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={poolSaving}>取消</Button></DialogClose><ActionButton type="submit" disabled={poolSaving || !poolId || poolId === user.subscriptionId} label="确认换池" pendingLabel="换池中..." pending={poolSaving} /></div>
-          </form></DialogContent>
-      </Dialog>
       <Dialog open={giftOpen} onOpenChange={setGiftOpen}>
         <DialogContent title="赠送时长" description={`${user.userId || user.email || "用户"} · 赠送天数叠加到当前生效套餐的到期日`}>{!hasActiveRecurringPlan(user) ? <div className="grid gap-4">
             <Alert tone="warning" title="无法赠送时长">用户当前没有生效中的周期性套餐{user.v2ProductSnapshot ? `（当前：${productName}，${user.duration === "lifetime" || user.v2ProductSnapshot.productType === "lifetime_plan" ? "不限时套餐" : `已于 ${formatDate(user.expiresAt)} 到期`}）` : ""}，请先通过购买或更改套餐开通周期性套餐。</Alert>
@@ -919,7 +735,7 @@ export function UserDetailPage() {
           </form>}</DialogContent>
       </Dialog>
       <Dialog open={userTypeOpen} onOpenChange={setUserTypeOpen}>
-        <ArcDialogContent title="设置用户类型" description="超级账户可跨越 BASIC、PRO、ULTRA 套餐等级选择订阅池。"><Select label="用户类型" value={selectedUserType} onValueChange={value => setSelectedUserType(value as keyof typeof userTypeLabels)} disabled={userTypeSaving} id="user-type" className="w-full" options={[...Object.entries(userTypeLabels).map(([value, label]) => ({ value: value, label: label }))]} /><div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={userTypeSaving}>取消</Button></DialogClose><ActionButton type="button" onClick={() => void saveUserType()} label="保存类型" pendingLabel="保存中..." pending={userTypeSaving} /></div></ArcDialogContent>
+        <ArcDialogContent title="设置用户类型"><Select label="用户类型" value={selectedUserType} onValueChange={value => setSelectedUserType(value as keyof typeof userTypeLabels)} disabled={userTypeSaving} id="user-type" className="w-full" options={[...Object.entries(userTypeLabels).map(([value, label]) => ({ value: value, label: label }))]} /><div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={userTypeSaving}>取消</Button></DialogClose><ActionButton type="button" onClick={() => void saveUserType()} label="保存类型" pendingLabel="保存中..." pending={userTypeSaving} /></div></ArcDialogContent>
       </Dialog>
       <Dialog open={customInboundOpen} onOpenChange={setCustomInboundOpen}>
         <ArcDialogContent title="管理个人定制入站" description="个人定制授权不随套餐变更或到期清除。用户到期时仍只显示占位节点，重新购买套餐后自动恢复授权。" size="xl" className="max-h-[calc(100dvh-2rem)] overflow-y-auto">{customInboundLoading ? <ArcCard title="正在读取可用入站" description="请稍候…" headerAction={<><Loader2 className="animate-spin" /></>} /> : customInboundData ? <>
@@ -996,7 +812,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               ...(user.lineType === "self_hosted" ? [
                 { label: "单向赠送流量", icon: <Gift />, onSelect: () => { setTrafficGiftError(""); setTrafficGiftOpen(true) } },
                 { label: "同步V2套餐到3x-ui", icon: <RefreshCw />, onSelect: () => setXuiRecoverOpen(true), disabled: xuiRecoverSaving },
-              ] : [{ label: "换池", icon: <RefreshCw />, onSelect: openPoolDialog }]),
+              ] : []),
               { label: "赠送时长", icon: <Gift />, onSelect: openGiftDialog },
             ]),
             ...(user.email || user.accountStatus !== "unclaimed" ? [{ label: "换绑邮箱", icon: <AtSign />, onSelect: () => { setEmailRebindValue(""); setEmailRebindNote(""); setEmailRebindError(""); setEmailRebindOpen(true) } }] : []),
@@ -1038,30 +854,6 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
                   <p className="text-xs text-muted-foreground">最后同步：{weightedTraffic.lastSyncedAt ? formatDateTime(weightedTraffic.lastSyncedAt) : "-"}</p>
                 </> : <EmptyState title="暂无倍率流量数据" description="完成首次 3x-ui 流量同步后显示节点明细。" />}
               </div></Card> : null}
-            {user.poolCompatibility ? (
-              <Card className="@4xl:col-start-2" title="推荐适配度" description={poolDisplayName(currentPool)} headerAction={<Badge tone={user.poolCompatibility.status === "high" ? "success" : user.poolCompatibility.status === "usable" ? "neutral" : user.poolCompatibility.status === "incompatible" ? "danger" : "warning"}>
-                      {user.poolCompatibility.statusText}
-                    </Badge>}><div className="grid gap-4">
-                  {user.poolCompatibility.status !== "high" ? (
-                    <Alert tone={user.poolCompatibility.status === "incompatible" ? "danger" : user.poolCompatibility.status === "adjust" ? "warning" : "info"} title="具体原因">
-                        <ul className="list-disc space-y-1 pl-4">
-                          {user.poolCompatibility.reasons.map(reason => <li key={reason}>{reason}</li>)}
-                        </ul>
-                      </Alert>
-                  ) : null}
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <Info label="当前池 URL" value={currentPool?.url ? <UrlCell value={currentPool.url} /> : "-"} />
-                    <Info label="供应商评级" value={user.poolCompatibility.rating ? <Badge>{user.poolCompatibility.rating} 级</Badge> : "未评级"} />
-                    <Info label="套餐匹配" value={user.isSuperAccount ? "超级账户可跨等级使用" : user.poolCompatibility.groupAllowed ? `${user.v2ProductSnapshot?.lineGroupId?.toUpperCase() || "当前"} 套餐可用` : "不支持当前套餐"} />
-                    <Info label="到期匹配" value={formatPoolExpiryDifference(user.poolCompatibility.expiryDiffDays)} />
-                    <Info label="容量" value={`${user.poolCompatibility.customerCount ?? 0} / ${user.poolCompatibility.maxUsers ?? 15} 人`} />
-                    <Info label="绑定方式" value={user.poolCompatibility.binding?.type === "manual" ? `手动换池${user.poolCompatibility.binding.at ? ` · ${formatDateTime(user.poolCompatibility.binding.at)}` : ""}` : "系统绑定"} />
-                  </div>
-                  {user.poolCompatibility.recommendedPool ? (
-                    <ArcCard title="当前更优选择" description={`${user.poolCompatibility.recommendedPool.label} · ${user.poolCompatibility.recommendedPool.rating || "未评级"} 级 · ${formatPoolExpiryDifference(user.poolCompatibility.recommendedPool.expiryDiffDays)}`} />
-                  ) : null}
-                </div></Card>
-            ) : null}
             <Card className="@4xl:col-start-2" title="3x-ui 信息"><div className="grid gap-4 sm:grid-cols-2">
                 <Info label="迁移状态" value={<Badge tone={migrationStatus.variant}>{migrationStatus.label}</Badge>} />
                 <Info label="迁移方式" value={xuiMigrationSource(user)} />
@@ -1087,7 +879,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
           </TabsContent>
           <TabsContent value="bills" className="grid min-w-0 gap-4">
             <UserBillsCard records={user.billingRecords} />
-            <Card className="gap-0 overflow-hidden py-0" title="用户日志" description={`共 ${user.userLogs?.length || 0} 条`}><SimpleTable caption="时间列表" columns={["时间", "类型", "状态", "内容", "操作"]} rows={user.userLogs} rowKey={(log) => log.id} cells={(log) => [<span className="text-muted-foreground">{formatDateTime(log.at)}</span>, <Badge>{log.reasonText || log.reason || "用户日志"}</Badge>, <Badge tone={["failed", "blocked", "no_usable_pool"].includes(log.status || "") ? "danger" : "neutral"}>{log.statusText || log.status || "已记录"}</Badge>, <span className="whitespace-normal text-muted-foreground">{log.message || [log.fromSubscriptionLabel, log.toSubscriptionLabel].filter(Boolean).join(" → ") || "-"}</span>, <span className="text-right">{latestPlanEvent?.id === log.id && log.reason === "plan-changed" && log.details?.rollbackState ? <Button type="button" variant="secondary" size="sm" onClick={() => setPlanRollbackId(log.id)}><RotateCcw />撤销变更</Button> : null}</span>]} emptyMessage="暂无用户日志" /></Card>
+            <Card className="gap-0 overflow-hidden py-0" title="用户日志" description={`共 ${user.userLogs?.length || 0} 条`}><SimpleTable caption="时间列表" columns={["时间", "类型", "状态", "内容", "操作"]} rows={user.userLogs} rowKey={(log) => log.id} cells={(log) => [<span className="text-muted-foreground">{formatDateTime(log.at)}</span>, <Badge>{log.reasonText || log.reason || "用户日志"}</Badge>, <Badge tone={["failed", "blocked"].includes(log.status || "") ? "danger" : "neutral"}>{log.statusText || log.status || "已记录"}</Badge>, <span className="whitespace-normal text-muted-foreground">{log.message || "-"}</span>, <span className="text-right">{latestPlanEvent?.id === log.id && log.reason === "plan-changed" && log.details?.rollbackState ? <Button type="button" variant="secondary" size="sm" onClick={() => setPlanRollbackId(log.id)}><RotateCcw />撤销变更</Button> : null}</span>]} emptyMessage="暂无用户日志" /></Card>
           </TabsContent>
           <TabsContent value="referral" className="grid min-w-0 gap-4">
             <Card title="邀请返利设置"><Separator /><>{user.accountId ? <div className="grid gap-4 sm:grid-cols-2"><Input label="收到返利比例（%）" id="referral-rate" type="number" min="0" max="100" value={referralRate} onChange={event => setReferralRate(Number(event.target.value))} /><div className="self-end"><Checkbox id="recurring-referral" checked={recurringReferral} onCheckedChange={checked => setRecurringReferral(checked === true)} label="享受循环返利" /></div><ActionButton className="sm:w-fit" onClick={() => void saveReferralSettings()} label="保存返利设置" pendingLabel="保存中..." pending={referralSaving} /></div> : <p className="text-sm text-muted-foreground">用户认领账户后可配置邀请返利。</p>}</></Card>
