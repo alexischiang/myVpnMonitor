@@ -70,7 +70,7 @@ VPS: xboard-node (machine 模式) ──HTTPS /api/v1|v2/server/*──> 反向�
 1. 在同一台服务器上运行 `npm run start:hub`（或 pm2/systemd），环境变量见 `.env.example` 的 node-hub 段。`NODE_HUB_DATABASE_URL` 指向本站数据库（node-hub 需要写 `xui_daily_traffic`）。
 2. 反向代理只把 `/api/v1/server/` 和 `/api/v2/server/` 转发到 `127.0.0.1:3003`，绝不暴露 `/internal/`；`/api/v2/server/ws` 要允许 WebSocket 升级（nginx：`proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_read_timeout 120s;`）。`NODE_HUB_PUBLIC_URL` 设为这个 HTTPS 地址。
 3. 本站设置 `NODE_HUB_URL=http://127.0.0.1:3003` 和相同的 `NODE_HUB_INTERNAL_TOKEN`，重启。
-4. 创建机器（`POST /api/node-hub/machines`），在 VPS 上执行返回的 `installCommand`（machine 模式，每台机器独立 token）。
+4. 创建机器（`POST /api/node-hub/machines`），在 VPS 上执行返回的 `installCommand`（machine 模式，每台机器独立 token，固定 `--kernel xray`）。machine 模式下 xboard-node 只按机器 `config.yml` 的 `kernel.type` 选内核，节点的 `kernel_type` 不生效；安装脚本默认 sing-box，而 sing-box 不处理 PROXY protocol，经中转的节点会握手失败。旧命令装的机器把 `/etc/xboard-node/config.yml` 里的 `type: singbox` 改成 `type: xray` 后 `systemctl restart xboard-node`，日志出现 `accepting PROXY protocol` 即生效（2026-11-03 bage-hk 照此修复）。
 5. 创建节点，加入线路组，运行同步任务「node-hub 授权同步」。
 
 ## 从 3x-ui 迁移一台 VPS

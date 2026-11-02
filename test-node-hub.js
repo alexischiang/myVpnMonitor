@@ -325,7 +325,7 @@ async function main() {
     assert.equal(created.status, 201);
     const machine = created.body;
     assert.match(machine.token, /^[0-9a-f]{48}$/);
-    assert.equal(machine.installCommand, `curl -fsSL https://raw.githubusercontent.com/alexischiang/nexora-node/dev/install.sh | sudo bash -s -- --mode machine --panel https://hub.example.com --token ${machine.token} --machine-id ${machine.id}`);
+    assert.equal(machine.installCommand, `curl -fsSL https://raw.githubusercontent.com/alexischiang/nexora-node/dev/install.sh | sudo bash -s -- --mode machine --kernel xray --panel https://hub.example.com --token ${machine.token} --machine-id ${machine.id}`);
     const otherMachine = (await internal("POST", "/internal/machines", { name: "HK" })).body;
     const keys = (await internal("POST", "/internal/reality-keypair")).body;
     const vlessNode = await internal("POST", "/internal/nodes", { machineId: machine.id, name: "美国 01", protocol: "vless", host: "la.example.com", serverPort: 443, region: "美国", networkLevel: "premium", settings: { network: "tcp", tls: 2, flow: "xtls-rprx-vision", reality_settings: { server_name: "www.apple.com", private_key: keys.privateKey, short_id: keys.shortId } } });
@@ -472,7 +472,7 @@ async function main() {
     assert.match(dry, /users whose 3x-ui uuid is carried over: 1/);
     assert.equal((await store.listMachines()).some(item => item.name === "LA-MIGRATED"), false, "a dry run changes nothing");
     const applied = await migrate("--node-guid", "local", "--host", "la2.example.com", "--name", "LA-MIGRATED", "--apply");
-    assert.match(applied, /--mode machine --panel https:\/\/hub\.example\.com/);
+    assert.match(applied, /--mode machine --kernel xray --panel https:\/\/hub\.example\.com/);
     const migratedMachine = (await store.listMachines()).find(item => item.name === "LA-MIGRATED");
     const migratedNodes = await store.listNodes({ machineId: migratedMachine.id });
     assert.deepEqual(migratedNodes.map(item => [item.protocol, item.serverPort, item.host, item.settings.reality_settings?.private_key]), [["vless", 443, "la2.example.com", keys.privateKey]]);

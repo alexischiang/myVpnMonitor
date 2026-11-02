@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-01
-- Current Objective: node-hub 改为从 nexora-node fork 安装（v1.13.1 修复 0 用户节点不起内核），REALITY 表单不再预填 www.microsoft.com，已上线
+- Last Updated: 2026-11-03
+- Current Objective: Fix aws-jp -> bage-hk relay; machine installs default to xray kernel
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -542,8 +542,12 @@
 
 - 2026-11-01: legend-sg 升级 v1.13.1 后 0 用户节点授权后 1 秒内起内核且未重启；production ddccbd0 部署成功，安装命令指向 fork
 
+- 2026-11-02: npm run verify、npm run verify:harness、git diff --check 通过；/users、用户详情、/subconverter、/dashboard 浏览器验证无控制台错误
+
+- 2026-11-03: test-node-hub.js and verify:fast pass; bage-hk relay handshake via aws-jp:61001 succeeds after switching to xray
+
 ## Next Session
 
-- Files: none
+- Files: `.env.example`, `PROGRESS.md`, `README.md`, `database.js`, `docs/agent/node-hub.md`, `feature_list.json`, `node-hub/app.js`, `server.js`, `src/components/features/data-provider.tsx`, `src/components/features/details.tsx`, `src/components/features/provider-badge.tsx`, `src/components/features/subconverter.tsx`, `src/components/features/subscription-pool-select.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/types.ts`, `src/utils.ts`, `test-fallback.js`, `test-node-hub.js`, `test-payment.js`, `test-super-account.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: fork 的 ci.yml 镜像命名空间改动需带 workflow 权限的令牌推送；deploy.yml 不重启 nexora-hub，改 node-hub 代码后需手动 pm2 restart nexora-hub
+- Recommended Next Step: Check other hub machines installed before 2026-11-03 for kernel.type singbox in /etc/xboard-node/config.yml and switch them to xray; deploy the install-command change when asked
