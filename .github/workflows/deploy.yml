@@ -126,6 +126,24 @@ jobs:
                 exit 1
               fi
             fi
+            # node-hub serves the machine/relay install commands and node configs from this checkout, so it
+            # must restart with the new code too. Only hosts that already run it under pm2 are touched.
+            if pm2 describe nexora-hub > /dev/null 2>&1; then
+              pm2 restart nexora-hub --update-env
+              node_hub_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.NODE_HUB_URL || 'http://127.0.0.1:3003')")
+              hub_ready=false
+              for attempt in $(seq 1 12); do
+                if curl --fail --silent --max-time 5 "${node_hub_url%/}/health" > /dev/null; then
+                  hub_ready=true
+                  break
+                fi
+                sleep 5
+              done
+              if [ "$hub_ready" != "true" ]; then
+                pm2 logs nexora-hub --lines 50 --nostream || true
+                exit 1
+              fi
+            fi
             pm2 restart nexora --update-env
             for attempt in $(seq 1 12); do
               if curl --fail --silent --max-time 5 http://127.0.0.1:3000/api/health | grep -q '"ok":true'; then
