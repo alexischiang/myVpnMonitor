@@ -2,8 +2,8 @@
 //   main app (node-hub mode) -> node-hub -> xboard-node (xray kernel) <- xray client -> local file server
 // It provisions a user through the app, starts xboard-node in machine mode against node-hub,
 // downloads through VLESS, VLESS+REALITY+Vision and Shadowsocks-2022 nodes taken from the user's
-// subscription, and checks traffic accounting, billing, speed limit, depletion, presence, the
-// monitor and inbound management.
+// subscription, and checks traffic accounting, billing, speed limit, depletion (including a
+// download already open when the user runs out), presence, the monitor and inbound management.
 //
 // Usage (disposable database only; it is wiped):
 //   TEST_DATABASE_URL=postgres://... XBOARD_NODE_BIN=/path/xboard-node XRAY_BIN=/path/xray node scripts/e2e-xboard-node.js
@@ -66,6 +66,30 @@ function run(name, command, args, options = {}) {
   children.push(child);
   child.on("exit", code => { if (code && !child.killedByTest) log(`${name} exited with ${code}; see ${path.join(work, `${name}.log`)}`); });
   return child;
+}
+
+// Opens GET `fileUrl` through a SOCKS5 port and keeps counting the bytes that arrive, for a
+// connection that must stay open across a change on the node. `closedAt` is set when it ends.
+function streamThroughSocks(socksPort, fileUrl) {
+  const url = new URL(fileUrl);
+  const stream = { received: 0, closedAt: 0, socket: net.connect(socksPort, "127.0.0.1") };
+  let stage = 0;
+  stream.socket.on("error", () => {});
+  stream.socket.on("close", () => { stream.closedAt = Date.now(); });
+  stream.socket.on("connect", () => stream.socket.write(Buffer.from([5, 1, 0])));
+  stream.socket.on("data", chunk => {
+    if (stage === 0) {
+      stage = 1;
+      const host = Buffer.from(url.hostname);
+      const port = Buffer.alloc(2);
+      port.writeUInt16BE(Number(url.port));
+      stream.socket.write(Buffer.concat([Buffer.from([5, 1, 0, 3, host.length]), host, port]));
+    } else if (stage === 1) {
+      stage = 2;
+      stream.socket.write(`GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\n\r\n`);
+    } else stream.received += chunk.length;
+  });
+  return stream;
 }
 
 // Downloads `bytes` from the file server through a SOCKS5 port (plain HTTP over the tunnel).
@@ -139,6 +163,13 @@ async function main() {
   // --- local servers: file server, REALITY target, fake subconverter -----
   const payload = crypto.randomBytes(8 * MiB);
   const files = http.createServer((req, res) => {
+    if (req.url.startsWith("/stream")) {
+      // Endless slow body (~320 KiB/s) for a connection that outlives a user change.
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      const ticker = setInterval(() => res.write(payload.subarray(0, 16 * 1024)), 50);
+      res.on("close", () => clearInterval(ticker));
+      return;
+    }
     const size = Math.min(64 * MiB, Number(new URL(req.url, "http://x").searchParams.get("bytes")) || MiB);
     res.writeHead(200, { "content-type": "application/octet-stream", "content-length": size });
     let sent = 0;
@@ -220,6 +251,10 @@ async function main() {
     xuiClientEmail: email
   };
   await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', $1, 0, $2::jsonb)", [userId, JSON.stringify(user)]);
+  // A second user that stays entitled, so the node keeps running and depletion removes the first
+  // user from a live kernel, as on a production node with many users.
+  const bystander = { ...user, id: "e2e-bystander", userId: "e2e-bystander", email: "bystander@example.test", customerID: "900201", subscriptionToken: crypto.randomBytes(16).toString("hex"), xuiClientEmail: "bystander@example.test", v2ProductSnapshot: { ...user.v2ProductSnapshot, trafficBytes: 1024 * MiB } };
+  await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', $1, 1, $2::jsonb)", [bystander.id, JSON.stringify(bystander)]);
 
   // --- main app ----------------------------------------------------------
   const handler = require("../server");
@@ -274,6 +309,7 @@ async function main() {
   assert.ok(hubUser?.enabled, "the user is enabled on node-hub");
   assert.deepEqual(hubUser.nodeIds, [plain.id, reality.id, ss.id].sort((a, b) => a - b));
   assert.equal(hubUser.deviceLimit, 3);
+  assert.ok((await hubStore.getUser(bystander.id))?.enabled, "the bystander is enabled on node-hub");
   log("user entitled on hub", { hubUserId: hubUser.id, uuid: hubUser.uuid });
 
   // --- start the real xboard-node in machine mode ------------------------
@@ -383,6 +419,9 @@ async function main() {
   assert.equal(machineRow.inboundCount, 3);
 
   // --- depletion: 2x weighted usage (44 MiB) exceeds the 40 MiB quota ------
+  // A download already running through REALITY when the user runs out must stop too.
+  const stream = streamThroughSocks(socks.reality, `http://127.0.0.1:${filePort}/stream`);
+  await waitFor("long-lived stream to flow", () => stream.received > 256 * 1024, { timeoutMs: 15000, intervalMs: 200 });
   await runJob("node-hub-billing");
   users = await api("/api/users");
   billed = users.find(item => item.id === userId);
@@ -399,6 +438,12 @@ async function main() {
     }
   }, { timeoutMs: 30000, intervalMs: 1000 });
   log("depleted user is refused by the node", { afterMs: Date.now() - since });
+  const receivedAtRefusal = stream.received;
+  await waitFor("open stream of the depleted user to close", () => stream.closedAt, { timeoutMs: 10000, intervalMs: 200 }).catch(() => null);
+  const openStream = { closed: Boolean(stream.closedAt), closedAfterMs: stream.closedAt ? stream.closedAt - since : null, bytesAfterRefusal: stream.received - receivedAtRefusal };
+  stream.socket.destroy();
+  log("open stream of the depleted user", openStream);
+  assert.ok(openStream.closed, `an open connection of a depleted user is closed (${openStream.bytesAfterRefusal} bytes kept flowing for 10 s after new connections were refused)`);
 
   // Restore: multiplier back to 1 -> under quota -> re-enabled on the next rounds.
   await api(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { method: "PUT", body: { multiplier: 1 } });
@@ -422,7 +467,7 @@ async function main() {
 
   for (const child of children) { child.killedByTest = true; child.kill("SIGTERM"); }
   await new Promise(resolve => nodeProcess.exitCode !== null ? resolve() : nodeProcess.once("exit", resolve));
-  console.log(`E2E passed (${restOnly ? "REST polling" : "WebSocket push"}): real xboard-node ${execFileSync(nodeBin, ["-v"]).toString().trim()} served VLESS, VLESS+REALITY+Vision and Shadowsocks-2022 from node-hub; traffic accounted within 5% of the payload; billing, multiplier, depletion, re-enable, speed limit and node disable all reached the node.`);
+  console.log(`E2E passed (${restOnly ? "REST polling" : "WebSocket push"}): real xboard-node ${execFileSync(nodeBin, ["-v"]).toString().trim()} served VLESS, VLESS+REALITY+Vision and Shadowsocks-2022 from node-hub; traffic accounted within 5% of the payload; billing, multiplier, depletion (open connections included), re-enable, speed limit and node disable all reached the node.`);
   hubHandler.close();
   await database.end();
   await hubStore.close();
