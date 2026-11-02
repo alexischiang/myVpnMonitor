@@ -1,66 +1,5 @@
 export type Status = "ok" | "expiring" | "invalid" | "low_traffic" | "depleted" | "warning" | "expired" | "error" | "unknown" | string
 
-export type Subscription = {
-  id: string
-  name?: string
-  email?: string
-  url: string
-  sourceType?: "url" | "manual" | "yaml"
-  manualContent?: string
-  provider?: string
-  serviceProvider?: string
-  serviceProviderRating?: VendorRating | null
-  note?: string
-  enabled?: boolean
-  excludeFromAutoSwitch?: boolean
-  useCachedConfigForFallback?: boolean
-  manualTrafficDepleted?: boolean
-  accountStatus?: "unclaimed" | "invited" | "active" | "disabled"
-  accountId?: string
-  referralCode?: string
-  referralRate?: number
-  recurringReferral?: boolean
-  status?: Status
-  httpStatus?: number | string | null
-  lastCheckedAt?: string | null
-  lastError?: string | null
-  customerCount?: number
-  maxUsers?: number
-  allowedGroups?: string[]
-  metrics?: {
-    totalBytes?: number
-    usedBytes?: number
-    remainingBytes?: number
-    expireAt?: string
-  } | null
-}
-
-export type VendorRating = "S" | "A" | "B" | "C"
-
-export type PoolCompatibility = {
-  status: "high" | "usable" | "adjust" | "unknown" | "incompatible"
-  statusText: string
-  reasons: string[]
-  provider?: string
-  rating?: VendorRating | null
-  poolExpiresAt?: string | null
-  expiryDiffDays?: number | null
-  customerCount?: number
-  maxUsers?: number
-  groupAllowed?: boolean
-  binding?: {
-    type: "manual" | "system"
-    at?: string | null
-  } | null
-  recommendedPool?: {
-    id: string
-    label: string
-    provider?: string
-    rating?: VendorRating | null
-    expiryDiffDays?: number | null
-  } | null
-}
-
 /** A user's plan as bound from an order and kept in step with its product by buyer sync. */
 export type PlanSnapshot = {
   version: 2
@@ -104,7 +43,6 @@ export type User = {
   wechatName?: string
   imessage?: string
   email?: string
-  subscriptionId?: string
   lineType?: "upstream" | "self_hosted"
   xuiClientEmail?: string
   xuiSubId?: string
@@ -146,7 +84,6 @@ export type User = {
     lastSyncedAt?: string
     nodes: Array<{ key: string; name: string; multiplier: number; rawBytes: number; weightedBytes: number }>
   }
-  subscription?: Subscription
   deviceLimit?: number
   isBusiness?: boolean
   isFamilyFriend?: boolean
@@ -166,13 +103,10 @@ export type User = {
   vipSpend?: number
   cost?: number
   deliveryToken?: string
-  outputMode?: string
   relayPath?: string
-  blockUserinfo?: boolean
   note?: string
   logs?: Array<Record<string, unknown>>
   userLogs?: UserLog[]
-  poolCompatibility?: PoolCompatibility | null
 }
 
 export type UserLog = {
@@ -182,8 +116,6 @@ export type UserLog = {
   statusText?: string
   reason?: string
   reasonText?: string
-  fromSubscriptionLabel?: string
-  toSubscriptionLabel?: string
   message?: string
   details?: Record<string, unknown>
 }
@@ -226,15 +158,6 @@ export type Bill = {
     walletGiftAmount?: number
     paidAt?: string
   } | null
-}
-
-export type Vendor = {
-  id: string
-  name: string
-  overrideExclude?: string
-  overrideInclude?: string
-  overrideRename?: string
-  rating?: VendorRating | ""
 }
 
 export type Preset = {

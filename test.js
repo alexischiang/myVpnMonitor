@@ -10,15 +10,9 @@ assert.strictEqual(orderProductLabel({ planName: "", optionLabel: "充值" }), "
 const net = require("net");
 const zlib = require("zlib");
 const {
-  parseSubscriptionUserInfo,
-  parseBodyHints,
-  parseAccountUnavailable,
   calculateExpiry,
   calculateGiftExpiry,
   giftDaysPreview,
-  extractClashConfigBody,
-  statusFor,
-  toBytes,
   remainingPlanCashValue,
   billTypeForPurchaseAction,
   planTrafficBytes,
@@ -44,13 +38,10 @@ const {
   publicInviterLabel,
   adminReferralDetails,
   sendJson,
-  batchItems,
-  classifyCurrentPoolFit,
   restoreUpstreamClashConfig,
   injectPlaceholderNodes,
   buildUserInfoNodes,
   postSubconverter,
-  normalizeSubscription,
   normalizeXuiClientResult,
   selfHostedSubscriptionUrl,
   fetchSelfHostedSubscription,
@@ -101,7 +92,6 @@ const {
   markMissingXuiClients,
   isXuiTimeoutError,
   disabledAccountPlaceholderSubscription,
-  clearSubscriptionSourceState,
   ticketTelegramText,
   ticketReplyMessage,
   toggleTicketReaction,
@@ -464,11 +454,6 @@ assert.strictEqual(linkedXuiUserWithoutManagedQuota.xuiTrafficLimitBytes, 50 * g
 assert.strictEqual(xuiTrafficLimitBytes({ v2ProductSnapshot: { trafficBytes: 50 * gib } }, { totalGB: 900 * gib }), 50 * gib);
 assert.throws(() => xuiTrafficLimitBytes({}, { totalGB: 900 * gib }), /App 本地缺少可验证的套餐流量权益/);
 
-assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: 20 }).status, "high");
-assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: 21 }).status, "adjust");
-assert.strictEqual(classifyCurrentPoolFit({ expiryDiffDays: -21 }).status, "incompatible");
-assert.match(classifyCurrentPoolFit({ expiryDiffDays: -21 }).reasons[0], /21 天/);
-
 const compressedResponse = {
   req: { headers: { "accept-encoding": "gzip, deflate" } },
   writeHead(status, headers) { this.status = status; this.headers = headers; },
@@ -477,7 +462,6 @@ const compressedResponse = {
 sendJson(compressedResponse, 200, { data: "x".repeat(2000) });
 assert.strictEqual(compressedResponse.headers["content-encoding"], "gzip");
 assert.strictEqual(JSON.parse(zlib.gunzipSync(compressedResponse.body)).data.length, 2000);
-assert.deepStrictEqual(batchItems([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
 assert.strictEqual(publicInviterLabel({ customerID: 10001 }, { userId: "Alice" }), "Alice");
 assert.strictEqual(publicInviterLabel({ customerID: 10001 }, { userId: "alice@example.com" }), "alice@example.com");
 
@@ -506,76 +490,6 @@ const outOfOrderBills = [
 assert.strictEqual(remainingPlanCashValue({ ...legacyCashValueUser, expiresAt: "2026-09-18T09:25:23.894Z" }, new Date("2026-07-20T09:25:23.894Z"), outOfOrderBills), 80.34);
 assert.strictEqual(remainingPlanCashValue({ ...legacyCashValueUser, expiresAt: "2026-08-19T09:25:23.894Z" }, new Date("2026-07-20T09:25:23.894Z"), [{ ...outOfOrderBills[0], reversedAt: "2026-07-21T00:00:00.000Z" }, outOfOrderBills[1]]), 40.17);
 
-const manualYamlSubscription = normalizeSubscription({
-  sourceType: "yaml",
-  manualContent: "mixed-port: 7890\nproxies:\n  - { name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret }\n",
-  expiresAt: "2027-12-31",
-  email: "yaml@example.com",
-  maxUsers: 15
-});
-assert.strictEqual(manualYamlSubscription.sourceType, "yaml");
-assert.match(manualYamlSubscription.manualContent, /^mixed-port: 7890/);
-assert.strictEqual(manualYamlSubscription.metrics.expireAt, "2027-12-31T23:59:59.999Z");
-const changedManualSubscription = { ...manualYamlSubscription, metrics: { ...manualYamlSubscription.metrics, remainingBytes: 100 }, cachedConfig: {}, lastError: "old" };
-clearSubscriptionSourceState(changedManualSubscription);
-assert.deepStrictEqual(changedManualSubscription.metrics, { expireAt: "2027-12-31T23:59:59.999Z" });
-assert.strictEqual(changedManualSubscription.cachedConfig, null);
-assert.strictEqual(changedManualSubscription.lastError, null);
-assert.throws(() => normalizeSubscription({
-  sourceType: "yaml",
-  manualContent: manualYamlSubscription.manualContent,
-  email: "yaml@example.com",
-  maxUsers: 15
-}), /到期日/);
-assert.throws(() => normalizeSubscription({
-  sourceType: "yaml",
-  manualContent: "rules:\n  - MATCH,DIRECT\n",
-  expiresAt: "2027-12-31",
-  email: "yaml@example.com",
-  maxUsers: 15
-}), /proxies/);
-
-function near(actual, expected, tolerance = 2) {
-  assert.ok(
-    Math.abs(actual - expected) <= tolerance,
-    `Expected ${actual} to be within ${tolerance} bytes of ${expected}`
-  );
-}
-
-const headerMetrics = parseSubscriptionUserInfo(
-  "upload=1073741824; download=2147483648; total=10737418240; expire=1893456000"
-);
-assert.strictEqual(headerMetrics.uploadBytes, toBytes(1, "gb"));
-assert.strictEqual(headerMetrics.downloadBytes, toBytes(2, "gb"));
-assert.strictEqual(headerMetrics.usedBytes, toBytes(3, "gb"));
-assert.strictEqual(headerMetrics.totalBytes, toBytes(10, "gb"));
-assert.strictEqual(headerMetrics.expireAt, "2030-01-01T00:00:00.000Z");
-
-const statusMetrics = parseBodyHints(
-  "STATUS=🚀↑:0.03GB,↓:0.69GB,TOT:500GB💡Expires:2026-11-20"
-);
-assert.strictEqual(statusMetrics.source, "status-field");
-assert.strictEqual(statusMetrics.uploadBytes, toBytes(0.03, "gb"));
-assert.strictEqual(statusMetrics.downloadBytes, toBytes(0.69, "gb"));
-near(statusMetrics.usedBytes, toBytes(0.72, "gb"));
-assert.strictEqual(statusMetrics.totalBytes, toBytes(500, "gb"));
-near(statusMetrics.remainingBytes, toBytes(499.28, "gb"));
-assert.strictEqual(statusMetrics.expireAt, "2026-11-20T00:00:00.000Z");
-
-assert.strictEqual(parseBodyHints("剩余流量 100GB 到期 2030-01-01"), null);
-const unavailableMetrics = parseAccountUnavailable('{"message":"Account unavailable"}');
-assert.strictEqual(unavailableMetrics.unavailable, true);
-assert.strictEqual(unavailableMetrics.source, "account-unavailable");
-assert.strictEqual(statusFor({ metrics: statusMetrics, lastError: null }), "ok");
-assert.strictEqual(statusFor({ metrics: null, lastError: "请求失败" }), "invalid");
-assert.strictEqual(statusFor({ metrics: null, lastError: null }), "unknown");
-assert.strictEqual(statusFor({ metrics: unavailableMetrics, lastError: null }), "invalid");
-assert.strictEqual(statusFor({ metrics: { remainingBytes: 100, expireAt: "2020-01-01T00:00:00.000Z" }, lastError: null }), "expired");
-assert.strictEqual(statusFor({ sourceType: "yaml", manualContent: "proxies: []", manualTrafficDepleted: true, metrics: { expireAt: "2099-01-01T00:00:00.000Z" } }), "depleted");
-assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(49, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }), "ok");
-assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(50, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }), "ok");
-assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(100, "gb"), expireAt: new Date(Date.now() + 2 * 86400000).toISOString() }, lastError: null }), "expiring");
-assert.strictEqual(statusFor({ metrics: { remainingBytes: toBytes(100, "gb"), expireAt: "2030-01-01T00:00:00.000Z" }, lastError: null }, 8), "ok");
 assert.strictEqual(calculateExpiry("2026-06-02T00:00:00.000Z", "monthly").slice(0, 10), "2026-07-02");
 assert.strictEqual(calculateExpiry("2026-07-02T00:00:00.000Z", "monthly").slice(0, 10), "2026-08-01");
 assert.strictEqual(calculateExpiry("2026-05-28T12:00:00.000Z", "quarterly").slice(0, 10), "2026-08-26");
@@ -789,13 +703,6 @@ assert.strictEqual(verifyPaymentSign({ ...signedPayload, money: "2.00" }, xinhui
 assert.strictEqual(paymentConfigReady(xinhui, "100"), true);
 assert.strictEqual(configuredPaymentChannel({ ...xinhui, alipayChannelCode: "custom-alipay" }, "100"), "custom-alipay");
 assert.throws(() => normalizePaymentSettings({ ...xinhui, wechatChannelCode: "" }), /通道码/);
-
-const extracted = extractClashConfigBody("prefix\nmixed-port: 7890\nproxies:\n  - name: node\nrules:\n  - MATCH,PROXY\nextra:\n  value: ignored\n");
-assert.ok(extracted.startsWith("mixed-port: 7890"));
-assert.ok(extracted.includes("proxies:\n  - name: node"));
-assert.ok(extracted.includes("rules:\n  - MATCH,PROXY"));
-assert.ok(!extracted.includes("extra:"));
-assert.strictEqual(extractClashConfigBody("<!doctype html><html><title>403</title></html>"), "");
 
 const restoredConfig = require("js-yaml").load(restoreUpstreamClashConfig(
   Buffer.from(`port: 7890
@@ -1020,10 +927,10 @@ Promise.all([
       assert.throws(() => selfHostedSubscriptionUrl({}), /subId/);
       const liveConfig = await fetchSelfHostedSubscription(user);
       const res = { writeHead() {}, end() {} };
-      await sendSubconverterSubscription({ req: { headers: {} }, res, user, relayRequestId: "test", subscription: { id: "xui:stored-user" }, liveConfig, sc: { target: "clash", postSubconverter: false } });
+      await sendSubconverterSubscription({ req: { headers: {} }, res, user, relayRequestId: "test", source: { id: "xui:stored-user" }, liveConfig, sc: { target: "clash", postSubconverter: false } });
       assert.strictEqual(calls.length, 2);
       assert.ok(calls[0].endsWith("/clash/stored%2Fsub%20id"));
-      assert.ok(new URL(calls[1]).searchParams.get("url").startsWith("http://127.0.0.1:3000/api/internal/pool-live/"));
+      assert.ok(new URL(calls[1]).searchParams.get("url").startsWith("http://127.0.0.1:3000/api/internal/live-config/"));
     } finally {
       global.fetch = originalFetch;
     }

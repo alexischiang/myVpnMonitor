@@ -8,9 +8,9 @@ import { Field, FieldContent, FieldLabel } from "@/components/ui/field"
 import { Label } from "@/components/ui/label"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
 import { useData } from "@/components/features/data-provider"
-import { SimpleFormDialog, type Field as SimpleFormField, type FormValues } from "@/components/features/simple-form"
+import { SimpleFormDialog, type FormValues } from "@/components/features/simple-form"
 import { PageHeader } from "@/components/features/shared"
-import type { PlaceholderNode, Preset, Vendor } from "@/types"
+import type { PlaceholderNode, Preset } from "@/types"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Button } from "@/components/arc/button/button"
 import { Card } from "@/components/arc/card/card"
@@ -53,15 +53,13 @@ function presetValues(preset: Preset): PresetValues {
 export function SubconverterPage() {
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="Subconverter" description="订阅转换预设、供应商覆写与占位节点配置。" />
+      <PageHeader title="Subconverter" description="订阅转换预设与占位节点配置。" />
       <Tabs defaultValue="preset" className="min-w-0 gap-4">
         <TabsList>
           <TabsTrigger value="preset">转换预设</TabsTrigger>
-          <TabsTrigger value="vendors">供应商覆写</TabsTrigger>
           <TabsTrigger value="placeholders">占位节点</TabsTrigger>
         </TabsList>
         <TabsContent value="preset" className="grid min-w-0 gap-4"><PresetCard /></TabsContent>
-        <TabsContent value="vendors" className="min-w-0"><VendorOverrides /></TabsContent>
         <TabsContent value="placeholders" className="min-w-0"><PlaceholderNodes /></TabsContent>
       </Tabs>
     </div>
@@ -111,66 +109,6 @@ function PresetCard() {
           <ActionButton onClick={save} label="保存预设" pendingLabel="保存中..." pending={saving} />
         </div></Card>
     </>
-  )
-}
-
-function VendorOverrides() {
-  const { subscriptions, vendors, reload, runAsync } = useData()
-  const [editing, setEditing] = React.useState<Vendor | null>(null)
-  const [open, setOpen] = React.useState(false)
-  const providerNames = React.useMemo(() => [...new Set(subscriptions.map(item => item.serviceProvider || item.provider).filter((name): name is string => Boolean(name)))].sort(), [subscriptions])
-  const vendorRows = React.useMemo(() => providerNames.map(name => vendors.find(vendor => vendor.name === name) || { id: `provider:${name}`, name }), [providerNames, vendors])
-  const fields = React.useMemo<SimpleFormField[]>(() => [
-    { name: "overrideExclude", label: "排除规则", type: "textarea", rows: 5, className: "sm:col-span-1" },
-    { name: "overrideInclude", label: "包含规则", type: "textarea", rows: 5, className: "sm:col-span-1" },
-    { name: "overrideRename", label: "重命名规则", type: "textarea", rows: 4 },
-  ], [])
-  async function save(values: FormValues) {
-    if (!editing) return
-    const vendor = vendors.find(item => item.name === editing.name)
-    await runAsync(async () => {
-      if (vendor) await putJson(`/api/vendors/${vendor.id}`, values)
-      else await postJson("/api/vendors", { ...values, name: editing.name })
-      await reload(["vendors"])
-      toast({ type: "success", title: "供应商配置已保存" })
-    }, "保存供应商配置...")
-  }
-
-  const columns = React.useMemo<ColumnDef<Vendor>[]>(() => [
-    {
-      accessorKey: "name",
-      header: DataTableColumnHeader({ title: "名称" }),
-      meta: { label: "名称" },
-    },
-    {
-      accessorKey: "overrideExclude",
-      header: DataTableColumnHeader({ title: "排除" }),
-      meta: { label: "排除" },
-      cell: ({ row }) => row.original.overrideExclude ? "已配置" : "-",
-    },
-    {
-      accessorKey: "overrideInclude",
-      header: DataTableColumnHeader({ title: "包含" }),
-      meta: { label: "包含" },
-      cell: ({ row }) => row.original.overrideInclude ? "已配置" : "-",
-    },
-    {
-      id: "actions",
-      header: "操作",
-      cell: ({ row }) => <DataTableRowActions actions={[{ label: "编辑", onSelect: () => { setEditing(row.original); setOpen(true) } }]} />,
-      enableHiding: false,
-      enableSorting: false,
-    },
-  ], [])
-
-  return (
-    <Card title="供应商覆写"><DataTable
-          columns={columns}
-          data={vendorRows}
-          searchKey="name"
-          searchPlaceholder="搜索供应商..."
-          emptyTitle="暂无订阅池供应商"
-        /><SimpleFormDialog open={open} title={`编辑 ${editing?.name || ""} 覆写`} description="规则留空时使用默认转换配置。" fields={fields} initialValues={editing || {}} contentClassName="sm:max-w-2xl" onOpenChange={setOpen} onSubmit={save} /></Card>
   )
 }
 

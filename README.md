@@ -87,7 +87,7 @@ subconverter 是独立后台进程，`ctrl+c` 停止 `dev:all` 时不会自动�
 
 ## 3x-ui 自研线路测试套餐
 
-服务端支持 `SELF-HOSTED` 0 元、30 天测试套餐。自研用户与订阅池互斥，节点仍经过现有 subconverter 交付，且不能使用换池功能。
+服务端支持 `SELF-HOSTED` 0 元、30 天测试套餐。自研用户的节点经过 subconverter 交付。
 
 需要配置以下环境变量：
 

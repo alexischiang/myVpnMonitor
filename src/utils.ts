@@ -171,8 +171,3 @@ export function copyText(value: string) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value).catch(() => copyTextWithSelection(value))
   return copyTextWithSelection(value)
 }
-
-export function subscriptionLabel(item: { serviceProvider?: string; provider?: string; email?: string; url?: string; metrics?: { expireAt?: string } }) {
-  const tail = item.url ? item.url.slice(-4) : "????"
-  return `${item.serviceProvider || item.provider || "Provider"} - ${tail} - ${formatDate(item.metrics?.expireAt)} - ${item.email || "No email"}`
-}

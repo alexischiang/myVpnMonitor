@@ -160,45 +160,11 @@ async function main() {
       // Legacy inbound settings, imported into xui_inbounds on first access.
       [JSON.stringify({ groups: { basic: [1], pro: [1], ultra: [1], self_hosted: [1] }, metadata: { "local:1": { region: "迁移地区", networkLevel: "premium" }, "local:7": { region: "旧入站", inboundType: "custom" } } })]
     );
-    const subscription = {
-      id: "payment-test-pool",
-      name: "Payment test pool",
-      url: "https://example.test/subscription",
-      email: "pool@example.test",
-      metrics: {
-        expireAt: new Date(Date.now() + 31 * 86400000).toISOString(),
-        remainingBytes: 100 * 1024 ** 3
-      }
-    };
-    await database.query(
-      "INSERT INTO app_records (collection, id, position, data) VALUES ('subscriptions', $1, 0, $2::jsonb)",
-      [subscription.id, JSON.stringify(subscription)]
-    );
-    const laterSubscription = {
-      ...subscription,
-      id: "payment-test-pool-later",
-      name: "Payment test pool later",
-      email: "later-pool@example.test",
-      metrics: { ...subscription.metrics, expireAt: new Date(Date.now() + 100 * 86400000).toISOString() }
-    };
-    await database.query(
-      "INSERT INTO app_records (collection, id, position, data) VALUES ('subscriptions', $1, 1, $2::jsonb)",
-      [laterSubscription.id, JSON.stringify(laterSubscription)]
-    );
-    const expiredSubscription = {
-      ...subscription,
-      id: "payment-test-pool-expired",
-      name: "Payment test pool expired",
-      email: "expired-pool@example.test",
-      metrics: { ...subscription.metrics, expireAt: new Date(Date.now() - 86400000).toISOString() }
-    };
-    await database.query(
-      "INSERT INTO app_records (collection, id, position, data) VALUES ('subscriptions', $1, 2, $2::jsonb)",
-      [expiredSubscription.id, JSON.stringify(expiredSubscription)]
-    );
+    // Legacy pool users still carry the id of a pool that no longer exists.
+    const legacyPoolId = "payment-test-pool";
     // A user saved before the snapshot became the only plan source; startup strips the copies.
     const preSnapshotUser = {
-      id: "pre-snapshot-user", userId: "pre-snapshot@example.test", email: "pre-snapshot@example.test", customerID: "900100", lineType: "upstream", subscriptionId: subscription.id, expiresAt: "2020-01-01T00:00:00.000Z", duration: "lifetime",
+      id: "pre-snapshot-user", userId: "pre-snapshot@example.test", email: "pre-snapshot@example.test", customerID: "900100", lineType: "upstream", subscriptionId: legacyPoolId, expiresAt: "2020-01-01T00:00:00.000Z", duration: "lifetime",
       v2ProductSnapshot: { productId: "friends", productType: "lifetime_plan", periodId: null, lineGroupId: "pro", name: "亲友", durationDays: null, trafficBytes: 999 * 1024 ** 3, deviceLimit: 5 },
       unlimited: true, group: "pro", activeGroup: "basic", v2LineGroupId: "pro", v2ProductId: "friends", v2PeriodId: null, purchasedTrafficGb: null, trafficTier: 1,
       currentProductId: "pro", currentOptionId: "pro-lifetime", currentProductSnapshot: { planName: "PRO" }, productCatalogVersion: 2, legacyProductBinding: { productId: "pro", optionId: "pro-lifetime" }
@@ -564,7 +530,7 @@ async function main() {
 
     await database.query(`UPDATE app_records
       SET data = (data || $2::jsonb) - 'xuiClientEmail' - 'xuiSubId' - 'xuiInboundIds'
-      WHERE collection = 'users' AND id = $1`, [createdUser.id, JSON.stringify({ email: "legacy-address@example.test", lineType: "upstream", subscriptionId: subscription.id })]);
+      WHERE collection = 'users' AND id = $1`, [createdUser.id, JSON.stringify({ email: "legacy-address@example.test", lineType: "upstream", subscriptionId: legacyPoolId })]);
     xuiClients.delete("buyer@example.test");
     const polledOrder = await createOrder();
     queryResults.set(polledOrder.data.merOrderTid, {
@@ -629,19 +595,10 @@ async function main() {
     assert.strictEqual(protectedUpdate.response.status, 400);
     const blockedRenewal = await request(`/api/users/${managedUser.id}/renew`, { method: "POST", cookie: adminCookie, body: { actualPaid: 1, duration: "monthly" } });
     assert.strictEqual(blockedRenewal.response.status, 400);
-    const manualPoolChange = await request(`/api/users/${managedUser.id}/pool`, { method: "POST", cookie: adminCookie, body: { subscriptionId: subscription.id } });
-    assert.strictEqual(manualPoolChange.response.status, 410);
-    const disabledPool = await request(`/api/subscriptions/${laterSubscription.id}`, { method: "PUT", cookie: adminCookie, body: { enabled: false } });
-    assert.strictEqual(disabledPool.data.enabled, false);
-    assert.strictEqual(disabledPool.data.status, "disabled");
-    const recommendationWithoutDisabled = await request("/api/subscriptions/recommend", { method: "POST", cookie: adminCookie, body: { expiresAt: new Date(Date.now() + 95 * 86400000).toISOString() } });
-    assert.notStrictEqual(recommendationWithoutDisabled.data.subscription?.id, laterSubscription.id);
-    const blockedDisabledPool = await request(`/api/users/${managedUser.id}/pool`, { method: "POST", cookie: adminCookie, body: { subscriptionId: laterSubscription.id } });
-    assert.strictEqual(blockedDisabledPool.response.status, 410);
-    const allowedDisabledPool = await request(`/api/users/${managedUser.id}/pool`, { method: "POST", cookie: adminCookie, body: { subscriptionId: laterSubscription.id, allowDisabled: true } });
-    assert.strictEqual(allowedDisabledPool.response.status, 410);
-    const blockedExpiredPool = await request(`/api/users/${managedUser.id}/pool`, { method: "POST", cookie: adminCookie, body: { subscriptionId: expiredSubscription.id, allowDisabled: true } });
-    assert.strictEqual(blockedExpiredPool.response.status, 410);
+    // The pool admin routes are gone.
+    for (const [path, method] of [[`/api/users/${managedUser.id}/pool`, "POST"], ["/api/subscriptions", "GET"], [`/api/subscriptions/${legacyPoolId}`, "PUT"], ["/api/subscriptions/recommend", "POST"], ["/api/vendors", "GET"], ["/api/users/batch-gift", "POST"]]) {
+      assert.strictEqual((await request(path, { method, cookie: adminCookie, ...(method === "GET" ? {} : { body: {} }) })).response.status, 404, `${method} ${path} must be removed`);
+    }
 
     const crossAccount = await request("/api/auth/register", {
       method: "POST",
@@ -1043,11 +1000,10 @@ async function main() {
     const reversalEntries = await database.query("SELECT COUNT(*)::int AS count FROM wallet_entries WHERE idempotency_key LIKE 'reversal:%' AND source_id = ANY($1::text[])", [[walletOrder.data.id, rechargeOrder.data.id, inviterOrder.data.id, inviteeOrder.data.id]]);
     assert.strictEqual(reversalEntries.rows[0].count, 5, "four orders plus the settled referral must each be reversed once");
 
-    await request(`/api/subscriptions/${subscription.id}`, { method: "PUT", cookie: adminCookie, body: { enabled: false } });
-    const noPoolOrder = await createOrder({ optionId: `v2:${catalogV2Ids.flowBasic}:90d` });
-    assert.strictEqual(noPoolOrder.response.status, 201);
-    await callback(noPoolOrder.data, 1, String(noPoolOrder.data.amount), true);
-    status = await request(`/api/payments/orders/${noPoolOrder.data.id}`, { cookie });
+    const basicPlanOrder = await createOrder({ optionId: `v2:${catalogV2Ids.flowBasic}:90d` });
+    assert.strictEqual(basicPlanOrder.response.status, 201);
+    await callback(basicPlanOrder.data, 1, String(basicPlanOrder.data.amount), true);
+    status = await request(`/api/payments/orders/${basicPlanOrder.data.id}`, { cookie });
     assert.strictEqual(status.data.fulfillmentStatus, "fulfilled");
     assert.strictEqual(status.data.fulfillmentError, "");
 
@@ -1057,14 +1013,14 @@ async function main() {
     const adminOrders = await request("/api/admin/orders", { cookie: adminCookie });
     assert.strictEqual(adminOrders.response.status, 200);
     const adminOrderIds = new Set(adminOrders.data.map(item => item.id));
-    for (const order of [visiblePendingOrder.data, cancelledOrder.data, failedOrder.data, paidOrder.data, noPoolOrder.data]) assert.ok(adminOrderIds.has(order.id));
-    const noPoolAdminOrder = adminOrders.data.find(item => item.id === noPoolOrder.data.id);
-    assert.strictEqual(noPoolAdminOrder.status, "paid");
-    assert.strictEqual(noPoolAdminOrder.fulfillmentStatus, "fulfilled");
-    assert.strictEqual(noPoolAdminOrder.internalFulfillmentError, "");
-    const adminOrderDetail = await request(`/api/admin/orders/${noPoolOrder.data.id}`, { cookie: adminCookie });
-    assert.strictEqual(adminOrderDetail.data.id, noPoolOrder.data.id);
-    const reversedFailedFulfillment = await request(`/api/admin/orders/${noPoolOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
+    for (const order of [visiblePendingOrder.data, cancelledOrder.data, failedOrder.data, paidOrder.data, basicPlanOrder.data]) assert.ok(adminOrderIds.has(order.id));
+    const basicPlanAdminOrder = adminOrders.data.find(item => item.id === basicPlanOrder.data.id);
+    assert.strictEqual(basicPlanAdminOrder.status, "paid");
+    assert.strictEqual(basicPlanAdminOrder.fulfillmentStatus, "fulfilled");
+    assert.strictEqual(basicPlanAdminOrder.internalFulfillmentError, "");
+    const adminOrderDetail = await request(`/api/admin/orders/${basicPlanOrder.data.id}`, { cookie: adminCookie });
+    assert.strictEqual(adminOrderDetail.data.id, basicPlanOrder.data.id);
+    const reversedFailedFulfillment = await request(`/api/admin/orders/${basicPlanOrder.data.id}/reverse`, { method: "POST", cookie: adminCookie });
     assert.strictEqual(reversedFailedFulfillment.response.status, 200);
     assert.strictEqual(reversedFailedFulfillment.data.fulfillmentStatus, "reversed");
     const buyerUsersAfterFailedReversal = await database.query("SELECT COUNT(*)::int AS count FROM app_records WHERE collection = 'users' AND data->>'email' = 'buyer@example.test'");
@@ -1451,7 +1407,7 @@ async function main() {
     const manualProbe = await request("/api/sync-jobs/xui-inbound-probe/run", { method: "POST", cookie: adminCookie, body: {} });
     assert.strictEqual(manualProbe.response.status, 202);
     const syncJobs = await waitForSyncJob("xui-inbound-probe");
-    assert.deepStrictEqual(syncJobs.data.modules.map(module => module.id), ["xui", "traffic", "subscriptions", "orders", "referrals", "addons"]);
+    assert.deepStrictEqual(syncJobs.data.modules.map(module => module.id), ["xui", "traffic", "orders", "referrals", "addons"]);
     assert.deepStrictEqual(syncJobs.data.modules.find(module => module.id === "addons").jobs.map(job => [job.id, job.configured]), [["addon-service-expiry", true]]);
     const probeJob = syncJobs.data.modules[0].jobs.find(job => job.id === "xui-inbound-probe");
     assert.deepStrictEqual([probeJob.configured, probeJob.running, probeJob.lastRun.status, probeJob.lastRun.trigger, probeJob.stats24h.total], [true, false, "success", "manual", 1]);
@@ -1690,7 +1646,7 @@ async function main() {
 
     // Legacy pool migration on subscription refresh follows the same rule: a same-email panel
     // client is reported, not adopted, and the next refresh after deleting it creates one.
-    const legacyPool = { id: "legacy-pool-user", userId: "legacy-pool@example.test", email: "legacy-pool@example.test", wechatName: "legacy", customerID: "900002", lineType: "upstream", subscriptionId: subscription.id, subscriptionToken: "legacy-pool-token", v2ProductSnapshot: { productId: catalogV2Ids.flow, productType: "recurring_plan", periodId: "30d", lineGroupId: catalogV2Ids.flowGroup, name: "PRO", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3 }, duration: "monthly", purchasedAt: new Date().toISOString(), expiresAt: "2099-01-01T00:00:00.000Z", createdAt: new Date().toISOString() };
+    const legacyPool = { id: "legacy-pool-user", userId: "legacy-pool@example.test", email: "legacy-pool@example.test", wechatName: "legacy", customerID: "900002", lineType: "upstream", subscriptionId: legacyPoolId, subscriptionToken: "legacy-pool-token", v2ProductSnapshot: { productId: catalogV2Ids.flow, productType: "recurring_plan", periodId: "30d", lineGroupId: catalogV2Ids.flowGroup, name: "PRO", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3 }, duration: "monthly", purchasedAt: new Date().toISOString(), expiresAt: "2099-01-01T00:00:00.000Z", createdAt: new Date().toISOString() };
     await database.query("INSERT INTO app_records (collection, id, data) VALUES ('users', $1, $2::jsonb)", [legacyPool.id, JSON.stringify(legacyPool)]);
     xuiClients.set("legacy-pool@example.test", { email: "legacy-pool@example.test", subId: "panel-only-sub", limitIp: 9, inboundIds: [2], enable: true });
     const panelOnlyClient = structuredClone(xuiClients.get("legacy-pool@example.test"));
@@ -2020,17 +1976,8 @@ async function main() {
       assert.ok(!again.failed.some(item => outageIds.includes(item.orderId)) && again.retried <= recovered.retried - outageIds.length, "delivered orders are not retried again");
     }
 
-    // Runs last: the cron subscription refresh fetches the test pools' upstream URLs, which
-    // fail and mark the pools with lastError.
-    delete process.env.CRON_SECRET;
-    assert.strictEqual((await request("/api/cron/refresh")).response.status, 503, "the cron refresh is disabled without CRON_SECRET");
-    process.env.CRON_SECRET = "cron-test-secret";
-    assert.strictEqual((await request("/api/cron/refresh", { headers: { authorization: "Bearer wrong" } })).response.status, 401);
-    const cronRefresh = await request("/api/cron/refresh", { headers: { authorization: "Bearer cron-test-secret" } });
-    assert.strictEqual(cronRefresh.response.status, 200, cronRefresh.text);
-    const cronRun = (await handler.listSyncJobRuns("subscription-refresh"))[0];
-    assert.deepStrictEqual([cronRun.trigger, ["success", "partial"].includes(cronRun.status), cronRun.summary.total], ["cron", true, cronRefresh.data.refreshed], "the cron subscription refresh must be recorded");
-    delete process.env.CRON_SECRET;
+    // The pool refresh cron is gone.
+    assert.strictEqual((await request("/api/cron/refresh", { cookie: adminCookie })).response.status, 404);
 
     // Buying again after the reversed first order continues on the kept user instead of creating another one.
     const inviteeRepurchase = await purchase({ method: "POST", cookie: inviteeCookie, body: { optionId: paymentOptionId, channelCode: "100", confirmReplacement: true, useBalance: false } });
