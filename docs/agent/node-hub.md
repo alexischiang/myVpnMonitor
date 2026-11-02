@@ -70,7 +70,7 @@ VPS: xboard-node (machine 模式) ──HTTPS /api/v1|v2/server/*──> 反向�
 1. 在同一台服务器上运行 `npm run start:hub`（或 pm2/systemd），环境变量见 `.env.example` 的 node-hub 段。`NODE_HUB_DATABASE_URL` 指向本站数据库（node-hub 需要写 `xui_daily_traffic`）。
 2. 反向代理只把 `/api/v1/server/` 和 `/api/v2/server/` 转发到 `127.0.0.1:3003`，绝不暴露 `/internal/`；`/api/v2/server/ws` 要允许 WebSocket 升级（nginx：`proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_read_timeout 120s;`）。`NODE_HUB_PUBLIC_URL` 设为这个 HTTPS 地址。
 3. 本站设置 `NODE_HUB_URL=http://127.0.0.1:3003` 和相同的 `NODE_HUB_INTERNAL_TOKEN`，重启。
-4. 创建机器（`POST /api/node-hub/machines`），在 VPS 上执行返回的 `installCommand`（machine 模式，每台机器独立 token，固定 `--kernel xray`）。machine 模式下 xboard-node 只按机器 `config.yml` 的 `kernel.type` 选内核，节点的 `kernel_type` 不生效；安装脚本默认 sing-box，而 sing-box 不处理 PROXY protocol，经中转的节点会握手失败。旧命令装的机器把 `/etc/xboard-node/config.yml` 里的 `type: singbox` 改成 `type: xray` 后 `systemctl restart xboard-node`，日志出现 `accepting PROXY protocol` 即生效（2026-11-03 bage-hk 照此修复）。
+4. 创建机器（`POST /api/node-hub/machines`），在 VPS 上执行返回的 `installCommand`（machine 模式，每台机器独立 token，固定 `--kernel xray` 和 `--version v1.13.2`：从这个版本起 xray 内核会断开被移除用户已打开的连接，见「已知限制」；已装的机器重新执行一次安装命令即升级）。machine 模式下 xboard-node 只按机器 `config.yml` 的 `kernel.type` 选内核，节点的 `kernel_type` 不生效；安装脚本默认 sing-box，而 sing-box 不处理 PROXY protocol，经中转的节点会握手失败。旧命令装的机器把 `/etc/xboard-node/config.yml` 里的 `type: singbox` 改成 `type: xray` 后 `systemctl restart xboard-node`，日志出现 `accepting PROXY protocol` 即生效（2026-11-03 bage-hk 照此修复）。
 5. 创建节点，加入线路组，运行同步任务「node-hub 授权同步」。
 
 ## 从 3x-ui 迁移一台 VPS
@@ -140,6 +140,7 @@ xboard-node 启动时调 handshake；`NODE_HUB_PUBLIC_URL` 已设置且 `NODE_HU
 - 限速按节点生效；全局设备数只在 sing-box 内核上生效，xray 内核按单节点计算。
 - 3x-ui 中多个 shortId / serverName 只保留第一个。
 - 节点在没有任何授权用户时创建，xboard-node（v1.13）不启动内核；之后推送来的用户（`sync.users`、`add` 增量、只有用户变化的 REST 重新拉取）都会被 `ensureRunning()` 丢掉，因为它检查的 `lastUsers` 要等内核启动后才写入。节点会一直显示「内核未运行」，直到 `systemctl restart xboard-node`。fork `alexischiang/nexora-node` 已修复（内核空闲时先记下推送来的用户再启动内核），hub 的安装命令默认从 fork 安装；仍在用上游二进制的机器，先把节点加入线路组、确认有用户授权，再执行安装命令或重启 xboard-node。
+- 流量耗尽或到期的用户，已经建立的连接要靠 xboard-node 主动断开。xray 内核从 UserManager 移除用户只拒绝新连接；fork v1.13.1 的 `CloseUserConnections` 是空操作，所以旧连接会一直跑（2026-11-03 实测，`npm run e2e:hub`：REALITY Vision 节点上持续下载的连接在新连接被拒后 10 秒内又传了 3.26 MB，速率不变，没有断开）。fork v1.13.2 已修复（PR [alexischiang/nexora-node#1](https://github.com/alexischiang/nexora-node/pull/1)，`internal/kernel/xray`：dispatcher 按用户登记每条连接，`RemoveUsers`/`UpdateUsers` 移除用户时取消其上下文并中断 link，含重启回退和最后一个用户被移除时的 Stop）。用发布的 v1.13.2 实测：推送模式下这条连接在新连接被拒的同时停止（之后 0 字节，客户端约 0.7 s 内收到断开）；修复构建在 REST 轮询模式下同样 0 字节。安装命令固定 `--version v1.13.2`；还在跑 v1.13.1 或更早版本的机器要重新执行安装命令升级，否则旧连接仍会继续用流量，直到客户端自己断开。到期与耗尽走同一条移除路径。sing-box 内核本来就会断开。
 - REALITY 伪装域名不要用 `www.microsoft.com`：xray 和 sing-box 内核下合法连接都会以 `REALITY: processed invalid connection ... handshake did not complete successfully` 失败（2026-10-31 在新加坡测试节点上复现，换成 3x-ui 节点使用的伪装域名后立即连通）。新建节点表单不再预填它。
 
 ## 本地验证
@@ -151,4 +152,6 @@ npm run verify          # 完整验证，包含 test:hub
 TEST_DATABASE_URL=... XBOARD_NODE_BIN=/path/xboard-node XRAY_BIN=/path/xray npm run e2e:hub
 ```
 
-`e2e:hub` 会在本机启动 hub、本站（只用 hub）、真实 xboard-node（machine 模式）和 xray 客户端，创建 VLESS、VLESS REALITY Vision、SS2022 三个节点，下载文件并检查：计费误差 < 5%、在线状态、8 Mbps 限速、2 倍率计费、流量耗尽后连接被拒、恢复、停用节点后节点停止。
+`e2e:hub` 会在本机启动 hub、本站（只用 hub）、真实 xboard-node（machine 模式）和 xray 客户端，创建 VLESS、VLESS REALITY Vision、SS2022 三个节点和两个用户（第二个用户始终有效，让节点在第一个用户被移除时保持运行，和生产一样走热移除），下载文件并检查：计费误差 < 5%、在线状态、8 Mbps 限速、2 倍率计费、流量耗尽后新连接被拒且已打开的下载在 10 秒内被断开、恢复、停用节点后节点停止。已打开连接这一项需要 fork v1.13.2 或更新的 xboard-node（见「已知限制」），用 v1.13.1 会失败。
+
+Windows 上没有 Linux 环境时，可以用 Docker 跑：`postgres:16` 容器做 `TEST_DATABASE_URL`，在 `node:24-bookworm` 容器里下载 xboard-node 和 xray 的 Linux 发行版二进制后执行 `npm run e2e:hub`；fork 用 `golang:1.26-bookworm` 编译（`CGO_ENABLED=0`，标签同 Makefile）。
