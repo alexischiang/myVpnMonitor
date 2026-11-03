@@ -1387,17 +1387,14 @@ class PostgresDataStore {
   // Inbound catalog, refreshed from 3x-ui. Probe and settings columns (region, network level,
   // type) belong to the app and survive refreshes. An inbound missing from 3x-ui is marked
   // missing_since rather than deleted, so its settings return with it; rows missing for 30 days
-  // are deleted. An empty list is refused while active inbounds exist, since it is more likely a
-  // bad panel read than every inbound being deleted.
+  // are deleted. An empty list marks every inbound missing (all 3x-ui inbounds removed, e.g. after
+  // moving to node-hub); a failed panel read throws before reaching here.
   async replaceXuiInbounds(rows) {
     const list = Array.isArray(rows) ? rows : [];
     return withPgRetry(async () => {
       const client = await this.pool.connect();
       try {
         await client.query("BEGIN");
-        if (!list.length && (await client.query("SELECT 1 FROM xui_inbounds WHERE missing_since IS NULL LIMIT 1")).rows.length) {
-          throw new Error("3x-ui 返回的入站列表为空，已保留现有入站。");
-        }
         await client.query("UPDATE xui_inbounds SET missing_since = NOW() WHERE missing_since IS NULL AND NOT (key = ANY($1::text[]))", [list.map(row => row.key)]);
         await client.query("DELETE FROM xui_inbounds WHERE missing_since < NOW() - INTERVAL '30 days'");
         if (list.length) {

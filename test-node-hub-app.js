@@ -42,10 +42,13 @@ async function readBody(req) {
 function mockXui() {
   const clients = new Map();
   const requests = [];
+  const state = { inbounds: true };
   const server = http.createServer(async (req, res) => {
     const body = req.method === "GET" ? {} : await readBody(req);
     requests.push({ url: req.url, body });
     if (req.url.startsWith("/clash/")) {
+      // Like 3x-ui, a client with no inbound left has no subscription.
+      if (!state.inbounds) return sendJson(res, 404, { success: false });
       res.writeHead(200, { "content-type": "text/yaml" });
       return res.end("proxies:\n  - { name: 3x-ui 节点, type: vless, server: panel.example.com, port: 443, uuid: 00000000-0000-4000-8000-000000000000 }\n");
     }
@@ -56,7 +59,7 @@ function mockXui() {
     }
     if (req.url === "/panel/api/server/status") return sendJson(res, 200, { success: true, obj: { panelGuid: "panel" } });
     if (req.url === "/panel/api/nodes/list") return sendJson(res, 200, { success: true, obj: [] });
-    if (req.url === "/panel/api/inbounds/list") return sendJson(res, 200, { success: true, obj: [{ id: 1, remark: "3x-ui 节点", protocol: "vless", port: 443, enable: true, originNodeGuid: "panel", clientStats: [...clients.values()].map(client => ({ email: client.email, up: 0, down: 0 })) }] });
+    if (req.url === "/panel/api/inbounds/list") return sendJson(res, 200, { success: true, obj: state.inbounds ? [{ id: 1, remark: "3x-ui 节点", protocol: "vless", port: 443, enable: true, originNodeGuid: "panel", clientStats: [...clients.values()].map(client => ({ email: client.email, up: 0, down: 0 })) }] : [] });
     if (req.url === "/panel/api/clients/list") return sendJson(res, 200, { success: true, obj: [...clients.values()].map(client => ({ traffic: { up: 0, down: 0, enable: true }, ...client })) });
     if (req.url === "/panel/api/clients/add") {
       // Like the real panel: id is the numeric row id, the credential is uuid.
@@ -85,7 +88,7 @@ function mockXui() {
     }
     return sendJson(res, 200, { success: true, obj: {} });
   });
-  return { server, clients, requests };
+  return { server, clients, requests, state };
 }
 
 async function child(mode) {
@@ -295,6 +298,23 @@ async function child(mode) {
     const mixNames = await subNames();
     assert.ok(mixNames.includes("Hub 01") && mixNames.includes("3x-ui 节点") === Boolean(xui), `mix: ${mixNames.join(",")}`);
     assert.ok((await api("/api/users")).find(item => item.id === user.id).userLogs.some(log => log.reason === "node-source-changed"), "node source changes are logged");
+    if (xui) {
+      // Every 3x-ui inbound deleted (moved to node-hub): the subscription carries the hub nodes.
+      xui.state.inbounds = false;
+      const beforeCatalogRefresh = await subNames();
+      assert.ok(beforeCatalogRefresh.includes("Hub 01"), `a failing 3x-ui subscription still serves the hub nodes: ${beforeCatalogRefresh.join(",")}`);
+      await api("/api/xui-inbounds?refresh=1");
+      const afterPanelEmptied = await subNames();
+      assert.ok(afterPanelEmptied.includes("Hub 01") && !afterPanelEmptied.includes("3x-ui 节点"), `3x-ui emptied: ${afterPanelEmptied.join(",")}`);
+      // Provisioning still works with no 3x-ui inbound: the client is written with none.
+      const expiresBeforeGift = (await api("/api/users")).find(item => item.id === user.id).expiresAt;
+      await api(`/api/users/${user.id}/gift`, { method: "POST", body: { days: 1 } });
+      const gifted = (await api("/api/users")).find(item => item.id === user.id);
+      assert.ok(new Date(gifted.expiresAt) > new Date(expiresBeforeGift) && !gifted.xuiLastError, `gift with an empty panel: ${gifted.xuiLastError}`);
+      assert.equal((await hubStore.getUser(user.id)).enabled, true);
+      xui.state.inbounds = true;
+      await api("/api/xui-inbounds?refresh=1");
+    }
 
     // Traffic -> billing -> depletion -> removal from the node.
     await nodeClient.report({ traffic: { [hubUser.id]: [MiB, 9 * MiB] }, online: { [hubUser.id]: 1 }, alive: { [hubUser.id]: ["203.0.113.8"] } });
