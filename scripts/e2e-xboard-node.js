@@ -372,7 +372,7 @@ async function main() {
   const downloaded = 12 * MiB;
   const guid = `hub-m${machine.id}`;
   const trafficRow = await waitFor("traffic in xui_daily_traffic", async () => {
-    const row = (await database.query("SELECT SUM(up_bytes)::bigint AS up, SUM(down_bytes)::bigint AS down FROM xui_daily_traffic WHERE email = $1 AND node_guid = $2", [email, guid])).rows[0];
+    const row = (await database.query("SELECT SUM(up_bytes)::bigint AS up, SUM(down_bytes)::bigint AS down FROM xui_daily_traffic WHERE email = $1 AND node_guid LIKE $2", [email, `${guid}-n%`])).rows[0];
     return Number(row?.down) >= downloaded ? row : null;
   }, { timeoutMs: 30000 });
   const down = Number(trafficRow.down);
@@ -407,15 +407,16 @@ async function main() {
   let billed = users.find(item => item.id === userId);
   log("ledger", { usedBytes: billed.xuiWeightedTraffic?.usedBytes, totalBytes: billed.xuiWeightedTraffic?.totalBytes, nodes: billed.xuiWeightedTraffic?.nodes?.map(node => [node.key, node.rawBytes]) });
   assert.ok(billed.xuiWeightedTraffic.usedBytes >= 22 * MiB, "ledger counts the hub traffic");
-  assert.equal(billed.xuiWeightedTraffic.nodes[0].key, guid);
+  assert.ok(billed.xuiWeightedTraffic.nodes.every(node => node.key.startsWith(`${guid}-n`)), "hub traffic is billed per node");
   assert.equal(billed.xuiWeightedTraffic.depleted, false);
 
-  // Machine multiplier 2x applies to hub traffic like a 3x-ui node multiplier.
-  await api(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { method: "PUT", body: { multiplier: 2 } });
+  // Node multipliers 2x apply to hub traffic like a 3x-ui node multiplier.
+  const setNodeMultipliers = multiplier => Promise.all(hubInbounds.map(item => api(`/api/node-hub/nodes/${item.hubNodeId}`, { method: "PUT", body: { multiplier } })));
+  await setNodeMultipliers(2);
   const monitor = await api("/api/xui-monitor");
   const machineRow = monitor.nodes.find(node => node.guid === guid);
   assert.equal(machineRow.status, "online");
-  assert.equal(machineRow.multiplier, 2);
+  assert.equal(machineRow.multiplier, null, "machine rows have no multiplier");
   assert.equal(machineRow.inboundCount, 3);
 
   // --- depletion: 2x weighted usage (44 MiB) exceeds the 40 MiB quota ------
@@ -446,7 +447,7 @@ async function main() {
   assert.ok(openStream.closed, `an open connection of a depleted user is closed (${openStream.bytesAfterRefusal} bytes kept flowing for 10 s after new connections were refused)`);
 
   // Restore: multiplier back to 1 -> under quota -> re-enabled on the next rounds.
-  await api(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/settings`, { method: "PUT", body: { multiplier: 1 } });
+  await setNodeMultipliers(1);
   await runJob("node-hub-billing");
   assert.equal((await hubStore.getUser(userId)).enabled, true, "the user is re-enabled once under quota");
   since = Date.now();

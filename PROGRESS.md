@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-11-03
-- Current Objective: Admin user details hourly traffic chart (流量时段 tab)
+- Current Objective: Node Hub multipliers per node only: every hub node billed under hub-m<machine>-n<node>, machine multiplier removed and migrated
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -562,8 +562,12 @@
 
 - 2026-11-03: test-xui-traffic, test-node-hub, verify:fast, npm run check, browser check of 流量时段 (ranges, hover/click, mobile, dark, empty) with no console errors
 
+- 2026-11-03: npm run verify, npm run verify:harness, git diff --check pass; /node-hub nodes editor verified desktop + 375px with no uncaught errors
+
+- 2026-11-03: npm run verify, npm run verify:harness, git diff --check pass; /node-hub nodes+machines and /xui-monitor verified in browser with no console errors
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `feature_list.json`, `node-hub/store.js`, `server.js`, `src/components/arc/tabs/tabs.tsx`, `src/components/features/details.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/xui-monitor.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`, `test-xui-traffic.js`, `xui-traffic.js`, `src/components/features/user-hourly-traffic.tsx`
+- Files: `PROGRESS.md`, `docs/agent/node-hub.md`, `feature_list.json`, `node-hub/app.js`, `node-hub/store.js`, `scripts/e2e-xboard-node.js`, `server.js`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/xui-monitor.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`, `test-xui-traffic.js`, `xui-traffic.js`
 - Known risks: none
-- Recommended Next Step: Commit and deploy when asked; hourly data accumulates in production only after deploy
+- Recommended Next Step: Commit and deploy when asked (app + node-hub together); then on bage hk add a second node per relay (aws jp / gomami hk) and set gomami to 2. scripts/e2e-xboard-node.js not run (needs binaries)

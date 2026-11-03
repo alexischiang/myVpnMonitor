@@ -95,6 +95,13 @@ function xuiMultiplier(value) {
   return Number.isFinite(n) && n >= 0 ? n : 1;
 }
 
+// node-hub traffic is billed per node under hub-m<machine>-n<node>; for everything else (VPS cost,
+// monitor totals, names) it belongs to the machine's key hub-m<machine>.
+function billingMachineGuid(guid) {
+  const match = /^(hub-m\d+)-n\d+$/.exec(String(guid || ""));
+  return match ? match[1] : String(guid || "");
+}
+
 // Raw (unweighted) total across a per-node { guid: bytes } map.
 function sumRawBytes(perNodeBytes = {}) {
   return Object.values(perNodeBytes).reduce((sum, v) => sum + Math.max(0, Number(v) || 0), 0);
@@ -311,6 +318,7 @@ module.exports = {
   cycleStartMs,
   applyCycleBaseline,
   xuiMultiplier,
+  billingMachineGuid,
   sumRawBytes,
   weightedBytes,
   perNodeTotals,

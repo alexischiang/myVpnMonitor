@@ -439,16 +439,23 @@ async function main() {
     assert.equal(dup.duplicate, true, "a resent report_id is acknowledged without counting again");
     await hy.report({ traffic: { [storedA.id]: [100, 200], [storedB.id]: [7, 8] }, online: { [storedB.id]: 1 }, alive: { [storedB.id]: ["192.0.2.1"] } });
     const today = chinaDateKey();
-    const rows = (await pool.query("SELECT date, email, node_guid, user_id, user_label, plan_id, node_name, up_bytes, down_bytes FROM xui_daily_traffic WHERE node_guid LIKE 'hub-%' ORDER BY email")).rows;
+    const vlessKey = `hub-m${machine.id}-n${vlessNode.body.id}`;
+    const hyKey = `hub-m${machine.id}-n${hyNode.id}`;
+    const byKey = (left, right) => left.email.localeCompare(right.email) || left.node_guid.localeCompare(right.node_guid);
+    const rows = (await pool.query("SELECT date, email, node_guid, user_id, user_label, plan_id, node_name, up_bytes, down_bytes FROM xui_daily_traffic WHERE node_guid LIKE 'hub-%'")).rows.sort(byKey);
     assert.deepEqual(rows.map(row => ({ ...row, up_bytes: Number(row.up_bytes), down_bytes: Number(row.down_bytes) })), [
-      { date: today, email: "a@example.test", node_guid: `hub-m${machine.id}`, user_id: "user-a", user_label: "A#000001", plan_id: "pro", node_name: "LA-BWH", up_bytes: 1124, down_bytes: 6200 },
-      { date: today, email: "b@example.test", node_guid: `hub-m${machine.id}`, user_id: "user-b", user_label: "B#000002", plan_id: "basic", node_name: "LA-BWH", up_bytes: 7, down_bytes: 8 }
-    ], "traffic is summed per China day, user and machine; unknown ids and duplicate batches are dropped");
-    const hourly = (await pool.query("SELECT hour, email, node_guid, up_bytes, down_bytes FROM xui_hourly_traffic WHERE node_guid LIKE 'hub-%' ORDER BY email")).rows;
+      { date: today, email: "a@example.test", node_guid: vlessKey, user_id: "user-a", user_label: "A#000001", plan_id: "pro", node_name: "LA-BWH", up_bytes: 1024, down_bytes: 6000 },
+      { date: today, email: "a@example.test", node_guid: hyKey, user_id: "user-a", user_label: "A#000001", plan_id: "pro", node_name: "LA-BWH", up_bytes: 100, down_bytes: 200 },
+      { date: today, email: "b@example.test", node_guid: hyKey, user_id: "user-b", user_label: "B#000002", plan_id: "basic", node_name: "LA-BWH", up_bytes: 7, down_bytes: 8 }
+    ].sort(byKey), "traffic is summed per China day, user and node; unknown ids and duplicate batches are dropped");
+    const hourly = (await pool.query("SELECT hour, email, node_guid, up_bytes, down_bytes FROM xui_hourly_traffic WHERE node_guid LIKE 'hub-%'")).rows.sort(byKey);
     assert.deepEqual(hourly.map(row => [row.email, row.node_guid, Number(row.up_bytes), Number(row.down_bytes), row.hour.getTime() % 3600000]), [
-      ["a@example.test", `hub-m${machine.id}`, 1124, 6200, 0],
-      ["b@example.test", `hub-m${machine.id}`, 7, 8, 0]
-    ], "the same traffic lands in the current whole hour");
+      { email: "a@example.test", node_guid: vlessKey, row: ["a@example.test", vlessKey, 1024, 6000, 0] },
+      { email: "a@example.test", node_guid: hyKey, row: ["a@example.test", hyKey, 100, 200, 0] },
+      { email: "b@example.test", node_guid: hyKey, row: ["b@example.test", hyKey, 7, 8, 0] }
+    ].sort(byKey).map(item => item.row), "the same traffic lands in the current whole hour");
+    const hyOverview = (await internal("GET", "/internal/overview")).body.nodes.find(item => item.id === hyNode.id);
+    assert.deepEqual([hyOverview.guid, hyOverview.billingKey], [`hub-m${machine.id}`, hyKey], "the machine key (inbound keys, presence) stays next to the node's billing key");
 
     // Presence: online every report, alive only on change, absence of online means nobody.
     let presence = (await internal("GET", "/internal/presence")).body;

@@ -19,8 +19,11 @@ import type { NodeHubMachine, NodeHubNode, NodeHubProtocol, NodeHubRelay, NodeHu
 
 type Settings = Record<string, unknown>
 
-/** access "relay": users reach the node only through the relays in relayIds (saved as relayIds: [] when direct). */
-export type NodeHubNodeDraft = Pick<NodeHubNode, "machineId" | "name" | "protocol" | "host" | "serverPort" | "listenIp" | "enabled" | "sortOrder" | "region" | "networkLevel" | "inboundType"> & { settings: Settings; access: "direct" | "relay"; relayIds: number[] }
+/**
+ * access "relay": users reach the node only through the relays in relayIds (saved as relayIds: [] when direct).
+ * multiplier stays text while typing; the server validates 0–100.
+ */
+export type NodeHubNodeDraft = Pick<NodeHubNode, "machineId" | "name" | "protocol" | "host" | "serverPort" | "listenIp" | "enabled" | "sortOrder" | "region" | "networkLevel" | "inboundType"> & { settings: Settings; access: "direct" | "relay"; relayIds: number[]; multiplier: string }
 
 export const NODE_HUB_PROTOCOLS: { value: NodeHubProtocol; label: string }[] = [
   { value: "vless", label: "VLESS" },
@@ -77,13 +80,13 @@ export function defaultNodeSettings(protocol: NodeHubProtocol): Settings {
 
 export function emptyNodeDraft(machineId = 0): NodeHubNodeDraft {
   // Hub machines are installed with the xray kernel, so new nodes say so too.
-  return { machineId, name: "", protocol: "vless", host: "", serverPort: 443, listenIp: "0.0.0.0", enabled: true, sortOrder: 1, region: "", networkLevel: "", inboundType: "package", settings: { ...defaultNodeSettings("vless"), kernel_type: "xray" }, access: "direct", relayIds: [] }
+  return { machineId, name: "", protocol: "vless", host: "", serverPort: 443, listenIp: "0.0.0.0", enabled: true, sortOrder: 1, region: "", networkLevel: "", inboundType: "package", settings: { ...defaultNodeSettings("vless"), kernel_type: "xray" }, access: "direct", relayIds: [], multiplier: "1" }
 }
 
 export function nodeDraftFrom(node: NodeHubNode): NodeHubNodeDraft {
   const { machineId, name, protocol, host, serverPort, listenIp, enabled, sortOrder, region, networkLevel, inboundType } = node
   const relayIds = (node.relays || []).map(entry => entry.relayId)
-  return { machineId, name, protocol, host, serverPort, listenIp, enabled, sortOrder, region, networkLevel, inboundType, settings: structuredClone(node.settings || {}), access: relayIds.length ? "relay" : "direct", relayIds }
+  return { machineId, name, protocol, host, serverPort, listenIp, enabled, sortOrder, region, networkLevel, inboundType, settings: structuredClone(node.settings || {}), access: relayIds.length ? "relay" : "direct", relayIds, multiplier: String(node.multiplier ?? 1) }
 }
 
 /** The advanced JSON box's text for a node's settings, empty when none of its keys are set. */
@@ -243,6 +246,7 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
       <Input label="监听地址" id="node-listen" value={draft.listenIp} onChange={event => field("listenIp", event.target.value.trim())} placeholder="0.0.0.0" />
       <Select label="网络级别" id="node-level" className="w-full" value={draft.networkLevel || "unset"} onValueChange={value => field("networkLevel", value === "unset" ? "" : value)} options={[{ value: "unset", label: "未设置" }, ...NODE_HUB_NETWORK_LEVELS.map(level => ({ value: level.value, label: level.label }))]} />
       <Select label="入站类型" id="node-type" className="w-full" value={draft.inboundType} onValueChange={value => field("inboundType", value as "package" | "custom")} description="定制节点只能在用户页单独授权，不参与线路组。" options={[{ value: "package", label: "套餐节点" }, { value: "custom", label: "定制节点" }]} />
+      <Input label="流量倍率" id="node-multiplier" type="number" inputMode="decimal" min={0} max={100} step={0.1} value={draft.multiplier} onChange={event => field("multiplier", event.target.value)} description="这个节点的流量按此倍率计费，修改后重算本计费周期已用流量。" />
       <WideNumberField label="排序" id="node-order" value={draft.sortOrder} onValueChange={value => field("sortOrder", value)} min={0} />
       <Select label="内核" id="node-kernel" className="w-full" value={str(s.kernel_type) || "xray"} onValueChange={value => set(["kernel_type"], value)} disabled={viaRelay} options={[{ value: "xray", label: "Xray" }, { value: "singbox", label: "sing-box" }]} />
       <SwitchField id="node-enabled" label="启用节点" checked={draft.enabled} onCheckedChange={enabled => field("enabled", enabled)} />

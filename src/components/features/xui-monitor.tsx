@@ -61,7 +61,8 @@ type MonitorData = {
     trafficTokenRequired: boolean
     trafficConfigured: boolean
     trafficError: string
-    multiplier: number
+    /** null for node-hub machines: their multipliers are set per node in Node Hub. */
+    multiplier: number | null
     costConfig: null | { purchaseDate: string; monthlyFee: number; trafficQuotaGiB: number; trafficMode: "in_out" | "out_only" }
   }>
 }
@@ -105,7 +106,7 @@ export function XuiMonitorPage() {
 
   function openNodeSettings(node: MonitorData["nodes"][number]) {
     setNodeTokens(current => ({ ...current, [node.guid]: "" }))
-    setNodeMultipliers(current => ({ ...current, [node.guid]: String(node.multiplier) }))
+    setNodeMultipliers(current => ({ ...current, [node.guid]: String(node.multiplier ?? "") }))
     setNodeCosts(current => ({ ...current, [node.guid]: {
       purchaseDate: node.costConfig?.purchaseDate || new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" }),
       monthlyFee: node.costConfig ? String(node.costConfig.monthlyFee) : "",
@@ -123,10 +124,10 @@ export function XuiMonitorPage() {
       const apiToken = nodeTokens[guid]?.trim()
       const multiplier = Number(nodeMultipliers[guid])
       const cost = nodeCosts[guid]
-      if (!nodeMultipliers[guid]?.trim() || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw new Error("节点倍率必须在 0 到 100 之间")
+      if (node.multiplier !== null && (!nodeMultipliers[guid]?.trim() || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100)) throw new Error("节点倍率必须在 0 到 100 之间")
       const costChanged = nodeCostChanged(node)
       if (costChanged && (!cost?.purchaseDate || cost.monthlyFee === "" || !cost.trafficQuotaGiB)) throw new Error("请填写 VPS 购买日期、月费和流量额度")
-      const multiplierChanged = multiplier !== node.multiplier
+      const multiplierChanged = node.multiplier !== null && multiplier !== node.multiplier
       let configured = node.trafficConfigured
       if (apiToken) {
         const credentials = await putJson<{ configured?: boolean }>(`/api/xui-monitor/nodes/${encodeURIComponent(guid)}/credentials`, { apiToken })
@@ -155,8 +156,7 @@ export function XuiMonitorPage() {
 
   function nodeSettingsChanged(node: MonitorData["nodes"][number]) {
     const guid = node.guid
-    const multiplier = Number(nodeMultipliers[guid] ?? String(node.multiplier))
-    if (multiplier !== node.multiplier) return true
+    if (node.multiplier !== null && Number(nodeMultipliers[guid] ?? String(node.multiplier)) !== node.multiplier) return true
     if (nodeTokens[guid]?.trim()) return true
     return nodeCostChanged(node)
   }
@@ -200,7 +200,7 @@ export function XuiMonitorPage() {
           return (
             <Card key={node.id}><div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="grid gap-1">
-                    <h3 className="text-lg font-medium flex flex-wrap items-center gap-2"><Server className="size-5" />{node.name}<Badge tone={online ? "success" : "neutral"}>{node.enabled ? node.status : "disabled"}</Badge>{node.trafficTokenRequired && !node.trafficConfigured ? <Badge tone="danger">未设置 API</Badge> : null}{!node.costConfig ? <Badge tone="warning">未设置成本</Badge> : null}<Badge>× {node.multiplier}</Badge></h3>
+                    <h3 className="text-lg font-medium flex flex-wrap items-center gap-2"><Server className="size-5" />{node.name}<Badge tone={online ? "success" : "neutral"}>{node.enabled ? node.status : "disabled"}</Badge>{node.trafficTokenRequired && !node.trafficConfigured ? <Badge tone="danger">未设置 API</Badge> : null}{!node.costConfig ? <Badge tone="warning">未设置成本</Badge> : null}{node.multiplier !== null ? <Badge>× {node.multiplier}</Badge> : null}</h3>
                     <p className="text-sm text-muted-foreground">{node.address}{node.port ? `:${node.port}` : ""}</p>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
@@ -222,9 +222,9 @@ export function XuiMonitorPage() {
       </div>
 
       <Dialog open={Boolean(settingsNode)} onOpenChange={open => { if (!open) setSettingsGuid("") }}>
-        <DialogContent title={`${settingsNode?.name ?? ""} 节点设置`} description="配置整个面板的流量倍率；该面板中的所有端口和协议统一按此倍率计费。">
+        <DialogContent title={`${settingsNode?.name ?? ""} 节点设置`} description={settingsNode?.multiplier === null ? "流量倍率按节点设置，在 Node Hub → 节点里修改。" : "配置整个面板的流量倍率；该面板中的所有端口和协议统一按此倍率计费。"}>
           {settingsNode ? <form className="grid gap-6" onSubmit={event => { event.preventDefault(); void saveNodeSettings(settingsNode.guid) }}>
-            <Input label="流量倍率" description="保存后按此倍率重算本计费周期已用流量。" id={`settings-multiplier-${settingsNode.id}`} type="number" min="0" max="100" step="0.1" value={nodeMultipliers[settingsNode.guid] ?? "1"} onChange={event => setNodeMultipliers(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
+            {settingsNode.multiplier === null ? null : <Input label="流量倍率" description="保存后按此倍率重算本计费周期已用流量。" id={`settings-multiplier-${settingsNode.id}`} type="number" min="0" max="100" step="0.1" value={nodeMultipliers[settingsNode.guid] ?? "1"} onChange={event => setNodeMultipliers(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />}
             <section className="grid gap-4 border-t pt-4">
               <div className="flex items-center gap-2">
                 <h3 className="font-medium">VPS 月度成本</h3>

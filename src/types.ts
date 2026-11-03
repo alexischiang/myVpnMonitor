@@ -514,8 +514,6 @@ export type NodeHubMachine = {
   /** The machine holds a live WebSocket push channel to node-hub. */
   pushConnected?: boolean
   guid?: string
-  /** Billing multiplier for this machine's traffic (the app's billing state, key hub-m<id>); 1 when unset. */
-  multiplier?: number
   nodeIds?: number[]
   createdAt: string
   updatedAt: string
@@ -541,6 +539,8 @@ export type NodeHubNode = {
   region: string
   networkLevel: string
   inboundType: "package" | "custom"
+  /** Billing multiplier for this node's traffic (the app's billing state, key hub-m<machine>-n<node>); 1 when unset. */
+  multiplier?: number
   lastCheckAt: string
   lastPushAt: string
   metrics: Record<string, unknown> | null

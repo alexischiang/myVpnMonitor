@@ -153,10 +153,15 @@ function bytes(value) {
   return Number.isFinite(number) && number > 0 ? Math.min(Math.floor(number), MAX_SAFE_BYTES) : 0;
 }
 
-// The billing node key for a node's traffic: one key per machine, matching 3x-ui where one key
-// is one VPS (multipliers and VPS cost settings are per machine).
+// A node's machine key: one per VPS, like a 3x-ui node guid (VPS cost, presence, inbound keys).
 function nodeGuid(node) {
   return node.machineId ? `hub-m${node.machineId}` : `hub-n${node.id}`;
+}
+
+// The key a node's traffic rows are recorded under: one per node, so each node has its own
+// multiplier. The main app rolls hub-m<machine>-n<node> up to the machine for cost and totals.
+function nodeBillingKey(node) {
+  return node.machineId ? `hub-m${node.machineId}-n${node.id}` : `hub-n${node.id}`;
 }
 
 function machineFromRow(row) {
@@ -633,7 +638,7 @@ class NodeHubStore {
   async recordReport(node, { traffic = {}, alive = null, online = null, status = null, metrics = null, reportId = "" } = {}, { nodeName = "", statementTimeoutMs = 10000 } = {}) {
     const now = this.now();
     const date = chinaDateKey(now);
-    const guid = nodeGuid(node);
+    const guid = nodeBillingKey(node);
     return this.transaction(async client => {
       await client.query(`SET LOCAL statement_timeout = ${Math.max(1000, Math.floor(statementTimeoutMs))}`);
       if (reportId) {
@@ -748,4 +753,4 @@ class NodeHubStore {
   }
 }
 
-module.exports = { NodeHubStore, chinaDateKey, nodeGuid, normalizeUserInput, RELAY_PORT_START };
+module.exports = { NodeHubStore, chinaDateKey, nodeGuid, nodeBillingKey, normalizeUserInput, RELAY_PORT_START };

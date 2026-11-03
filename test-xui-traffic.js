@@ -86,6 +86,15 @@ assert.strictEqual(effectiveQuotaBytes(0, 50, true), 0, "unlimited plan (0) stay
   assert.deepStrictEqual(usage.dates, ["2026-11-02", "2026-11-03"]);
 }
 
+// A hub node's billing key rolls up to its machine; each node key has its own multiplier.
+{
+  const { billingMachineGuid } = require("./xui-traffic");
+  assert.strictEqual(billingMachineGuid("hub-m3-n12"), "hub-m3");
+  assert.strictEqual(billingMachineGuid("hub-m3"), "hub-m3");
+  assert.strictEqual(billingMachineGuid("node-hk"), "node-hk");
+  assert.strictEqual(weightedBytes({ "hub-m3-n12": 100, "hub-m3-n13": 100 }, { "hub-m3": 5, "hub-m3-n12": 2 }), 300, "node keys never take the machine key's multiplier");
+}
+
 const { xuiLedgerFromCycle } = require("./xui-traffic");
 const led = xuiLedgerFromCycle({ a: 100, b: 200 }, { a: 1, b: 2 }, { cycleKey: "2026-01-01", nodeNames: { a: "LA" }, updatedAt: "t" });
 assert.strictEqual(led.rawBytes, 300);
