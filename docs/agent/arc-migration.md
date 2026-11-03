@@ -249,6 +249,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `card` | `title`、`description` 改为可选且接受节点；`headerAction`；没有 `details` 时不做悬停抬起；正文外包一层带间距的容器 |
 | `metric-card` | `prefix`、`decimals`、`locale`；`value` 可为 `null`（显示占位符）；`context` 可选；`action`；`className` |
 | `dialog` | `size`（`md/lg/xl/full`）；关闭按钮文案 |
+| `tabs` | `TabsContent` 切换动画结束后，motion 会把最后一帧高度写回面板；之后内容再变高（切换后才加载数据）时，面板被钉在旧高度。动画结束后，面板尺寸一变化就清掉残留的行内高度 |
 | `drawer` | `size`（`md/lg/xl`）；关闭按钮文案 |
 | `input`、`textarea`、`select`、`password-field`、`search-field` | `hideLabel`（标签只对读屏可见） |
 | `password-field` | `error`；默认文案改中文 |

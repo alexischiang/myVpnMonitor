@@ -224,7 +224,7 @@ export function XuiMonitorPage() {
       <Dialog open={Boolean(settingsNode)} onOpenChange={open => { if (!open) setSettingsGuid("") }}>
         <DialogContent title={`${settingsNode?.name ?? ""} 节点设置`} description="配置整个面板的流量倍率；该面板中的所有端口和协议统一按此倍率计费。">
           {settingsNode ? <form className="grid gap-6" onSubmit={event => { event.preventDefault(); void saveNodeSettings(settingsNode.guid) }}>
-            <Input label="流量倍率" description="保存后，该节点所有入站新增流量统一按此倍率计算。" id={`settings-multiplier-${settingsNode.id}`} type="number" min="0" max="100" step="0.1" value={nodeMultipliers[settingsNode.guid] ?? "1"} onChange={event => setNodeMultipliers(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
+            <Input label="流量倍率" description="保存后按此倍率重算本计费周期已用流量。" id={`settings-multiplier-${settingsNode.id}`} type="number" min="0" max="100" step="0.1" value={nodeMultipliers[settingsNode.guid] ?? "1"} onChange={event => setNodeMultipliers(current => ({ ...current, [settingsNode.guid]: event.target.value }))} />
             <section className="grid gap-4 border-t pt-4">
               <div className="flex items-center gap-2">
                 <h3 className="font-medium">VPS 月度成本</h3>

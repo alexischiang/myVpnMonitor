@@ -264,8 +264,43 @@ function accountNodeUsage(rows = [], labelByGuid = new Map(), dates = [], maxSer
   };
 }
 
+// Shapes one user's hourly rows ({ date, hour, nodeName, up, down }) for the admin time-of-day
+// charts: one cell per (date, hour) with traffic, carrying its busiest node's name, plus the
+// 24-hour profile summed over the range. `dates` (oldest first) bounds the range; rows outside
+// it are ignored. Raw bytes, no multipliers.
+function hourlyUsage(rows = [], dates = []) {
+  const inRange = new Set(dates);
+  const cells = new Map();
+  const profile = Array.from({ length: 24 }, (_, hour) => ({ hour, up: 0, down: 0 }));
+  for (const row of rows) {
+    const hour = Number(row.hour);
+    if (!inRange.has(row.date) || !Number.isInteger(hour) || hour < 0 || hour > 23) continue;
+    const up = Math.max(0, Number(row.up) || 0);
+    const down = Math.max(0, Number(row.down) || 0);
+    if (!up && !down) continue;
+    const key = `${row.date} ${hour}`;
+    const cell = cells.get(key) || { date: row.date, hour, up: 0, down: 0, nodes: new Map() };
+    cell.up += up;
+    cell.down += down;
+    const name = String(row.nodeName || row.nodeGuid || "");
+    cell.nodes.set(name, (cell.nodes.get(name) || 0) + up + down);
+    cells.set(key, cell);
+    profile[hour].up += up;
+    profile[hour].down += down;
+  }
+  return {
+    dates,
+    cells: [...cells.values()].map(({ nodes, ...cell }) => ({
+      ...cell,
+      topNode: [...nodes.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] || ""
+    })),
+    profile
+  };
+}
+
 module.exports = {
   accountNodeUsage,
+  hourlyUsage,
   RESET_INTERVAL_DAYS,
   MS_PER_DAY,
   deductRemotesFromLocalNode,

@@ -4535,6 +4535,40 @@ async function saveXuiBillingState(state) {
   await setXuiState("billing", "xuiBilling", { ...xuiBillingPayload(state), updatedAt: new Date().toISOString() });
 }
 
+/** Adds each node-hub machine's billing multiplier to machine responses (overview, list, one machine). */
+async function withHubMachineMultipliers(hubPath, result) {
+  const single = /^\/machines\/\d+$/.test(hubPath) || hubPath === "/machines" && result && !Array.isArray(result);
+  const list = hubPath === "/machines" && Array.isArray(result) ? result : hubPath === "/overview" && Array.isArray(result?.machines) ? result.machines : null;
+  if (!single && !list) return result;
+  const multipliers = (await getXuiBillingState()).multipliers || {};
+  const withMultiplier = machine => machine?.id ? { ...machine, multiplier: xuiMultiplier(multipliers[`hub-m${machine.id}`]) } : machine;
+  if (single) return withMultiplier(result);
+  const machines = list.map(withMultiplier);
+  return hubPath === "/overview" ? { ...result, machines } : machines;
+}
+
+/** A traffic multiplier from a form value; throws the message the admin sees. */
+function parseNodeMultiplier(value) {
+  const multiplier = Number(value);
+  if (value === "" || value === null || value === undefined || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw Object.assign(new Error("节点倍率必须在 0 到 100 之间。"), { statusCode: 400 });
+  return multiplier;
+}
+
+/**
+ * Sets one billing key's multiplier (a 3x-ui node guid or hub-m<machine id>). The next traffic sync
+ * reprices the current cycle with it. Pass `extra` to do more under the same billing lock.
+ */
+async function setNodeMultiplier(guid, multiplier, extra = null) {
+  await withXuiBillingLock(async () => {
+    const state = await getXuiBillingState();
+    if (xuiMultiplier(state.multipliers[guid]) !== multiplier) {
+      state.multipliers[guid] = multiplier;
+      await saveXuiBillingState(state);
+    }
+    if (extra) await extra();
+  });
+}
+
 async function getXuiNodeTokens(legacyTokens = {}) {
   const tokens = XUI_SERVICE_URL
     ? (await getXuiState("node-tokens", "xuiNodeTokens")) || {}
@@ -4695,15 +4729,19 @@ async function resetDueXuiTraffic() {
 // Retention cleanup: periodic-plan users keep 90 days of daily rows; lifetime/unlimited
 // users are excluded so their history is kept permanently (their billing sums all time).
 const XUI_DAILY_TRAFFIC_RETENTION_DAYS = 90;
+// Hourly rows (time-of-day analysis only) keep the same 90 days for every user.
 async function pruneXuiDailyTrafficRetention(now = Date.now()) {
-  const cutoff = chinaDateKey(now - XUI_DAILY_TRAFFIC_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const cutoffMs = now - XUI_DAILY_TRAFFIC_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const { deleted: hourlyDeleted } = await dataStore.pruneXuiHourlyTraffic(cutoffMs);
+  if (hourlyDeleted) console.log(`[xui-traffic] Pruned ${hourlyDeleted} hourly rows older than ${new Date(cutoffMs).toISOString()}.`);
+  const cutoff = chinaDateKey(cutoffMs);
   const periodicEmails = [...new Set(users
     .filter(item => isSelfHostedUser(item) && item.xuiClientEmail && xuiTraffic.isPeriodicPlan(item))
     .map(item => String(item.xuiClientEmail).trim().toLowerCase()))];
-  if (!cutoff || !periodicEmails.length) return { deleted: 0, cutoff };
+  if (!cutoff || !periodicEmails.length) return { deleted: 0, hourlyDeleted, cutoff };
   const { deleted } = await dataStore.pruneXuiDailyTraffic(cutoff, periodicEmails);
   if (deleted) console.log(`[xui-traffic] Pruned ${deleted} daily rows older than ${cutoff} (periodic-plan users; lifetime kept).`);
-  return { deleted, cutoff };
+  return { deleted, hourlyDeleted, cutoff };
 }
 
 function markMissingXuiClients(appUsersByEmail, remoteEmails, checkedAt = new Date().toISOString()) {
@@ -5472,7 +5510,7 @@ const SYNC_JOBS = [
     }
   },
   {
-    id: "xui-traffic-prune", module: "traffic", name: "每日流量清理", description: `删除周期套餐用户超过 ${XUI_DAILY_TRAFFIC_RETENTION_DAYS} 天的每日流量记录，不限时套餐保留。`,
+    id: "xui-traffic-prune", module: "traffic", name: "每日流量清理", description: `删除周期套餐用户超过 ${XUI_DAILY_TRAFFIC_RETENTION_DAYS} 天的每日流量记录，不限时套餐保留；所有用户超过 ${XUI_DAILY_TRAFFIC_RETENTION_DAYS} 天的每小时流量记录一并删除。`,
     intervalMs: 24 * 60 * 60 * 1000, requiresLine: true,
     run: async () => ({ status: "success", summary: await pruneXuiDailyTrafficRetention() })
   },
@@ -8691,12 +8729,18 @@ async function handleApi(req, res, pathname) {
         return;
       }
       const body = ["POST", "PUT"].includes(req.method) ? await readJson(req) : undefined;
+      // A machine's traffic multiplier is billing state of this app (key hub-m<id>), not node-hub data:
+      // it is validated before the hub sees the request and saved once the machine exists.
+      const machineWrite = /^\/machines(\/\d+)?$/.test(hubPath) && body && body.multiplier !== undefined;
+      const multiplier = machineWrite ? parseNodeMultiplier(body.multiplier) : null;
+      if (machineWrite) delete body.multiplier;
       const result = await requestNodeHub(route[2](hubPath), { method: req.method, body });
+      if (machineWrite && result?.id) await setNodeMultiplier(`hub-m${result.id}`, multiplier);
       if (req.method !== "GET") {
         invalidateHubOverview();
         if (/^\/nodes/.test(hubPath)) syncHubUsers().catch(error => hubLogger.warn({ error: error.message }, "node-hub entitlement sync after node change failed"));
       }
-      sendJson(res, req.method === "POST" && /^\/(machines|nodes|relays)$/.test(hubPath) ? 201 : 200, result);
+      sendJson(res, req.method === "POST" && /^\/(machines|nodes|relays)$/.test(hubPath) ? 201 : 200, await withHubMachineMultipliers(hubPath, result));
     } catch (error) {
       sendJson(res, error.statusCode && error.statusCode < 600 ? error.statusCode : 502, { error: error.message });
     }
@@ -8851,21 +8895,12 @@ async function handleApi(req, res, pathname) {
   if (xuiNodeSettingsMatch && req.method === "PUT") {
     try {
       const payload = await readJson(req);
-      const multiplier = Number(payload.multiplier);
-      if (payload.multiplier === "" || !Number.isFinite(multiplier) || multiplier < 0 || multiplier > 100) throw new Error("节点倍率必须在 0 到 100 之间。");
+      const multiplier = parseNodeMultiplier(payload.multiplier);
       const guid = decodeURIComponent(xuiNodeSettingsMatch[1]);
       if (!guid || guid.length > 512 || /[\\/]/.test(guid)) throw new Error("节点标识无效。");
       const apiToken = String(payload.apiToken || "").trim();
       if (apiToken.length > 4096) throw new Error("节点 API Token 无效。");
-      await withXuiBillingLock(async () => {
-        const state = await getXuiBillingState();
-        const multiplierChanged = xuiMultiplier(state.multipliers[guid]) !== multiplier;
-        if (multiplierChanged) {
-          state.multipliers[guid] = multiplier;
-          await saveXuiBillingState(state);
-        }
-        if (apiToken) await setXuiNodeToken(guid, sealXuiNodeToken(apiToken));
-      });
+      await setNodeMultiplier(guid, multiplier, apiToken ? () => setXuiNodeToken(guid, sealXuiNodeToken(apiToken)) : null);
       sendJson(res, 200, { ok: true, guid, multiplier });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -10103,7 +10138,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -10132,6 +10167,18 @@ async function handleApi(req, res, pathname) {
       } catch (error) {
         sendJson(res, 200, { availableBalance: 0, balance: 0, error: error.message });
       }
+      return;
+    }
+
+    // Admin time-of-day view: the last 7, 30 or 90 China days of hourly rows (raw bytes).
+    if (action === "hourly-traffic" && req.method === "GET") {
+      const requested = Number(new URL(req.url, "http://localhost").searchParams.get("days"));
+      const days = [7, 30, 90].includes(requested) ? requested : 30;
+      const email = item ? String(xuiClientEmail(item) || "").trim().toLowerCase() : "";
+      const now = Date.now();
+      const dates = Array.from({ length: days }, (_, index) => chinaDateKey(now - (days - 1 - index) * 86400000));
+      const rows = email ? await dataStore.xuiUserHourlySeries(email, now - (days + 1) * 86400000) : [];
+      sendJson(res, 200, xuiTraffic.hourlyUsage(rows, dates));
       return;
     }
 

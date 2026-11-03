@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-11-03
-- Current Objective: Node Hub: node dialog tabs, runtime-change pushes, relay entry names, realm rules judge; commit and deploy
+- Current Objective: Admin user details hourly traffic chart (流量时段 tab)
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -554,8 +554,16 @@
 
 - 2026-11-03: npm run verify, npm run check, verify:harness pass; browser checks of node dialog, relay form and relay save toast
 
+- 2026-11-03: npm run check, verify:harness pass; /xui-monitor dialog and user detail card browser-checked
+
+- 2026-11-03: test-node-hub-app.js, test-node-hub.js, verify:fast, check pass; machine dialog and drawer browser-checked
+
+- 2026-11-03: test-xui-traffic, test-node-hub, test-node-hub-app, test-payment, verify:fast, git diff --check pass
+
+- 2026-11-03: test-xui-traffic, test-node-hub, verify:fast, npm run check, browser check of 流量时段 (ranges, hover/click, mobile, dark, empty) with no console errors
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `feature_list.json`, `node-hub/app.js`, `node-hub/node-config.js`, `node-hub/push.js`, `node-hub/relay.js`, `src/components/arc/number-field/number-field.module.css`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub-relays.tsx`, `src/components/features/node-hub.tsx`, `src/styles.css`, `test-node-hub.js`
+- Files: `PROGRESS.md`, `database.js`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `feature_list.json`, `node-hub/store.js`, `server.js`, `src/components/arc/tabs/tabs.tsx`, `src/components/features/details.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/xui-monitor.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`, `test-xui-traffic.js`, `xui-traffic.js`, `src/components/features/user-hourly-traffic.tsx`
 - Known risks: none
-- Recommended Next Step: After deploy each relay rewrites its realm comments once (one realm restart per relay); Arc CJK description wrap is a separate proposed task
+- Recommended Next Step: Commit and deploy when asked; hourly data accumulates in production only after deploy

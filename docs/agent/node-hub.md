@@ -138,6 +138,7 @@ xboard-node 启动时调 handshake；`NODE_HUB_PUBLIC_URL` 已设置且 `NODE_HU
 - 推送连接时变化即时生效；只用轮询（没有 `NODE_HUB_PUBLIC_URL`、反向代理不支持 WebSocket、或推送断开）时，机器的节点列表和用户最多每 60 秒刷新一次。
 - xboard-node 的机器模式只在启动时 handshake 一次：已经在跑的机器要重启 xboard-node（`systemctl restart xboard-node`）才会切到推送。
 - 限速按节点生效；全局设备数只在 sing-box 内核上生效，xray 内核按单节点计算。
+- 流量倍率按机器计（计费键 `hub-m<机器 id>`，xboard-node 只上报原始流量）。在「Node Hub → 机器」新建或编辑时填写：本站转发请求时取出 `multiplier`、校验 0–100、在机器存在后写进计费状态（`setNodeMultiplier`），读取机器、机器列表和概览时附上当前倍率；node-hub 本身不存倍率。「3x-ui 监控」的节点设置改的是同一个键。修改后下一次计费同步按新倍率重算本计费周期已用流量。
 - 3x-ui 中多个 shortId / serverName 只保留第一个。
 - 节点在没有任何授权用户时创建，xboard-node（v1.13）不启动内核；之后推送来的用户（`sync.users`、`add` 增量、只有用户变化的 REST 重新拉取）都会被 `ensureRunning()` 丢掉，因为它检查的 `lastUsers` 要等内核启动后才写入。节点会一直显示「内核未运行」，直到 `systemctl restart xboard-node`。fork `alexischiang/nexora-node` 已修复（内核空闲时先记下推送来的用户再启动内核），hub 的安装命令默认从 fork 安装；仍在用上游二进制的机器，先把节点加入线路组、确认有用户授权，再执行安装命令或重启 xboard-node。
 - 流量耗尽或到期的用户，已经建立的连接要靠 xboard-node 主动断开。xray 内核从 UserManager 移除用户只拒绝新连接；fork v1.13.1 的 `CloseUserConnections` 是空操作，所以旧连接会一直跑（2026-11-03 实测，`npm run e2e:hub`：REALITY Vision 节点上持续下载的连接在新连接被拒后 10 秒内又传了 3.26 MB，速率不变，没有断开）。fork v1.13.2 已修复（PR [alexischiang/nexora-node#1](https://github.com/alexischiang/nexora-node/pull/1)，`internal/kernel/xray`：dispatcher 按用户登记每条连接，`RemoveUsers`/`UpdateUsers` 移除用户时取消其上下文并中断 link，含重启回退和最后一个用户被移除时的 Stop）。用发布的 v1.13.2 实测：推送模式下这条连接在新连接被拒的同时停止（之后 0 字节，客户端约 0.7 s 内收到断开）；修复构建在 REST 轮询模式下同样 0 字节。安装命令固定 `--version v1.13.2`；还在跑 v1.13.1 或更早版本的机器要重新执行安装命令升级，否则旧连接仍会继续用流量，直到客户端自己断开。到期与耗尽走同一条移除路径。sing-box 内核本来就会断开。

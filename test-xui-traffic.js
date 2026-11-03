@@ -66,6 +66,26 @@ assert.strictEqual(effectiveQuotaBytes(100, 50, false), 100, "inactive pack igno
 assert.strictEqual(effectiveQuotaBytes(0, 50, true), 0, "unlimited plan (0) stays unlimited");
 
 // xuiLedgerFromCycle: shape, weighting, cycle carry-over
+// hourlyUsage: one cell per (date, hour) with its busiest node, plus the 24-hour profile.
+{
+  const { hourlyUsage } = require("./xui-traffic");
+  const usage = hourlyUsage([
+    { date: "2026-11-02", hour: 14, nodeName: "HK", up: 10, down: 90 },
+    { date: "2026-11-02", hour: 14, nodeName: "US", up: 200, down: 0 },
+    { date: "2026-11-03", hour: 14, nodeName: "HK", up: 0, down: 50 },
+    { date: "2026-11-03", hour: 2, nodeName: "HK", up: 0, down: 0 },
+    { date: "2026-10-01", hour: 1, nodeName: "HK", up: 5, down: 5 },
+    { date: "2026-11-03", hour: 24, nodeName: "HK", up: 5, down: 5 }
+  ], ["2026-11-02", "2026-11-03"]);
+  assert.deepStrictEqual(usage.cells, [
+    { date: "2026-11-02", hour: 14, up: 210, down: 90, topNode: "US" },
+    { date: "2026-11-03", hour: 14, up: 0, down: 50, topNode: "HK" }
+  ], "nodes merge into one cell; empty, out-of-range and invalid-hour rows are dropped");
+  assert.strictEqual(usage.profile.length, 24);
+  assert.deepStrictEqual(usage.profile[14], { hour: 14, up: 210, down: 140 });
+  assert.deepStrictEqual(usage.dates, ["2026-11-02", "2026-11-03"]);
+}
+
 const { xuiLedgerFromCycle } = require("./xui-traffic");
 const led = xuiLedgerFromCycle({ a: 100, b: 200 }, { a: 1, b: 2 }, { cycleKey: "2026-01-01", nodeNames: { a: "LA" }, updatedAt: "t" });
 assert.strictEqual(led.rawBytes, 300);
@@ -193,10 +213,12 @@ assert.deepStrictEqual(
 
 async function checkApplicationTrafficStore() {
   let dailyInsert;
+  let hourlyInsert;
   const client = {
     async query(sql, params) {
       if (String(sql).includes("SELECT email, node_guid, last_up, last_down")) return { rows: [{ email: "user@example.com", node_guid: "hk", last_up: "100", last_down: "200" }] };
       if (String(sql).includes("INSERT INTO xui_daily_traffic")) dailyInsert = { sql: String(sql), params };
+      if (String(sql).includes("INSERT INTO xui_hourly_traffic")) hourlyInsert = { sql: String(sql), params };
       return { rows: [] };
     },
     release() {}
@@ -207,6 +229,14 @@ async function checkApplicationTrafficStore() {
   assert.deepStrictEqual(recorded, { applied: 1, seeded: 0 });
   assert.ok(dailyInsert.sql.includes("user_id, user_label, plan_id, node_name"));
   assert.deepStrictEqual(dailyInsert.params, ["2026-09-15", ["user@example.com"], ["hk"], ["u1"], ["U1"], ["pro"], ["Hong Kong"], [30], [60]]);
+  assert.ok(hourlyInsert.sql.includes("date_trunc('hour', NOW())"), "hourly rows are bucketed by the current hour");
+  assert.deepStrictEqual(hourlyInsert.params, [["user@example.com"], ["hk"], [30], [60]], "the hourly table gets the same deltas as the daily table");
+
+  let pruned;
+  store.pool = { async query(sql, params) { pruned = { sql: String(sql), params }; return { rowCount: 4 }; } };
+  assert.deepStrictEqual(await store.pruneXuiHourlyTraffic(Date.parse("2026-08-05T00:00:00Z")), { deleted: 4 });
+  assert.ok(pruned.sql.includes("DELETE FROM xui_hourly_traffic WHERE hour < $1"));
+  assert.deepStrictEqual(pruned.params, ["2026-08-05T00:00:00.000Z"]);
 
   store.pool = {
     async query(sql, params) {

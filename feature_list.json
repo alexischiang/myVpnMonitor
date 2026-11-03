@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-02T18:24:07.917Z",
+  "updated_at": "2026-11-03T11:06:52.856Z",
   "required_fields": [
     "id",
     "name",
@@ -5278,6 +5278,114 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-11-02T18:24:07.917Z"
+      }
+    },
+    {
+      "id": "multiplier-copy-retroactive",
+      "name": "Multiplier copy matches the retroactive billing",
+      "description": "Billing recomputes each user ledger every sync from the current cycle raw bytes per node times the current multipliers (xuiLedgerFromCycle, server.js syncXuiWeightedTraffic), so a multiplier change reprices traffic already used this cycle. The 3x-ui monitor multiplier hint and the user detail 倍率流量 card said it only affected new traffic; both now state the repricing.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The multiplier setting hint says saving reprices this cycle's used traffic.",
+        "The user detail 倍率流量 card says the same."
+      ],
+      "verification": [
+        "2026-11-03 local: code read confirms xuiLedgerFromCycle(cycleUsage.nodes, nodeMultipliers, ...) runs per sync with current multipliers. npm run check passes."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/99c330e4-efe4-4e77-b7a6-ac14a382269f",
+          "/xui-monitor"
+        ],
+        "interactions": [
+          "Read the 倍率流量 card description (no overflow)",
+          "Open Hub VPS 节点设置 and read the 流量倍率 hint (scrollWidth 390 = clientWidth 390)"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-02T18:41:00.487Z"
+      }
+    },
+    {
+      "id": "node-hub-machine-multiplier",
+      "name": "Set a node-hub machine traffic multiplier when creating or editing the machine",
+      "description": "Node Hub machine create dialog and edit drawer get a 流量倍率 field. server.js takes multiplier out of /api/node-hub/machines POST/PUT bodies, validates 0-100 (400 otherwise, before the hub sees the request), saves it to the billing state under hub-m<id> once the machine exists (setNodeMultiplier, shared with the 3x-ui monitor settings endpoint) and adds the current multiplier to machine, machine list and overview responses. node-hub stores no multiplier.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "multiplier-copy-retroactive"
+      ],
+      "done_criteria": [
+        "Creating a machine with a multiplier stores it under hub-m<id>.",
+        "Editing a machine changes it; invalid values are rejected with 400.",
+        "Machine reads and the overview carry the multiplier; the 3x-ui monitor row shows the same value."
+      ],
+      "verification": [
+        "2026-11-03 local: node test-node-hub-app.js (node-hub only and with 3x-ui) passes with new checks: POST with multiplier 1.5 returns it, GET machine and overview show 1.5, PUT 101 is a 400, PUT back to 1 works and the hub never stores the field. node test-node-hub.js, npm run verify:fast, npm run check and git diff --check pass."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=machines"
+        ],
+        "interactions": [
+          "新建机器 with 流量倍率 2.5 -> overview shows 2.5",
+          "Open the machine drawer (shows 2.5, hint fits), set 0.5 and save -> machine and /api/xui-monitor hub-m row both 0.5"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-02T18:53:55.979Z"
+      }
+    },
+    {
+      "id": "xui-hourly-traffic",
+      "name": "Record per-user traffic per hour for time-of-day analysis",
+      "description": "New table xui_hourly_traffic (hour timestamptz, email, node_guid, up/down bytes; PK hour+email+node, index email+hour). recordXuiTrafficSamples (3x-ui sync) and node-hub recordReport add the same deltas they put into xui_daily_traffic to the current whole hour, in the same transaction. The daily xui-traffic-prune job also deletes hourly rows older than 90 days for every user, lifetime included. Billing, quotas and charts still read only the daily table.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [],
+      "done_criteria": [
+        "Every daily delta is also added to the current hour row.",
+        "node-hub reports write hourly rows too.",
+        "Hourly rows older than 90 days are pruned by the daily retention job."
+      ],
+      "verification": [
+        "2026-11-03 local: node test-xui-traffic.js (hourly insert gets the same deltas as the daily insert, bucketed by date_trunc hour; prune SQL and cutoff), node test-node-hub.js (hub reports land in a whole-hour row with the daily sums), node test-node-hub-app.js, node test-payment.js, npm run verify:fast and git diff --check pass. On the test database the app init creates the table and both indexes, and pruneXuiHourlyTraffic deleted a 91-day-old row and kept the current one."
+      ]
+    },
+    {
+      "id": "user-hourly-traffic-chart",
+      "name": "Admin user details: hourly traffic heatmap and 24-hour profile",
+      "description": "User details (self-hosted users) get a 流量时段 tab: a date x hour heatmap (Beijing time, 7/30/90 days, square-root color scale against the busiest hour, detail line on hover/click with up/down and busiest node) and a stacked up/down 24-hour bar chart (recharts). GET /api/users/:id/hourly-traffic?days=7|30|90 returns xuiTraffic.hourlyUsage over xui_hourly_traffic (raw bytes). Arc TabsContent now clears a stale inline height the switch animation leaves behind, so panels whose content loads after the switch are not pinned to the loading height.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "xui-hourly-traffic"
+      ],
+      "done_criteria": [
+        "Self-hosted user details show a 流量时段 tab with the heatmap and 24-hour chart.",
+        "Range switch 7/30/90 refetches and the panel resizes.",
+        "Empty, loading and error states render.",
+        "No console or page errors."
+      ],
+      "verification": [
+        "2026-11-03 local: node test-xui-traffic.js (hourlyUsage merges nodes per cell, picks the busiest node, drops empty/out-of-range/invalid-hour rows, builds the 24-hour profile), npm run check, npm run verify:fast, node test-node-hub.js, git diff --check pass."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/:id (流量时段 tab)"
+        ],
+        "interactions": [
+          "Open 流量时段 on a seeded self-hosted user (308 hourly rows): heatmap, summary and 24h chart render; panel settles at natural height (no inline height)",
+          "Switch 30 -> 7 -> 90 days: refetch, panel resizes, 90 days shows weekly labels",
+          "Hover and click heatmap cells: detail line updates with time, up/down and node; clicked cell gets a ring",
+          "375px mobile + dark theme: no page horizontal overflow, heatmap scrolls sideways only",
+          "User without hourly rows shows the empty state; days=5 falls back to 30"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-03T11:06:52.856Z"
       }
     }
   ]

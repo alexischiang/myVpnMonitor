@@ -169,7 +169,16 @@ class PostgresDataStore {
         PRIMARY KEY (email, node_guid)
       );
       ALTER TABLE xui_traffic_cursor ADD COLUMN IF NOT EXISTS carry_up BIGINT NOT NULL DEFAULT 0;
-      ALTER TABLE xui_traffic_cursor ADD COLUMN IF NOT EXISTS carry_down BIGINT NOT NULL DEFAULT 0
+      ALTER TABLE xui_traffic_cursor ADD COLUMN IF NOT EXISTS carry_down BIGINT NOT NULL DEFAULT 0;
+      CREATE TABLE IF NOT EXISTS xui_hourly_traffic (
+        hour TIMESTAMPTZ NOT NULL,
+        email TEXT NOT NULL,
+        node_guid TEXT NOT NULL,
+        up_bytes BIGINT NOT NULL DEFAULT 0,
+        down_bytes BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (hour, email, node_guid)
+      );
+      CREATE INDEX IF NOT EXISTS xui_hourly_traffic_email_hour_idx ON xui_hourly_traffic (email, hour)
       `), "xui daily traffic init");
       await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS xui_inbounds (
@@ -949,6 +958,16 @@ class PostgresDataStore {
                            updated_at = NOW()`,
             [dateKey, delta.emails, delta.nodes, delta.userIds, delta.userLabels, delta.planIds, delta.nodeNames, delta.ups, delta.downs]
           );
+          // Same deltas into the current hour, for time-of-day usage (pruned after 90 days).
+          await client.query(
+            `INSERT INTO xui_hourly_traffic (hour, email, node_guid, up_bytes, down_bytes)
+             SELECT date_trunc('hour', NOW()), u.email, u.node, u.up, u.down
+             FROM UNNEST($1::text[], $2::text[], $3::bigint[], $4::bigint[]) AS u(email, node, up, down)
+             ON CONFLICT (hour, email, node_guid)
+             DO UPDATE SET up_bytes = xui_hourly_traffic.up_bytes + EXCLUDED.up_bytes,
+                           down_bytes = xui_hourly_traffic.down_bytes + EXCLUDED.down_bytes`,
+            [delta.emails, delta.nodes, delta.ups, delta.downs]
+          );
         }
         await client.query(
           `INSERT INTO xui_traffic_cursor (email, node_guid, last_up, last_down, carry_up, carry_down, updated_at)
@@ -1017,6 +1036,27 @@ class PostgresDataStore {
       `xui daily node series ${email}`
     );
     return result.rows.map(row => ({ date: row.date, nodeGuid: row.node_guid, bytes: Number(row.bytes) }));
+  }
+
+  // One user's hourly rows from `fromMs` on, bucketed by China date and hour, with each node's
+  // latest daily-table name. Returns [{ date, hour, nodeGuid, nodeName, up, down }].
+  async xuiUserHourlySeries(email, fromMs) {
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT to_char(h.hour AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS date,
+                EXTRACT(HOUR FROM h.hour AT TIME ZONE 'Asia/Shanghai')::int AS hour,
+                h.node_guid, COALESCE(n.node_name, '') AS node_name, h.up_bytes, h.down_bytes
+         FROM xui_hourly_traffic h
+         LEFT JOIN (
+           SELECT DISTINCT ON (node_guid) node_guid, node_name FROM xui_daily_traffic
+           WHERE email = $1 AND node_name <> '' ORDER BY node_guid, date DESC
+         ) n ON n.node_guid = h.node_guid
+         WHERE h.email = $1 AND h.hour >= $2 ORDER BY h.hour`,
+        [email, new Date(Number(fromMs)).toISOString()]
+      ),
+      `xui hourly series ${email}`
+    );
+    return result.rows.map(row => ({ date: row.date, hour: Number(row.hour), nodeGuid: row.node_guid, nodeName: row.node_name, up: Number(row.up_bytes), down: Number(row.down_bytes) }));
   }
 
   // Directional application traffic rows used by sales profitability reports.
@@ -1329,6 +1369,17 @@ class PostgresDataStore {
         [cutoffDateKey, list]
       ),
       "prune xui daily traffic"
+    );
+    return { deleted: result.rowCount || 0 };
+  }
+
+  // Hourly rows are only for time-of-day analysis, so every user's rows older than
+  // `cutoffMs` go, lifetime plans included (billing never reads this table).
+  async pruneXuiHourlyTraffic(cutoffMs) {
+    if (!Number.isFinite(Number(cutoffMs))) return { deleted: 0 };
+    const result = await withPgRetry(
+      () => this.pool.query("DELETE FROM xui_hourly_traffic WHERE hour < $1", [new Date(Number(cutoffMs)).toISOString()]),
+      "prune xui hourly traffic"
     );
     return { deleted: result.rowCount || 0 };
   }
