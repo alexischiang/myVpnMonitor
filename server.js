@@ -5035,17 +5035,22 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   return { ...state, nodeResults, nodeNames };
 }
 
+// An empty list is a valid answer (every 3x-ui inbound deleted, e.g. after moving to node-hub);
+// only a panel that answers none of the endpoints is an error.
 async function getAllXuiInboundIds() {
   let lastError;
+  let answered = false;
   for (const apiPath of ["/panel/api/inbounds/list", "/panel/api/inbounds/list/slim", "/panel/api/inbounds/options"]) {
     try {
       const ids = normalizeXuiInboundIds(await xuiRequest(apiPath));
       if (ids.length) return ids;
+      answered = true;
     } catch (error) {
       lastError = error;
     }
   }
-  throw new Error(lastError ? `无法读取3x-ui入站列表：${lastError.message}` : "3x-ui中没有可关联的入站。");
+  if (answered) return [];
+  throw new Error(`无法读取3x-ui入站列表：${lastError.message}`);
 }
 
 // Applies per-client inbound changes ([{ email, attach, detach }]) with one bulk request per
@@ -7302,7 +7307,10 @@ async function fetchHubSubscriptionProxies(user) {
 
 async function handleSelfHostedRelay(req, res, user, relayRequestId) {
   const nodeSource = userNodeSource(user);
-  const panelInboundIds = nodeSource === "nodehub" ? [] : (Array.isArray(user.xuiInboundIds) ? user.xuiInboundIds : []).filter(id => !nodeHub.isHubInboundId(id));
+  // The user's stored ids can still name 3x-ui inbounds deleted since the last client sync; only
+  // inbounds still in the catalog count, so a panel emptied for node-hub serves the hub nodes.
+  const catalogIds = nodeSource === "nodehub" ? new Set() : new Set((await dataStore.listXuiInbounds()).map(inbound => inbound.id));
+  const panelInboundIds = (Array.isArray(user.xuiInboundIds) ? user.xuiInboundIds : []).filter(id => !nodeHub.isHubInboundId(id) && catalogIds.has(id));
   let hubProxies = [];
   if (hubConfigured() && nodeSource !== "3xui") {
     try {
@@ -7328,13 +7336,22 @@ async function handleSelfHostedRelay(req, res, user, relayRequestId) {
     return;
   }
   try {
-    const usePanel = panelInboundIds.length > 0;
-    const source = usePanel
-      ? { id: `xui:${user.id}`, url: selfHostedSubscriptionUrl(user), sourceType: "url", serviceProvider: "3x-ui", enabled: true }
-      : { id: `hub:${user.id}`, url: `${NODE_HUB_URL}/internal/subscription/${encodeURIComponent(user.id)}`, sourceType: "url", serviceProvider: "node-hub", enabled: true };
-    const liveConfig = usePanel
-      ? await fetchSelfHostedSubscription(user)
-      : { body: "", status: 200, client: "node-hub", sourceUrl: source.url, fetchedAt: new Date().toISOString(), contentType: "text/yaml; charset=utf-8", subscriptionUserinfo: selfHostedUserinfo(user), attempts: [], error: null };
+    const hubSource = { id: `hub:${user.id}`, url: `${NODE_HUB_URL}/internal/subscription/${encodeURIComponent(user.id)}`, sourceType: "url", serviceProvider: "node-hub", enabled: true };
+    const hubLiveConfig = () => ({ body: "", status: 200, client: "node-hub", sourceUrl: hubSource.url, fetchedAt: new Date().toISOString(), contentType: "text/yaml; charset=utf-8", subscriptionUserinfo: selfHostedUserinfo(user), attempts: [], error: null });
+    let source = hubSource;
+    let liveConfig = null;
+    if (panelInboundIds.length) {
+      try {
+        source = { id: `xui:${user.id}`, url: selfHostedSubscriptionUrl(user), sourceType: "url", serviceProvider: "3x-ui", enabled: true };
+        liveConfig = await fetchSelfHostedSubscription(user);
+      } catch (error) {
+        // Like a node-hub failure above: the other half still serves when it has nodes.
+        if (!hubProxies.length) throw error;
+        relayLog("self-hosted-panel-subscription-failed", { relayRequestId, userId: user.id, error: error.message });
+        source = hubSource;
+      }
+    }
+    liveConfig ||= hubLiveConfig();
     if (hubProxies.length) {
       liveConfig.body = nodeHub.mergeClashProxies(yaml, liveConfig.body, hubProxies);
       liveConfig.score = liveConfig.body.length;

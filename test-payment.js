@@ -1307,11 +1307,13 @@ async function main() {
     xuiInboundFilter = null;
     const restored = (await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie })).data.inbounds.find(inbound => inbound.key === "local:2");
     assert.deepStrictEqual([restored.region, restored.networkLevel, restored.inboundType], ["保留地区", "optimized", "custom"], "a returning inbound keeps its settings");
-    // An empty panel list is refused instead of hiding every inbound.
+    // An empty panel list (every 3x-ui inbound deleted) is accepted and hides them all; they come
+    // back with their settings once 3x-ui returns them again.
     xuiInboundFilter = () => false;
     const emptyPanel = await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
-    assert.deepStrictEqual([emptyPanel.response.status, emptyPanel.data.inbounds.length, Boolean(emptyPanel.data.refreshError)], [200, 3, true], "an empty 3x-ui list keeps the existing inbounds");
+    assert.deepStrictEqual([emptyPanel.response.status, emptyPanel.data.inbounds.length, emptyPanel.data.refreshError], [200, 0, ""], "an empty 3x-ui list hides every inbound");
     xuiInboundFilter = null;
+    assert.strictEqual((await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie })).data.inbounds.length, 3, "inbounds return after an empty list");
     // Rows missing for more than 30 days are deleted on the next refresh.
     await database.query("UPDATE xui_inbounds SET missing_since = NOW() - INTERVAL '31 days' WHERE key='local:99'");
     await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
