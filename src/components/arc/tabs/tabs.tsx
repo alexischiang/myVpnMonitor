@@ -120,13 +120,16 @@ export function TabsContent({ className, value, forceMount, children, ...props }
     const from = panelHeightRef.current;
     const to = node.offsetHeight;
     let controls: AnimationPlaybackControls | undefined;
-    const release = () => { node.style.height = ""; node.style.overflow = ""; };
+    let settled = false;
+    const release = () => { settled = true; node.style.height = ""; node.style.overflow = ""; };
     if (from !== null && Math.abs(from - to) > 1 && !reduced) {
       if (to > from) node.style.overflow = "clip";
       controls = animate(node, { height: [from, to] }, { ...motionTokens.spring.smooth, onComplete: release });
-    }
+    } else settled = true;
     panelHeightRef.current = controls && from !== null ? from : to;
-    const observer = new ResizeObserver(() => { panelHeightRef.current = node.offsetHeight; });
+    // XELA extension: the finished animation can write its last height back after release, which pins a panel whose
+    // content grows later (data loading in after the switch). Once settled, any inline height left behind is cleared.
+    const observer = new ResizeObserver(() => { if (settled && node.style.height) release(); panelHeightRef.current = node.offsetHeight; });
     observer.observe(node);
     return () => { observer.disconnect(); controls?.stop(); release(); };
   }, [selected, reduced, forceMount, panelHeightRef, leavingRectRef]);

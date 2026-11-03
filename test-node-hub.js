@@ -343,6 +343,7 @@ async function main() {
   const pool = new Pool({ connectionString: databaseUrl });
   await pool.query("DROP TABLE IF EXISTS nh_node_relays, nh_relays, nh_presence, nh_machine_load, nh_report_ids, nh_users, nh_nodes, nh_machines, nh_schema_migrations CASCADE");
   await pool.query("DELETE FROM xui_daily_traffic WHERE node_guid LIKE 'hub-%'").catch(() => {});
+  await pool.query("DELETE FROM xui_hourly_traffic WHERE node_guid LIKE 'hub-%'").catch(() => {});
   const store = new NodeHubStore(pool);
   await store.init();
   await store.init();
@@ -443,6 +444,11 @@ async function main() {
       { date: today, email: "a@example.test", node_guid: `hub-m${machine.id}`, user_id: "user-a", user_label: "A#000001", plan_id: "pro", node_name: "LA-BWH", up_bytes: 1124, down_bytes: 6200 },
       { date: today, email: "b@example.test", node_guid: `hub-m${machine.id}`, user_id: "user-b", user_label: "B#000002", plan_id: "basic", node_name: "LA-BWH", up_bytes: 7, down_bytes: 8 }
     ], "traffic is summed per China day, user and machine; unknown ids and duplicate batches are dropped");
+    const hourly = (await pool.query("SELECT hour, email, node_guid, up_bytes, down_bytes FROM xui_hourly_traffic WHERE node_guid LIKE 'hub-%' ORDER BY email")).rows;
+    assert.deepEqual(hourly.map(row => [row.email, row.node_guid, Number(row.up_bytes), Number(row.down_bytes), row.hour.getTime() % 3600000]), [
+      ["a@example.test", `hub-m${machine.id}`, 1124, 6200, 0],
+      ["b@example.test", `hub-m${machine.id}`, 7, 8, 0]
+    ], "the same traffic lands in the current whole hour");
 
     // Presence: online every report, alive only on change, absence of online means nobody.
     let presence = (await internal("GET", "/internal/presence")).body;

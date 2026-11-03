@@ -33,6 +33,9 @@ import { Select } from "@/components/arc/select/select"
 import { Dialog, DialogClose, DialogContent } from "@/components/arc/dialog/dialog"
 import { Card as ArcCard } from "@/components/arc/card/card"
 import { SimpleTable } from "@/components/features/simple-table"
+import { Skeleton } from "@/components/arc/skeleton/skeleton"
+
+const UserHourlyTraffic = React.lazy(() => import("@/components/features/user-hourly-traffic").then(module => ({ default: module.UserHourlyTraffic })))
 
 type GiftPreview = {
   days: number
@@ -827,11 +830,12 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
           ]} />}</Card>
 
         <Tabs defaultValue="overview" className="@container min-w-0 gap-4">
-          <TabsList className="grid w-full grid-cols-2 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-4">
+          <TabsList className={`grid w-full group-data-[orientation=horizontal]/tabs:h-auto ${user.lineType === "self_hosted" ? "grid-cols-3 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4"}`}>
             <TabsTrigger value="overview" className="h-9">基本信息</TabsTrigger>
             <TabsTrigger value="catalog-v2" className="h-9">V2 商品</TabsTrigger>
             <TabsTrigger value="bills" className="h-9">用户日志</TabsTrigger>
             <TabsTrigger value="referral" className="h-9">邀请返利</TabsTrigger>
+            {user.lineType === "self_hosted" ? <TabsTrigger value="hourly-traffic" className="h-9">流量时段</TabsTrigger> : null}
           </TabsList>
           <TabsContent value="overview" className={`grid min-w-0 gap-4 ${user.lineType === "self_hosted" ? "@4xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] @4xl:grid-rows-[auto_auto_auto_1fr] @4xl:items-start" : ""}`}>
             {/* Wide panes: node traffic on the left, plan and status stacked on the right. Narrow panes: one column with the plan first. */}
@@ -888,6 +892,9 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
             <Card className="gap-0 overflow-hidden py-0" title="邀请账单"><SimpleTable caption="订单列表" columns={["订单", "邀请用户", "套餐", "金额", "状态", "时间"]} rows={referralDetails?.orders} rowKey={(item) => item.id} cells={(item) => [<Button asChild variant="link" size="sm" className="h-auto p-0"><Link to={`/orders/${item.id}`}>{item.number}</Link></Button>, <>{item.inviteeEmail}</>, <>{item.planName}</>, <>{formatMoney(item.amount)}</>, <Badge tone={item.status === "paid" ? "success" : item.status === "reversed" ? "danger" : "neutral"}>{item.status === "paid" ? "已支付" : item.status === "pending" ? "待支付" : item.status === "reversed" ? "已撤销" : item.status}</Badge>, <span className="text-muted-foreground">{formatDateTime(item.createdAt)}</span>]} emptyMessage="暂无邀请账单" /></Card>
             <Card className="gap-0 overflow-hidden py-0" title="返利明细"><SimpleTable caption="来源订单列表" columns={["来源订单", "邀请用户", "返利基数", "比例", "返利金额", "状态", "到账时间"]} rows={referralDetails?.rewards} rowKey={(item) => item.id} cells={(item) => [<Button asChild variant="link" size="sm" className="h-auto p-0"><Link to={`/orders/${item.sourceOrderId}`}>{item.orderNumber}</Link></Button>, <>{item.inviteeEmail}</>, <>{formatMoney(item.baseAmount)}</>, <>{item.rate}%</>, <span className="font-medium">{formatMoney(item.rewardAmount)}</span>, <Badge tone={item.status === "available" ? "success" : item.status === "pending" ? "neutral" : "danger"}>{item.status === "available" ? "已到账" : item.status === "pending" ? "审核中" : item.status === "rejected" ? "已拒绝" : item.status}</Badge>, <span className="text-muted-foreground">{formatDateTime(item.availableAt)}</span>]} emptyMessage="暂无返利记录" /></Card>
           </TabsContent>
+          {user.lineType === "self_hosted" ? <TabsContent value="hourly-traffic" className="grid min-w-0 gap-4">
+            <React.Suspense fallback={<Skeleton lines={1} className="h-72" />}><UserHourlyTraffic userId={user.id} /></React.Suspense>
+          </TabsContent> : null}
         </Tabs>
       </div>
     </div>

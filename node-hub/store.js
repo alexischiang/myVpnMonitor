@@ -125,6 +125,18 @@ const MIGRATIONS = [
           PRIMARY KEY (node_id, relay_id)
         );
         CREATE UNIQUE INDEX IF NOT EXISTS nh_node_relays_port_idx ON nh_node_relays (relay_id, listen_port)
+  ` },
+  // Hourly copy of the daily traffic rows (same table the main app creates), for time-of-day usage.
+  { version: 3, sql: `
+        CREATE TABLE IF NOT EXISTS xui_hourly_traffic (
+          hour TIMESTAMPTZ NOT NULL,
+          email TEXT NOT NULL,
+          node_guid TEXT NOT NULL,
+          up_bytes BIGINT NOT NULL DEFAULT 0,
+          down_bytes BIGINT NOT NULL DEFAULT 0,
+          PRIMARY KEY (hour, email, node_guid)
+        );
+        CREATE INDEX IF NOT EXISTS xui_hourly_traffic_email_hour_idx ON xui_hourly_traffic (email, hour)
   ` }
 ];
 
@@ -661,6 +673,16 @@ class NodeHubStore {
              node_name = CASE WHEN EXCLUDED.node_name <> '' THEN EXCLUDED.node_name ELSE xui_daily_traffic.node_name END,
              updated_at = NOW()`,
           [JSON.stringify(rows)]
+        );
+        // Same traffic into the current hour, for time-of-day usage (the main app prunes it).
+        await client.query(
+          `INSERT INTO xui_hourly_traffic (hour, email, node_guid, up_bytes, down_bytes)
+           SELECT $1::timestamptz, r.email, r."nodeGuid", SUM(r.up), SUM(r.down)
+           FROM jsonb_to_recordset($2::jsonb) AS r(email TEXT, "nodeGuid" TEXT, up BIGINT, down BIGINT)
+           GROUP BY r.email, r."nodeGuid"
+           ON CONFLICT (hour, email, node_guid) DO UPDATE SET up_bytes = xui_hourly_traffic.up_bytes + EXCLUDED.up_bytes,
+             down_bytes = xui_hourly_traffic.down_bytes + EXCLUDED.down_bytes`,
+          [new Date(Math.floor(now / 3600000) * 3600000).toISOString(), JSON.stringify(rows)]
         );
       }
       const activeIds = ids.filter(id => usersById.has(id));

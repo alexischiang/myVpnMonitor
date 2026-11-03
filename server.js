@@ -4729,15 +4729,19 @@ async function resetDueXuiTraffic() {
 // Retention cleanup: periodic-plan users keep 90 days of daily rows; lifetime/unlimited
 // users are excluded so their history is kept permanently (their billing sums all time).
 const XUI_DAILY_TRAFFIC_RETENTION_DAYS = 90;
+// Hourly rows (time-of-day analysis only) keep the same 90 days for every user.
 async function pruneXuiDailyTrafficRetention(now = Date.now()) {
-  const cutoff = chinaDateKey(now - XUI_DAILY_TRAFFIC_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const cutoffMs = now - XUI_DAILY_TRAFFIC_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const { deleted: hourlyDeleted } = await dataStore.pruneXuiHourlyTraffic(cutoffMs);
+  if (hourlyDeleted) console.log(`[xui-traffic] Pruned ${hourlyDeleted} hourly rows older than ${new Date(cutoffMs).toISOString()}.`);
+  const cutoff = chinaDateKey(cutoffMs);
   const periodicEmails = [...new Set(users
     .filter(item => isSelfHostedUser(item) && item.xuiClientEmail && xuiTraffic.isPeriodicPlan(item))
     .map(item => String(item.xuiClientEmail).trim().toLowerCase()))];
-  if (!cutoff || !periodicEmails.length) return { deleted: 0, cutoff };
+  if (!cutoff || !periodicEmails.length) return { deleted: 0, hourlyDeleted, cutoff };
   const { deleted } = await dataStore.pruneXuiDailyTraffic(cutoff, periodicEmails);
   if (deleted) console.log(`[xui-traffic] Pruned ${deleted} daily rows older than ${cutoff} (periodic-plan users; lifetime kept).`);
-  return { deleted, cutoff };
+  return { deleted, hourlyDeleted, cutoff };
 }
 
 function markMissingXuiClients(appUsersByEmail, remoteEmails, checkedAt = new Date().toISOString()) {
@@ -5506,7 +5510,7 @@ const SYNC_JOBS = [
     }
   },
   {
-    id: "xui-traffic-prune", module: "traffic", name: "每日流量清理", description: `删除周期套餐用户超过 ${XUI_DAILY_TRAFFIC_RETENTION_DAYS} 天的每日流量记录，不限时套餐保留。`,
+    id: "xui-traffic-prune", module: "traffic", name: "每日流量清理", description: `删除周期套餐用户超过 ${XUI_DAILY_TRAFFIC_RETENTION_DAYS} 天的每日流量记录，不限时套餐保留；所有用户超过 ${XUI_DAILY_TRAFFIC_RETENTION_DAYS} 天的每小时流量记录一并删除。`,
     intervalMs: 24 * 60 * 60 * 1000, requiresLine: true,
     run: async () => ({ status: "success", summary: await pruneXuiDailyTrafficRetention() })
   },
@@ -10134,7 +10138,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui|xui-recover|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -10163,6 +10167,18 @@ async function handleApi(req, res, pathname) {
       } catch (error) {
         sendJson(res, 200, { availableBalance: 0, balance: 0, error: error.message });
       }
+      return;
+    }
+
+    // Admin time-of-day view: the last 7, 30 or 90 China days of hourly rows (raw bytes).
+    if (action === "hourly-traffic" && req.method === "GET") {
+      const requested = Number(new URL(req.url, "http://localhost").searchParams.get("days"));
+      const days = [7, 30, 90].includes(requested) ? requested : 30;
+      const email = item ? String(xuiClientEmail(item) || "").trim().toLowerCase() : "";
+      const now = Date.now();
+      const dates = Array.from({ length: days }, (_, index) => chinaDateKey(now - (days - 1 - index) * 86400000));
+      const rows = email ? await dataStore.xuiUserHourlySeries(email, now - (days + 1) * 86400000) : [];
+      sendJson(res, 200, xuiTraffic.hourlyUsage(rows, dates));
       return;
     }
 
