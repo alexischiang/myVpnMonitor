@@ -3742,16 +3742,16 @@ async function syncHubUser(user, { forceDisabled = false, context = null, uuid =
   return stored;
 }
 
-// node-hub machines as monitor rows, with the same per-guid multiplier and VPS cost settings as
-// 3x-ui nodes (their billing guid is hub-m<machine id>).
-async function hubMonitorRows({ billing = null, salesTraffic = null, force = false } = {}) {
-  const [overview, billingState, salesState] = await Promise.all([getHubOverview({ force }), billing || getXuiBillingState(), salesTraffic || getSalesTrafficState()]);
+// node-hub machines as monitor rows, with the same VPS cost settings as 3x-ui nodes (their guid is
+// hub-m<machine id>). Multipliers are per hub node (Node Hub → 节点), so a machine row has none.
+async function hubMonitorRows({ salesTraffic = null, force = false } = {}) {
+  const [overview, salesState] = await Promise.all([getHubOverview({ force }), salesTraffic || getSalesTrafficState()]);
   return nodeHub.hubMonitorNodes(overview).map(node => ({
     ...node,
     trafficTokenRequired: false,
     trafficConfigured: true,
     trafficError: "",
-    multiplier: xuiMultiplier(billingState.multipliers?.[node.guid]),
+    multiplier: null,
     costConfig: nodeCostConfigForDate(salesState.costConfigs?.[node.guid])
   }));
 }
@@ -4259,7 +4259,8 @@ function salesProfitabilityReport({ from, to, plan = "all", trafficRows = [], co
     const planId = String(traffic.planId || activeUserGroup(user || {}));
     if (plan !== "all" && planId !== plan) continue;
     const userRow = rowForUser(userId, traffic.userLabel || (user ? billUserLabel(user) : email));
-    const guid = String(traffic.nodeGuid || "");
+    // VPS cost is per machine, so a hub node's own billing key counts toward its machine.
+    const guid = xuiTraffic.billingMachineGuid(traffic.nodeGuid);
     if (!guid) continue;
     const inBytes = Math.max(0, Number(traffic.inBytes) || 0);
     const outBytes = Math.max(0, Number(traffic.outBytes) || 0);
@@ -4357,7 +4358,8 @@ async function xuiUserNodeUsage(user, days = 30, now = Date.now()) {
     getXuiBillingState()
   ]);
   const multipliers = billingState?.multipliers || {};
-  const rows = rawRows.map(row => ({ ...row, bytes: Math.round(row.bytes * xuiMultiplier(multipliers[row.nodeGuid])) }));
+  // A hub node key is weighted with the node's multiplier, then labelled like its machine.
+  const rows = rawRows.map(row => ({ ...row, nodeGuid: xuiTraffic.billingMachineGuid(row.nodeGuid), bytes: Math.round(row.bytes * xuiMultiplier(multipliers[row.nodeGuid])) }));
   const v2Group = groups.find(group => group.id === planLineGroupId(user) && group.isEnabled) || null;
   const guidByInboundId = new Map((management.inbounds || []).map(inbound => [String(inbound.id), inbound.nodeGuid]));
   const labelByGuid = new Map();
@@ -4374,12 +4376,18 @@ async function xuiPresencePayload() {
   const state = await getXuiBillingState();
   const today = chinaDateKey();
   const [nodeTotals, userTotals] = await Promise.all([dataStore.xuiNodeDailyTotals(today), dataStore.xuiUserDailyTotals(today)]);
+  // Raw bytes per machine: hub node keys are added to their machine's total.
+  const nodes = {};
+  for (const item of nodeTotals) {
+    const guid = xuiTraffic.billingMachineGuid(item.nodeGuid);
+    nodes[guid] = { usedBytes: (nodes[guid]?.usedBytes || 0) + item.up + item.down };
+  }
   return {
     configured: true,
     ...(state.presence || { checkedAt: "", onlineEmails: [], onlineByGuid: {}, lastOnline: {}, nodeNames: {} }),
     dailyTraffic: {
       date: today,
-      nodes: Object.fromEntries(nodeTotals.map(item => [item.nodeGuid, { usedBytes: item.up + item.down }])),
+      nodes,
       users: Object.fromEntries(userTotals.map(item => [item.email, { usedBytes: item.up + item.down }]))
     }
   };
@@ -4535,16 +4543,51 @@ async function saveXuiBillingState(state) {
   await setXuiState("billing", "xuiBilling", { ...xuiBillingPayload(state), updatedAt: new Date().toISOString() });
 }
 
-/** Adds each node-hub machine's billing multiplier to machine responses (overview, list, one machine). */
-async function withHubMachineMultipliers(hubPath, result) {
-  const single = /^\/machines\/\d+$/.test(hubPath) || hubPath === "/machines" && result && !Array.isArray(result);
-  const list = hubPath === "/machines" && Array.isArray(result) ? result : hubPath === "/overview" && Array.isArray(result?.machines) ? result.machines : null;
+/** The billing key a node-hub node's traffic is recorded under (node-hub's nodeBillingKey). */
+function hubNodeBillingKey(node) {
+  return node.machineId ? `hub-m${node.machineId}-n${node.id}` : `hub-n${node.id}`;
+}
+
+/** Adds each node-hub node's billing multiplier (1 when unset) to node responses (overview, list, one node). */
+async function withHubNodeMultipliers(hubPath, result) {
+  const single = /^\/nodes\/\d+$/.test(hubPath) || hubPath === "/nodes" && result && !Array.isArray(result);
+  const list = hubPath === "/nodes" && Array.isArray(result) ? result : hubPath === "/overview" && Array.isArray(result?.nodes) ? result.nodes : null;
   if (!single && !list) return result;
   const multipliers = (await getXuiBillingState()).multipliers || {};
-  const withMultiplier = machine => machine?.id ? { ...machine, multiplier: xuiMultiplier(multipliers[`hub-m${machine.id}`]) } : machine;
+  const withMultiplier = node => node?.id ? { ...node, multiplier: xuiMultiplier(multipliers[hubNodeBillingKey(node)]) } : node;
   if (single) return withMultiplier(result);
-  const machines = list.map(withMultiplier);
-  return hubPath === "/overview" ? { ...result, machines } : machines;
+  const nodes = list.map(withMultiplier);
+  return hubPath === "/overview" ? { ...result, nodes } : nodes;
+}
+
+let hubMultiplierMigration = null;
+/**
+ * One-time move from machine to node multipliers: every node of a machine whose multiplier is not 1
+ * gets that multiplier under its own key. The machine key keeps its value only to price traffic
+ * recorded under it before per-node keys, until that traffic leaves the billing cycle; it can no
+ * longer be edited. Retried on the next call if node-hub is unreachable.
+ */
+function migrateHubMachineMultipliers() {
+  if (!hubConfigured()) return Promise.resolve();
+  hubMultiplierMigration ||= (async () => {
+    if ((await getXuiBillingState()).hubNodeMultipliersAt) return;
+    const nodes = await requestNodeHub("/internal/nodes");
+    await withXuiBillingLock(async () => {
+      const state = await getXuiBillingState();
+      if (state.hubNodeMultipliersAt) return;
+      for (const node of Array.isArray(nodes) ? nodes : []) {
+        const machineMultiplier = node.machineId ? state.multipliers[`hub-m${node.machineId}`] : undefined;
+        const key = hubNodeBillingKey(node);
+        if (machineMultiplier !== undefined && xuiMultiplier(machineMultiplier) !== 1 && state.multipliers[key] === undefined) state.multipliers[key] = xuiMultiplier(machineMultiplier);
+      }
+      state.hubNodeMultipliersAt = new Date().toISOString();
+      await saveXuiBillingState(state);
+    });
+  })().catch(error => {
+    hubMultiplierMigration = null;
+    throw error;
+  });
+  return hubMultiplierMigration;
 }
 
 /** A traffic multiplier from a form value; throws the message the admin sees. */
@@ -4555,8 +4598,8 @@ function parseNodeMultiplier(value) {
 }
 
 /**
- * Sets one billing key's multiplier (a 3x-ui node guid or hub-m<machine id>). The next traffic sync
- * reprices the current cycle with it. Pass `extra` to do more under the same billing lock.
+ * Sets one billing key's multiplier (a 3x-ui node guid or hub-m<machine id>-n<node id>). The next
+ * traffic sync reprices the current cycle with it. Pass `extra` to do more under the same billing lock.
  */
 async function setNodeMultiplier(guid, multiplier, extra = null) {
   await withXuiBillingLock(async () => {
@@ -4758,6 +4801,8 @@ function markMissingXuiClients(appUsersByEmail, remoteEmails, checkedAt = new Da
 
 async function syncXuiWeightedTraffic(snapshot = {}) {
   if (!xuiPanelConfigured() && !hubConfigured()) return getXuiBillingState();
+  // Hub node keys are priced with node multipliers, so they must exist before the first such round.
+  await migrateHubMachineMultipliers().catch(error => hubLogger.warn({ error: error.message }, "node-hub multiplier migration failed"));
   return withXuiSyncLock(() => runXuiWeightedTrafficSync(snapshot));
 }
 
@@ -4788,7 +4833,9 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   const { monotonicTraffic, nodeResults, localGuid } = panel ? await xuiTrafficFromNodes(status, nodes, inbounds, nodeTokens) : { monotonicTraffic: {}, nodeResults: {}, localGuid: "node:local" };
   const nodeNames = {
     ...(panel ? { [localGuid]: XUI_PANEL_NAME, ...Object.fromEntries((Array.isArray(nodes) ? nodes : []).map(item => [String(item?.guid || `node:${item?.id}`), String(item?.remark || item?.name || item?.guid || item?.id)])) } : {}),
-    ...Object.fromEntries((hubOverview?.machines || []).map(machine => [machine.guid, machine.name]))
+    ...Object.fromEntries((hubOverview?.machines || []).map(machine => [machine.guid, machine.name])),
+    // Hub traffic is billed per node: shown as "machine · node" in the user's traffic list.
+    ...Object.fromEntries((hubOverview?.nodes || []).filter(node => node.billingKey && node.billingKey !== node.guid).map(node => [node.billingKey, node.machineName ? `${node.machineName} · ${node.name}` : node.name]))
   };
   const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
   try {
@@ -8729,18 +8776,22 @@ async function handleApi(req, res, pathname) {
         return;
       }
       const body = ["POST", "PUT"].includes(req.method) ? await readJson(req) : undefined;
-      // A machine's traffic multiplier is billing state of this app (key hub-m<id>), not node-hub data:
-      // it is validated before the hub sees the request and saved once the machine exists.
-      const machineWrite = /^\/machines(\/\d+)?$/.test(hubPath) && body && body.multiplier !== undefined;
-      const multiplier = machineWrite ? parseNodeMultiplier(body.multiplier) : null;
-      if (machineWrite) delete body.multiplier;
+      // Node multipliers start from the machine multipliers they replace.
+      await migrateHubMachineMultipliers().catch(error => hubLogger.warn({ error: error.message }, "node-hub multiplier migration failed"));
+      // A node's traffic multiplier is billing state of this app (key hub-m<machine>-n<node>), not
+      // node-hub data: it is validated before the hub sees the request and saved once the node exists.
+      // Machines have no multiplier any more; a stale form value is dropped.
+      if (/^\/machines(\/\d+)?$/.test(hubPath) && body) delete body.multiplier;
+      const nodeWrite = /^\/nodes(\/\d+)?$/.test(hubPath) && body && body.multiplier !== undefined;
+      const nodeMultiplier = nodeWrite ? parseNodeMultiplier(body.multiplier) : null;
+      if (nodeWrite) delete body.multiplier;
       const result = await requestNodeHub(route[2](hubPath), { method: req.method, body });
-      if (machineWrite && result?.id) await setNodeMultiplier(`hub-m${result.id}`, multiplier);
+      if (nodeWrite && result?.id) await setNodeMultiplier(hubNodeBillingKey(result), nodeMultiplier);
       if (req.method !== "GET") {
         invalidateHubOverview();
         if (/^\/nodes/.test(hubPath)) syncHubUsers().catch(error => hubLogger.warn({ error: error.message }, "node-hub entitlement sync after node change failed"));
       }
-      sendJson(res, req.method === "POST" && /^\/(machines|nodes|relays)$/.test(hubPath) ? 201 : 200, await withHubMachineMultipliers(hubPath, result));
+      sendJson(res, req.method === "POST" && /^\/(machines|nodes|relays)$/.test(hubPath) ? 201 : 200, await withHubNodeMultipliers(hubPath, result));
     } catch (error) {
       sendJson(res, error.statusCode && error.statusCode < 600 ? error.statusCode : 502, { error: error.message });
     }
@@ -8862,7 +8913,7 @@ async function handleApi(req, res, pathname) {
       const onlineUsers = onlinesByGuid ? normalizeXuiPresence(onlinesByGuid, {}).onlineEmails.length : null;
       if (hubConfigured()) {
         try {
-          monitor.nodes.push(...await hubMonitorRows({ billing, salesTraffic }));
+          monitor.nodes.push(...await hubMonitorRows({ salesTraffic }));
         } catch (error) {
           console.warn(`[xui-monitor] node-hub unavailable: ${error.message}`);
         }
@@ -8898,6 +8949,7 @@ async function handleApi(req, res, pathname) {
       const multiplier = parseNodeMultiplier(payload.multiplier);
       const guid = decodeURIComponent(xuiNodeSettingsMatch[1]);
       if (!guid || guid.length > 512 || /[\\/]/.test(guid)) throw new Error("节点标识无效。");
+      if (/^hub-/.test(guid)) throw new Error("node-hub 的流量倍率按节点设置，请在 Node Hub → 节点里修改。");
       const apiToken = String(payload.apiToken || "").trim();
       if (apiToken.length > 4096) throw new Error("节点 API Token 无效。");
       await setNodeMultiplier(guid, multiplier, apiToken ? () => setXuiNodeToken(guid, sealXuiNodeToken(apiToken)) : null);
@@ -10178,7 +10230,8 @@ async function handleApi(req, res, pathname) {
       const now = Date.now();
       const dates = Array.from({ length: days }, (_, index) => chinaDateKey(now - (days - 1 - index) * 86400000));
       const rows = email ? await dataStore.xuiUserHourlySeries(email, now - (days + 1) * 86400000) : [];
-      sendJson(res, 200, xuiTraffic.hourlyUsage(rows, dates));
+      // Raw bytes, so a hub node's own billing key simply counts as its machine.
+      sendJson(res, 200, xuiTraffic.hourlyUsage(rows.map(row => ({ ...row, nodeGuid: xuiTraffic.billingMachineGuid(row.nodeGuid) })), dates));
       return;
     }
 

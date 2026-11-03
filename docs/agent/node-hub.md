@@ -13,7 +13,7 @@ VPS: xboard-node (machine 模式) ──HTTPS /api/v1|v2/server/*──> 反向�
 
 - node-hub 是独立进程，只做三件事：对 xboard-node 提供 Xboard 节点 API（handshake、config、user、report、machine/nodes、machine/status，ETag/304）；通过 WebSocket 把变化实时推给 xboard-node（`node-hub/push.js`，见下节）；对本站提供 `/internal/*` 管理 API（仅 loopback + `NODE_HUB_INTERNAL_TOKEN`）。
 - 授权由本站计算：每个用户 `{userKey, uuid, planId, nodeIds, speedLimit, deviceLimit, enabled}`，每 60 秒全量同步（同步任务「node-hub 授权同步」，兜底到期等没有事件的变化），开通、续费、套餐变更、流量耗尽、个人定制入站变更时立即同步单个用户。node-hub 收到后立刻推给已连接的机器。
-- 流量：xboard-node 每次上报的是每用户增量；node-hub 在一个事务里按 report id 去重后累加到本站的 `xui_daily_traffic`（中国日期，`node_guid = hub-m<机器id>`）。所以加权计费、日流量图、节点盈利分析都沿用原逻辑。上报失败时节点会自己回滚重报，不会丢流量。
+- 流量：xboard-node 每次上报的是每用户增量；node-hub 在一个事务里按 report id 去重后累加到本站的 `xui_daily_traffic`（中国日期，每个节点一个计费键 `node_guid = hub-m<机器id>-n<节点id>`）。所以加权计费、日流量图、节点盈利分析都沿用原逻辑（按机器统计的地方把节点键归到机器，见「已知限制」里的流量倍率）。上报失败时节点会自己回滚重报，不会丢流量。
 - 在本站里，hub 节点以入站形式出现：key `hub-m<机器id>:<节点id>`，入站 id `1000000000 + 节点id`。这些 id 永远不会发给 3x-ui。线路组、入站设置（地区、网络等级、套餐/定制）、启用停用、个人定制入站、在线状态、节点监控都直接可用。
 - 订阅：`/sub/<token>` 把 hub 节点的 Clash 代理合并进 3x-ui 的 Clash 配置（两者共存时），或者单独生成（只有 hub 时），再交给 subconverter。
 
@@ -138,7 +138,8 @@ xboard-node 启动时调 handshake；`NODE_HUB_PUBLIC_URL` 已设置且 `NODE_HU
 - 推送连接时变化即时生效；只用轮询（没有 `NODE_HUB_PUBLIC_URL`、反向代理不支持 WebSocket、或推送断开）时，机器的节点列表和用户最多每 60 秒刷新一次。
 - xboard-node 的机器模式只在启动时 handshake 一次：已经在跑的机器要重启 xboard-node（`systemctl restart xboard-node`）才会切到推送。
 - 限速按节点生效；全局设备数只在 sing-box 内核上生效，xray 内核按单节点计算。
-- 流量倍率按机器计（计费键 `hub-m<机器 id>`，xboard-node 只上报原始流量）。在「Node Hub → 机器」新建或编辑时填写：本站转发请求时取出 `multiplier`、校验 0–100、在机器存在后写进计费状态（`setNodeMultiplier`），读取机器、机器列表和概览时附上当前倍率；node-hub 本身不存倍率。「3x-ui 监控」的节点设置改的是同一个键。修改后下一次计费同步按新倍率重算本计费周期已用流量。
+- 流量倍率按节点计（计费键 `hub-m<机器 id>-n<节点 id>`，node-hub 的 `nodeBillingKey`，概览节点的 `billingKey`；`guid = hub-m<机器 id>` 仍是入站 key、在线状态和 VPS 成本用的机器键，线路组不受影响）。在「Node Hub → 节点」新建或编辑时填写，默认 1：本站转发请求时取出 `multiplier`、校验 0–100、在节点存在后写进计费状态（`setNodeMultiplier`），读取节点、节点列表和概览时附上当前倍率；node-hub 本身不存倍率。机器没有倍率：机器表单不再有这个字段，「3x-ui 监控」里 hub 机器行的 `multiplier` 为 null，设置窗口只剩 VPS 成本，`PUT /api/xui-monitor/nodes/hub-…/settings` 返回 400。修改后下一次计费同步按新倍率重算本计费周期已用流量。VPS 成本、盈利分析、今日节点流量、流量时段图和账户节点用量都用 `billingMachineGuid` 把节点键归到机器；用户的流量明细里每个节点一行，名为「机器 · 节点」。同一台落地机经两台中转机按不同倍率计费时，把节点拆成两个（不同端口、各挂一台中转机），分别设倍率。
+- 从机器倍率迁移（`migrateHubMachineMultipliers`，第一次计费同步或 Node Hub 请求时执行一次，计费状态记 `hubNodeMultipliersAt`，node-hub 不可达时下次重试）：倍率不是 1 的机器，把倍率写给它的每个节点。旧机器键 `hub-m<机器 id>` 的倍率保留但不能再改，只用来给升级前记在机器键下的流量计价，这些流量离开计费周期后就不再参与计费。
 - 3x-ui 中多个 shortId / serverName 只保留第一个。
 - 节点在没有任何授权用户时创建，xboard-node（v1.13）不启动内核；之后推送来的用户（`sync.users`、`add` 增量、只有用户变化的 REST 重新拉取）都会被 `ensureRunning()` 丢掉，因为它检查的 `lastUsers` 要等内核启动后才写入。节点会一直显示「内核未运行」，直到 `systemctl restart xboard-node`。fork `alexischiang/nexora-node` 已修复（内核空闲时先记下推送来的用户再启动内核），hub 的安装命令默认从 fork 安装；仍在用上游二进制的机器，先把节点加入线路组、确认有用户授权，再执行安装命令或重启 xboard-node。
 - 流量耗尽或到期的用户，已经建立的连接要靠 xboard-node 主动断开。xray 内核从 UserManager 移除用户只拒绝新连接；fork v1.13.1 的 `CloseUserConnections` 是空操作，所以旧连接会一直跑（2026-11-03 实测，`npm run e2e:hub`：REALITY Vision 节点上持续下载的连接在新连接被拒后 10 秒内又传了 3.26 MB，速率不变，没有断开）。fork v1.13.2 已修复（PR [alexischiang/nexora-node#1](https://github.com/alexischiang/nexora-node/pull/1)，`internal/kernel/xray`：dispatcher 按用户登记每条连接，`RemoveUsers`/`UpdateUsers` 移除用户时取消其上下文并中断 link，含重启回退和最后一个用户被移除时的 Stop）。用发布的 v1.13.2 实测：推送模式下这条连接在新连接被拒的同时停止（之后 0 字节，客户端约 0.7 s 内收到断开）；修复构建在 REST 轮询模式下同样 0 字节。安装命令固定 `--version v1.13.2`；还在跑 v1.13.1 或更早版本的机器要重新执行安装命令升级，否则旧连接仍会继续用流量，直到客户端自己断开。到期与耗尽走同一条移除路径。sing-box 内核本来就会断开。

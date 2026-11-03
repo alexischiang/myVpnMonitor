@@ -142,6 +142,11 @@ async function child(mode) {
   await hubStore.init();
   const hub = http.createServer(createNodeHubHandler({ store: hubStore, internalToken, publicUrl: "https://hub.example.com", logger: { warn() {}, error() {} } }));
   await listen(hub, hubPort);
+  // A machine priced 1.5x before multipliers moved to nodes: its node must inherit 1.5.
+  const { normalizeNodeInput } = require("./node-hub/node-config");
+  const legacyMachine = await hubStore.createMachine({ name: "Legacy VPS", host: "legacy-vps.example.com" });
+  const legacyNode = await hubStore.createNode(legacyMachine.id, normalizeNodeInput({ name: "Legacy 01", protocol: "vless", host: "legacy-vps.example.com", serverPort: 9443, enabled: false, settings: { network: "tcp", tls: 0 } }));
+  await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('xuiBilling', 'state', 0, $1::jsonb)", [JSON.stringify({ multipliers: { [`hub-m${legacyMachine.id}`]: 1.5 } })]);
 
   const now = Date.now();
   const user = {
@@ -192,18 +197,20 @@ async function child(mode) {
     assert.equal(jobs.find(job => job.id === "node-hub-billing").configured, mode === "hub", "hub billing runs only without 3x-ui");
 
     // Machine and node through the app; node shows up as an inbound.
+    // Machines have no multiplier: a stale form value never reaches the hub or billing state.
     const machine = await api("/api/node-hub/machines", { method: "POST", body: { name: "Hub VPS", host: "hub-vps.example.com", multiplier: 1.5 } });
-    // The machine's traffic multiplier is the app's billing key hub-m<id>: set and read with the machine.
-    assert.equal(machine.multiplier, 1.5, "created with its multiplier");
-    assert.equal((await api(`/api/node-hub/machines/${machine.id}`)).multiplier, 1.5);
-    assert.equal((await api("/api/node-hub/overview")).machines.find(item => item.id === machine.id).multiplier, 1.5);
-    await assert.rejects(api(`/api/node-hub/machines/${machine.id}`, { method: "PUT", body: { multiplier: 101 } }), error => error.status === 400);
-    assert.equal((await api(`/api/node-hub/machines/${machine.id}`, { method: "PUT", body: { name: "Hub VPS", multiplier: 1 } })).multiplier, 1, "edited back to 1");
-    assert.equal((await api(`/api/node-hub/machines/${machine.id}`)).name, "Hub VPS", "the hub never sees the multiplier field");
-    const node = await api("/api/node-hub/nodes", { method: "POST", body: { machineId: machine.id, name: "Hub 01", protocol: "vless", host: "hub-vps.example.com", serverPort: 443, settings: { network: "tcp", tls: 0 } } });
+    assert.equal(machine.multiplier, undefined, "machines carry no multiplier");
+    // The first Node Hub request moved the legacy machine multiplier onto its node, once.
+    assert.equal((await api(`/api/node-hub/nodes/${legacyNode.id}`)).multiplier, 1.5, "a node inherits its machine's old multiplier");
+    // The node's traffic multiplier is the app's billing key hub-m<machine>-n<node>: set and read with the node.
+    const node = await api("/api/node-hub/nodes", { method: "POST", body: { machineId: machine.id, name: "Hub 01", protocol: "vless", host: "hub-vps.example.com", serverPort: 443, multiplier: 1, settings: { network: "tcp", tls: 0 } } });
+    assert.equal(node.multiplier, 1, "created with its multiplier");
     const customNode = await api("/api/node-hub/nodes", { method: "POST", body: { machineId: machine.id, name: "Hub 定制", protocol: "vless", host: "hub-vps.example.com", serverPort: 8443, inboundType: "custom", settings: { network: "tcp", tls: 0 } } });
-    assert.deepEqual((await api("/api/node-hub/machines")).map(item => item.id), [machine.id]);
-    assert.equal((await api("/api/node-hub/nodes")).length, 2);
+    assert.equal(customNode.multiplier, 1, "a node without one is billed at 1");
+    await assert.rejects(api(`/api/node-hub/nodes/${node.id}`, { method: "PUT", body: { multiplier: 101 } }), error => error.status === 400);
+    await assert.rejects(api(`/api/node-hub/nodes/${node.id}`, { method: "PUT", body: { multiplier: "" } }), error => error.status === 400, "a node multiplier is required once sent");
+    assert.deepEqual((await api("/api/node-hub/machines")).map(item => item.id).sort(), [legacyMachine.id, machine.id].sort());
+    assert.equal((await api("/api/node-hub/nodes")).length, 3);
     if (xui) await runJob("xui-panel-sync");
     const view = await api("/api/xui-inbounds");
     const hubRow = view.inbounds.find(row => row.hubNodeId === node.id);
@@ -304,7 +311,28 @@ async function child(mode) {
     const machineRow = monitor.nodes.find(item => item.guid === `hub-m${machine.id}`);
     assert.equal(machineRow.status, "online");
     assert.equal(machineRow.onlineCount, 1);
-    await nodeClient.report({ traffic: { [hubUser.id]: [0, 11 * MiB] } });
+
+    // Hub traffic is billed per node under hub-m<machine>-n<node>, and still counts as the machine's
+    // traffic for presence, the monitor and VPS cost. The machine row has no multiplier to edit.
+    const nodeKey = `hub-m${machine.id}-n${node.id}`;
+    assert.deepEqual(billed.xuiWeightedTraffic.nodes.map(item => [item.key, item.name, item.multiplier, item.rawBytes]), [[nodeKey, "Hub VPS · Hub 01", 1, 10 * MiB]]);
+    assert.equal(machineRow.multiplier, null, "machine rows carry no multiplier");
+    await assert.rejects(api(`/api/xui-monitor/nodes/${encodeURIComponent(`hub-m${machine.id}`)}/settings`, { method: "PUT", body: { multiplier: 2 } }), error => error.status === 400);
+    // A multiplier change reprices the node's traffic in the current cycle.
+    assert.equal((await api(`/api/node-hub/nodes/${node.id}`, { method: "PUT", body: { multiplier: 1.1 } })).multiplier, 1.1);
+    assert.equal((await api("/api/node-hub/overview")).nodes.find(item => item.id === node.id).multiplier, 1.1);
+    assert.equal((await api("/api/node-hub/nodes")).find(item => item.id === customNode.id).multiplier, 1, "other nodes keep theirs");
+    await nodeClient.report({ traffic: { [hubUser.id]: [0, MiB] } });
+    await runJob(xui ? "xui-panel-sync" : "node-hub-billing");
+    billed = (await api("/api/users")).find(item => item.id === user.id);
+    assert.equal(billed.xuiWeightedTraffic.rawUsedBytes, 11 * MiB);
+    assert.equal(billed.xuiWeightedTraffic.usedBytes, Math.round(11 * MiB * 1.1), "the node's traffic is weighted with its multiplier");
+    assert.equal((await api("/api/xui-presence")).dailyTraffic.nodes[`hub-m${machine.id}`].usedBytes, 11 * MiB, "today's machine total sums its node keys");
+    assert.equal((await api(`/api/node-hub/nodes/${node.id}`, { method: "PUT", body: { multiplier: 1 } })).multiplier, 1);
+    await runJob(xui ? "xui-panel-sync" : "node-hub-billing");
+    assert.equal((await api("/api/users")).find(item => item.id === user.id).xuiWeightedTraffic.usedBytes, 11 * MiB);
+
+    await nodeClient.report({ traffic: { [hubUser.id]: [0, 10 * MiB] } });
     await runJob(xui ? "xui-panel-sync" : "node-hub-billing");
     billed = (await api("/api/users")).find(item => item.id === user.id);
     assert.equal(billed.xuiWeightedTraffic.depleted, true);

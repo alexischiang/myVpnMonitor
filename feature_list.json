@@ -5311,7 +5311,7 @@
     {
       "id": "node-hub-machine-multiplier",
       "name": "Set a node-hub machine traffic multiplier when creating or editing the machine",
-      "description": "Node Hub machine create dialog and edit drawer get a 流量倍率 field. server.js takes multiplier out of /api/node-hub/machines POST/PUT bodies, validates 0-100 (400 otherwise, before the hub sees the request), saves it to the billing state under hub-m<id> once the machine exists (setNodeMultiplier, shared with the 3x-ui monitor settings endpoint) and adds the current multiplier to machine, machine list and overview responses. node-hub stores no multiplier.",
+      "description": "Node Hub machine create dialog and edit drawer get a 流量倍率 field. server.js takes multiplier out of /api/node-hub/machines POST/PUT bodies, validates 0-100 (400 otherwise, before the hub sees the request), saves it to the billing state under hub-m<id> once the machine exists (setNodeMultiplier, shared with the 3x-ui monitor settings endpoint) and adds the current multiplier to machine, machine list and overview responses. node-hub stores no multiplier. Superseded 2026-11-03 by hub-node-multiplier: hub multipliers are per node, the machine field is gone.",
       "status": "passing",
       "ui": true,
       "dependencies": [
@@ -5386,6 +5386,44 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-11-03T11:06:52.856Z"
+      }
+    },
+    {
+      "id": "hub-node-multiplier",
+      "name": "Node Hub: traffic multiplier per node only",
+      "description": "Every node-hub node records traffic under its own billing key hub-m<machine>-n<node> (node-hub nodeBillingKey, overview billingKey; guid hub-m<machine> stays for inbound keys, presence and VPS cost). The multiplier is set only on the node (流量倍率 in the node form, default 1, 0-100); machines have no multiplier (field removed from the machine dialog and drawer, monitor hub rows return multiplier null and reject a multiplier). migrateHubMachineMultipliers copies a machine multiplier other than 1 onto each of its nodes once (hubNodeMultipliersAt). billingMachineGuid rolls node keys up to the machine for VPS cost, profitability, today totals, the hourly chart and account node usage.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-machine-multiplier"
+      ],
+      "done_criteria": [
+        "All hub traffic rows are per node",
+        "Node form sets and edits the multiplier; 0-100 and required",
+        "Machine dialog, drawer and monitor hub rows have no multiplier",
+        "A machine multiplier migrates onto its nodes once",
+        "Machine totals, VPS cost and analytics still include node traffic",
+        "No console or page errors"
+      ],
+      "verification": [
+        "2026-11-03 local: node test-xui-traffic.js, node test-node-hub.js (per-node daily and hourly rows, billingKey next to the machine guid), node test-node-hub-app.js both modes (legacy 1.5x machine migrates to its node, machine multiplier ignored, monitor hub settings multiplier 400, per-node ledger line Hub VPS · Hub 01, 1.1x reprices 11 MiB, presence machine total sums node keys), npm run check, npm run verify pass. scripts/e2e-xboard-node.js updated to node multipliers but not run (needs real xboard-node/xray binaries)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=nodes",
+          "/node-hub?tab=machines",
+          "/xui-monitor"
+        ],
+        "interactions": [
+          "Seeded bage hk with a 2x machine multiplier: after the first request both its nodes show × 2",
+          "Edit the AWS node: field shows 2, set 1 and save -> API 1, only the GOMAMI node keeps × 2",
+          "Machine drawer and new machine dialog have no 流量倍率 field",
+          "3x-ui 监控: hub machine cards show no × badge; bage hk settings dialog says multipliers are per node and has only VPS cost; saving cost 50/1000 GiB stores it with multiplier null",
+          "Fresh /node-hub load: no console errors"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-03T15:16:05.371Z"
       }
     }
   ]

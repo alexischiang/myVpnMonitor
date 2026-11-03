@@ -36,9 +36,8 @@ import { formatBytes, formatDateTime } from "@/utils"
 
 const TABS = ["overview", "machines", "relays", "nodes", "speed"] as const
 type TabId = typeof TABS[number]
-/** `multiplier` stays text while typing; the server validates 0–100. */
-type MachineDraft = { name: string; host: string; notes: string; isActive: boolean; multiplier: string }
-const emptyMachineDraft = (): MachineDraft => ({ name: "", host: "", notes: "", isActive: true, multiplier: "1" })
+type MachineDraft = { name: string; host: string; notes: string; isActive: boolean }
+const emptyMachineDraft = (): MachineDraft => ({ name: "", host: "", notes: "", isActive: true })
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
@@ -215,7 +214,7 @@ export function NodeHubPage() {
 
   const openMachine = React.useCallback(async (machine: NodeHubMachine) => {
     setMachineDetail(machine)
-    setMachineDraft({ name: machine.name, host: machine.host, notes: machine.notes, isActive: machine.isActive, multiplier: String(machine.multiplier ?? 1) })
+    setMachineDraft({ name: machine.name, host: machine.host, notes: machine.notes, isActive: machine.isActive })
     setMachineDetailLoading(true)
     try {
       const detail = await fetchJson<NodeHubMachine>(`/api/node-hub/machines/${machine.id}`)
@@ -402,7 +401,7 @@ export function NodeHubPage() {
     { id: "protocol", accessorFn: node => `${node.protocol} ${node.serverPort}`, header: DataTableColumnHeader({ title: "协议 / 端口" }), meta: { label: "协议 / 端口" }, cell: ({ row }) => <div className="flex flex-wrap items-center gap-1"><Badge>{protocolLabel(row.original.protocol)}</Badge>{nodeSecurityLabel(row.original) ? <Badge>{nodeSecurityLabel(row.original)}</Badge> : null}<span className="text-sm tabular-nums">{row.original.serverPort}</span></div> },
     { id: "status", accessorFn: node => node.enabled ? node.online ? "在线" : "离线" : "已停用", header: DataTableColumnHeader({ title: "状态" }), meta: { label: "状态" }, cell: ({ row }) => <NodeStatus node={row.original} /> },
     { id: "users", accessorFn: node => node.userCount || 0, header: DataTableColumnHeader({ title: "授权 / 在线" }), meta: { label: "授权 / 在线" }, cell: ({ row }) => <span className="tabular-nums">{row.original.userCount || 0} / {row.original.onlineCount || 0}</span> },
-    { id: "line", accessorFn: node => `${node.region} ${node.networkLevel} ${node.inboundType}`, header: DataTableColumnHeader({ title: "线路" }), meta: { label: "线路" }, cell: ({ row }) => <div className="flex flex-wrap gap-1">{row.original.region ? <Badge>{row.original.region}</Badge> : null}{row.original.networkLevel ? <Badge>{NODE_HUB_NETWORK_LEVELS.find(level => level.value === row.original.networkLevel)?.label}</Badge> : null}{row.original.inboundType === "custom" ? <Badge tone="info">定制节点</Badge> : null}{!row.original.region && !row.original.networkLevel && row.original.inboundType !== "custom" ? <span className="text-muted-foreground">未设置</span> : null}</div> },
+    { id: "line", accessorFn: node => `${node.region} ${node.networkLevel} ${node.inboundType}`, header: DataTableColumnHeader({ title: "线路" }), meta: { label: "线路" }, cell: ({ row }) => <div className="flex flex-wrap gap-1">{row.original.region ? <Badge>{row.original.region}</Badge> : null}{row.original.networkLevel ? <Badge>{NODE_HUB_NETWORK_LEVELS.find(level => level.value === row.original.networkLevel)?.label}</Badge> : null}{row.original.inboundType === "custom" ? <Badge tone="info">定制节点</Badge> : null}{row.original.multiplier != null && row.original.multiplier !== 1 ? <Badge tone="warning">× {row.original.multiplier}</Badge> : null}{!row.original.region && !row.original.networkLevel && row.original.inboundType !== "custom" ? <span className="text-muted-foreground">未设置</span> : null}</div> },
     { id: "actions", header: "操作", enableHiding: false, enableSorting: false, cell: ({ row }) => <DataTableRowActions detail={<Button variant="ghost" size="icon" onClick={() => openNodeEditor(row.original)} aria-label={`编辑 ${row.original.name}`}><Pencil /></Button>} actions={[
       row.original.enabled ? { label: "停用节点", icon: <PowerOff />, onSelect: () => void setNodeEnabled(row.original, false) } : { label: "启用节点", icon: <Power />, onSelect: () => void setNodeEnabled(row.original, true) },
       { label: "删除节点", icon: <Trash2 />, destructive: true, separatorBefore: true, onSelect: () => setConfirmDeleteNode(row.original) },
@@ -430,7 +429,7 @@ export function NodeHubPage() {
     }))
   }, [machineDetail?.loadHistory])
 
-  const machineChanged = machineDetail ? machineDraft.name !== machineDetail.name || machineDraft.host !== machineDetail.host || machineDraft.notes !== machineDetail.notes || machineDraft.isActive !== machineDetail.isActive || Number(machineDraft.multiplier) !== (machineDetail.multiplier ?? 1) || !machineDraft.multiplier.trim() : false
+  const machineChanged = machineDetail ? machineDraft.name !== machineDetail.name || machineDraft.host !== machineDetail.host || machineDraft.notes !== machineDetail.notes || machineDraft.isActive !== machineDetail.isActive : false
 
   if (loading && !data && !notConfigured) return <div className="grid gap-4 px-4 lg:px-6"><Skeleton lines={3} /><Skeleton lines={6} /></div>
   if (notConfigured) return <div className="grid gap-4 px-4 lg:px-6"><Alert tone="info" title="node-hub 尚未配置">{notConfigured} 配置方法见 docs/agent/node-hub.md 的「部署」一节。</Alert></div>
@@ -503,7 +502,6 @@ export function NodeHubPage() {
           <div className="grid gap-3">
             <Input label="机器名称" id="machine-name" value={machineDraft.name} onChange={event => setMachineDraft(current => ({ ...current, name: event.target.value }))} placeholder="香港 VPS 01" maxLength={80} />
             <Input label="地址" id="machine-host" description="VPS 的 IP 或域名，新建节点时作为默认连接地址。" value={machineDraft.host} onChange={event => setMachineDraft(current => ({ ...current, host: event.target.value.trim() }))} placeholder="203.0.113.10" />
-            <Input label="流量倍率" id="machine-multiplier" type="number" inputMode="decimal" min={0} max={100} step={0.1} description="这台机器上所有节点的流量按此倍率计费。" value={machineDraft.multiplier} onChange={event => setMachineDraft(current => ({ ...current, multiplier: event.target.value }))} />
             <Textarea label="备注" id="machine-notes" value={machineDraft.notes} onChange={event => setMachineDraft(current => ({ ...current, notes: event.target.value }))} rows={2} maxLength={500} />
           </div>
           <div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => setMachineCreateOpen(false)} disabled={machineSaving}>取消</Button><ActionButton icon={<Plus />} onClick={() => void createMachine()} disabled={machineSaving || !machineDraft.name.trim()} pending={machineSaving} label="创建机器" /></div>
@@ -537,7 +535,6 @@ export function NodeHubPage() {
               <h3 className="text-sm font-semibold">设置</h3>
               <Input label="机器名称" id="machine-edit-name" value={machineDraft.name} onChange={event => setMachineDraft(current => ({ ...current, name: event.target.value }))} maxLength={80} />
               <Input label="地址" id="machine-edit-host" value={machineDraft.host} onChange={event => setMachineDraft(current => ({ ...current, host: event.target.value.trim() }))} placeholder="203.0.113.10" />
-              <Input label="流量倍率" id="machine-edit-multiplier" type="number" inputMode="decimal" min={0} max={100} step={0.1} description="所有节点按此倍率计费，修改后重算本计费周期已用流量。" value={machineDraft.multiplier} onChange={event => setMachineDraft(current => ({ ...current, multiplier: event.target.value }))} />
               <Textarea label="备注" id="machine-edit-notes" value={machineDraft.notes} onChange={event => setMachineDraft(current => ({ ...current, notes: event.target.value }))} rows={2} maxLength={500} />
               <SwitchRow id="machine-edit-active" label="启用机器" description="停用后这台机器的请求会被拒绝，节点停止服务。" checked={machineDraft.isActive} onCheckedChange={isActive => setMachineDraft(current => ({ ...current, isActive }))} />
               <div className="flex flex-wrap justify-end gap-2"><ActionButton icon={<Save />} onClick={() => void saveMachine()} disabled={machineSaving || !machineChanged || !machineDraft.name.trim()} pending={machineSaving} label="保存机器设置" /></div>

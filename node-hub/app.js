@@ -13,7 +13,7 @@
 const crypto = require("crypto");
 const { URL } = require("url");
 const { buildNodeConfig, clashProxy, normalizeNodeInput, nodeRuntimeChanged, generateRealityKeyPair } = require("./node-config");
-const { nodeGuid } = require("./store");
+const { nodeGuid, nodeBillingKey } = require("./store");
 const { createNodeHubPush, wsUrlFor } = require("./push");
 const { realmConfig, realmRulesChanged, configHash, relayInstallCommand, INSTALL_SCRIPT, CONFIG_PATH: RELAY_CONFIG_PATH, INSTALL_PATH: RELAY_INSTALL_PATH } = require("./relay");
 
@@ -312,6 +312,7 @@ function createNodeHubHandler({
       nodes: nodes.map(node => ({
         ...node,
         guid: nodeGuid(node),
+        billingKey: nodeBillingKey(node),
         machineName: machinesById.get(node.machineId)?.name || "",
         online: node.enabled && nodeOnline(node, now),
         userCount: counts[node.id]?.users || 0,
