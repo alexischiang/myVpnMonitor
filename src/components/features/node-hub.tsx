@@ -36,8 +36,9 @@ import { formatBytes, formatDateTime } from "@/utils"
 
 const TABS = ["overview", "machines", "relays", "nodes", "speed"] as const
 type TabId = typeof TABS[number]
-type MachineDraft = { name: string; host: string; notes: string; isActive: boolean }
-const emptyMachineDraft = (): MachineDraft => ({ name: "", host: "", notes: "", isActive: true })
+/** `multiplier` stays text while typing; the server validates 0–100. */
+type MachineDraft = { name: string; host: string; notes: string; isActive: boolean; multiplier: string }
+const emptyMachineDraft = (): MachineDraft => ({ name: "", host: "", notes: "", isActive: true, multiplier: "1" })
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
@@ -214,7 +215,7 @@ export function NodeHubPage() {
 
   const openMachine = React.useCallback(async (machine: NodeHubMachine) => {
     setMachineDetail(machine)
-    setMachineDraft({ name: machine.name, host: machine.host, notes: machine.notes, isActive: machine.isActive })
+    setMachineDraft({ name: machine.name, host: machine.host, notes: machine.notes, isActive: machine.isActive, multiplier: String(machine.multiplier ?? 1) })
     setMachineDetailLoading(true)
     try {
       const detail = await fetchJson<NodeHubMachine>(`/api/node-hub/machines/${machine.id}`)
@@ -429,7 +430,7 @@ export function NodeHubPage() {
     }))
   }, [machineDetail?.loadHistory])
 
-  const machineChanged = machineDetail ? machineDraft.name !== machineDetail.name || machineDraft.host !== machineDetail.host || machineDraft.notes !== machineDetail.notes || machineDraft.isActive !== machineDetail.isActive : false
+  const machineChanged = machineDetail ? machineDraft.name !== machineDetail.name || machineDraft.host !== machineDetail.host || machineDraft.notes !== machineDetail.notes || machineDraft.isActive !== machineDetail.isActive || Number(machineDraft.multiplier) !== (machineDetail.multiplier ?? 1) || !machineDraft.multiplier.trim() : false
 
   if (loading && !data && !notConfigured) return <div className="grid gap-4 px-4 lg:px-6"><Skeleton lines={3} /><Skeleton lines={6} /></div>
   if (notConfigured) return <div className="grid gap-4 px-4 lg:px-6"><Alert tone="info" title="node-hub 尚未配置">{notConfigured} 配置方法见 docs/agent/node-hub.md 的「部署」一节。</Alert></div>
@@ -502,6 +503,7 @@ export function NodeHubPage() {
           <div className="grid gap-3">
             <Input label="机器名称" id="machine-name" value={machineDraft.name} onChange={event => setMachineDraft(current => ({ ...current, name: event.target.value }))} placeholder="香港 VPS 01" maxLength={80} />
             <Input label="地址" id="machine-host" description="VPS 的 IP 或域名，新建节点时作为默认连接地址。" value={machineDraft.host} onChange={event => setMachineDraft(current => ({ ...current, host: event.target.value.trim() }))} placeholder="203.0.113.10" />
+            <Input label="流量倍率" id="machine-multiplier" type="number" inputMode="decimal" min={0} max={100} step={0.1} description="这台机器上所有节点的流量按此倍率计费。" value={machineDraft.multiplier} onChange={event => setMachineDraft(current => ({ ...current, multiplier: event.target.value }))} />
             <Textarea label="备注" id="machine-notes" value={machineDraft.notes} onChange={event => setMachineDraft(current => ({ ...current, notes: event.target.value }))} rows={2} maxLength={500} />
           </div>
           <div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => setMachineCreateOpen(false)} disabled={machineSaving}>取消</Button><ActionButton icon={<Plus />} onClick={() => void createMachine()} disabled={machineSaving || !machineDraft.name.trim()} pending={machineSaving} label="创建机器" /></div>
@@ -535,6 +537,7 @@ export function NodeHubPage() {
               <h3 className="text-sm font-semibold">设置</h3>
               <Input label="机器名称" id="machine-edit-name" value={machineDraft.name} onChange={event => setMachineDraft(current => ({ ...current, name: event.target.value }))} maxLength={80} />
               <Input label="地址" id="machine-edit-host" value={machineDraft.host} onChange={event => setMachineDraft(current => ({ ...current, host: event.target.value.trim() }))} placeholder="203.0.113.10" />
+              <Input label="流量倍率" id="machine-edit-multiplier" type="number" inputMode="decimal" min={0} max={100} step={0.1} description="所有节点按此倍率计费，修改后重算本计费周期已用流量。" value={machineDraft.multiplier} onChange={event => setMachineDraft(current => ({ ...current, multiplier: event.target.value }))} />
               <Textarea label="备注" id="machine-edit-notes" value={machineDraft.notes} onChange={event => setMachineDraft(current => ({ ...current, notes: event.target.value }))} rows={2} maxLength={500} />
               <SwitchRow id="machine-edit-active" label="启用机器" description="停用后这台机器的请求会被拒绝，节点停止服务。" checked={machineDraft.isActive} onCheckedChange={isActive => setMachineDraft(current => ({ ...current, isActive }))} />
               <div className="flex flex-wrap justify-end gap-2"><ActionButton icon={<Save />} onClick={() => void saveMachine()} disabled={machineSaving || !machineChanged || !machineDraft.name.trim()} pending={machineSaving} label="保存机器设置" /></div>

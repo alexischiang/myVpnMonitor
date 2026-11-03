@@ -841,7 +841,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
                 <Info label="赠送时长" value={`${user.giftedDays || 0} 天`} />
                 <Info label="用户 URL" value={<UrlCell value={absoluteUrl(user.relayPath)} />} />
               </div></Card>
-            {user.lineType === "self_hosted" ? <Card className="@4xl:col-start-1 @4xl:row-span-4 @4xl:row-start-1" title="倍率流量" description="按节点倍率折算用户流量；节点倍率修改仅影响之后产生的流量" headerAction={<Badge tone={!weightedTraffic ? "neutral" : weightedTraffic.depleted ? "danger" : "success"}>{!weightedTraffic ? "未同步" : weightedTraffic.depleted ? "已耗尽" : "正常"}</Badge>}><div className="grid gap-4">
+            {user.lineType === "self_hosted" ? <Card className="@4xl:col-start-1 @4xl:row-span-4 @4xl:row-start-1" title="倍率流量" description="按节点当前倍率折算本周期流量，修改倍率会重算已用流量" headerAction={<Badge tone={!weightedTraffic ? "neutral" : weightedTraffic.depleted ? "danger" : "success"}>{!weightedTraffic ? "未同步" : weightedTraffic.depleted ? "已耗尽" : "正常"}</Badge>}><div className="grid gap-4">
                 {weightedTraffic ? <>
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Info label="原始流量" value={formatBytes(weightedTraffic.rawUsedBytes)} />

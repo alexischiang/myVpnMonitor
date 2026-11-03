@@ -192,7 +192,14 @@ async function child(mode) {
     assert.equal(jobs.find(job => job.id === "node-hub-billing").configured, mode === "hub", "hub billing runs only without 3x-ui");
 
     // Machine and node through the app; node shows up as an inbound.
-    const machine = await api("/api/node-hub/machines", { method: "POST", body: { name: "Hub VPS", host: "hub-vps.example.com" } });
+    const machine = await api("/api/node-hub/machines", { method: "POST", body: { name: "Hub VPS", host: "hub-vps.example.com", multiplier: 1.5 } });
+    // The machine's traffic multiplier is the app's billing key hub-m<id>: set and read with the machine.
+    assert.equal(machine.multiplier, 1.5, "created with its multiplier");
+    assert.equal((await api(`/api/node-hub/machines/${machine.id}`)).multiplier, 1.5);
+    assert.equal((await api("/api/node-hub/overview")).machines.find(item => item.id === machine.id).multiplier, 1.5);
+    await assert.rejects(api(`/api/node-hub/machines/${machine.id}`, { method: "PUT", body: { multiplier: 101 } }), error => error.status === 400);
+    assert.equal((await api(`/api/node-hub/machines/${machine.id}`, { method: "PUT", body: { name: "Hub VPS", multiplier: 1 } })).multiplier, 1, "edited back to 1");
+    assert.equal((await api(`/api/node-hub/machines/${machine.id}`)).name, "Hub VPS", "the hub never sees the multiplier field");
     const node = await api("/api/node-hub/nodes", { method: "POST", body: { machineId: machine.id, name: "Hub 01", protocol: "vless", host: "hub-vps.example.com", serverPort: 443, settings: { network: "tcp", tls: 0 } } });
     const customNode = await api("/api/node-hub/nodes", { method: "POST", body: { machineId: machine.id, name: "Hub 定制", protocol: "vless", host: "hub-vps.example.com", serverPort: 8443, inboundType: "custom", settings: { network: "tcp", tls: 0 } } });
     assert.deepEqual((await api("/api/node-hub/machines")).map(item => item.id), [machine.id]);
