@@ -77,7 +77,7 @@ export function UsersPage() {
     try {
       setPresence(await fetchJson<XuiPresence>("/api/xui-presence", { background }))
     } catch {
-      // Keep the last successful snapshot during a transient 3x-ui failure.
+      // Keep the last successful snapshot during a transient presence read failure.
     }
   }, [])
 

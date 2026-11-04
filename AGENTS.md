@@ -2,7 +2,7 @@
 
 ## 项目
 
-XELA monitor 是一个基于 Node.js、PostgreSQL、React 和 Vite 的应用，用于管理 VPN 订阅、客户、账单、支付和 3x-ui 服务。
+XELA monitor 是一个基于 Node.js、PostgreSQL、React 和 Vite 的应用，用于管理 VPN 订阅、客户、账单、支付和 node-hub 节点。
 
 ## 仓库结构
 
@@ -10,7 +10,8 @@ XELA monitor 是一个基于 Node.js、PostgreSQL、React 和 Vite 的应用，�
 - `src/` — React 前端
 - `src/components/ui/` — shadcn/ui 基础组件
 - `src/components/features/` — 产品功能组件
-- `xui-*.js` — 独立的 3x-ui 服务
+- `node-hub/` — 节点控制服务（xboard-node 的面板，自研线路唯一后端）
+- `xui-traffic.js` — 按节点流量计费的纯函数（`xui_*` 表名和字段名沿用 3x-ui 时期，3x-ui 本身已移除）
 - 客户文档（教程、公告、下载）在独立仓库 `nexora-docs`（Fumadocs）；本仓库只负责 `/docs` 跳转和读取其公告 feed（`DOCS_SITE_URL`）
 - `scripts/` — 设置、迁移、同步和构建脚本
 - `.github/workflows/deploy.yml` — 生产环境部署

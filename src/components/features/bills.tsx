@@ -329,7 +329,7 @@ export function OrderDetailPage() {
         {order.bindingNeedsRepair ? <>
           <ActionButton variant="secondary" size="sm" onClick={() => setRepairOpen(true)} label="补关联" pendingLabel="补关联中..." pending={repairing} />
           <Dialog open={repairOpen} onOpenChange={setRepairOpen}>
-            <DialogContent title="补关联此订单的V2套餐？" description={`将核对 ${order.email} 的最新套餐订单，并按该订单的已交付账单补齐用户套餐绑定和权益，立即同步3x-ui。不会重复收款或生成账单；存在后续套餐或权益变更时将拒绝覆盖。`}><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={repairing}>取消</Button></DialogClose><DialogClose asChild><Button disabled={repairing} onClick={event => { event.preventDefault(); void repairBinding() }}>{repairing ? <Loader2 className="animate-spin" /> : <Link2 />}{repairing ? "补关联中..." : "确认补关联"}</Button></DialogClose></div></DialogContent>
+            <DialogContent title="补关联此订单的V2套餐？" description={`将核对 ${order.email} 的最新套餐订单，并按该订单的已交付账单补齐用户套餐绑定和权益，立即同步 node-hub。不会重复收款或生成账单；存在后续套餐或权益变更时将拒绝覆盖。`}><div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={repairing}>取消</Button></DialogClose><DialogClose asChild><Button disabled={repairing} onClick={event => { event.preventDefault(); void repairBinding() }}>{repairing ? <Loader2 className="animate-spin" /> : <Link2 />}{repairing ? "补关联中..." : "确认补关联"}</Button></DialogClose></div></DialogContent>
           </Dialog>
         </> : null}
         <BackButton fallback="/orders" size="sm" />

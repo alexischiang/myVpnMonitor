@@ -277,7 +277,7 @@ export function NodeHubNodeForm({ draft, onChange, machines, relays, relayEntrie
         <SwitchField id="node-tls-insecure" label="允许不安全证书" description="客户端跳过证书校验，只用于自签名证书。" checked={read(s, ["tls_settings", "allow_insecure"]) === true} onCheckedChange={checked => set(["tls_settings", "allow_insecure"], checked || undefined)} />
       </> : null}
       {tls === 2 ? <>
-        <Input label="伪装域名（server_name）" id="node-reality-sni" description="用 3x-ui 节点上验证可用的伪装域名；www.microsoft.com 会让合法连接握手失败。" value={str(read(s, ["reality_settings", "server_name"]))} onChange={event => set(["reality_settings", "server_name"], event.target.value.trim())} placeholder="dl.example.com" />
+        <Input label="伪装域名（server_name）" id="node-reality-sni" description="用在这台 VPS 上验证可用的伪装域名；www.microsoft.com 会让合法连接握手失败。" value={str(read(s, ["reality_settings", "server_name"]))} onChange={event => set(["reality_settings", "server_name"], event.target.value.trim())} placeholder="dl.example.com" />
         <WideNumberField label="伪装目标端口" id="node-reality-port" value={Number(read(s, ["reality_settings", "server_port"]) || 443)} onValueChange={value => set(["reality_settings", "server_port"], value)} min={1} max={65535} locale="zh-CN" formatOptions={{ useGrouping: false }} />
         <Input label="伪装目标（dest）" id="node-reality-dest" description="留空时使用 伪装域名:端口。" value={str(read(s, ["reality_settings", "dest"]))} onChange={event => set(["reality_settings", "dest"], event.target.value.trim() || undefined)} placeholder="dl.example.com:443" />
         <Input label="Short ID" id="node-reality-sid" value={str(read(s, ["reality_settings", "short_id"]))} onChange={event => set(["reality_settings", "short_id"], event.target.value.trim())} placeholder="不超过 16 位十六进制" maxLength={16} />

@@ -116,7 +116,7 @@ type XuiDashboardData = {
   nodeNames?: Record<string, string>
 }
 
-// Presence and today's traffic from 3x-ui, polled every 30 seconds; the online count and both ranked lists read the same snapshot.
+// Presence and today's traffic from node-hub, polled every 30 seconds; the online count and both ranked lists read the same snapshot.
 function useXuiPresence() {
   const [data, setData] = React.useState<XuiDashboardData | null>(null)
   const [failed, setFailed] = React.useState(false)
@@ -220,7 +220,7 @@ export function DashboardPage() {
         </div>
         <div className="grid min-w-0 gap-4 md:col-span-2 md:grid-cols-3 xl:col-span-4 xl:grid-cols-1 xl:auto-rows-fr">
           <PendingWorkCards />
-          <MetricCard density="compact" label="当前在线人数" value={xui.data?.configured ? xui.data.onlineEmails?.length ?? 0 : null} context={!xui.data ? xui.failed ? "暂时无法读取 3x-ui 在线状态" : "正在读取 3x-ui 在线状态" : xui.data.configured ? "按 3x-ui 在线客户端去重" : "3x-ui 尚未配置"} />
+          <MetricCard density="compact" label="当前在线人数" value={xui.data?.configured ? xui.data.onlineEmails?.length ?? 0 : null} context={!xui.data ? xui.failed ? "暂时无法读取在线状态" : "正在读取在线状态" : xui.data.configured ? "按 node-hub 在线用户去重" : "node-hub 尚未配置"} />
         </div>
       </div>
 

@@ -2,7 +2,7 @@
 // machine), relays (realm port forwarders in front of nodes), node users (entitlements pushed by
 // the main app), presence and load history.
 // Traffic goes straight into the main app's xui_daily_traffic table, so billing, the account
-// chart and the profitability report read hub traffic exactly like 3x-ui traffic.
+// chart and the profitability report all read it from there.
 const crypto = require("crypto");
 
 // First port handed out on a relay; each (node, relay) entry gets its own.
@@ -153,7 +153,7 @@ function bytes(value) {
   return Number.isFinite(number) && number > 0 ? Math.min(Math.floor(number), MAX_SAFE_BYTES) : 0;
 }
 
-// A node's machine key: one per VPS, like a 3x-ui node guid (VPS cost, presence, inbound keys).
+// A node's machine key: one per VPS (VPS cost, presence, inbound keys).
 function nodeGuid(node) {
   return node.machineId ? `hub-m${node.machineId}` : `hub-n${node.id}`;
 }
@@ -593,7 +593,7 @@ class NodeHubStore {
     });
   }
 
-  // Seeds a user's credential (migration from 3x-ui keeps the client uuid). An existing user only
+  // Seeds a user's credential (keeps a known client uuid). An existing user only
   // gets the uuid; a new one is created disabled until the app's next entitlement sync.
   async setUserUuid(userKey, { email, uuid }) {
     const user = normalizeUserInput({ userKey, email, uuid, enabled: false });

@@ -11,11 +11,6 @@ const { NodeHubStore, chinaDateKey } = require("./node-hub/store");
 const { createNodeHubHandler } = require("./node-hub/app");
 const { configHash, realmRulesChanged } = require("./node-hub/relay");
 const nodeConfig = require("./node-hub/node-config");
-const { convertXuiInbound } = require("./node-hub/xui-import");
-const { execFile } = require("node:child_process");
-const { promisify } = require("node:util");
-const execFileAsync = promisify(execFile);
-const os = require("node:os");
 
 function testDatabaseUrl() {
   if (process.env.TEST_DATABASE_URL) return process.env.TEST_DATABASE_URL;
@@ -208,35 +203,8 @@ function unitChecks() {
   assert.equal(hyConfig.obfs, "salamander");
   assert.equal(hyConfig["obfs-password"], "x");
   assert.equal(nodeConfig.clashProxy({ ...hy2, id: 3 }, uuid).type, "hysteria2");
-  assert.equal(chinaDateKey(Date.parse("2026-10-25T16:30:00.000Z")), "2026-10-26", "traffic dates use China days like the 3x-ui sampler");
+  assert.equal(chinaDateKey(Date.parse("2026-10-25T16:30:00.000Z")), "2026-10-26", "traffic dates use China days");
 
-  // 3x-ui inbound -> node-hub node: port, REALITY keys, SNI, short id, flow and uuids are kept.
-  const fixture = xuiFixture(keys);
-  const converted = convertXuiInbound(fixture.inbounds[0], { host: "la.example.com", localGuid: "panel-guid" });
-  assert.equal(converted.xuiKey, "panel-guid:1");
-  assert.deepEqual({ protocol: converted.node.protocol, port: converted.node.serverPort, tls: converted.node.settings.tls, flow: converted.node.settings.flow, sni: converted.node.settings.reality_settings.server_name, sid: converted.node.settings.reality_settings.short_id, pk: converted.node.settings.reality_settings.private_key, pub: converted.node.settings.reality_settings.public_key, dest: converted.node.settings.reality_settings.dest },
-    { protocol: "vless", port: 443, tls: 2, flow: "xtls-rprx-vision", sni: "www.apple.com", sid: "6ba85179e30d4fc2", pk: keys.privateKey, pub: keys.publicKey, dest: "www.apple.com:443" });
-  assert.deepEqual(converted.clients.map(client => client.email), ["migrated@example.test", "nouuid@example.test"].slice(0, 1), "clients without a uuid-shaped id are not carried over");
-  assert.ok(converted.warnings.some(warning => warning.includes("shortId")));
-  nodeConfig.normalizeNodeInput(converted.node);
-  const ws = convertXuiInbound(fixture.inbounds[1], { host: "hk.example.com", localGuid: "panel-guid" });
-  assert.deepEqual([ws.nodeGuid, ws.node.settings.network, ws.node.settings.network_settings.path, ws.node.settings.tls], ["node-hk", "ws", "/ray", 0]);
-  assert.match(convertXuiInbound({ id: 9, protocol: "wireguard", remark: "wg" }).skip, /暂不支持/);
-}
-
-function xuiFixture(keys) {
-  return {
-    status: { panelGuid: "panel-guid" },
-    nodes: [{ id: 2, guid: "node-hk", remark: "HK-VPS", address: "hk.example.com" }],
-    inbounds: [
-      { id: 1, remark: "美国 REALITY", protocol: "vless", port: 443, enable: true, originNodeGuid: "node:local",
-        settings: JSON.stringify({ clients: [{ id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", email: "Migrated@Example.test", flow: "xtls-rprx-vision" }, { id: "12", email: "nouuid@example.test", flow: "xtls-rprx-vision" }], decryption: "none" }),
-        streamSettings: JSON.stringify({ network: "tcp", security: "reality", realitySettings: { show: false, target: "www.apple.com:443", serverNames: ["www.apple.com"], privateKey: keys.privateKey, shortIds: ["6ba85179e30d4fc2", "1a"], settings: { publicKey: keys.publicKey, fingerprint: "chrome" } } }) },
-      { id: 5, remark: "香港 WS", protocol: "vless", port: 8080, enable: true, originNodeGuid: "node-hk",
-        settings: { clients: [{ id: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee", email: "hk@example.test" }] },
-        streamSettings: { network: "ws", security: "none", wsSettings: { path: "/ray", headers: { Host: "hk.example.com" } } } }
-    ]
-  };
 }
 
 // Relay machines: CRUD, port allocation, relay-mode nodes, the realm rules a relay pulls and the
@@ -510,65 +478,10 @@ async function main() {
     await remoteHandler({ url: "/internal/overview", method: "GET", headers: { authorization: `Bearer ${internalToken}` }, socket: { remoteAddress: "203.0.113.9" } }, fakeRes);
     assert.equal(fakeRes.code, 403);
 
-    // Migration script: dry run, --apply, --switch-line-groups against this hub and database.
-    const { createDataStore } = require("./database");
-    const appStore = createDataStore({ databaseUrl, ssl: false });
-    await appStore.init();
-    await appStore.pool.query("DELETE FROM app_records WHERE collection = 'users' AND id = 'migrated-user'");
-    await appStore.pool.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', 'migrated-user', 0, $1::jsonb)", [JSON.stringify({ id: "migrated-user", email: "migrated@example.test", xuiClientEmail: "migrated@example.test", lineType: "self_hosted" })]);
-    await appStore.pool.query("DELETE FROM catalog_v2_line_groups WHERE id = 'nh-migrate-test'");
-    await appStore.pool.query("INSERT INTO catalog_v2_line_groups (id, name, inbound_keys) VALUES ('nh-migrate-test', 'migrate', $1::jsonb)", [JSON.stringify(["panel-guid:1", "node-hk:5", "other:9"])]);
-    const fixturePath = path.join(os.tmpdir(), `nh-xui-fixture-${process.pid}.json`);
-    fs.writeFileSync(fixturePath, JSON.stringify(xuiFixture(keys)));
-    // Async: the hub under test runs in this process.
-    const migrate = async (...args) => (await execFileAsync(process.execPath, [path.join(__dirname, "scripts/migrate-xui-to-node-hub.js"), "--from-file", fixturePath, ...args], { env: { ...process.env, NODE_HUB_URL: base, NODE_HUB_INTERNAL_TOKEN: internalToken, LOCAL_DATABASE_URL: databaseUrl, DATABASE_SSL: "false" }, encoding: "utf8" })).stdout;
-    const dry = await migrate("--node-guid", "local", "--host", "la2.example.com", "--name", "LA-MIGRATED");
-    assert.match(dry, /Dry run/);
-    assert.match(dry, /users whose 3x-ui uuid is carried over: 1/);
-    assert.equal((await store.listMachines()).some(item => item.name === "LA-MIGRATED"), false, "a dry run changes nothing");
-    const applied = await migrate("--node-guid", "local", "--host", "la2.example.com", "--name", "LA-MIGRATED", "--apply");
-    assert.match(applied, /--mode machine --kernel xray --version v1\.13\.2 --panel https:\/\/hub\.example\.com/);
-    const migratedMachine = (await store.listMachines()).find(item => item.name === "LA-MIGRATED");
-    const migratedNodes = await store.listNodes({ machineId: migratedMachine.id });
-    assert.deepEqual(migratedNodes.map(item => [item.protocol, item.serverPort, item.host, item.settings.reality_settings?.private_key]), [["vless", 443, "la2.example.com", keys.privateKey]]);
-    assert.equal((await store.getUser("migrated-user")).uuid, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "the 3x-ui uuid is seeded");
-    assert.equal((await store.getUser("migrated-user")).enabled, false, "seeding does not enable the user before the app syncs");
-    assert.match(await migrate("--node-guid", "local", "--host", "la2.example.com", "--name", "LA-MIGRATED", "--apply"), /already exists/, "re-running --apply is safe");
-    const setHubUuid = hubUuid => appStore.pool.query("UPDATE app_records SET data = data || $1::jsonb WHERE collection = 'users' AND id = 'migrated-user'", [JSON.stringify({ hubUuid })]);
-    await setHubUuid("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
-    const matchingPlan = await migrate("--node-guid", "local", "--host", "la2.example.com", "--name", "LA-MIGRATED");
-    assert.match(matchingPlan, /users already on the hub with their 3x-ui uuid: 1/, "a user the app already synced with the panel uuid is counted as matching");
-    assert.doesNotMatch(matchingPlan, /must update their subscription/);
-    await setHubUuid("11111111-2222-4333-8444-555555555555");
-    assert.match(await migrate("--node-guid", "local", "--host", "la2.example.com", "--name", "LA-MIGRATED"), /hub uuid differs from 3x-ui \(they must update their subscription\): migrated@example\.test/, "a differing hub uuid is reported");
-    await migrate("--node-guid", "local", "--name", "LA-MIGRATED", "--host", "la2.example.com", "--switch-line-groups");
-    const switched = (await appStore.pool.query("SELECT inbound_keys FROM catalog_v2_line_groups WHERE id = 'nh-migrate-test'")).rows[0].inbound_keys;
-    assert.deepEqual(switched, [`hub-m${migratedMachine.id}:${migratedNodes[0].id}`, "node-hk:5", "other:9"], "only the migrated VPS's keys are switched");
-    // Side by side with 3x-ui on the same VPS: shifted ports, hub keys added next to the 3x-ui keys.
-    await appStore.pool.query("UPDATE catalog_v2_line_groups SET inbound_keys = $2::jsonb WHERE id = $1", ["nh-migrate-test", JSON.stringify(["panel-guid:1", "node-hk:5", "other:9"])]);
-    const coexist = (...args) => migrate("--node-guid", "local", "--host", "la2.example.com", "--name", "LA-COEXIST", "--port-offset", "10000", ...args);
-    await assert.rejects(migrate("--node-guid", "local", "--host", "la2.example.com", "--port-offset", "65200"), /smaller --port-offset/);
-    await assert.rejects(coexist("--switch-line-groups", "--add-to-line-groups"), /either/);
-    assert.match(await coexist(), /3x-ui ports \+ 10000/);
-    assert.match(await coexist("--apply"), /3x-ui keeps running; open the new ports 10443/);
-    const coexistMachine = (await store.listMachines()).find(item => item.name === "LA-COEXIST");
-    const coexistNodes = await store.listNodes({ machineId: coexistMachine.id });
-    assert.deepEqual(coexistNodes.map(item => [item.protocol, item.serverPort]), [["vless", 10443]]);
-    assert.match(await coexist("--apply"), /already exists/, "re-running with the same offset is safe");
-    await coexist("--add-to-line-groups");
-    const added = (await appStore.pool.query("SELECT inbound_keys FROM catalog_v2_line_groups WHERE id = 'nh-migrate-test'")).rows[0].inbound_keys;
-    assert.deepEqual(added, ["panel-guid:1", `hub-m${coexistMachine.id}:${coexistNodes[0].id}`, "node-hk:5", "other:9"], "the 3x-ui key stays and the hub key is added after it");
-    await coexist("--add-to-line-groups");
-    assert.deepEqual((await appStore.pool.query("SELECT inbound_keys FROM catalog_v2_line_groups WHERE id = 'nh-migrate-test'")).rows[0].inbound_keys, added, "adding twice changes nothing");
-    await appStore.pool.query("DELETE FROM catalog_v2_line_groups WHERE id = 'nh-migrate-test'");
-    await appStore.pool.query("DELETE FROM app_records WHERE collection = 'users' AND id = 'migrated-user'");
-    await appStore.close?.();
-    fs.unlinkSync(fixturePath);
-
     await relayChecks({ base, internal });
 
     if (process.env.NODE_HUB_CONTRACT_OUT) fs.writeFileSync(process.env.NODE_HUB_CONTRACT_OUT, JSON.stringify({ config, configHy: await new XboardNodeClient(base, { token: "global-node-token", nodeId: hkNode.id }).getConfig(), users: { users: vlessUsers }, machineNodes: listed, handshake: hs }));
-    console.log("node-hub checks passed: node API (machine and node mode, ETag), WebSocket push (auth, node list, config, users and removal deltas, global devices, revocation), traffic accounting, duplicate reports, presence, status, subscriptions, internal API guards, the 3x-ui migration script and relay machines (ports, realm rules, sync state, per-relay subscription entries).");
+    console.log("node-hub checks passed: node API (machine and node mode, ETag), WebSocket push (auth, node list, config, users and removal deltas, global devices, revocation), traffic accounting, duplicate reports, presence, status, subscriptions, internal API guards and relay machines (ports, realm rules, sync state, per-relay subscription entries).");
   } finally {
     handler.close();
     server.close();

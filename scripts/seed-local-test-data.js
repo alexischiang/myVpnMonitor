@@ -6,6 +6,7 @@ const crypto = require("crypto");
 const { loadLocalEnv } = require("../env");
 const { createDataStore } = require("../database");
 const { nextCustomerID } = require("../customer-id");
+const nodeHub = require("../node-hub/bridge");
 
 loadLocalEnv();
 
@@ -119,8 +120,15 @@ async function reset(store) {
   for (const group of LINE_GROUPS) if (groupIds.has(group.id)) await store.deleteCatalogV2LineGroup(group.id);
 }
 
+// node-hub nodes as inbound rows, so line groups pick nodes by name; none without node-hub.
+async function hubInbounds() {
+  if (!process.env.NODE_HUB_URL || !process.env.NODE_HUB_INTERNAL_TOKEN) return [];
+  const requestNodeHub = nodeHub.createNodeHubClient({ url: process.env.NODE_HUB_URL, token: process.env.NODE_HUB_INTERNAL_TOKEN });
+  return nodeHub.hubManagementRows(await requestNodeHub("/internal/overview"));
+}
+
 async function seed(store) {
-  const inbounds = await store.listXuiInbounds();
+  const inbounds = await hubInbounds();
   for (const group of LINE_GROUPS) {
     const inboundKeys = group.inboundNames.map(name => inbounds.find(inbound => inbound.name === name)?.key).filter(Boolean);
     const { inboundNames, ...row } = group;

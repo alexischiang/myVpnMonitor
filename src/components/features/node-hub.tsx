@@ -11,6 +11,7 @@ import { InfoList } from "@/components/features/shared"
 import { toast } from "@/components/features/toast"
 import { advancedSettingsText, applyAdvancedSettings, emptyNodeDraft, NODE_HUB_NETWORK_LEVELS, NODE_HUB_PROTOCOLS, NodeHubNodeForm, nodeDraftFrom, nodeSecurityLabel, protocolLabel, type NodeHubNodeDraft } from "@/components/features/node-hub-node-form"
 import { NodeHubRelaysTab } from "@/components/features/node-hub-relays"
+import { MachineCostSection, MachineCostSummary, useMachineCosts } from "@/components/features/node-hub-machine-cost"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Alert } from "@/components/arc/alert/alert"
@@ -30,9 +31,9 @@ import { Textarea } from "@/components/arc/textarea/textarea"
 import type { NodeHubLoadStatus, NodeHubMachine, NodeHubNode, NodeHubOverview, User } from "@/types"
 import { formatBytes, formatDateTime } from "@/utils"
 
-// Admin page for node-hub: the machines (VPS running xboard-node), relay machines (realm in front
-// of nodes) and nodes it serves, and the per-user node speed limit. Everything goes through the
-// app's /api/node-hub/* proxy.
+// Admin page for node-hub: the machines (VPS running xboard-node, with their monthly VPS cost),
+// relay machines (realm in front of nodes) and nodes it serves, and the per-user node speed limit.
+// Everything goes through the app's /api/node-hub/* proxy.
 
 const TABS = ["overview", "machines", "relays", "nodes", "speed"] as const
 type TabId = typeof TABS[number]
@@ -108,6 +109,7 @@ export function NodeHubPage() {
   const [machineDetailLoading, setMachineDetailLoading] = React.useState(false)
   const [confirmResetToken, setConfirmResetToken] = React.useState(false)
   const [confirmDeleteMachine, setConfirmDeleteMachine] = React.useState(false)
+  const { costs: machineCosts, reload: reloadMachineCosts, setCost: setMachineCost } = useMachineCosts()
 
   // Nodes
   const [nodeEditorOpen, setNodeEditorOpen] = React.useState(false)
@@ -393,8 +395,9 @@ export function NodeHubPage() {
     { id: "status", accessorFn: machine => machine.isActive ? machine.online ? "在线" : "离线" : "已停用", header: DataTableColumnHeader({ title: "状态" }), meta: { label: "状态" }, cell: ({ row }) => <MachineStatus machine={row.original} /> },
     { id: "load", accessorFn: machine => machine.loadStatus?.cpu ?? -1, header: DataTableColumnHeader({ title: "负载" }), meta: { label: "负载" }, cell: ({ row }) => <LoadSummary load={row.original.loadStatus} /> },
     { id: "nodes", accessorFn: machine => machine.nodeIds?.length || 0, header: DataTableColumnHeader({ title: "节点" }), meta: { label: "节点" }, cell: ({ row }) => <span className="tabular-nums">{row.original.nodeIds?.length || 0}</span> },
+    { id: "cost", accessorFn: machine => machineCosts[machine.guid || `hub-m${machine.id}`]?.monthlyFee ?? -1, header: DataTableColumnHeader({ title: "VPS 成本" }), meta: { label: "VPS 成本" }, cell: ({ row }) => <MachineCostSummary cost={machineCosts[row.original.guid || `hub-m${row.original.id}`]} /> },
     { id: "actions", header: "操作", enableHiding: false, enableSorting: false, cell: ({ row }) => <DataTableRowActions detail={<Button variant="ghost" size="icon" onClick={() => void openMachine(row.original)} aria-label={`管理 ${row.original.name}`}><Pencil /></Button>} /> },
-  ], [openMachine])
+  ], [machineCosts, openMachine])
 
   const nodeColumns = React.useMemo<ColumnDef<NodeHubNode>[]>(() => [
     { id: "node", accessorFn: node => `${node.name} ${node.machineName} ${node.host} ${node.region} ${(node.relays || []).map(entry => entry.relayName).join(" ")}`, header: DataTableColumnHeader({ title: "节点" }), meta: { label: "节点" }, cell: ({ row }) => <div className="grid min-w-0"><span className="truncate font-medium">{row.original.name}</span><span className="truncate text-xs text-muted-foreground">{row.original.machineName || `机器 ${row.original.machineId}`} · {row.original.relays?.length ? `经 ${row.original.relays.map(entry => entry.relayName).join("、")}` : row.original.host}</span></div> },
@@ -451,7 +454,7 @@ export function NodeHubPage() {
             <TabsTrigger value="speed">用户限速</TabsTrigger>
           </TabsList>
           <div className="flex flex-wrap items-center gap-2">
-            <ActionButton variant="secondary" icon={<RefreshCw />} collapse onClick={() => void refresh()} disabled={loading} pending={loading} label="刷新" />
+            <ActionButton variant="secondary" icon={<RefreshCw />} collapse onClick={() => { void refresh(); void reloadMachineCosts(true) }} disabled={loading} pending={loading} label="刷新" />
             <ActionButton icon={<UsersIcon />} collapse onClick={() => void syncEntitlements()} disabled={syncing} pending={syncing} label="同步用户授权" />
           </div>
         </div>
@@ -476,7 +479,7 @@ export function NodeHubPage() {
         </TabsContent>
 
         <TabsContent value="machines">
-          <DataTableCard><DataTable columns={machineColumns} data={machines} searchKey="machine" searchPlaceholder="搜索机器名称、地址或备注" stateKey="machines" emptyTitle="还没有机器" emptyDescription="新建机器后，在 VPS 上执行安装命令即可接入。" pageSize={30} frame="card" renderMobileItem={machine => <Card title={machine.name} description={machine.host || "未填写地址"} headerAction={<Button variant="ghost" size="icon" onClick={() => void openMachine(machine)} aria-label={`管理 ${machine.name}`}><Pencil /></Button>}><div className="flex flex-wrap items-start justify-between gap-3"><MachineStatus machine={machine} /><LoadSummary load={machine.loadStatus} /></div></Card>} toolbar={<Button collapse onClick={() => { setMachineDraft(emptyMachineDraft()); setMachineCreateOpen(true) }}><Plus />新建机器</Button>} /></DataTableCard>
+          <DataTableCard><DataTable columns={machineColumns} data={machines} searchKey="machine" searchPlaceholder="搜索机器名称、地址或备注" stateKey="machines" emptyTitle="还没有机器" emptyDescription="新建机器后，在 VPS 上执行安装命令即可接入。" pageSize={30} frame="card" renderMobileItem={machine => <Card title={machine.name} description={machine.host || "未填写地址"} headerAction={<Button variant="ghost" size="icon" onClick={() => void openMachine(machine)} aria-label={`管理 ${machine.name}`}><Pencil /></Button>}><div className="flex flex-wrap items-start justify-between gap-3"><MachineStatus machine={machine} /><LoadSummary load={machine.loadStatus} /><MachineCostSummary cost={machineCosts[machine.guid || `hub-m${machine.id}`]} /></div></Card>} toolbar={<Button collapse onClick={() => { setMachineDraft(emptyMachineDraft()); setMachineCreateOpen(true) }}><Plus />新建机器</Button>} /></DataTableCard>
         </TabsContent>
 
         <TabsContent value="relays">
@@ -539,6 +542,7 @@ export function NodeHubPage() {
               <SwitchRow id="machine-edit-active" label="启用机器" description="停用后这台机器的请求会被拒绝，节点停止服务。" checked={machineDraft.isActive} onCheckedChange={isActive => setMachineDraft(current => ({ ...current, isActive }))} />
               <div className="flex flex-wrap justify-end gap-2"><ActionButton icon={<Save />} onClick={() => void saveMachine()} disabled={machineSaving || !machineChanged || !machineDraft.name.trim()} pending={machineSaving} label="保存机器设置" /></div>
             </section>
+            <MachineCostSection guid={machineDetail.guid || `hub-m${machineDetail.id}`} cost={machineCosts[machineDetail.guid || `hub-m${machineDetail.id}`]} onSaved={cost => setMachineCost(machineDetail.guid || `hub-m${machineDetail.id}`, cost)} />
             <section className="grid gap-3">
               <h3 className="flex items-center gap-2 text-sm font-semibold"><Terminal className="size-4" />安装命令</h3>
               {machineDetailLoading ? <Skeleton lines={2} /> : <InstallCommand command={machineDetail.installCommand} />}

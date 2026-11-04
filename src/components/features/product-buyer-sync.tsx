@@ -104,7 +104,7 @@ export function ProductBuyerSyncButton({ productId, productName, groups, dirty }
   return <>
     <Button variant="secondary" collapse onClick={openDialog}><RefreshCw />同步已购用户</Button>
     <Dialog open={open} onOpenChange={next => { if (!running) setOpen(next) }}>
-      <DialogContent size="xl" title={`同步已购用户：${productName}`} description="把商品当前的名称、在线IP数量、流量和线路权限组应用到未到期的已购用户，并按同一规则同步 3x-ui。到期时间和成交价不变。" onEscapeKeyDown={event => { if (running) event.preventDefault() }}>
+      <DialogContent size="xl" title={`同步已购用户：${productName}`} description="把商品当前的名称、在线IP数量、流量和线路权限组应用到未到期的已购用户，并按同一规则同步 node-hub。到期时间和成交价不变。" onEscapeKeyDown={event => { if (running) event.preventDefault() }}>
         {state.phase === "loading" ? <div className="grid gap-2" aria-label="正在生成预览"><Skeleton className="h-6 w-1/2" /><Skeleton className="h-24 w-full" /></div> : null}
         {state.phase === "error" ? <>
           <Alert tone="danger" title={state.message} />
@@ -132,13 +132,13 @@ function PreviewBody({ preview, groups, dirty, progress, onApply }: { preview: B
     {dirty ? <Alert tone="warning" title="页面有未保存的修改">预览和同步按已保存的商品计算；要让这些修改生效，请先关闭弹窗并保存商品。</Alert> : null}
     {preview.changes.length ? <SimpleTable
       caption="待同步的用户"
-      columns={["用户", "变更", "已用 / 流量额度", "3x-ui 连接"]}
+      columns={["用户", "变更", "已用 / 流量额度", "线路连接"]}
       rows={preview.changes}
       rowKey={row => row.userId}
       cells={row => [row.label, <ChangeList change={row} groups={groups} />, trafficCell(row), <Badge tone={connectionBadges[row.connection].tone}>{connectionBadges[row.connection].label}</Badge>]}
     /> : <Alert tone="info" title={preview.holders ? "所有未到期的已购用户都已与商品当前设置一致" : "没有未到期的已购用户"}>没有需要同步的用户。</Alert>}
     <SkippedTable rows={preview.skipped} />
-    {closing ? <Alert tone="warning" title={`${closing} 位用户的已用流量达到新的流量额度`}>同步后将关闭他们的 3x-ui 客户端连接，直到流量重置或增加额度。</Alert> : null}
+    {closing ? <Alert tone="warning" title={`${closing} 位用户的已用流量达到新的流量额度`}>同步后将关闭他们的线路连接，直到流量重置或增加额度。</Alert> : null}
     {progress ? <Progress value={progress.done} max={progress.total || 1} label={`正在同步 ${progress.done} / ${progress.total} 位用户，请勿关闭页面`} showValue /> : null}
     <div className="flex flex-wrap justify-end gap-2">
       <DialogClose asChild><Button variant="secondary" disabled={Boolean(progress)}>取消</Button></DialogClose>

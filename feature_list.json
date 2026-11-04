@@ -5493,6 +5493,50 @@
         "page_errors": [],
         "checked_at": "2026-11-04T07:47:33.557Z"
       }
+    },
+    {
+      "id": "remove-3x-ui",
+      "name": "彻底移除 3x-ui，全部用户接入 node-hub",
+      "description": "3x-ui is removed; node-hub is the only self-hosted line backend. Production was audited first (2026-11-04, read-only): every self-hosted user has a hubUuid, line groups hold only hub keys, the 3x-ui inbound catalog is empty and 3x-ui traffic stopped 2026-11-03 23:00 Beijing time. server.js drops the panel client/inbound/sync/probe code, the 3x-ui service transport (xui-app/xui-server/xui-client/xui-database/xui-audit, redis) and the node source filter; provisioning is provisionHubUser only, the billing round (node-hub-billing) prices xui_daily_traffic for every self-hosted user and node-hub entitlements enforce depletion, and subscriptions are built from hub proxies alone. Billing state lives in app_records xuiBilling/state; database.js copies the 3x-ui service copy (xui_state.billing, the live one in production since the service was enabled) into it once on startup while it is newer. Table and field names (xui_daily_traffic, xuiClientEmail, …) are kept. Frontend: 3x-ui monitor, access log and import/link dialog are gone (/xui-monitor and /xui-logs redirect to Node Hub); VPS monthly cost moved into Node Hub → 机器 (column + drawer section); the user detail loses 节点来源 and 切换到自研线路, and 3x-ui wording is replaced. Deploy deletes the nexora-xui pm2 process. Migration scripts and test-xui-service are removed; test-payment and test-node-hub-app now run against an in-process node-hub.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-first-user-provisioning"
+      ],
+      "done_criteria": [
+        "No 3x-ui runtime code, service, dependency, route, job or UI remains",
+        "Billing state from the 3x-ui service is carried into app_records on startup",
+        "Purchases, renewals, reversals, gifts, buyer sync, custom inbounds and depletion work through node-hub only",
+        "VPS cost is set in Node Hub; old monitor/log URLs redirect",
+        "npm run verify passes; affected pages have no console or page errors"
+      ],
+      "verification": [
+        "2026-11-04 production (read-only audit over ssh): 0 self-hosted users without hubUuid, 0 line groups with 3x-ui keys, 0 3x-ui inbounds in the catalog; 3x-ui daily traffic last on 2026-11-03 while node-hub carried 154 users / 189 GB on 2026-11-04; xui_state.billing updated 2026-11-04 vs app_records xuiBilling 2026-10-18 (same database), so the startup import is needed.",
+        "2026-11-04 local: npm run check; npm test (test.js, test-xui-traffic.js); test-checkout, test-payment, test-wallet, test-catalog-v2, test-node-hub, test-node-hub-app in an isolated schema — all pass. test-payment now injects node-hub outages and slow writes through a proxy in front of a real in-process hub."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=machines",
+          "/users/detail/<provisioned user>",
+          "/xui-inbounds",
+          "/sync-jobs",
+          "/dashboard",
+          "/xui-monitor",
+          "/xui-logs"
+        ],
+        "interactions": [
+          "Isolated app + node-hub on a throwaway schema (no XUI_* env): sidebar 节点 group lists 入站管理, Node Hub, 同步任务 only",
+          "Node Hub 机器: VPS 成本 column shows 未设置成本; drawer section saves ¥35 / 1000 GiB / in+out (toast, button disables), column then shows ¥35.00 / 月 · 1000 GiB · in + out",
+          "375x812 Node Hub 机器: mobile card shows the cost, scrollWidth 375 = clientWidth",
+          "User detail: no 节点来源 / 切换到自研线路, 线路信息 card, 同步V2套餐到 node-hub confirm → user log 已按当前V2套餐同步 node-hub 授权, hubNodeIds [1]",
+          "入站管理 lists hub nodes; removing the node from a line group and saving shows V2 权限组已保存，已同步 1 个用户 and the user hubNodeIds becomes []",
+          "/sync-jobs shows modules node-hub 节点, 流量, 订单, 钱包与返利, 附加服务 with no 3x-ui jobs; /dashboard renders",
+          "/xui-monitor redirects to /node-hub?tab=machines, /xui-logs to /node-hub"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-04T10:29:35.753Z"
+      }
     }
   ]
 }

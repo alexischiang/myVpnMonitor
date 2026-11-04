@@ -227,7 +227,7 @@ export function SyncJobsPage() {
     </div>
 
     {error ? <div className="px-4 lg:px-6"><Alert tone="danger" title="无法读取同步任务状态">{error}</Alert></div> : null}
-    {unconfigured.length ? <div className="px-4 lg:px-6"><Alert title="部分任务未启用">3x-ui 未配置，{unconfigured.map(job => job.name).join("、")}不会定时执行，也无法手动执行。</Alert></div> : null}
+    {unconfigured.length ? <div className="px-4 lg:px-6"><Alert title="部分任务未启用">node-hub 未配置，{unconfigured.map(job => job.name).join("、")}不会定时执行，也无法手动执行。</Alert></div> : null}
 
     {data ? data.modules.map(module => <div key={module.id} className="px-4 lg:px-6">
       <Card className="gap-0 overflow-hidden py-0" title={module.name} description={`${module.jobs.length} 个任务 · 24 小时 ${module.jobs.reduce((total, job) => total + job.stats24h.total, 0)} 次 · 异常 ${module.jobs.reduce((total, job) => total + job.stats24h.failed, 0)} 次`}>{/* Narrow screens list the jobs as rows inside the module card: the name keeps the full width and the actions sit on their own row. */}

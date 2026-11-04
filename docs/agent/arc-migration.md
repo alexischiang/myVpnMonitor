@@ -119,7 +119,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | 单选的选项组 | `radio-cards` | 计费周期（`public-pages.tsx`）、支付方式（`online-payment.tsx`）、分类切换（`category-pills.tsx`） |
 | 统计格（说明加数字） | `metric-card` | `account-node-status.tsx` 顶部三格 |
 | 带标题和说明的步骤或说明行 | `stepper`（`orientation="vertical"`、`details="all"`） | `account-onboarding.tsx` 的邀请步骤 |
-| 按时间排列的记录、日志 | `timeline`（`events[{id,at,title,meta,detail,tone}]`） | `sync-jobs.tsx`、`xui-logs.tsx`、工单消息 |
+| 按时间排列的记录、日志 | `timeline`（`events[{id,at,title,meta,detail,tone}]`） | `sync-jobs.tsx`、工单消息 |
 | 带头像或图标、标题、说明、操作的信息行 | `card`（`avatar`、`title`、`description`、`meta`、`status`、`action`） | 节点行、订单移动端条目 |
 
 `radio-cards` 属性：`options[{value,label,description,meta,icon,disabled,disabledReason}]`、`value`、`onValueChange`、`layout`: `grid/list`、`name`。以上对应是默认方案，每处实现时按实际内容选择并验证。

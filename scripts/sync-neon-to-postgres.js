@@ -28,10 +28,6 @@ async function main() {
     const { rows } = await source.query(
       "SELECT collection, id, position, data, updated_at FROM app_records ORDER BY collection, position"
     );
-    const { rows: credentialTable } = await source.query("SELECT to_regclass('public.xui_node_credentials') AS table_name");
-    const { rows: credentialRows } = credentialTable[0]?.table_name
-      ? await source.query("SELECT guid, sealed_token, updated_at FROM xui_node_credentials ORDER BY guid")
-      : { rows: [] };
     const client = await target.connect();
     try {
       await client.query("BEGIN");
@@ -43,13 +39,6 @@ async function main() {
           data JSONB NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (collection, id)
-        )
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS xui_node_credentials (
-          guid TEXT PRIMARY KEY,
-          sealed_token TEXT NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
       await client.query("TRUNCATE app_records");
@@ -68,20 +57,6 @@ async function main() {
           ]
         );
       }
-      await client.query("TRUNCATE xui_node_credentials");
-      if (credentialRows.length) {
-        await client.query(
-          `INSERT INTO xui_node_credentials (guid, sealed_token, updated_at)
-           SELECT u.guid, u.sealed_token, u.updated_at::timestamptz
-           FROM UNNEST($1::text[], $2::text[], $3::text[])
-             AS u(guid, sealed_token, updated_at)`,
-          [
-            credentialRows.map(row => row.guid),
-            credentialRows.map(row => row.sealed_token),
-            credentialRows.map(row => row.updated_at.toISOString())
-          ]
-        );
-      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -94,7 +69,6 @@ async function main() {
       "SELECT collection, COUNT(*)::int AS count FROM app_records GROUP BY collection ORDER BY collection"
     );
     for (const row of counts.rows) console.log(`${row.collection}: ${row.count}`);
-    console.log(`xui_node_credentials: ${credentialRows.length}`);
   } finally {
     await source.end();
     await target.end();

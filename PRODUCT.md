@@ -6,7 +6,7 @@ product
 
 ## Users
 
-XELA operators and administrators who manage VPN subscriptions, customers, billing, payments, and 3x-ui infrastructure from a desktop or mobile admin dashboard.
+XELA operators and administrators who manage VPN subscriptions, customers, billing, payments, and node-hub infrastructure from a desktop or mobile admin dashboard.
 
 ## Product Purpose
 
