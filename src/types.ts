@@ -84,6 +84,12 @@ export type User = {
     lastSyncedAt?: string
     nodes: Array<{ key: string; name: string; multiplier: number; rawBytes: number; weightedBytes: number }>
   }
+  /** Online IPs per node from the last traffic sync (3x-ui panel nodes and node-hub nodes). */
+  xuiOnlineIps?: {
+    checkedAt: string
+    totalIps: number
+    nodes: Array<{ key: string; name: string; source: "xui" | "hub"; ips: string[] }>
+  }
   deviceLimit?: number
   isBusiness?: boolean
   isFamilyFriend?: boolean

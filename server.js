@@ -2783,7 +2783,9 @@ async function fulfillPaymentOrderOnce(order, req) {
     user = normalizeUser({
       userId: email,
       email,
-      wechatName: "",
+      // Profile an admin entered when creating the account (新增用户).
+      wechatName: account?.wechatName || "",
+      ...(account?.imessage ? { imessage: account.imessage } : {}),
       purchasedAt,
       ...(selectedOption.duration === "custom" && selectedOption.durationDays ? { expiresAt: new Date(Date.parse(purchasedAt) + selectedOption.durationDays * 86400000).toISOString() } : {}),
       actualPaid: planCashValueAmount,
@@ -3176,7 +3178,8 @@ async function submitPurchaseOrder(payload, req, account, manualAmount) {
 // Existing administrator-created sales still compose submission and collection.
 async function createPaymentOrder(payload, req, account, paymentSource = "online") {
   if (paymentSource !== "manual") return submitPurchaseOrder(payload, req, account);
-  const cents = moneyCents(payload.amount, "人工收款金额");
+  // The admin sets the amount freely; 0 assigns the plan without collecting money.
+  const cents = Number(payload.amount) === 0 && /^0+(\.0{1,2})?$/.test(String(payload.amount ?? "").trim()) ? 0 : moneyCents(payload.amount, "人工收款金额");
   if (cents > 1000000) throw new Error("单次人工收款不能超过 ¥10,000.00。");
   const order = await submitPurchaseOrder(payload, req, account, cents / 100);
   return markPaymentOrderPaidManually(order, req);
@@ -3554,13 +3557,13 @@ function refreshUserPlanTraffic(user) {
   ]);
 }
 
-// Pushes a user's changed entitlement to node-hub right away. Hub-only, the hub is the only
-// enforcement point, so its failure is the caller's failure; next to 3x-ui the panel write already
-// succeeded and the next full entitlement sync repairs the hub.
+// Pushes a user's changed entitlement to node-hub right away. For a user without a 3x-ui client
+// the hub is the only enforcement point, so its failure is the caller's failure; for a 3x-ui
+// customer the panel write already succeeded and the next full entitlement sync repairs the hub.
 async function syncHubUserNow(user) {
   if (!hubConfigured()) return;
   const sync = syncHubUser(user);
-  if (!xuiPanelConfigured()) await sync;
+  if (!userOnXuiPanel(user)) await sync;
   else await sync.catch(error => hubLogger.warn({ userId: user.id, error: error.message }, "node-hub entitlement sync failed; the next full sync retries"));
 }
 
@@ -3569,7 +3572,7 @@ async function syncHubUserNow(user) {
 async function enableXuiClientAfterTrafficIncrease(user) {
   const email = xuiClientEmail(user);
   const totalBytes = xuiTrafficLimitBytes(user);
-  if (xuiPanelConfigured()) {
+  if (xuiPanelConfigured() && (!hubConfigured() || userOnXuiPanel(user))) {
     const remote = await getXuiClientByEmail(email);
     const enable = xuiClientAllowed(user);
     await xuiRequest(`/panel/api/clients/update/${encodeURIComponent(email)}`, { method: "POST", body: xuiClientWritePayload(remote, { ...remote, totalGB: 0, reset: 0, flow: XUI_VISION_FLOW, enable }) });
@@ -3726,14 +3729,15 @@ async function syncHubUser(user, { forceDisabled = false, context = null, uuid =
   const entitlement = hubEntitlementFor(user, context || await hubEntitlementContext(), { forceDisabled });
   if (!entitlement) return null;
   if (!entitlement.uuid) entitlement.uuid = hubUuidOrEmpty(uuid);
-  if (!entitlement.uuid && xuiPanelConfigured()) {
+  // A 3x-ui customer's first hub credential is their panel uuid when the panel can tell it;
+  // otherwise (and for everyone else) node-hub generates one.
+  if (!entitlement.uuid && userOnXuiPanel(user)) {
     try {
       const client = await getXuiClientByEmail(entitlement.email);
       entitlement.uuid = hubUuidOrEmpty(client.uuid || client.id);
     } catch (error) {
-      if (error.statusCode !== 404) throw error;
+      hubLogger.warn({ userId: user.id, error: error.message }, "3x-ui uuid unavailable; node-hub generates the credential");
     }
-    if (!entitlement.uuid) return null;
   }
   if (!entitlement.uuid) delete entitlement.uuid;
   const stored = await requestNodeHub(`/internal/users/${encodeURIComponent(user.id)}`, { method: "PUT", body: entitlement });
@@ -3767,13 +3771,17 @@ function syncHubUsers({ reload = true } = {}) {
     if (reload) await loadLatestData();
     const context = await hubEntitlementContext();
     const owners = users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail);
-    let entitlements = owners.map(item => [item, hubEntitlementFor(item, context)]).filter(([, entry]) => entry);
-    if (xuiPanelConfigured() && entitlements.some(([, entry]) => !entry.uuid)) {
-      const panelUuids = await panelUuidsByEmail();
-      entitlements = entitlements.filter(([, entry]) => {
-        if (!entry.uuid) entry.uuid = panelUuids.get(entry.email) || "";
-        return entry.uuid;
+    const entitlements = owners.map(item => [item, hubEntitlementFor(item, context)]).filter(([, entry]) => entry);
+    // 3x-ui customers not yet on the hub start from their panel uuid; the rest get a hub one.
+    if (entitlements.some(([item, entry]) => !entry.uuid && userOnXuiPanel(item))) {
+      const panelUuids = await panelUuidsByEmail().catch(error => {
+        hubLogger.warn({ error: error.message }, "3x-ui client list unavailable; node-hub generates missing credentials");
+        return new Map();
       });
+      for (const [item, entry] of entitlements) {
+        if (!entry.uuid && userOnXuiPanel(item)) entry.uuid = panelUuids.get(entry.email) || "";
+        if (!entry.uuid) delete entry.uuid;
+      }
     }
     const result = await requestNodeHub("/internal/users", { method: "PUT", body: { users: entitlements.map(([, entry]) => entry), replace: true } });
     const changedUsers = [];
@@ -3793,9 +3801,9 @@ function syncHubUsers({ reload = true } = {}) {
   return hubUsersSyncRun;
 }
 
-// Hub-only provisioning (3x-ui not configured): the user's line identity is their registered
-// email and the hub entitlement; there is no panel client.
-async function provisionHubOnlyUser(user) {
+// node-hub provisioning: the user's line identity is their registered email and the hub
+// entitlement. uuid: the credential to start from (a 3x-ui customer's panel uuid).
+async function provisionHubOnlyUser(user, { uuid = "" } = {}) {
   if (!accessGroupForUser(user)) throw new Error("Self-hosted user is missing a valid access group.");
   xuiTrafficLimitBytes(user);
   const email = xuiClientEmail(user);
@@ -3804,7 +3812,7 @@ async function provisionHubOnlyUser(user) {
   user.lineType = "self_hosted";
   user.subscriptionId = "";
   user.xuiClientEmail = email;
-  const stored = await syncHubUser(user);
+  const stored = await syncHubUser(user, { uuid });
   if (!stored) throw new Error("node-hub 未接受该用户的线路授权。");
   user.xuiLastSyncedAt = new Date().toISOString();
   user.xuiLastError = "";
@@ -4029,6 +4037,22 @@ function normalizeXuiConnectedIps(value, email) {
     }
   }
   return [...ips];
+}
+
+// One user's online IPs per node, for the admin user page: 3x-ui nodes by panel guid,
+// node-hub nodes by node id. null for a source that could not be read this round.
+function userOnlineIpsByNode(email, { clientIpsByGuid = null, hubEntry = null, hubRead = false, nodeNames = {}, hubNodeNames = {} } = {}) {
+  const nodes = [];
+  for (const [guid, clients] of Object.entries(clientIpsByGuid && typeof clientIpsByGuid === "object" ? clientIpsByGuid : {})) {
+    const ips = normalizeXuiConnectedIps({ [guid]: clients }, email);
+    if (ips.length) nodes.push({ key: guid, name: nodeNames[guid] || guid, source: "xui", ips });
+  }
+  for (const [nodeId, ips] of Object.entries(hubEntry?.ipsByNode || {})) {
+    const list = [...new Set((Array.isArray(ips) ? ips : []).map(String).filter(Boolean))];
+    if (list.length) nodes.push({ key: `hub:${nodeId}`, name: hubNodeNames[nodeId] || `Node Hub #${nodeId}`, source: "hub", ips: list });
+  }
+  if (!clientIpsByGuid && !hubRead) return null;
+  return { checkedAt: new Date().toISOString(), totalIps: new Set(nodes.flatMap(node => node.ips)).size, nodes };
 }
 
 function normalizeXuiInbounds(value = []) {
@@ -4837,6 +4861,7 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
     // Hub traffic is billed per node: shown as "machine · node" in the user's traffic list.
     ...Object.fromEntries((hubOverview?.nodes || []).filter(node => node.billingKey && node.billingKey !== node.guid).map(node => [node.billingKey, node.machineName ? `${node.machineName} · ${node.name}` : node.name]))
   };
+  const hubNodeNames = Object.fromEntries((hubOverview?.nodes || []).map(node => [String(node.id), node.machineName ? `${node.machineName} · ${node.name}` : node.name]));
   const appUsersByEmail = new Map(users.filter(item => isSelfHostedUser(item) && item.xuiClientEmail).map(item => [String(item.xuiClientEmail).toLowerCase(), item]));
   try {
     await updateSalesTrafficState(current => ({ ...current, nodeNames: { ...current.nodeNames, ...nodeNames } }), state);
@@ -4899,16 +4924,20 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
   const depletedMails = [];
   const alertSettings = currentSalesSettings().alertSettings;
   const remoteEmails = new Set();
-  // node-hub only: every self-hosted user gets a ledger entry, standing in for the panel client
-  // (enable = allowed by plan and account; nothing is ever written to a panel for them).
-  const ledgerClients = panel ? (Array.isArray(clients) ? clients : []) : [...appUsersByEmail].map(([email, item]) => ({
+  // Users without a 3x-ui client (every user when node-hub runs alone, users that never had one
+  // next to 3x-ui) get a ledger entry standing in for the panel client (enable = allowed by plan
+  // and account; nothing is ever written to a panel for them).
+  const panelClients = panel ? (Array.isArray(clients) ? clients : []) : [];
+  const panelEmails = new Set(panelClients.map(remote => String(remote?.email || "").trim().toLowerCase()));
+  const hubOnlyClients = !panel || hubConfigured() ? [...appUsersByEmail].filter(([email, item]) => !panelEmails.has(email) && (!panel || !userOnXuiPanel(item))).map(([email, item]) => ({
     email,
     enable: xuiClientAllowed(item),
     totalGB: 0,
     expiryTime: Date.parse(item.expiresAt || "") || 0,
     traffic: { up: 0, down: 0, enable: true },
     backend: "node-hub"
-  }));
+  })) : [];
+  const ledgerClients = [...panelClients, ...hubOnlyClients];
 
   for (const remote of ledgerClients) {
     const email = String(remote?.email || "").trim().toLowerCase();
@@ -4922,11 +4951,13 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
     const ledger = xuiTraffic.xuiLedgerFromCycle(cycleUsage.nodes, nodeMultipliers, { cycleKey: cycleStartKey, nodeNames, updatedAt: new Date().toISOString(), previous });
     const expired = user ? isUserExpired(user) : Number(remote.expiryTime) > 0 && Number(remote.expiryTime) < Date.now();
     const depleted = totalBytes > 0 && ledger.weightedBytes >= totalBytes;
-    if (depleted && remote.enable !== false && !expired) disableEmails.push(email);
+    // Only panel clients are switched on the panel; node-hub follows the entitlement sync.
+    const onPanel = panelEmails.has(email);
+    if (onPanel && depleted && remote.enable !== false && !expired) disableEmails.push(email);
     // Self-healing re-enable: if the panel has the client disabled but they are no longer
     // over quota (traffic pack, cycle reset, or the from-zero launch) and are otherwise
     // valid, re-enable them. Independent of any stored ledger flag.
-    if (user && remote.enable === false && !depleted && xuiClientAllowed(user)) enableEmails.push(email);
+    if (onPanel && user && remote.enable === false && !depleted && xuiClientAllowed(user)) enableEmails.push(email);
     ledger.disabled = ledger.disabled || depleted;
     ledger.totalBytes = totalBytes;
     state.users[email] = ledger;
@@ -4954,8 +4985,11 @@ async function runXuiWeightedTrafficSync(snapshot = {}) {
       delete user.xuiClientMissingAt;
       user.xuiWeightedTraffic = weightedTraffic;
       const panelIpCount = clientIpsByGuid ? normalizeXuiConnectedIps(clientIpsByGuid, email).length : null;
-      const hubIpCount = hubPresence ? nodeHub.hubPresenceForEmail(hubPresence, email)?.ips?.length || 0 : null;
+      const hubEntry = hubPresence ? nodeHub.hubPresenceForEmail(hubPresence, email) : null;
+      const hubIpCount = hubPresence ? hubEntry?.ips?.length || 0 : null;
       user.xuiLastTraffic = xuiTrafficPayload(user, remote, panelIpCount === null && hubIpCount === null ? null : (panelIpCount || 0) + (hubIpCount || 0));
+      const onlineIps = userOnlineIpsByNode(email, { clientIpsByGuid, hubEntry, hubRead: Boolean(hubPresence), nodeNames, hubNodeNames });
+      if (onlineIps) user.xuiOnlineIps = onlineIps;
       user.xuiLastSyncedAt = weightedTraffic.lastSyncedAt;
       user.xuiLastError = "";
       changedUsers.push(user);
@@ -5425,7 +5459,9 @@ async function runCatalogV2Sync({ forceReload = false, snapshot = {}, readOnly =
   const findClient = async email => clientsByEmail.get(String(email).trim().toLowerCase()) || null;
   // Inbound changes are collected per user and sent in batches after the loop.
   const inboundChanges = [];
-  for (const user of users.filter(item => item.v2ProductSnapshot && isSelfHostedUser(item))) {
+  // Next to node-hub only customers who already have a 3x-ui client are kept in step here; the
+  // panel never gets a client for anyone else.
+  for (const user of users.filter(item => item.v2ProductSnapshot && isSelfHostedUser(item) && (!hubConfigured() || userOnXuiPanel(item)))) {
     report.checked++;
     let repairedTrafficLimit = false;
     try {
@@ -5913,7 +5949,6 @@ async function writeXuiClient(user, {
 }
 
 async function provisionXuiClientOnce(user, options = {}) {
-  if (!xuiConfigured() && hubConfigured()) return provisionHubOnlyUser(user);
   if (!xuiConfigured()) throw new Error("自研线路尚未完成3x-ui配置。");
   if (!accessGroupForUser(user)) throw new Error("Self-hosted user is missing a valid access group.");
   const allInboundIds = options.allInboundIds || await getAllXuiInboundIds();
@@ -5938,15 +5973,42 @@ async function provisionXuiClientOnce(user, options = {}) {
   // With node-hub alongside 3x-ui, the same uuid is used on hub nodes, so a client config moves
   // between the two without changes. The panel write already succeeded; a hub failure is
   // repaired by the next full entitlement sync.
-  if (hubConfigured()) {
+  if (hubConfigured() && !options.skipHubSync) {
     await syncHubUser(user, { uuid: remote?.uuid || remote?.id || desired.uuid || desired.id }).catch(error => hubLogger.warn({ userId: user.id, error: error.message }, "node-hub entitlement sync failed after 3x-ui provisioning"));
   }
   return remote;
 }
 
+// A customer who already has a 3x-ui client (the panel gave them a subId). Everyone else is
+// node-hub only once node-hub is configured: no panel client is ever created for them.
+function userOnXuiPanel(user = {}) {
+  return xuiConfigured() && Boolean(user.xuiSubId);
+}
+
+// Provisions a user's line. With node-hub configured, node-hub is the only provisioning target
+// that must succeed: users without a 3x-ui client go to node-hub alone, and a customer who still
+// has a 3x-ui client gets it updated on a best-effort basis (a panel failure is recorded on the
+// user, never blocks the purchase or admin action). options.panel forces the 3x-ui path (linking
+// or importing a 3x-ui client). Takes writeXuiClient's options for the panel write.
+async function provisionXuiClient(user, options = {}) {
+  if (!hubConfigured() || options.panel) return provisionXuiPanelClient(user, options);
+  if (!userOnXuiPanel(user)) return provisionHubOnlyUser(user);
+  let remote = null;
+  let panelError = null;
+  try {
+    remote = await provisionXuiPanelClient(user, { ...options, skipHubSync: true });
+  } catch (error) {
+    panelError = error;
+    hubLogger.warn({ userId: user.id, error: error.message }, "3x-ui client update failed; node-hub provisioning continues");
+  }
+  const hubResult = await provisionHubOnlyUser(user, { uuid: remote?.uuid || remote?.id || "" });
+  if (panelError) user.xuiLastError = `3x-ui 客户端同步失败（node-hub 已生效）：${panelError.message}`;
+  return remote || hubResult;
+}
+
 // Creates or updates the user's 3x-ui client through writeXuiClient, retrying timeouts, then
 // stores the panel's subId and sync state on the user. Takes writeXuiClient's options.
-async function provisionXuiClient(user, options = {}) {
+async function provisionXuiPanelClient(user, options = {}) {
   let lastError;
   for (let attempt = 1; attempt <= XUI_PROVISION_MAX_ATTEMPTS; attempt += 1) {
     try {
@@ -6006,10 +6068,11 @@ async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
     try {
       const conflict = users.find(item => item.id !== user.id && String(item.xuiClientEmail || "").trim().toLowerCase() === email);
       if (conflict) throw new Error("该邮箱对应的3x-ui Client已关联其他用户。");
-      // Same rule as every other write: a same-email panel client is only reused when this
-      // user was already linked to it; otherwise the migration fails with a conflict.
-      const existing = await lookupXuiClient(email);
-      await assertNoUnlinkedXuiClient(user, { email, existing, checkLegacyEmail: false });
+      // With node-hub the user moves to node-hub and the panel is not consulted. Otherwise, same
+      // rule as every other write: a same-email panel client is only reused when this user was
+      // already linked to it; otherwise the migration fails with a conflict.
+      const existing = hubConfigured() ? null : await lookupXuiClient(email);
+      if (!hubConfigured()) await assertNoUnlinkedXuiClient(user, { email, existing, checkLegacyEmail: false });
       user.email ||= email;
       user.xuiClientEmail = email;
       initializeLegacyXuiMigration(user, existing);
@@ -6026,7 +6089,7 @@ async function migrateLegacyUserOnSubscriptionRefresh(user, req) {
         reason: "xui-migration-completed",
         req,
         stage: "xui-migration",
-        message: existing ? "旧套餐已关联现有3x-ui Client并完成迁移。" : "旧套餐已创建3x-ui Client并完成迁移。",
+        message: existing ? "旧套餐已关联现有3x-ui Client并完成迁移。" : hubConfigured() ? "旧套餐已迁移到 node-hub。" : "旧套餐已创建3x-ui Client并完成迁移。",
         details: { source: user.xuiMigrationSource, email, group: accessGroupForUser(user), trafficLimitBytes: user.xuiTrafficLimitBytes, nextResetAt: user.xuiNextTrafficResetAt, flow: XUI_VISION_FLOW, inboundIds: user.xuiInboundIds || [], inheritedUsedTrafficBytes: existing ? remote.usedTraffic : 0 }
       }));
       await saveUsers();
@@ -6084,7 +6147,7 @@ async function connectXuiClient(user, { mode, email = "", importedIpLimit } = {}
   }
   user.lineType = "self_hosted";
   user.subscriptionId = "";
-  remote = await provisionXuiClient(user);
+  remote = await provisionXuiClient(user, { panel: true });
   await clearXuiBillingLedger(user.xuiClientEmail);
   user.xuiTrafficBaselinePending = true;
   user.xuiTrafficBaselineVersion = 0;
@@ -6093,15 +6156,16 @@ async function connectXuiClient(user, { mode, email = "", importedIpLimit } = {}
 
 async function disableXuiClient(user) {
   if (!user?.xuiClientEmail) return;
-  if (XUI_BASE_URL && XUI_API_TOKEN) {
+  const panelClient = xuiPanelConfigured() && (!hubConfigured() || userOnXuiPanel(user));
+  if (panelClient) {
     await xuiRequest("/panel/api/clients/bulkDisable", { method: "POST", body: { emails: [user.xuiClientEmail] } });
     user.xuiLastSyncedAt = new Date().toISOString();
     await saveXuiClientProjection(user, false);
   }
   if (hubConfigured()) {
     const sync = syncHubUser(user, { forceDisabled: true });
-    // Hub-only: the hub is the only enforcement point, so its failure is the caller's failure.
-    if (!xuiPanelConfigured()) await sync;
+    // Without a panel client the hub is the only enforcement point, so its failure is the caller's failure.
+    if (!panelClient) await sync;
     else await sync.catch(error => hubLogger.warn({ userId: user.id, error: error.message }, "node-hub disable failed; the next full sync retries"));
     user.xuiLastSyncedAt = new Date().toISOString();
   }
@@ -6513,7 +6577,8 @@ function paymentOrderForBill(bill) {
 function paymentOrderOwnerId(order) {
   if (order.userId && users.some(user => user.id === order.userId)) return order.userId;
   const account = accounts.find(item => item.id === order.accountId);
-  return account ? account.linkedUserId || `account:${account.id}` : order.userId || "";
+  if (!account) return order.userId || "";
+  return account.linkedUserId && users.some(user => user.id === account.linkedUserId) ? account.linkedUserId : `account:${account.id}`;
 }
 
 function userBillingSummary(ownerId) {
@@ -8547,7 +8612,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/admin-data" && req.method === "GET") {
     const usersById = userById();
     const registeredAccounts = accounts
-      .filter(account => ["active", "disabled"].includes(account.status) && !userForAccount(account))
+      .filter(account => ["active", "disabled", "invited"].includes(account.status) && !userForAccount(account))
       .map(publicRegisteredAccount);
     sendJson(res, 200, {
       users: [...users.map(user => ({ ...publicUser(user), userLogs: [] })), ...registeredAccounts],
@@ -9087,6 +9152,27 @@ async function handleApi(req, res, pathname) {
 
   const accountInviteMatch = pathname.match(/^\/api\/users\/([^/]+)\/account-invite$/);
   if (accountInviteMatch && req.method === "POST") {
+    // An account created by 新增用户 has no subscription user yet: resend its claim mail.
+    const invitedAccountId = decodeURIComponent(accountInviteMatch[1]).match(/^account:(.+)$/)?.[1];
+    if (invitedAccountId) {
+      const account = accounts.find(item => item.id === invitedAccountId);
+      if (!account || account.status !== "invited" || userForAccount(account)) {
+        sendJson(res, account ? 409 : 404, { error: account ? "该账户已认领或已开通订阅。" : "账户不存在。" });
+        return;
+      }
+      try {
+        const token = crypto.randomBytes(32).toString("base64url");
+        account.claimTokenHash = tokenHash(token);
+        account.claimTokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+        account.updatedAt = new Date().toISOString();
+        await saveAccounts();
+        await sendAccountActionMail({ to: account.email, subject: "认领你的订阅账户", title: "请点击下面的链接设置密码并认领订阅", url: accountActionUrl(req, "/reset-password", token) });
+        sendJson(res, 200, { ok: true, status: "invited" });
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
     const user = users.find(item => item.id === accountInviteMatch[1]);
     if (!user) {
       sendJson(res, 404, { error: "用户不存在。" });
@@ -9168,7 +9254,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/users" && req.method === "GET") {
     await loadLatestData();
     const registeredAccounts = accounts
-      .filter(account => ["active", "disabled"].includes(account.status) && !userForAccount(account))
+      .filter(account => ["active", "disabled", "invited"].includes(account.status) && !userForAccount(account))
       .map(publicRegisteredAccount);
     sendJson(res, 200, [...users.map(user => publicUser(user)), ...registeredAccounts]);
     return;
@@ -9178,8 +9264,9 @@ async function handleApi(req, res, pathname) {
     try {
       const payload = await readJson(req);
       if (pathname === "/api/admin/manual-payments") await loadLatestData({ force: true });
-      const account = accounts.find(item => item.id === String(payload.accountId || "") && item.status === "active");
-      if (!account) throw new Error("只有已启用的认领账户可以人工收款。");
+      // An invited account (created by an admin, or invited and not yet claimed) can be charged too.
+      const account = accounts.find(item => item.id === String(payload.accountId || "") && ["active", "invited"].includes(item.status));
+      if (!account) throw new Error("只有已启用或等待认领的账户可以人工收款。");
       const input = { ...payload, useBalance: false };
       if (pathname.endsWith("/quote")) {
         sendJson(res, 200, await paymentQuoteForAccount(input, account, { allowUnlisted: true }));
@@ -9406,70 +9493,42 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  // 新增用户 creates the customer's account only: no plan, no line, nothing on node-hub or 3x-ui.
+  // The plan is assigned afterwards through 人工收款 (any amount, including 0), which creates the
+  // subscription user and provisions it. The customer sets a password through the claim mail.
   if (pathname === "/api/users" && req.method === "POST") {
     try {
+      await loadLatestData({ force: true });
       const payload = await readJson(req);
-      const item = {
-        id: crypto.randomUUID(),
-        createdAt: new Date().toISOString()
-      };
-      const option = await adminCatalogV2PlanOption(payload);
-      const purchasedTime = Date.parse(payload.purchasedAt || new Date().toISOString());
-      if (!Number.isFinite(purchasedTime)) throw new Error("购买时间格式不正确。");
-      const normalized = normalizeUser({
-        ...payload,
-        lineType: "self_hosted",
-        duration: option.duration,
-        expiresAt: option.lifetime ? undefined : new Date(purchasedTime + option.durationDays * 86400000).toISOString(),
-        actualPaid: payload.actualPaid ?? option.amount
-      }, item);
-      bindUserProductFromOrder(normalized, { id: "", paidAt: normalized.purchasedAt, paymentProvider: "manual", catalogVersion: 2, optionId: option.optionId, productSnapshot: { ...option, v2: option.productSnapshotV2 } });
-      normalized.currentProductSource = "admin_create";
-      normalized.xuiTrafficLimitBytes = Math.max(0, Number(option.trafficBytes) || 0);
-      users.unshift(normalized);
-      try {
-        await provisionXuiClient(normalized);
-      } catch (error) {
-        users = users.filter(entry => entry.id !== normalized.id);
-        throw error;
-      }
-      bills.unshift(makeBill({
-        user: normalized,
-        type: "initial",
-        amount: normalized.actualPaid,
-        occurredAt: normalized.purchasedAt,
-        duration: normalized.duration,
-        afterExpiresAt: normalized.expiresAt,
-        description: "用户初始购买"
-      }));
-      // A customer account that already has this user's email keeps VIP in its wallet, so the offline sale is booked there.
-      const ownerAccount = accounts.find(entry => userForAccount(entry) === normalized);
-      const offlineVipCents = Math.round(userVipSpend(normalized) * 100);
-      if (ownerAccount && offlineVipCents > 0) {
-        const wallet = await dataStore.creditWalletVipSpend({
-          id: crypto.randomUUID(), accountId: ownerAccount.id, sourceId: normalized.id, amountCents: offlineVipCents,
-          description: "后台录入消费", idempotencyKey: `offline-user:${normalized.id}`, initialVipCents: 0
-        });
-        syncWalletVip(ownerAccount, wallet);
-      }
-      appendUserLogToUser(normalized, createUserLog({
-        event: "user-action",
-        status: "recorded",
-        reason: "user-created",
-        req,
-        message: userActionMessage("user-created"),
-        details: {
-          snapshot: userSnapshotForLog(normalized),
-          amount: normalized.actualPaid,
-          duration: normalized.duration,
-          afterExpiresAt: normalized.expiresAt
+      const email = normalizeAccountEmail(payload.email);
+      if (accounts.some(entry => entry.email === email)) throw Object.assign(new Error("该邮箱已有账户。"), { statusCode: 409 });
+      if (users.some(entry => [entry.email, entry.userId].some(value => String(value || "").trim().toLowerCase() === email))) throw Object.assign(new Error("该邮箱已有订阅用户，请在该用户详情中操作。"), { statusCode: 409 });
+      const now = new Date().toISOString();
+      const account = { id: crypto.randomUUID(), email, passwordHash: "", status: "invited", linkedUserId: "", referralCode: randomReferralCode(), referredByAccountId: "", referralRate: 10, recurringReferral: false, referralBoundAt: "", createdAt: now, updatedAt: now };
+      account.customerID = nextCustomerID(account.id, [...users, ...accounts]);
+      const wechatName = String(payload.wechatName || "").trim().slice(0, 100);
+      const imessage = String(payload.imessage || "").trim().slice(0, 200);
+      if (wechatName) account.wechatName = wechatName;
+      if (imessage) account.imessage = imessage;
+      const token = crypto.randomBytes(32).toString("base64url");
+      account.claimTokenHash = tokenHash(token);
+      account.claimTokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      const actor = currentSession(req)?.account || "admin";
+      account.userLogs = [createUserLog({ event: "user-action", status: "recorded", reason: "user-created", req, message: `${userActionMessage("user-created")}（未分配套餐，操作人 ${actor}）`, details: { actor, email } })];
+      accounts.unshift(account);
+      await saveAccounts();
+      let claimMailSent = false;
+      if (notifier.isMailConfigured()) {
+        try {
+          await sendAccountActionMail({ to: email, subject: "认领你的订阅账户", title: "请点击下面的链接设置密码并认领订阅", url: accountActionUrl(req, "/reset-password", token) });
+          claimMailSent = true;
+        } catch (error) {
+          console.error(`Claim email failed for ${email}:`, error.message);
         }
-      }));
-      await saveUsers();
-      await saveBills();
-      sendJson(res, 201, publicUser(normalized));
+      }
+      sendJson(res, 201, { ...publicRegisteredAccount(account), claimMailSent });
     } catch (error) {
-      sendJson(res, 400, { error: error.message });
+      sendJson(res, error.statusCode || 400, { error: error.message });
     }
     return;
   }
@@ -10539,7 +10598,7 @@ async function handleApi(req, res, pathname) {
         // counter reset would skew the local-node derivation). The current cycle restarts at zero
         // from this instant through a cycle baseline; a client disabled for quota is re-enabled now.
         startXuiCycleBaseline(item, currentXuiCycleStartKey(item), Date.now());
-        if (xuiPanelConfigured() && xuiClientAllowed(item)) {
+        if (xuiPanelConfigured() && (!hubConfigured() || userOnXuiPanel(item)) && xuiClientAllowed(item)) {
           await xuiRequest("/panel/api/clients/bulkEnable", { method: "POST", body: { emails: [xuiClientEmail(item)] } });
         }
         const now = new Date().toISOString();

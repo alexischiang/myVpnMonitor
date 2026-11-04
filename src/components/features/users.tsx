@@ -102,8 +102,12 @@ export function UsersPage() {
         await putJson(`/api/users/${editing.id}`, values)
         toast({ type: "success", title: "用户已更新" })
       } else {
-        await postJson("/api/users", { ...values, lineType: "self_hosted", trafficTier: Number(values.trafficTier) || 1 })
-        toast({ type: "success", title: "用户已创建" })
+        // The account has no plan yet: open its detail page, where 人工收款 assigns one.
+        const created = await postJson<User & { claimMailSent?: boolean }>("/api/users", values)
+        toast({ type: "success", title: "用户已创建", description: created.claimMailSent ? "已发送账户认领邮件；请通过人工收款分配套餐" : "请通过人工收款分配套餐" })
+        await reload(["users", "bills"])
+        navigate(`/users/detail/${created.id}${location.search}`)
+        return
       }
       await reload(["users", "bills"])
     }, "保存用户...")

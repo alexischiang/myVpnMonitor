@@ -462,6 +462,8 @@ async function main() {
     assert.deepEqual(presence.users["user-a"].ips.sort(), ["198.51.100.7", "203.0.113.5"], "alive IPs are kept while online is reported without alive");
     assert.equal(presence.users["user-a"].online, true);
     assert.deepEqual(presence.users["user-b"].nodeIds, [hyNode.id]);
+    assert.deepEqual(presence.users["user-b"].ipsByNode, { [hyNode.id]: ["192.0.2.1"] }, "IPs are also kept per node");
+    assert.deepEqual([...new Set(Object.values(presence.users["user-a"].ipsByNode).flat())].sort(), presence.users["user-a"].ips, "per-node IPs add up to the merged list");
     assert.ok(presence.users["user-a"].lastOnlineAt);
     await vless.report({});
     presence = (await internal("GET", "/internal/presence")).body;
