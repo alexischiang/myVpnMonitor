@@ -1,6 +1,6 @@
 # node-hub：用本站控制每台 VPS 上的 xboard-node
 
-node-hub 让本站直接管理部署在每台 VPS 上的 [xboard-node](https://github.com/cedar2025/xboard-node)（安装和升级都用 fork `alexischiang/nexora-node`：在上游 v1.13 上修复了「无用户启动后收不到用户」，见下文已知限制），替代 3x-ui 主面板 / 子面板架构。xboard-node 使用 Xboard 的原生节点 API，无需二次开发。
+node-hub 让本站直接管理部署在每台 VPS 上的 [xboard-node](https://github.com/cedar2025/xboard-node)（安装和升级都用 fork `alexischiang/nexora-node`：在上游 v1.13 上修复了「无用户启动后收不到用户」，见下文已知限制），是本站唯一的自研线路后端（3x-ui 已于 2026-11-04 移除）。xboard-node 使用 Xboard 的原生节点 API，无需二次开发。
 
 ## 架构
 
@@ -14,45 +14,29 @@ VPS: xboard-node (machine 模式) ──HTTPS /api/v1|v2/server/*──> 反向�
 - node-hub 是独立进程，只做三件事：对 xboard-node 提供 Xboard 节点 API（handshake、config、user、report、machine/nodes、machine/status，ETag/304）；通过 WebSocket 把变化实时推给 xboard-node（`node-hub/push.js`，见下节）；对本站提供 `/internal/*` 管理 API（仅 loopback + `NODE_HUB_INTERNAL_TOKEN`）。
 - 授权由本站计算：每个用户 `{userKey, uuid, planId, nodeIds, speedLimit, deviceLimit, enabled}`，每 60 秒全量同步（同步任务「node-hub 授权同步」，兜底到期等没有事件的变化），开通、续费、套餐变更、流量耗尽、个人定制入站变更时立即同步单个用户。node-hub 收到后立刻推给已连接的机器。
 - 流量：xboard-node 每次上报的是每用户增量；node-hub 在一个事务里按 report id 去重后累加到本站的 `xui_daily_traffic`（中国日期，每个节点一个计费键 `node_guid = hub-m<机器id>-n<节点id>`）。所以加权计费、日流量图、节点盈利分析都沿用原逻辑（按机器统计的地方把节点键归到机器，见「已知限制」里的流量倍率）。上报失败时节点会自己回滚重报，不会丢流量。
-- 在本站里，hub 节点以入站形式出现：key `hub-m<机器id>:<节点id>`，入站 id `1000000000 + 节点id`。这些 id 永远不会发给 3x-ui。线路组、入站设置（地区、网络等级、套餐/定制）、启用停用、个人定制入站、在线状态、节点监控都直接可用。
-- 订阅：`/sub/<token>` 把 hub 节点的 Clash 代理合并进 3x-ui 的 Clash 配置（两者共存时），或者单独生成（只有 hub 时），再交给 subconverter。
+- 在本站里，hub 节点以入站形式出现：key `hub-m<机器id>:<节点id>`，入站 id `1000000000 + 节点id`（远高于原 3x-ui 入站 id，用户上残留的旧 id 不会指到 hub 节点）。线路组、入站设置（地区、网络等级、套餐/定制）、启用停用、个人定制入站、在线状态、节点监控都直接可用。
+- 订阅：`/sub/<token>` 用用户有权使用的 hub 节点生成 Clash 配置，再交给 subconverter。
 
-## 两种运行方式
+## 配置与计费
 
-| 配置 | 行为 |
-| --- | --- |
-| 只配 `XUI_*`（现状） | 和以前完全一样，hub 相关代码不运行，同步任务里不显示「节点」模块。 |
-| `XUI_*` + `NODE_HUB_*` | 混合：用户同时拿到 3x-ui 入站和 hub 节点。hub 复用 3x-ui Client 的 uuid，VLESS/VMess 迁移后客户端无需更新：新开通用户直接传入面板 uuid；已有用户在第一次授权同步时从面板 client 列表读取 uuid，面板上找不到 client 的用户先不上 hub，等开通创建 client 后再同步。计费仍由 3x-ui 面板同步任务完成，同时计入 hub 流量。 |
-| 只配 `NODE_HUB_*` + `SUB_CONVERTER_URL` | 只用 hub：开通不再调用 3x-ui，计费由「node-hub 流量计费」任务完成。 |
+需要 `NODE_HUB_URL`、`NODE_HUB_INTERNAL_TOKEN` 和 `SUB_CONVERTER_URL`；没有配置时自研线路不可用（开通报错，Node Hub 页显示配置说明）。计费由同步任务「node-hub 流量计费」完成，紧接着推送授权。计费状态（每用户账本、节点倍率）存在 `app_records` 的 `xuiBilling/state`；原 3x-ui 服务把它存在 `xui_state.billing`，启动时若那份更新，会一次性复制过来（`database.js` 初始化）。
 
-## 用户节点来源（混合模式下的逐个用户切换）
+## 功能说明
 
-用户详情页「节点来源」（`PUT /api/users/:id/node-source {nodeSource}`）决定 `/sub/<token>` 里放哪套架构的节点：
-
-| 节点来源 | 订阅内容 |
-| --- | --- |
-| `mix`（默认，不单独存储） | 3x-ui 面板节点 + node-hub 节点 |
-| `3xui` | 只有 3x-ui 面板节点 |
-| `nodehub` | 只有 node-hub 节点 |
-
-只过滤订阅：用户在 3x-ui 和 node-hub 上的开通与授权都不变，两边产生的流量都写入 `xui_daily_traffic` 并计费。变更会记入用户日志，用户更新订阅后生效。
-
-## 功能对照（3x-ui → node-hub）
-
-| 3x-ui 用法 | node-hub |
+| 功能 | node-hub |
 | --- | --- |
 | Client 开通、续费、停用 | `enabled` 授权；停用用户会从节点用户列表移除，节点下次拉取（≤ pull_interval）即断开 |
 | 每用户流量统计、加权计费、流量耗尽停用 | 节点增量上报 → `xui_daily_traffic` → 原有加权账本；耗尽后自动停用 |
-| 赠送流量、重置流量、流量包、流量附加服务 | 立即同步该用户的 hub 授权（耗尽的用户马上恢复）；只用 hub 时不再调用 3x-ui，hub 同步失败即操作失败 |
+| 赠送流量、重置流量、流量包、流量附加服务 | 立即同步该用户的 hub 授权（耗尽的用户马上恢复），hub 同步失败即操作失败 |
 | 每日流量、按节点流量、盈利分析 | 同一张表，`hub-m<id>` 作为节点 guid |
 | 在线用户、在线 IP 数 | `alive` / `online` 上报 → presence，合并进 `/api/xui-presence` 和用户的 connectedIpCount |
 | 设备数限制 | `device_limit`（套餐 deviceLimit）；推送连接时各节点上报在线 IP，node-hub 汇总后下发 `sync.devices`，sing-box 内核按全局设备数限制，xray 内核按单节点 |
 | 限速 | `speed_limit`（Mbps）：用户覆盖值 `PUT /api/users/:id/node-speed-limit`，否则用套餐 `speedLimitMbps` |
 | 入站启停、入站设置、线路组 | 同一套页面与 API，hub 入站可直接加入线路组 |
 | 个人定制入站 | 同一套 API，hub 入站 id 可直接分配 |
-| 节点监控 | 机器在线状态、CPU/内存/磁盘/负载、在线人数来自 machine/status |
+| 节点监控、VPS 成本 | 机器在线状态、CPU/内存/磁盘/负载、在线人数来自 machine/status；VPS 月度成本在机器详情里设置（`PUT /api/sales-traffic/nodes/hub-m<id>/cost`），盈利分析按它计算 |
 | 订阅 | hub 节点生成 ClashMeta 代理（vless/vmess/trojan/ss/hysteria2/tuic/anytls） |
-| REALITY 密钥 | `/api/node-hub/reality-keypair` 生成，或迁移时沿用 3x-ui 的 |
+| REALITY 密钥 | `/api/node-hub/reality-keypair` 生成 |
 
 ## 管理 API（管理员登录后）
 
@@ -63,7 +47,7 @@ VPS: xboard-node (machine 模式) ──HTTPS /api/v1|v2/server/*──> 反向�
 - `POST /api/node-hub/sync`：立即全量同步授权
 - `PUT /api/users/:id/node-speed-limit {speedLimitMbps}`（null 取消覆盖）
 
-管理端侧边栏「Node Hub」（`/node-hub`）提供这些 API 的界面：概览（在线情况、需要处理的问题、同步用户授权）、机器（新建后显示安装命令，详情里可改设置、看 24 小时负载、重置 token、删除）、节点（按协议的配置表单，含传输、TLS/REALITY 和密钥生成、证书、高级 JSON）和用户限速。hub 节点同时继续出现在入站管理、线路组和监控页面。没有配置 node-hub 时，`GET /api/node-hub/overview` 返回 `{ configured: false }`，页面显示配置说明。
+管理端侧边栏「Node Hub」（`/node-hub`）提供这些 API 的界面：概览（在线情况、需要处理的问题、同步用户授权）、机器（新建后显示安装命令，详情里可改设置、看 24 小时负载、重置 token、删除）、节点（按协议的配置表单，含传输、TLS/REALITY 和密钥生成、证书、高级 JSON）和用户限速。hub 节点同时出现在入站管理和线路组页面；原 3x-ui 监控页（`/xui-monitor`）已并入「机器」标签。没有配置 node-hub 时，`GET /api/node-hub/overview` 返回 `{ configured: false }`，页面显示配置说明。
 
 ## 部署
 
@@ -72,34 +56,6 @@ VPS: xboard-node (machine 模式) ──HTTPS /api/v1|v2/server/*──> 反向�
 3. 本站设置 `NODE_HUB_URL=http://127.0.0.1:3003` 和相同的 `NODE_HUB_INTERNAL_TOKEN`，重启。
 4. 创建机器（`POST /api/node-hub/machines`），在 VPS 上执行返回的 `installCommand`（machine 模式，每台机器独立 token，固定 `--kernel xray` 和 `--version v1.13.2`：从这个版本起 xray 内核会断开被移除用户已打开的连接，见「已知限制」；已装的机器重新执行一次安装命令即升级）。machine 模式下 xboard-node 只按机器 `config.yml` 的 `kernel.type` 选内核，节点的 `kernel_type` 不生效；安装脚本默认 sing-box，而 sing-box 不处理 PROXY protocol，经中转的节点会握手失败。旧命令装的机器把 `/etc/xboard-node/config.yml` 里的 `type: singbox` 改成 `type: xray` 后 `systemctl restart xboard-node`，日志出现 `accepting PROXY protocol` 即生效（2026-11-03 bage-hk 照此修复）。
 5. 创建节点，加入线路组，运行同步任务「node-hub 授权同步」。
-
-## 从 3x-ui 迁移一台 VPS
-
-```bash
-npm run migrate:xui-to-hub -- --node-guid <3x-ui 节点 guid 或 local>             # 只打印计划
-npm run migrate:xui-to-hub -- --node-guid <guid> --apply                         # 创建机器和同端口节点，写入用户 uuid，打印安装命令
-# 在 VPS 上停止 3x-ui 的 xray（或换端口），执行安装命令，确认节点上线
-npm run migrate:xui-to-hub -- --node-guid <guid> --switch-line-groups            # 线路组里的 3x-ui key 换成 hub key
-# 运行同步任务「node-hub 授权同步」，用户更新订阅
-```
-
-### 同一台 VPS 上与 3x-ui 并存（换端口）
-
-```bash
-npm run migrate:xui-to-hub -- --node-guid <guid> --port-offset 10000                         # 计划：hub 端口 = 3x-ui 端口 + 10000
-npm run migrate:xui-to-hub -- --node-guid <guid> --port-offset 10000 --apply                 # 创建节点，3x-ui 的 xray 不用停
-# 在 VPS 防火墙放行新端口，执行安装命令，确认节点上线
-npm run migrate:xui-to-hub -- --node-guid <guid> --port-offset 10000 --add-to-line-groups    # hub key 加在 3x-ui key 旁边，不替换
-# 运行「node-hub 授权同步」；mix 用户的订阅同时有两套节点
-```
-
-同一台 VPS 的每次运行都要带同样的 `--port-offset`。确认没问题后可以把用户逐个改成 `nodehub`，全部切完再用 `--switch-line-groups` 去掉 3x-ui key、停掉 3x-ui。
-
-- 端口、协议、REALITY 私钥/公钥、第一个 shortId 和 serverName、flow、ws/grpc/xhttp/httpupgrade 传输保持不变；VLESS/VMess 用户沿用原 uuid。计划会列出三类用户：本次写入 3x-ui uuid 的、已经以 3x-ui uuid 在 hub 上的、hub uuid 与 3x-ui 不一致的（脚本不覆盖 hub 已在使用的凭据，这些用户需要更新订阅）。
-- Trojan 和 Shadowsocks 的密码由 node-hub 根据 uuid 生成，用户需要更新订阅。
-- TLS（非 REALITY）证书不会迁移，需要在节点 settings 中配置 `cert_config`。
-- 个人定制入站用户会被列出，切换后在用户页重新分配新的 hub 入站 id。
-- 每次迁移一台，确认流量、在线、计费正常后再迁移下一台；3x-ui 回退只需把线路组 key 改回。
 
 ## 中转机（入口机 → 落地机）
 
@@ -138,9 +94,8 @@ xboard-node 启动时调 handshake；`NODE_HUB_PUBLIC_URL` 已设置且 `NODE_HU
 - 推送连接时变化即时生效；只用轮询（没有 `NODE_HUB_PUBLIC_URL`、反向代理不支持 WebSocket、或推送断开）时，机器的节点列表和用户最多每 60 秒刷新一次。
 - xboard-node 的机器模式只在启动时 handshake 一次：已经在跑的机器要重启 xboard-node（`systemctl restart xboard-node`）才会切到推送。
 - 限速按节点生效；全局设备数只在 sing-box 内核上生效，xray 内核按单节点计算。
-- 流量倍率按节点计（计费键 `hub-m<机器 id>-n<节点 id>`，node-hub 的 `nodeBillingKey`，概览节点的 `billingKey`；`guid = hub-m<机器 id>` 仍是入站 key、在线状态和 VPS 成本用的机器键，线路组不受影响）。在「Node Hub → 节点」新建或编辑时填写，默认 1：本站转发请求时取出 `multiplier`、校验 0–100、在节点存在后写进计费状态（`setNodeMultiplier`），读取节点、节点列表和概览时附上当前倍率；node-hub 本身不存倍率。机器没有倍率：机器表单不再有这个字段，「3x-ui 监控」里 hub 机器行的 `multiplier` 为 null，设置窗口只剩 VPS 成本，`PUT /api/xui-monitor/nodes/hub-…/settings` 返回 400。修改后下一次计费同步按新倍率重算本计费周期已用流量。VPS 成本、盈利分析、今日节点流量、流量时段图和账户节点用量都用 `billingMachineGuid` 把节点键归到机器；用户的流量明细里每个节点一行，名为「机器 · 节点」。同一台落地机经两台中转机按不同倍率计费时，把节点拆成两个（不同端口、各挂一台中转机），分别设倍率。
+- 流量倍率按节点计（计费键 `hub-m<机器 id>-n<节点 id>`，node-hub 的 `nodeBillingKey`，概览节点的 `billingKey`；`guid = hub-m<机器 id>` 仍是入站 key、在线状态和 VPS 成本用的机器键，线路组不受影响）。在「Node Hub → 节点」新建或编辑时填写，默认 1：本站转发请求时取出 `multiplier`、校验 0–100、在节点存在后写进计费状态（`setNodeMultiplier`），读取节点、节点列表和概览时附上当前倍率；node-hub 本身不存倍率。机器没有倍率：机器表单没有这个字段，`/api/xui-monitor` 的机器行 `multiplier` 为 null；VPS 成本在机器详情里设置。修改后下一次计费同步按新倍率重算本计费周期已用流量。VPS 成本、盈利分析、今日节点流量、流量时段图和账户节点用量都用 `billingMachineGuid` 把节点键归到机器；用户的流量明细里每个节点一行，名为「机器 · 节点」。同一台落地机经两台中转机按不同倍率计费时，把节点拆成两个（不同端口、各挂一台中转机），分别设倍率。
 - 从机器倍率迁移（`migrateHubMachineMultipliers`，第一次计费同步或 Node Hub 请求时执行一次，计费状态记 `hubNodeMultipliersAt`，node-hub 不可达时下次重试）：倍率不是 1 的机器，把倍率写给它的每个节点。旧机器键 `hub-m<机器 id>` 的倍率保留但不能再改，只用来给升级前记在机器键下的流量计价，这些流量离开计费周期后就不再参与计费。
-- 3x-ui 中多个 shortId / serverName 只保留第一个。
 - 节点在没有任何授权用户时创建，xboard-node（v1.13）不启动内核；之后推送来的用户（`sync.users`、`add` 增量、只有用户变化的 REST 重新拉取）都会被 `ensureRunning()` 丢掉，因为它检查的 `lastUsers` 要等内核启动后才写入。节点会一直显示「内核未运行」，直到 `systemctl restart xboard-node`。fork `alexischiang/nexora-node` 已修复（内核空闲时先记下推送来的用户再启动内核），hub 的安装命令默认从 fork 安装；仍在用上游二进制的机器，先把节点加入线路组、确认有用户授权，再执行安装命令或重启 xboard-node。
 - 流量耗尽或到期的用户，已经建立的连接要靠 xboard-node 主动断开。xray 内核从 UserManager 移除用户只拒绝新连接；fork v1.13.1 的 `CloseUserConnections` 是空操作，所以旧连接会一直跑（2026-11-03 实测，`npm run e2e:hub`：REALITY Vision 节点上持续下载的连接在新连接被拒后 10 秒内又传了 3.26 MB，速率不变，没有断开）。fork v1.13.2 已修复（PR [alexischiang/nexora-node#1](https://github.com/alexischiang/nexora-node/pull/1)，`internal/kernel/xray`：dispatcher 按用户登记每条连接，`RemoveUsers`/`UpdateUsers` 移除用户时取消其上下文并中断 link，含重启回退和最后一个用户被移除时的 Stop）。用发布的 v1.13.2 实测：推送模式下这条连接在新连接被拒的同时停止（之后 0 字节，客户端约 0.7 s 内收到断开）；修复构建在 REST 轮询模式下同样 0 字节。安装命令固定 `--version v1.13.2`；还在跑 v1.13.1 或更早版本的机器要重新执行安装命令升级，否则旧连接仍会继续用流量，直到客户端自己断开。到期与耗尽走同一条移除路径。sing-box 内核本来就会断开。
 - REALITY 伪装域名不要用 `www.microsoft.com`：xray 和 sing-box 内核下合法连接都会以 `REALITY: processed invalid connection ... handshake did not complete successfully` 失败（2026-10-31 在新加坡测试节点上复现，换成 3x-ui 节点使用的伪装域名后立即连通）。新建节点表单不再预填它。
@@ -148,7 +103,7 @@ xboard-node 启动时调 handshake；`NODE_HUB_PUBLIC_URL` 已设置且 `NODE_HU
 ## 本地验证
 
 ```bash
-npm run test:hub        # 单元 + 节点协议 + 迁移脚本 + 本站集成（只用 hub、hub 与 mock 3x-ui 共存），需要 TEST_DATABASE_URL
+npm run test:hub        # 单元 + 节点协议 + 本站集成，需要 TEST_DATABASE_URL
 npm run verify          # 完整验证，包含 test:hub
 # 真实二进制端到端（可选）：自行编译 xboard-node 和 xray
 TEST_DATABASE_URL=... XBOARD_NODE_BIN=/path/xboard-node XRAY_BIN=/path/xray npm run e2e:hub

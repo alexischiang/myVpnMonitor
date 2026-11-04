@@ -45,24 +45,18 @@ export type User = {
   email?: string
   lineType?: "upstream" | "self_hosted"
   xuiClientEmail?: string
-  xuiSubId?: string
   xuiInboundIds?: number[]
   xuiExtraInboundIds?: number[]
   /** node-hub: per-user speed limit override in Mbps (0 = unlimited); absent means the plan value applies. */
   nodeSpeedLimitMbps?: number | null
-  /** Which architecture's nodes the subscription carries; absent means "mix" (3x-ui and node-hub). */
-  nodeSource?: "3xui" | "nodehub" | "mix"
   hubNodeIds?: number[]
   hubUuid?: string
   xuiManagementMode?: "import" | "link"
   xuiMigrationStatus?: "completed" | "activation_required" | "failed"
-  xuiMigrationSource?: "linked_existing" | "created"
+  xuiMigrationSource?: "created"
   xuiMigrationError?: string
   xuiMigratedAt?: string
   xuiMigrationUpdatedAt?: string
-  xuiClientPresent?: boolean
-  xuiClientMissingAt?: string
-  xuiRecoveredAt?: string
   xuiIpLimit?: number
   xuiTrafficLimitBytes?: number
   xuiAdminTrafficGifts?: Array<{ id: string; kind: "admin_traffic_gift"; bytes: number; note?: string; actor?: string; createdAt: string }>
@@ -84,11 +78,11 @@ export type User = {
     lastSyncedAt?: string
     nodes: Array<{ key: string; name: string; multiplier: number; rawBytes: number; weightedBytes: number }>
   }
-  /** Online IPs per node from the last traffic sync (3x-ui panel nodes and node-hub nodes). */
+  /** Online IPs per node-hub node from the last traffic sync. */
   xuiOnlineIps?: {
     checkedAt: string
     totalIps: number
-    nodes: Array<{ key: string; name: string; source: "xui" | "hub"; ips: string[] }>
+    nodes: Array<{ key: string; name: string; source: "hub"; ips: string[] }>
   }
   deviceLimit?: number
   isBusiness?: boolean
@@ -363,7 +357,8 @@ export type XuiInboundSettings = {
 
 export type XuiInboundManagement = {
   configured: boolean
-  refreshError?: string
+  /** node-hub could not be read; the inbound list is empty. */
+  hubError?: string
   inbounds: Array<{
     id: number
     key: string

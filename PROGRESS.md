@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-11-04
-- Current Objective: 新增用户与分配套餐解耦，node-hub 作为唯一开通目标 (node-hub-first-user-provisioning)
+- Current Objective: 彻底移除 3x-ui，全部用户接入 node-hub (remove-3x-ui)
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -570,8 +570,10 @@
 
 - 2026-11-04: npm run verify、verify:fast、verify:harness、git diff --check 通过；浏览器（隔离 app+node-hub）新增用户→¥0 人工收款→node-hub 开通，console/page errors 为空
 
+- 2026-11-04: npm run check/test、隔离 schema 下 checkout/payment/wallet/catalog-v2/node-hub/node-hub-app 全部通过；浏览器（隔离 app+node-hub）Node Hub 机器 VPS 成本、用户详情、入站管理、同步任务、旧链接跳转无控制台错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `feature_list.json`, `node-hub/store.js`, `server.js`, `src/components/features/details.tsx`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/user-form-dialog.tsx`, `src/components/features/users.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`, `test-payment.js`, `src/components/features/online-ip-list.tsx`
+- Files: `.env.example`, `.github/workflows/deploy.yml`, `AGENTS.md`, `PRODUCT.md`, `README.md`, `database.js`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `env.js`, `feature_list.json`, `main-app.js`, `node-hub/bridge.js`, `node-hub/store.js`, `node-hub/xui-import.js`, `nodemon.json`, `package-lock.json`, `package.json`, `redis.js`, `scripts/dev-all.js`, `scripts/e2e-xboard-node.js`, `scripts/migrate-xui-data.js`, `scripts/migrate-xui-to-node-hub.js`, `scripts/seed-local-test-data.js`, `scripts/setup-local-xui-db.js`, `scripts/sync-neon-to-postgres.js`, `server.js`, `src/components/features/bills.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/online-ip-list.tsx`, `src/components/features/pricing-settings.tsx`, `src/components/features/product-buyer-sync.tsx`, `src/components/features/sync-jobs.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-logs.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`, `test-payment.js`, `test-xui-service.js`, `test-xui-traffic.js`, `test.js`, `xui-app.js`, `xui-audit.js`, `xui-client.js`, `xui-database.js`, `xui-server.js`, `xui-traffic.js`, `src/components/features/node-hub-machine-cost.tsx`
 - Known risks: none
-- Recommended Next Step: 用户确认后提交；上线前确认生产 NODE_HUB_URL/TOKEN 已配置（否则仍走 3x-ui）
+- Recommended Next Step: 用户确认后提交；部署后检查 nexora 启动日志与 app_records xuiBilling 已导入（updated_at 新于 2026-10-18），再从生产 .env 删除 XUI_* 变量；可逐台下线 VPS 上残留的 3x-ui/xray

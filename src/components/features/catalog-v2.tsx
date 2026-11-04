@@ -408,7 +408,7 @@ export function CatalogV2ProductDetailPage() {
     <DetailHeader
       breadcrumbs={[{ label: "商品管理", href: "/catalog-v2", onClick: event => { event.preventDefault(); navigate("/catalog-v2") } }, { label: isNew ? "新建 V2 商品" : product.name }]}
       title={isNew ? "新建 V2 商品" : product.name}
-      description="保存后会直接用于商城、支付交付和 3x-ui 权限同步。"
+      description="保存后会直接用于商城、支付交付和 node-hub 权限同步。"
       actions={<><Button variant="secondary" collapse asChild><Link to="/catalog-v2"><ArrowLeft />返回</Link></Button>{isNew || !savedProduct || savedProduct.type === "addon" ? null : <ProductBuyerSyncButton productId={savedProduct.id} productName={savedProduct.name} groups={groups} dirty={JSON.stringify(product) !== JSON.stringify(savedProduct)} />}{isNew ? null : <Button variant="danger" collapse onClick={() => setConfirmDelete(true)} disabled={saving}><Trash2 />删除</Button>}<ActionButton onClick={() => void save()} label="保存商品" pending={saving} /></>}
     />
     <Card title="基础信息" description="商品 ID 创建后不可修改，只允许小写字母、数字和短横线。"><div className="grid gap-6">

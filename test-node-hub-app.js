@@ -1,9 +1,9 @@
 // The app with node-hub, without binaries: a protocol-faithful node client stands in for
-// xboard-node. Runs twice in fresh processes: node-hub only, and node-hub next to 3x-ui (mock
-// panel). Covers provisioning, inbound management and line groups, custom inbounds, entitlement
-// sync, traffic billing, depletion, subscriptions, presence and the monitor, plus every user action
-// that used to talk to 3x-ui only: traffic gift and reset, plan purchase, traffic add-on and pack,
-// gift days, plan change, product buyer sync, account disable/enable, expiry and deletion.
+// xboard-node. Runs in a fresh process. Covers provisioning, inbound management and line groups,
+// custom inbounds, entitlement sync, traffic billing, depletion, subscriptions, presence and the
+// monitor, plus every user action that reaches the line: traffic gift and reset, plan purchase,
+// traffic add-on and pack, gift days, plan change, product buyer sync, account disable/enable,
+// expiry and deletion, admin-created users and customers moved off the upstream line.
 // Needs TEST_DATABASE_URL (disposable: app_records and nh_* tables are wiped).
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
@@ -27,80 +27,14 @@ function listen(server, port = 0) {
   });
 }
 
-function sendJson(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(body));
-}
-
-async function readBody(req) {
-  let raw = "";
-  for await (const chunk of req) raw += chunk;
-  return raw ? JSON.parse(raw) : {};
-}
-
-// Minimal 3x-ui panel: one local inbound, clients keyed by email.
-function mockXui() {
-  const clients = new Map();
-  const requests = [];
-  const state = { inbounds: true, clientsDown: false };
-  const server = http.createServer(async (req, res) => {
-    const body = req.method === "GET" ? {} : await readBody(req);
-    requests.push({ url: req.url, body });
-    // A panel that cannot be written (down, or refusing clients): app users must not depend on it.
-    if (state.clientsDown && req.url.startsWith("/panel/api/clients/") && req.url !== "/panel/api/clients/list") return sendJson(res, 500, { success: false, msg: "panel unavailable" });
-    if (req.url.startsWith("/clash/")) {
-      // Like 3x-ui, a client with no inbound left has no subscription.
-      if (!state.inbounds) return sendJson(res, 404, { success: false });
-      res.writeHead(200, { "content-type": "text/yaml" });
-      return res.end("proxies:\n  - { name: 3x-ui 节点, type: vless, server: panel.example.com, port: 443, uuid: 00000000-0000-4000-8000-000000000000 }\n");
-    }
-    const get = req.url.match(/^\/panel\/api\/clients\/get\/(.+)$/);
-    if (get) {
-      const client = clients.get(decodeURIComponent(get[1]));
-      return sendJson(res, client ? 200 : 404, client ? { success: true, obj: client } : { success: false, msg: "not found" });
-    }
-    if (req.url === "/panel/api/server/status") return sendJson(res, 200, { success: true, obj: { panelGuid: "panel" } });
-    if (req.url === "/panel/api/nodes/list") return sendJson(res, 200, { success: true, obj: [] });
-    if (req.url === "/panel/api/inbounds/list") return sendJson(res, 200, { success: true, obj: state.inbounds ? [{ id: 1, remark: "3x-ui 节点", protocol: "vless", port: 443, enable: true, originNodeGuid: "panel", clientStats: [...clients.values()].map(client => ({ email: client.email, up: 0, down: 0 })) }] : [] });
-    if (req.url === "/panel/api/clients/list") return sendJson(res, 200, { success: true, obj: [...clients.values()].map(client => ({ traffic: { up: 0, down: 0, enable: true }, ...client })) });
-    if (req.url === "/panel/api/clients/add") {
-      // Like the real panel: id is the numeric row id, the credential is uuid.
-      const uuid = body.client.uuid || (/^\d+$/.test(String(body.client.id ?? "")) ? "" : body.client.id) || crypto.randomUUID();
-      const client = { ...body.client, id: clients.size + 1, uuid, subId: body.client.subId || crypto.randomUUID().slice(0, 16), inboundIds: body.inboundIds || [] };
-      clients.set(client.email, client);
-      return sendJson(res, 200, { success: true, obj: client });
-    }
-    const update = req.url.match(/^\/panel\/api\/clients\/update\/(.+)$/);
-    if (update) {
-      const client = { ...(clients.get(decodeURIComponent(update[1])) || {}), ...body };
-      clients.set(client.email, client);
-      return sendJson(res, 200, { success: true, obj: client });
-    }
-    if (req.url === "/panel/api/clients/bulkEnable" || req.url === "/panel/api/clients/bulkDisable") {
-      for (const email of body.emails || []) if (clients.has(email)) clients.get(email).enable = req.url.endsWith("bulkEnable");
-      return sendJson(res, 200, { success: true, obj: {} });
-    }
-    if (req.url === "/panel/api/clients/bulkAttach" || req.url === "/panel/api/clients/bulkDetach") {
-      for (const email of body.emails || []) {
-        const client = clients.get(email);
-        if (!client) continue;
-        client.inboundIds = req.url.endsWith("bulkAttach") ? [...new Set([...(client.inboundIds || []), ...body.inboundIds])] : (client.inboundIds || []).filter(id => !body.inboundIds.includes(id));
-      }
-      return sendJson(res, 200, { success: true, obj: {} });
-    }
-    return sendJson(res, 200, { success: true, obj: {} });
-  });
-  return { server, clients, requests, state };
-}
-
-async function child(mode) {
+async function child() {
   const databaseUrl = testDatabaseUrl();
   const { Pool } = require("pg");
   const database = new Pool({ connectionString: databaseUrl });
   await database.query("CREATE TABLE IF NOT EXISTS app_records (collection TEXT NOT NULL, id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, data JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (collection, id))");
   await database.query("TRUNCATE app_records");
   await database.query("DROP TABLE IF EXISTS nh_presence, nh_machine_load, nh_report_ids, nh_users, nh_nodes, nh_machines, nh_schema_migrations CASCADE");
-  await database.query("DROP TABLE IF EXISTS xui_daily_traffic, xui_traffic_cursor, xui_inbounds");
+  await database.query("DROP TABLE IF EXISTS xui_daily_traffic, xui_hourly_traffic");
   await database.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id IN ('nh-app-plan', 'nh-app-plan-b', 'nh-app-credit')").catch(() => {});
   await database.query("DELETE FROM catalog_v2_products WHERE id IN ('nh-app-plan', 'nh-app-plan-b', 'nh-app-credit')").catch(() => {});
   await database.query("DELETE FROM catalog_v2_line_groups WHERE id = 'nh-app-test'").catch(() => {});
@@ -112,8 +46,6 @@ async function child(mode) {
     res.end(subconverterInput);
   });
   const subconverterPort = await listen(subconverter);
-  const xui = mode === "mixed" ? mockXui() : null;
-  const xuiPort = xui ? await listen(xui.server) : 0;
 
   const probe = http.createServer();
   const hubPort = await listen(probe);
@@ -129,10 +61,6 @@ async function child(mode) {
     NODE_HUB_URL: `http://127.0.0.1:${hubPort}`,
     NODE_HUB_INTERNAL_TOKEN: internalToken,
     SUB_CONVERTER_URL: `http://127.0.0.1:${subconverterPort}`,
-    XUI_BASE_URL: xui ? `http://127.0.0.1:${xuiPort}` : "",
-    XUI_API_TOKEN: xui ? "xui-token" : "",
-    XUI_SUBSCRIPTION_BASE_URL: xui ? `http://127.0.0.1:${xuiPort}` : "",
-    XUI_READ_ONLY: "false",
     ADMIN_USERNAME: "hub-admin",
     ADMIN_PASSWORD: "hub-admin-password",
     SESSION_SECRET: "hub-session-secret",
@@ -158,36 +86,21 @@ async function child(mode) {
     id: "hub-app-user", userId: "hub-app-user", email: "hubapp@example.test", customerID: "900300", lineType: "self_hosted", subscriptionId: "",
     subscriptionToken: crypto.randomBytes(16).toString("hex"),
     purchasedAt: new Date(now - 3600000).toISOString(), expiresAt: new Date(now + 30 * 86400000).toISOString(), duration: "monthly",
-    v2ProductSnapshot: { productId: "hub-plan", productType: "recurring_plan", periodId: "30d", lineGroupId: "nh-app-test", name: "Hub", durationDays: 30, trafficBytes: 20 * MiB, deviceLimit: 2 },
-    // Next to 3x-ui this is a customer who already has a 3x-ui client (a subId), so their panel
-    // client is kept in step; users without one are node-hub only.
-    ...(mode === "mixed" ? { xuiSubId: "mainsub" } : {})
+    v2ProductSnapshot: { productId: "hub-plan", productType: "recurring_plan", periodId: "30d", lineGroupId: "nh-app-test", name: "Hub", durationDays: 30, trafficBytes: 20 * MiB, deviceLimit: 2 }
   };
   await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', $1, 0, $2::jsonb)", [user.id, JSON.stringify(user)]);
-  // A customer provisioned on 3x-ui before node-hub was configured: the full entitlement sync
-  // must carry their panel uuid over instead of letting the hub generate one.
-  const legacyUuid = "5f1d7c2a-3b4e-4c6d-8e9f-0a1b2c3d4e5f";
-  const legacyUser = xui ? {
-    ...user, id: "hub-legacy-user", userId: "hub-legacy-user", email: "legacy@example.test", customerID: "900301",
-    subscriptionToken: crypto.randomBytes(16).toString("hex"), xuiClientEmail: "legacy@example.test", xuiSubId: "legacysub"
-  } : null;
-  // A customer still on the upstream line (never migrated to 3x-ui), whose email a stale panel
-  // client already uses: paying for a plan must move them to node-hub, not to 3x-ui.
-  const upstreamUser = xui ? {
+  // A customer still on the upstream line (never moved to a self-hosted line): paying for a plan
+  // must move them to node-hub.
+  const upstreamUser = {
     id: "hub-upstream-user", userId: "hub-upstream-user", email: "upstream@example.test", customerID: "900302", lineType: "upstream", subscriptionId: "upstream-sub",
     subscriptionToken: crypto.randomBytes(16).toString("hex"), purchasedAt: new Date(now - 40 * 86400000).toISOString(), expiresAt: new Date(now - 86400000).toISOString(), duration: "monthly",
     v2ProductSnapshot: user.v2ProductSnapshot
-  } : null;
-  if (upstreamUser) {
-    xui.clients.set("upstream@example.test", { email: "upstream@example.test", id: 8, uuid: crypto.randomUUID(), subId: "stale", enable: true, inboundIds: [1] });
+  };
+  {
     await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', $1, 2, $2::jsonb)", [upstreamUser.id, JSON.stringify(upstreamUser)]);
     // Invited to claim their account but not claimed yet: 人工收款 must still be possible.
     const upstreamAccount = { id: "hub-upstream-account", customerID: upstreamUser.customerID, email: upstreamUser.email, passwordHash: "", status: "invited", linkedUserId: upstreamUser.id, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() };
     await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('accounts', $1, 0, $2::jsonb)", [upstreamAccount.id, JSON.stringify(upstreamAccount)]);
-  }
-  if (legacyUser) {
-    xui.clients.set(legacyUser.xuiClientEmail, { email: legacyUser.xuiClientEmail, id: 7, uuid: legacyUuid, subId: "legacysub", enable: true, inboundIds: [1] });
-    await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', $1, 1, $2::jsonb)", [legacyUser.id, JSON.stringify(legacyUser)]);
   }
 
   const handler = require("./server");
@@ -216,7 +129,8 @@ async function child(mode) {
   try {
     const jobs = (await api("/api/sync-jobs")).modules.flatMap(module => module.jobs);
     assert.ok(jobs.some(job => job.id === "node-hub-sync" && job.configured));
-    assert.equal(jobs.find(job => job.id === "node-hub-billing").configured, mode === "hub", "hub billing runs only without 3x-ui");
+    assert.ok(jobs.find(job => job.id === "node-hub-billing").configured, "hub billing runs");
+    assert.ok(!jobs.some(job => job.id === "xui-panel-sync" || job.id === "xui-inbound-probe"), "no 3x-ui jobs are listed");
 
     // Machine and node through the app; node shows up as an inbound.
     // Machines have no multiplier: a stale form value never reaches the hub or billing state.
@@ -233,28 +147,20 @@ async function child(mode) {
     await assert.rejects(api(`/api/node-hub/nodes/${node.id}`, { method: "PUT", body: { multiplier: "" } }), error => error.status === 400, "a node multiplier is required once sent");
     assert.deepEqual((await api("/api/node-hub/machines")).map(item => item.id).sort(), [legacyMachine.id, machine.id].sort());
     assert.equal((await api("/api/node-hub/nodes")).length, 3);
-    if (xui) await runJob("xui-panel-sync");
     const view = await api("/api/xui-inbounds");
     const hubRow = view.inbounds.find(row => row.hubNodeId === node.id);
     const customRow = view.inbounds.find(row => row.hubNodeId === customNode.id);
     assert.equal(hubRow.key, `hub-m${machine.id}:${node.id}`);
     assert.equal(customRow.inboundType, "custom");
-    assert.equal(view.inbounds.some(row => row.key === "panel:1"), Boolean(xui), "3x-ui inbounds stay listed next to hub nodes");
+    assert.ok(view.inbounds.every(row => row.hubNodeId), "only hub nodes are listed");
     await api(`/api/xui-inbounds/${encodeURIComponent(hubRow.key)}/settings`, { method: "PUT", body: { region: "美国", networkLevel: "premium", inboundType: "package" } });
     assert.equal((await hubStore.getNode(node.id)).region, "美国", "inbound settings edits reach the hub node");
 
-    const lineKeys = [hubRow.key, ...(xui ? ["panel:1"] : [])];
+    const lineKeys = [hubRow.key];
     await api("/api/catalog-v2/line-groups", { method: "POST", body: { id: "nh-app-test", name: "Hub 测试", isEnabled: true, sortOrder: 0, inboundKeys: lineKeys } });
     const group = (await api("/api/catalog-v2/line-groups")).find(item => item.id === "nh-app-test");
     assert.deepEqual(group.inboundKeys.sort(), lineKeys.sort());
     assert.deepEqual(group.coverage.regions, ["美国"], "line group coverage includes hub nodes");
-
-    if (legacyUser) {
-      await runJob("node-hub-sync");
-      const legacyHubUser = await hubStore.getUser(legacyUser.id);
-      assert.equal(legacyHubUser?.uuid, legacyUuid, "an existing 3x-ui customer keeps their panel uuid on the hub");
-      assert.equal((await api("/api/users")).find(item => item.id === legacyUser.id).hubUuid, legacyUuid);
-    }
 
     // Provisioning (the same admin action a purchase or plan change uses).
     await api(`/api/users/${user.id}/xui-sync`, { method: "POST" });
@@ -262,82 +168,34 @@ async function child(mode) {
     assert.equal(hubUser.enabled, true);
     assert.deepEqual(hubUser.nodeIds, [node.id]);
     assert.equal(hubUser.deviceLimit, 2);
-    if (xui) {
-      const panelClient = xui.clients.get("hubapp@example.test");
-      assert.equal(hubUser.uuid, panelClient.uuid, "the hub uses the 3x-ui client's uuid");
-      assert.deepEqual(panelClient.inboundIds, [1], "only 3x-ui inbounds are attached on the panel");
-      assert.ok(!xui.requests.some(request => JSON.stringify(request.body).includes(String(hubRow.id))), "no hub inbound id is ever sent to 3x-ui");
-    }
-
     // Custom hub inbound as a personal inbound.
     await api(`/api/users/${user.id}/custom-inbounds`, { method: "PUT", body: { inboundIds: [customRow.id] } });
     hubUser = await hubStore.getUser(user.id);
     assert.deepEqual(hubUser.nodeIds, [node.id, customNode.id].sort((a, b) => a - b), "a personal custom hub inbound is granted");
     const customView = await api(`/api/users/${user.id}/custom-inbounds`);
     assert.ok(customView.effectiveInboundIds.includes(customRow.id) && customView.effectiveInboundIds.includes(hubRow.id));
-    if (xui) assert.ok(!xui.requests.some(request => JSON.stringify(request.body).includes(String(customRow.id))));
 
     // Speed limit.
     await api(`/api/users/${user.id}/node-speed-limit`, { method: "PUT", body: { speedLimitMbps: 30 } });
     const nodeClient = new XboardNodeClient(`http://127.0.0.1:${hubPort}`, { token: (await hubStore.getMachine(machine.id)).token, machineId: machine.id, nodeId: node.id });
-    // The legacy customer (mixed mode) is on the same node; these checks follow the main user.
-    // Like xboard-node, a 304 (null) means the node keeps the list it already has.
+    // These checks follow the main user. Like xboard-node, a 304 (null) means the node keeps the list it already has.
     let nodeUserList = [];
     const nodeUsers = async () => (nodeUserList = (await nodeClient.getUsers()) ?? nodeUserList);
-    const mainNodeUsers = async () => (await nodeUsers()).filter(item => item.uuid !== legacyUuid && item.uuid !== buyerUuid);
+    const mainNodeUsers = async () => (await nodeUsers()).filter(item => item.uuid !== buyerUuid);
     let buyerUuid = "";
     assert.deepEqual(await mainNodeUsers(), [{ id: hubUser.id, uuid: hubUser.uuid, speed_limit: 30, device_limit: 2 }]);
 
-    // Subscription: hub proxies (plus 3x-ui's own Clash config next to 3x-ui).
+    // Subscription: the hub proxies the user is entitled to.
     const sub = await fetch(`${origin}/sub/${user.subscriptionToken}`, { headers: { "user-agent": "clash.meta" } });
     assert.equal(sub.status, 200, await sub.clone().text());
     const names = (require("js-yaml").load(subconverterInput).proxies || []).map(proxy => proxy.name);
     assert.ok(names.includes("Hub 01") && names.includes("Hub 定制"), names.join(","));
-    assert.equal(names.includes("3x-ui 节点"), Boolean(xui));
-
-    // Node source: the per-user filter on which architecture's nodes the subscription carries.
-    const subNames = async () => {
-      const response = await fetch(`${origin}/sub/${user.subscriptionToken}`, { headers: { "user-agent": "clash.meta" } });
-      assert.equal(response.status, 200, await response.clone().text());
-      return (require("js-yaml").load(subconverterInput).proxies || []).map(proxy => proxy.name);
-    };
-    const setNodeSource = nodeSource => api(`/api/users/${user.id}/node-source`, { method: "PUT", body: { nodeSource } });
-    assert.equal((await setNodeSource("bogus").catch(error => error)) instanceof Error, true, "an unknown node source is rejected");
-    assert.equal((await api("/api/users")).find(item => item.id === user.id).nodeSource, undefined, "mix is the default and is not stored");
-    assert.deepEqual(await setNodeSource("nodehub"), { userId: user.id, nodeSource: "nodehub" });
-    const hubOnlyNames = await subNames();
-    assert.ok(hubOnlyNames.includes("Hub 01") && !hubOnlyNames.includes("3x-ui 节点"), `nodehub: ${hubOnlyNames.join(",")}`);
-    if (xui) {
-      await setNodeSource("3xui");
-      const panelOnlyNames = await subNames();
-      assert.ok(panelOnlyNames.includes("3x-ui 节点") && !panelOnlyNames.some(name => name.startsWith("Hub")), `3xui: ${panelOnlyNames.join(",")}`);
-    }
-    assert.deepEqual(await setNodeSource("mix"), { userId: user.id, nodeSource: "mix" });
-    assert.equal((await api("/api/users")).find(item => item.id === user.id).nodeSource, undefined);
-    const mixNames = await subNames();
-    assert.ok(mixNames.includes("Hub 01") && mixNames.includes("3x-ui 节点") === Boolean(xui), `mix: ${mixNames.join(",")}`);
-    assert.ok((await api("/api/users")).find(item => item.id === user.id).userLogs.some(log => log.reason === "node-source-changed"), "node source changes are logged");
-    if (xui) {
-      // Every 3x-ui inbound deleted (moved to node-hub): the subscription carries the hub nodes.
-      xui.state.inbounds = false;
-      const beforeCatalogRefresh = await subNames();
-      assert.ok(beforeCatalogRefresh.includes("Hub 01"), `a failing 3x-ui subscription still serves the hub nodes: ${beforeCatalogRefresh.join(",")}`);
-      await api("/api/xui-inbounds?refresh=1");
-      const afterPanelEmptied = await subNames();
-      assert.ok(afterPanelEmptied.includes("Hub 01") && !afterPanelEmptied.includes("3x-ui 节点"), `3x-ui emptied: ${afterPanelEmptied.join(",")}`);
-      // Provisioning still works with no 3x-ui inbound: the client is written with none.
-      const expiresBeforeGift = (await api("/api/users")).find(item => item.id === user.id).expiresAt;
-      await api(`/api/users/${user.id}/gift`, { method: "POST", body: { days: 1 } });
-      const gifted = (await api("/api/users")).find(item => item.id === user.id);
-      assert.ok(new Date(gifted.expiresAt) > new Date(expiresBeforeGift) && !gifted.xuiLastError, `gift with an empty panel: ${gifted.xuiLastError}`);
-      assert.equal((await hubStore.getUser(user.id)).enabled, true);
-      xui.state.inbounds = true;
-      await api("/api/xui-inbounds?refresh=1");
-    }
+    // The per-user node source filter is gone: its route answers 404 and a stored value has no effect.
+    await assert.rejects(api(`/api/users/${user.id}/node-source`, { method: "PUT", body: { nodeSource: "nodehub" } }), error => error.status === 404);
 
     // Traffic -> billing -> depletion -> removal from the node.
     await nodeClient.report({ traffic: { [hubUser.id]: [MiB, 9 * MiB] }, online: { [hubUser.id]: 1 }, alive: { [hubUser.id]: ["203.0.113.8"] } });
-    await runJob(xui ? "xui-panel-sync" : "node-hub-billing");
+    await runJob("node-hub-billing");
     let billed = (await api("/api/users")).find(item => item.id === user.id);
     assert.equal(billed.xuiWeightedTraffic.usedBytes, 10 * MiB, "hub traffic is billed");
     assert.equal(billed.xuiWeightedTraffic.depleted, false);
@@ -345,7 +203,7 @@ async function child(mode) {
     const hubIps = billed.xuiOnlineIps.nodes.filter(item => item.source === "hub");
     assert.deepEqual(hubIps.map(item => item.ips), [["203.0.113.8"]], `the user page lists online IPs per hub node: ${JSON.stringify(billed.xuiOnlineIps)}`);
     assert.ok(hubIps[0].name.includes("·"), `hub node rows are named machine · node: ${hubIps[0].name}`);
-    assert.equal(billed.xuiOnlineIps.totalIps, billed.xuiOnlineIps.nodes.some(item => item.source === "xui") ? new Set(billed.xuiOnlineIps.nodes.flatMap(item => item.ips)).size : 1);
+    assert.equal(billed.xuiOnlineIps.totalIps, 1);
     const presence = await api("/api/xui-presence");
     assert.ok(presence.onlineEmails.includes("hubapp@example.test"));
     assert.deepEqual(presence.onlineByGuid[`hub-m${machine.id}`], ["hubapp@example.test"]);
@@ -360,34 +218,32 @@ async function child(mode) {
     const nodeKey = `hub-m${machine.id}-n${node.id}`;
     assert.deepEqual(billed.xuiWeightedTraffic.nodes.map(item => [item.key, item.name, item.multiplier, item.rawBytes]), [[nodeKey, "Hub VPS · Hub 01", 1, 10 * MiB]]);
     assert.equal(machineRow.multiplier, null, "machine rows carry no multiplier");
-    await assert.rejects(api(`/api/xui-monitor/nodes/${encodeURIComponent(`hub-m${machine.id}`)}/settings`, { method: "PUT", body: { multiplier: 2 } }), error => error.status === 400);
+    await assert.rejects(api(`/api/xui-monitor/nodes/${encodeURIComponent(`hub-m${machine.id}`)}/settings`, { method: "PUT", body: { multiplier: 2 } }), error => error.status === 404, "the 3x-ui node settings route is gone");
     // A multiplier change reprices the node's traffic in the current cycle.
     assert.equal((await api(`/api/node-hub/nodes/${node.id}`, { method: "PUT", body: { multiplier: 1.1 } })).multiplier, 1.1);
     assert.equal((await api("/api/node-hub/overview")).nodes.find(item => item.id === node.id).multiplier, 1.1);
     assert.equal((await api("/api/node-hub/nodes")).find(item => item.id === customNode.id).multiplier, 1, "other nodes keep theirs");
     await nodeClient.report({ traffic: { [hubUser.id]: [0, MiB] } });
-    await runJob(xui ? "xui-panel-sync" : "node-hub-billing");
+    await runJob("node-hub-billing");
     billed = (await api("/api/users")).find(item => item.id === user.id);
     assert.equal(billed.xuiWeightedTraffic.rawUsedBytes, 11 * MiB);
     assert.equal(billed.xuiWeightedTraffic.usedBytes, Math.round(11 * MiB * 1.1), "the node's traffic is weighted with its multiplier");
     assert.equal((await api("/api/xui-presence")).dailyTraffic.nodes[`hub-m${machine.id}`].usedBytes, 11 * MiB, "today's machine total sums its node keys");
     assert.equal((await api(`/api/node-hub/nodes/${node.id}`, { method: "PUT", body: { multiplier: 1 } })).multiplier, 1);
-    await runJob(xui ? "xui-panel-sync" : "node-hub-billing");
+    await runJob("node-hub-billing");
     assert.equal((await api("/api/users")).find(item => item.id === user.id).xuiWeightedTraffic.usedBytes, 11 * MiB);
 
     await nodeClient.report({ traffic: { [hubUser.id]: [0, 10 * MiB] } });
-    await runJob(xui ? "xui-panel-sync" : "node-hub-billing");
+    await runJob("node-hub-billing");
     billed = (await api("/api/users")).find(item => item.id === user.id);
     assert.equal(billed.xuiWeightedTraffic.depleted, true);
     assert.deepEqual(await mainNodeUsers(), [], "a depleted user is removed from the node");
-    if (xui) assert.equal(xui.clients.get("hubapp@example.test").enable, false, "and disabled on 3x-ui");
 
     // More traffic puts a depleted user back on the node at once, without waiting for a sync job.
-    const billingJob = xui ? "xui-panel-sync" : "node-hub-billing";
+    const billingJob = "node-hub-billing";
     const giftResult = await api(`/api/users/${user.id}/traffic-gift`, { method: "POST", body: { trafficGb: 1 } }).catch(error => error);
     assert.ok(!(giftResult instanceof Error), `admin traffic gift: ${giftResult.message}`);
     assert.equal((await mainNodeUsers()).length, 1, "a traffic gift re-enables the user on the node immediately");
-    if (xui) assert.equal(xui.clients.get("hubapp@example.test").enable, true, "and on 3x-ui");
     await nodeClient.report({ traffic: { [hubUser.id]: [0, 1100 * MiB] } });
     await runJob(billingJob);
     assert.deepEqual(await mainNodeUsers(), [], "the gifted traffic runs out");
@@ -427,7 +283,6 @@ async function child(mode) {
     const buyerHub = await hubStore.getUser(buyer.id);
     buyerUuid = buyerHub.uuid;
     assert.deepEqual([buyerHub.enabled, buyerHub.nodeIds], [true, [node.id]], "a purchased plan grants the line group's hub node");
-    if (xui) assert.equal(xui.clients.has("hub-buyer@example.test"), false, "a new buyer gets no 3x-ui client next to node-hub");
     assert.ok(await onNode(buyerHub.uuid));
     // The first billing run after a purchase settles the new cycle's baseline; usage counts after it.
     await runJob(billingJob);
@@ -471,26 +326,19 @@ async function child(mode) {
     await runJob("node-hub-sync");
     assert.equal(await onNode(buyerHub.uuid), false, "an expired plan is removed from the node by the entitlement sync");
 
-    if (xui) {
-      // Node-hub is the only provisioning target for users without a 3x-ui client: admin-created
-      // users and customers who never moved to 3x-ui go straight to node-hub, even when the panel
-      // already holds a same-email client or cannot be written at all.
-      xui.clients.set("hub-new@example.test", { email: "hub-new@example.test", id: 9, uuid: crypto.randomUUID(), subId: "stale-new", enable: true, inboundIds: [1] });
-      xui.state.clientsDown = true;
-      const panelWrites = () => xui.requests.filter(request => /clients\/(add|update)/.test(request.url)).length;
-      const panelWritesBefore = panelWrites();
+    {
+      // Admin-created users and customers still on the upstream line are provisioned on node-hub.
       // 新增用户 creates the account only; 人工收款 (here ¥0) assigns the plan and provisions it.
       const createdAccount = await api("/api/users", { method: "POST", body: { email: "hub-new@example.test", wechatName: "new" } }).catch(error => error);
       assert.ok(!(createdAccount instanceof Error), `admin user creation: ${createdAccount.message}`);
       assert.deepEqual([createdAccount.registeredOnly, createdAccount.accountStatus], [true, "invited"]);
       const createdOrder = await manualPayment({ accountId: createdAccount.accountId, optionId: "v2:nh-app-plan:30d", amount: 0 });
-      assert.equal(createdOrder.fulfillmentStatus, "fulfilled", `plan assignment with 3x-ui unavailable: ${createdOrder.message || JSON.stringify(createdOrder)}`);
+      assert.equal(createdOrder.fulfillmentStatus, "fulfilled", `plan assignment: ${createdOrder.message || JSON.stringify(createdOrder)}`);
       const created = (await api("/api/users")).find(item => item.id === createdOrder.userId);
       assert.equal(created.wechatName, "new", "the profile entered at creation reaches the user");
       const createdHub = await hubStore.getUser(created.id);
       assert.deepEqual([createdHub?.enabled, createdHub?.nodeIds], [true, [node.id]], "a new user is provisioned on node-hub");
       assert.ok(await onNode(createdHub.uuid), "and is on the hub node at once");
-      assert.equal(created.xuiSubId || "", "", "with no 3x-ui client");
 
       const upstreamAccountId = (await api("/api/users")).find(item => item.id === upstreamUser.id)?.accountId;
       assert.equal(upstreamAccountId, "hub-upstream-account");
@@ -501,24 +349,18 @@ async function child(mode) {
       const migratedHub = await hubStore.getUser(upstreamUser.id);
       assert.deepEqual([migratedHub?.enabled, migratedHub?.nodeIds], [true, [node.id]], "the un-migrated user is moved to node-hub");
       assert.ok(await onNode(migratedHub.uuid));
-      assert.equal(panelWrites(), panelWritesBefore, "neither touches 3x-ui");
 
-      // Their subscription carries the hub nodes, and billing counts their hub traffic without
-      // flagging a missing 3x-ui client.
+      // Their subscription carries the hub nodes, and billing counts their hub traffic.
       const newSub = await fetch(`${origin}/sub/${created.subscriptionToken}`, { headers: { "user-agent": "clash.meta" } });
       assert.equal(newSub.status, 200, await newSub.clone().text());
       assert.ok((require("js-yaml").load(subconverterInput).proxies || []).some(proxy => proxy.name === "Hub 01"));
-      xui.state.clientsDown = false;
       await runJob(billingJob);
       await nodeClient.report({ traffic: { [createdHub.id]: [0, 2 * MiB] } });
       await runJob(billingJob);
       const createdBilled = (await api("/api/users")).find(item => item.id === created.id);
-      assert.equal(createdBilled.xuiWeightedTraffic?.rawUsedBytes, 2 * MiB, "a hub-only user's traffic is billed next to 3x-ui");
-      assert.notEqual(createdBilled.xuiClientPresent, false, `not flagged as a missing 3x-ui client: ${createdBilled.xuiLastError}`);
+      assert.equal(createdBilled.xuiWeightedTraffic?.rawUsedBytes, 2 * MiB, "a new user's hub traffic is billed");
       await runJob("node-hub-sync");
-      assert.ok(await onNode(createdHub.uuid), "the full entitlement sync keeps a hub-only user");
-      assert.equal(xui.clients.get("hub-new@example.test").subId, "stale-new", "the stale panel client is left alone");
-      assert.equal(panelWrites(), panelWritesBefore, "the panel sync does not create clients for hub-only users");
+      assert.ok(await onNode(createdHub.uuid), "the full entitlement sync keeps them");
     }
 
     // Disabling a hub inbound.
@@ -528,7 +370,7 @@ async function child(mode) {
     // Deleting an unclaimed self-hosted user disables them on the hub.
     await api(`/api/users/${user.id}`, { method: "DELETE" });
     assert.equal((await hubStore.getUser(user.id)).enabled, false, "a deleted user is disabled on the hub");
-    console.log(`node-hub app checks passed (${mode === "hub" ? "node-hub only" : "node-hub with 3x-ui"}).`);
+    console.log("node-hub app checks passed.");
   } finally {
     await database.end();
     await hubStore.close();
@@ -536,20 +378,18 @@ async function child(mode) {
   }
 }
 
-if (process.env.NODE_HUB_APP_MODE) {
-  child(process.env.NODE_HUB_APP_MODE).then(() => process.exit(0)).catch(error => {
+if (process.env.NODE_HUB_APP_CHILD) {
+  child().then(() => process.exit(0)).catch(error => {
     console.error(error);
     process.exit(1);
   });
 } else {
   if (!testDatabaseUrl()) throw new Error("TEST_DATABASE_URL is required for node-hub app tests");
-  for (const mode of ["hub", "mixed"]) {
-    const result = spawnSync(process.execPath, [__filename], { env: { ...process.env, NODE_HUB_APP_MODE: mode, LOG_LEVEL: "silent" }, encoding: "utf8" });
-    const output = `${result.stdout}${result.stderr}`.split("\n").filter(line => !line.startsWith("{\"level\"") && !line.startsWith("[req]") && !line.startsWith("[migration")).join("\n").trim();
-    if (result.status !== 0) {
-      console.error(output);
-      process.exit(1);
-    }
-    console.log(output.split("\n").filter(line => line.includes("checks passed")).join("\n"));
+  const result = spawnSync(process.execPath, [__filename], { env: { ...process.env, NODE_HUB_APP_CHILD: "1", LOG_LEVEL: "silent" }, encoding: "utf8" });
+  const output = `${result.stdout}${result.stderr}`.split("\n").filter(line => !line.startsWith("{\"level\"") && !line.startsWith("[req]") && !line.startsWith("[migration")).join("\n").trim();
+  if (result.status !== 0) {
+    console.error(output);
+    process.exit(1);
   }
+  console.log(output.split("\n").filter(line => line.includes("checks passed")).join("\n"));
 }

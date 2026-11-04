@@ -1,8 +1,6 @@
 const COLLECTIONS = ["users", "accounts", "bills", "presets", "placeholderNodes", "embyUsers", "embyVendors", "pricing", "paymentOrders", "salesSettings", "paymentSettings", "referralRewards", "tickets", "checkoutSettings"];
 const PG_RETRY_ATTEMPTS = Number(process.env.DATABASE_RETRY_ATTEMPTS || 2);
 const PG_RETRY_DELAY_MS = Number(process.env.DATABASE_RETRY_DELAY_MS || 500);
-const { appendXuiAuditLog, initXuiAudit, listXuiAuditLogs } = require("./xui-audit");
-const { directionalDelta, localNodeRound } = require("./xui-traffic");
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -84,13 +82,17 @@ class PostgresDataStore {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (collection, id)
       );
-      CREATE TABLE IF NOT EXISTS xui_node_credentials (
-        guid TEXT PRIMARY KEY,
-        sealed_token TEXT NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
+      -- The removed 3x-ui service kept the billing state (ledger, node multipliers) in xui_state.
+      -- Copy it into app_records once, while it is newer than the app's own copy.
+      DO $$ BEGIN
+        IF to_regclass('xui_state') IS NOT NULL THEN
+          INSERT INTO app_records (collection, id, position, data, updated_at)
+          SELECT 'xuiBilling', 'state', 0, data, updated_at FROM xui_state WHERE key = 'billing'
+          ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at
+          WHERE app_records.updated_at < EXCLUDED.updated_at;
+        END IF;
+      END $$
       `), "postgres init");
-      await withPgRetry(() => initXuiAudit(pool), "xui audit init");
       await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS wallet_accounts (
         account_id TEXT PRIMARY KEY,
@@ -160,16 +162,6 @@ class PostgresDataStore {
       ALTER TABLE xui_daily_traffic ADD COLUMN IF NOT EXISTS node_name TEXT NOT NULL DEFAULT '';
       CREATE INDEX IF NOT EXISTS xui_daily_traffic_email_date_idx ON xui_daily_traffic (email, date);
       CREATE INDEX IF NOT EXISTS xui_daily_traffic_date_node_idx ON xui_daily_traffic (date, node_guid);
-      CREATE TABLE IF NOT EXISTS xui_traffic_cursor (
-        email TEXT NOT NULL,
-        node_guid TEXT NOT NULL,
-        last_up BIGINT NOT NULL DEFAULT 0,
-        last_down BIGINT NOT NULL DEFAULT 0,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (email, node_guid)
-      );
-      ALTER TABLE xui_traffic_cursor ADD COLUMN IF NOT EXISTS carry_up BIGINT NOT NULL DEFAULT 0;
-      ALTER TABLE xui_traffic_cursor ADD COLUMN IF NOT EXISTS carry_down BIGINT NOT NULL DEFAULT 0;
       CREATE TABLE IF NOT EXISTS xui_hourly_traffic (
         hour TIMESTAMPTZ NOT NULL,
         email TEXT NOT NULL,
@@ -180,32 +172,6 @@ class PostgresDataStore {
       );
       CREATE INDEX IF NOT EXISTS xui_hourly_traffic_email_hour_idx ON xui_hourly_traffic (email, hour)
       `), "xui daily traffic init");
-      await withPgRetry(() => pool.query(`
-      CREATE TABLE IF NOT EXISTS xui_inbounds (
-        key TEXT PRIMARY KEY,
-        inbound_id INTEGER NOT NULL,
-        node_guid TEXT NOT NULL,
-        node_name TEXT NOT NULL DEFAULT '',
-        node_host TEXT NOT NULL DEFAULT '',
-        port INTEGER,
-        protocol TEXT NOT NULL DEFAULT '',
-        name TEXT NOT NULL DEFAULT '',
-        tag TEXT NOT NULL DEFAULT '',
-        enabled BOOLEAN NOT NULL DEFAULT TRUE,
-        sub_sort_index INTEGER NOT NULL DEFAULT 1,
-        client_count INTEGER NOT NULL DEFAULT 0,
-        recently_active BOOLEAN,
-        synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        probe_status TEXT NOT NULL DEFAULT 'unknown',
-        probe_latency_ms INTEGER,
-        probe_checked_at TIMESTAMPTZ,
-        probe_error TEXT NOT NULL DEFAULT ''
-      );
-      ALTER TABLE xui_inbounds ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT '';
-      ALTER TABLE xui_inbounds ADD COLUMN IF NOT EXISTS network_level TEXT NOT NULL DEFAULT '';
-      ALTER TABLE xui_inbounds ADD COLUMN IF NOT EXISTS inbound_type TEXT NOT NULL DEFAULT 'package';
-      ALTER TABLE xui_inbounds ADD COLUMN IF NOT EXISTS missing_since TIMESTAMPTZ
-      `), "xui inbounds init");
       await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS sync_job_runs (
         id BIGSERIAL PRIMARY KEY,
@@ -722,33 +688,12 @@ class PostgresDataStore {
     await this.pool.query("SELECT 1");
   }
 
-  async appendXuiAuditLog(entry) {
-    await withPgRetry(() => appendXuiAuditLog(this.pool, entry), "append xui audit log");
-  }
-
-  async listXuiAuditLogs(options) {
-    return withPgRetry(() => listXuiAuditLogs(this.pool, options), "list xui audit logs");
-  }
-
   async getRecord(collection, id) {
     const result = await withPgRetry(
       () => this.pool.query("SELECT data FROM app_records WHERE collection = $1 AND id = $2", [collection, id]),
       `load ${collection}/${id}`
     );
     return result.rows[0]?.data || null;
-  }
-
-  async getXuiNodeCredentials() {
-    const result = await withPgRetry(() => this.pool.query("SELECT guid, sealed_token FROM xui_node_credentials"), "load xui node credentials");
-    return Object.fromEntries(result.rows.map(row => [row.guid, row.sealed_token]));
-  }
-
-  async setXuiNodeCredential(guid, sealedToken) {
-    await withPgRetry(() => this.pool.query(
-      `INSERT INTO xui_node_credentials (guid, sealed_token, updated_at) VALUES ($1, $2, NOW())
-       ON CONFLICT (guid) DO UPDATE SET sealed_token = EXCLUDED.sealed_token, updated_at = NOW()`,
-      [guid, sealedToken]
-    ), `save xui node credential ${guid}`);
   }
 
   async setRecord(collection, id, data) {
@@ -841,156 +786,6 @@ class PostgresDataStore {
     }, `save ${collection}`);
   }
 
-  // Apply one sampling round of per-(user,node) cumulative counters to the daily
-  // table. `samples` = [{ email, nodeGuid, up, down }] with the CURRENT counter
-  // values read from each node. Deltas are computed against xui_traffic_cursor and
-  // added to today's row; the cursor advances to the current values. The whole
-  // round runs under a transaction-scoped advisory lock so concurrent processes
-  // serialize and can never double-count (the second writer sees the advanced
-  // cursor and derives a zero/partial delta). First observation of a pair records
-  // no delta — it only seeds the cursor.
-  //
-  // The local guid's sample is the client's GLOBAL counter; its own usage comes from
-  // localNodeRound, whose signed carry lives on the local cursor row. `localHeld` = a
-  // remote node could not be read this round, so the local node waits for a complete round.
-  async recordXuiTrafficSamples(dateKey, samples, localGuid = "", { localHeld = false } = {}) {
-    const clean = (Array.isArray(samples) ? samples : [])
-      .filter(sample => sample && sample.email && sample.nodeGuid)
-      .map(sample => ({
-        email: String(sample.email),
-        nodeGuid: String(sample.nodeGuid),
-        userId: String(sample.userId || ""),
-        userLabel: String(sample.userLabel || ""),
-        planId: String(sample.planId || ""),
-        nodeName: String(sample.nodeName || ""),
-        up: Math.max(0, Number(sample.up) || 0),
-        down: Math.max(0, Number(sample.down) || 0)
-      }));
-    if (!clean.length) return { applied: 0, seeded: 0 };
-    return withPgRetry(async () => {
-      const client = await this.pool.connect();
-      try {
-        await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["xui_traffic_sync"]);
-        const emails = [...new Set(clean.map(sample => sample.email))];
-        const cursorResult = await client.query(
-          "SELECT email, node_guid, last_up, last_down, carry_up, carry_down FROM xui_traffic_cursor WHERE email = ANY($1::text[])",
-          [emails]
-        );
-        const cursorByKey = new Map(
-          cursorResult.rows.map(row => [`${row.email} ${row.node_guid}`, {
-            up: Number(row.last_up),
-            down: Number(row.last_down),
-            carry: { up: Number(row.carry_up) || 0, down: Number(row.carry_down) || 0 }
-          }])
-        );
-        const delta = { emails: [], nodes: [], userIds: [], userLabels: [], planIds: [], nodeNames: [], ups: [], downs: [] };
-        const cursor = { emails: [], nodes: [], ups: [], downs: [], carryUps: [], carryDowns: [] };
-        const addDelta = (sample, change) => {
-          if (!(change.up > 0 || change.down > 0)) return;
-          delta.emails.push(sample.email);
-          delta.nodes.push(sample.nodeGuid);
-          delta.userIds.push(sample.userId);
-          delta.userLabels.push(sample.userLabel);
-          delta.planIds.push(sample.planId);
-          delta.nodeNames.push(sample.nodeName);
-          delta.ups.push(change.up);
-          delta.downs.push(change.down);
-        };
-        const addCursor = (email, nodeGuid, value, carry = { up: 0, down: 0 }) => {
-          cursor.emails.push(email);
-          cursor.nodes.push(nodeGuid);
-          cursor.ups.push(value.up);
-          cursor.downs.push(value.down);
-          cursor.carryUps.push(carry.up);
-          cursor.carryDowns.push(carry.down);
-        };
-        let seeded = 0;
-        const localByEmail = new Map();
-        const remoteChangeByEmail = new Map();
-        for (const sample of clean) {
-          const stored = cursorByKey.get(`${sample.email} ${sample.nodeGuid}`) || null;
-          if (!stored) seeded += 1;
-          if (localGuid && sample.nodeGuid === localGuid) {
-            localByEmail.set(sample.email, sample);
-            continue;
-          }
-          addDelta(sample, directionalDelta({ up: sample.up, down: sample.down }, stored));
-          addCursor(sample.email, sample.nodeGuid, sample);
-          // Signed growth for the local derivation: a restarted remote counter goes negative
-          // here and cancels the matching drop of the global counter.
-          if (stored) {
-            const change = remoteChangeByEmail.get(sample.email) || { up: 0, down: 0 };
-            change.up += sample.up - stored.up;
-            change.down += sample.down - stored.down;
-            remoteChangeByEmail.set(sample.email, change);
-          }
-        }
-        if (localGuid) {
-          for (const email of emails) {
-            const sample = localByEmail.get(email) || null;
-            const stored = cursorByKey.get(`${email} ${localGuid}`) || null;
-            if (!sample && !stored) continue;
-            const round = localNodeRound({
-              current: sample,
-              cursor: stored,
-              carry: stored?.carry,
-              remoteChange: remoteChangeByEmail.get(email),
-              held: localHeld
-            });
-            if (sample) addDelta(sample, round.delta);
-            addCursor(email, localGuid, round.cursor || stored, round.carry);
-          }
-        }
-        if (delta.emails.length) {
-          await client.query(
-            `INSERT INTO xui_daily_traffic (date, email, node_guid, user_id, user_label, plan_id, node_name, up_bytes, down_bytes, updated_at)
-             SELECT $1, u.email, u.node, u.user_id, u.user_label, u.plan_id, u.node_name, u.up, u.down, NOW()
-             FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::bigint[], $9::bigint[])
-               AS u(email, node, user_id, user_label, plan_id, node_name, up, down)
-             ON CONFLICT (date, email, node_guid)
-             DO UPDATE SET up_bytes = xui_daily_traffic.up_bytes + EXCLUDED.up_bytes,
-                           down_bytes = xui_daily_traffic.down_bytes + EXCLUDED.down_bytes,
-                           user_id = COALESCE(NULLIF(xui_daily_traffic.user_id, ''), EXCLUDED.user_id),
-                           user_label = CASE WHEN EXCLUDED.user_label <> '' THEN EXCLUDED.user_label ELSE xui_daily_traffic.user_label END,
-                           plan_id = COALESCE(NULLIF(xui_daily_traffic.plan_id, ''), EXCLUDED.plan_id),
-                           node_name = CASE WHEN EXCLUDED.node_name <> '' THEN EXCLUDED.node_name ELSE xui_daily_traffic.node_name END,
-                           updated_at = NOW()`,
-            [dateKey, delta.emails, delta.nodes, delta.userIds, delta.userLabels, delta.planIds, delta.nodeNames, delta.ups, delta.downs]
-          );
-          // Same deltas into the current hour, for time-of-day usage (pruned after 90 days).
-          await client.query(
-            `INSERT INTO xui_hourly_traffic (hour, email, node_guid, up_bytes, down_bytes)
-             SELECT date_trunc('hour', NOW()), u.email, u.node, u.up, u.down
-             FROM UNNEST($1::text[], $2::text[], $3::bigint[], $4::bigint[]) AS u(email, node, up, down)
-             ON CONFLICT (hour, email, node_guid)
-             DO UPDATE SET up_bytes = xui_hourly_traffic.up_bytes + EXCLUDED.up_bytes,
-                           down_bytes = xui_hourly_traffic.down_bytes + EXCLUDED.down_bytes`,
-            [delta.emails, delta.nodes, delta.ups, delta.downs]
-          );
-        }
-        await client.query(
-          `INSERT INTO xui_traffic_cursor (email, node_guid, last_up, last_down, carry_up, carry_down, updated_at)
-           SELECT u.email, u.node, u.up, u.down, u.carry_up, u.carry_down, NOW()
-           FROM UNNEST($1::text[], $2::text[], $3::bigint[], $4::bigint[], $5::bigint[], $6::bigint[]) AS u(email, node, up, down, carry_up, carry_down)
-           ON CONFLICT (email, node_guid)
-           DO UPDATE SET last_up = EXCLUDED.last_up, last_down = EXCLUDED.last_down,
-                         carry_up = EXCLUDED.carry_up, carry_down = EXCLUDED.carry_down, updated_at = NOW()`,
-          [cursor.emails, cursor.nodes, cursor.ups, cursor.downs, cursor.carryUps, cursor.carryDowns]
-        );
-        await client.query("COMMIT");
-        return { applied: delta.emails.length, seeded };
-      } catch (error) {
-        try { await client.query("ROLLBACK"); } catch {}
-        throw error;
-      } finally {
-        client.release();
-      }
-    }, "record xui traffic samples");
-  }
-
-  // Per-node totals for one user from `fromDateKey` (inclusive) to now — the
-  // current billing cycle. Returns [{ nodeGuid, up, down }].
   async sumXuiUserCycle(email, fromDateKey) {
     const result = await withPgRetry(
       () => this.pool.query(
@@ -1389,90 +1184,15 @@ class PostgresDataStore {
   // missing_since rather than deleted, so its settings return with it; rows missing for 30 days
   // are deleted. An empty list marks every inbound missing (all 3x-ui inbounds removed, e.g. after
   // moving to node-hub); a failed panel read throws before reaching here.
-  async replaceXuiInbounds(rows) {
-    const list = Array.isArray(rows) ? rows : [];
-    return withPgRetry(async () => {
-      const client = await this.pool.connect();
-      try {
-        await client.query("BEGIN");
-        await client.query("UPDATE xui_inbounds SET missing_since = NOW() WHERE missing_since IS NULL AND NOT (key = ANY($1::text[]))", [list.map(row => row.key)]);
-        await client.query("DELETE FROM xui_inbounds WHERE missing_since < NOW() - INTERVAL '30 days'");
-        if (list.length) {
-          await client.query(
-            `INSERT INTO xui_inbounds (key, inbound_id, node_guid, node_name, node_host, port, protocol, name, tag, enabled, sub_sort_index, client_count, recently_active, synced_at)
-             SELECT r.key, r.id, r."nodeGuid", r."nodeName", r."nodeHost", r.port, r.protocol, r.name, r.tag, r.enabled, r."subSortIndex", r."clientCount", r."recentlyActive", NOW()
-             FROM jsonb_to_recordset($1::jsonb) AS r(key TEXT, id INTEGER, "nodeGuid" TEXT, "nodeName" TEXT, "nodeHost" TEXT, port INTEGER, protocol TEXT, name TEXT, tag TEXT, enabled BOOLEAN, "subSortIndex" INTEGER, "clientCount" INTEGER, "recentlyActive" BOOLEAN)
-             ON CONFLICT (key) DO UPDATE SET inbound_id = EXCLUDED.inbound_id, node_guid = EXCLUDED.node_guid, node_name = EXCLUDED.node_name, node_host = EXCLUDED.node_host,
-               port = EXCLUDED.port, protocol = EXCLUDED.protocol, name = EXCLUDED.name, tag = EXCLUDED.tag, enabled = EXCLUDED.enabled, sub_sort_index = EXCLUDED.sub_sort_index,
-               client_count = EXCLUDED.client_count, recently_active = EXCLUDED.recently_active, synced_at = EXCLUDED.synced_at, missing_since = NULL`,
-            [JSON.stringify(list)]
-          );
-        }
-        await client.query("COMMIT");
-      } catch (error) {
-        try {
-          await client.query("ROLLBACK");
-        } catch {}
-        throw error;
-      } finally {
-        client.release();
-      }
-    }, "replace xui inbounds");
-  }
 
   // Inbounds currently in 3x-ui; rows marked missing are left out.
-  async listXuiInbounds() {
-    const result = await withPgRetry(() => this.pool.query("SELECT * FROM xui_inbounds WHERE missing_since IS NULL ORDER BY node_guid, inbound_id"), "list xui inbounds");
-    return result.rows.map(row => ({
-      id: row.inbound_id, key: row.key, name: row.name, tag: row.tag, protocol: row.protocol, port: row.port,
-      subSortIndex: row.sub_sort_index, enabled: row.enabled, recentlyActive: row.recently_active,
-      nodeGuid: row.node_guid, nodeName: row.node_name, nodeHost: row.node_host, clientCount: row.client_count,
-      syncedAt: row.synced_at ? row.synced_at.toISOString() : "",
-      probeStatus: row.probe_status, probeLatencyMs: row.probe_latency_ms,
-      probeCheckedAt: row.probe_checked_at ? row.probe_checked_at.toISOString() : "", probeError: row.probe_error,
-      region: row.region, networkLevel: row.network_level, inboundType: row.inbound_type
-    }));
-  }
 
   // Saves one inbound's app settings; returns null when the inbound is not (or no longer) in 3x-ui.
-  async updateXuiInboundSettings(key, { region, networkLevel, inboundType }) {
-    const result = await withPgRetry(() => this.pool.query(
-      `UPDATE xui_inbounds SET region = $2, network_level = $3, inbound_type = $4 WHERE key = $1 AND missing_since IS NULL
-       RETURNING key, region, network_level, inbound_type`,
-      [key, region, networkLevel, inboundType]
-    ), "update xui inbound settings");
-    const row = result.rows[0];
-    return row ? { key: row.key, region: row.region, networkLevel: row.network_level, inboundType: row.inbound_type } : null;
-  }
 
   // One-time import of the legacy inbound-groups metadata. Keys without a row yet get a
   // placeholder marked missing, which the next catalog refresh fills in if 3x-ui still has it.
-  async importXuiInboundSettings(entries) {
-    const list = Array.isArray(entries) ? entries : [];
-    if (!list.length) return;
-    await withPgRetry(() => this.pool.query(
-      `INSERT INTO xui_inbounds (key, inbound_id, node_guid, region, network_level, inbound_type, missing_since)
-       SELECT r.key, r.id, r."nodeGuid", r.region, r."networkLevel", r."inboundType", NOW()
-       FROM jsonb_to_recordset($1::jsonb) AS r(key TEXT, id INTEGER, "nodeGuid" TEXT, region TEXT, "networkLevel" TEXT, "inboundType" TEXT)
-       ON CONFLICT (key) DO UPDATE SET region = EXCLUDED.region, network_level = EXCLUDED.network_level, inbound_type = EXCLUDED.inbound_type`,
-      [JSON.stringify(list)]
-    ), "import xui inbound settings");
-  }
 
-  async recordXuiInboundProbes(results) {
-    const list = Array.isArray(results) ? results : [];
-    if (!list.length) return;
-    await withPgRetry(() => this.pool.query(
-      `UPDATE xui_inbounds AS i SET probe_status = r.status, probe_latency_ms = r."latencyMs", probe_checked_at = r."checkedAt", probe_error = r.error
-       FROM jsonb_to_recordset($1::jsonb) AS r(key TEXT, status TEXT, "latencyMs" INTEGER, "checkedAt" TIMESTAMPTZ, error TEXT)
-       WHERE i.key = r.key`,
-      [JSON.stringify(list)]
-    ), "record xui inbound probes");
-  }
 
-  async setXuiInboundEnabled(inboundId, enabled) {
-    await withPgRetry(() => this.pool.query("UPDATE xui_inbounds SET enabled = $2 WHERE inbound_id = $1 AND missing_since IS NULL", [inboundId, enabled]), "set xui inbound enabled");
-  }
 
   // Background job run history shown on the sync job monitor page.
   async startSyncJobRun(jobId, trigger) {

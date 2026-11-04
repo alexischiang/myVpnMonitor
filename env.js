@@ -19,10 +19,4 @@ function loadLocalEnv({ override = false } = {}) {
   }
 }
 
-function xuiDatabaseUrl() {
-  if (process.env.XUI_DATABASE_URL) return process.env.XUI_DATABASE_URL;
-  // Same fallback order as the deploy workflow, so the service still starts when only DATABASE_URL is set.
-  return process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL || "";
-}
-
-module.exports = { loadLocalEnv, xuiDatabaseUrl };
+module.exports = { loadLocalEnv };

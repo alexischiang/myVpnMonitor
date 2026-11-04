@@ -3,8 +3,6 @@ const { createDataStore } = require("./database");
 const {
   RESET_INTERVAL_DAYS,
   MS_PER_DAY,
-  counterDelta,
-  directionalDelta,
   isPeriodicPlan,
   cycleStartMs,
   xuiMultiplier,
@@ -14,19 +12,6 @@ const {
   isTrafficPackActive,
   effectiveQuotaBytes
 } = require("./xui-traffic");
-
-// counterDelta: growth, reset detection, first observation
-assert.strictEqual(counterDelta(150, 100), 50, "normal growth = difference");
-assert.strictEqual(counterDelta(100, 100), 0, "no change = 0");
-assert.strictEqual(counterDelta(30, 500), 30, "counter dropped (reset) → current value is the new usage");
-assert.strictEqual(counterDelta(0, 500), 0, "reset to 0 → 0");
-assert.strictEqual(counterDelta(50, null), 0, "first observation → seed only, no delta");
-assert.strictEqual(counterDelta(-5, 100), 0, "negative current clamped to 0");
-
-// directionalDelta: per-direction, first observation, mixed reset
-assert.deepStrictEqual(directionalDelta({ up: 120, down: 240 }, { up: 100, down: 200 }), { up: 20, down: 40 });
-assert.deepStrictEqual(directionalDelta({ up: 5, down: 240 }, { up: 100, down: 200 }), { up: 5, down: 40 }, "up reset, down grew");
-assert.deepStrictEqual(directionalDelta({ up: 10, down: 20 }, null), { up: 0, down: 0 }, "first observation records nothing");
 
 // isPeriodicPlan
 assert.strictEqual(isPeriodicPlan({ duration: "monthly" }), true);
@@ -113,22 +98,6 @@ assert.strictEqual(rolled.disabled, false, "new cycle clears disabled");
 assert.deepStrictEqual(rolled.trafficAlerts, {}, "new cycle clears alerts");
 assert.strictEqual(rolled.cycleReset, true);
 
-// deductRemotesFromLocalNode: local node holds the mirrored GLOBAL total → subtract remotes.
-const { deductRemotesFromLocalNode } = require("./xui-traffic");
-// user on TW(2309) only; local(LA) reports global 3022 = LA-real(713)+TW(2309) → LA becomes 713.
-const d1 = deductRemotesFromLocalNode({ "u@x": { LA: { inBytes: 1000, outBytes: 2022 }, TW: { inBytes: 900, outBytes: 1409 } } }, "LA");
-assert.deepStrictEqual(d1["u@x"].LA, { inBytes: 100, outBytes: 613 }, "LA = global - remote per direction");
-assert.deepStrictEqual(d1["u@x"].TW, { inBytes: 900, outBytes: 1409 }, "remote untouched");
-// global == remote (user only on one remote) → LA collapses to 0 (was pure double-count)
-const d2 = deductRemotesFromLocalNode({ "u@x": { LA: { inBytes: 900, outBytes: 1409 }, TW: { inBytes: 900, outBytes: 1409 } } }, "LA");
-assert.deepStrictEqual(d2["u@x"].LA, { inBytes: 0, outBytes: 0 }, "LA=global=remote → LA becomes 0");
-// global < remotes (central lag) → clamp to 0, never negative
-const d3 = deductRemotesFromLocalNode({ "u@x": { LA: { inBytes: 10, outBytes: 10 }, TW: { inBytes: 50, outBytes: 50 } } }, "LA");
-assert.deepStrictEqual(d3["u@x"].LA, { inBytes: 0, outBytes: 0 }, "negative clamped to 0");
-// no local node entry → untouched
-const d4 = deductRemotesFromLocalNode({ "u@x": { TW: { inBytes: 5, outBytes: 5 } } }, "LA");
-assert.deepStrictEqual(d4["u@x"], { TW: { inBytes: 5, outBytes: 5 } }, "no local → untouched");
-
 // accountNodeUsage: public names, merged duplicates, top-N series, "other" fold, zero-filled days.
 const { accountNodeUsage } = require("./xui-traffic");
 {
@@ -187,60 +156,8 @@ const { accountNodeUsage } = require("./xui-traffic");
   );
 }
 
-// localNodeRound: the local node's usage = signed global growth − signed remote growth + carry.
-const { localNodeRound } = require("./xui-traffic");
-assert.deepStrictEqual(
-  localNodeRound({ current: { up: 110, down: 220 }, cursor: { up: 100, down: 200 }, remoteChange: { up: 3, down: 5 } }),
-  { delta: { up: 7, down: 15 }, carry: { up: 0, down: 0 }, cursor: { up: 110, down: 220 } },
-  "local = global growth − remote growth"
-);
-assert.deepStrictEqual(
-  localNodeRound({ current: { up: 100, down: 200 }, cursor: { up: 100, down: 200 }, remoteChange: { up: 5, down: 0 } }),
-  { delta: { up: 0, down: 0 }, carry: { up: -5, down: 0 }, cursor: { up: 100, down: 200 } },
-  "global lag becomes a carried deficit instead of being dropped"
-);
-assert.deepStrictEqual(
-  localNodeRound({ current: { up: 108, down: 200 }, cursor: { up: 100, down: 200 }, carry: { up: -5, down: 0 } }).delta,
-  { up: 3, down: 0 },
-  "the carried deficit absorbs the late global growth"
-);
-assert.deepStrictEqual(
-  localNodeRound({ current: { up: 10, down: 10 }, cursor: { up: 1000, down: 1000 }, remoteChange: { up: -990, down: -990 } }).delta,
-  { up: 0, down: 0 },
-  "a restarted remote and the matching global drop cancel"
-);
-assert.deepStrictEqual(
-  localNodeRound({ current: { up: 500, down: 500 }, cursor: { up: 100, down: 100 }, remoteChange: { up: 50, down: 0 }, held: true }),
-  { delta: { up: 0, down: 0 }, carry: { up: -50, down: 0 }, cursor: null },
-  "held round: global cursor stays, readable remote growth is carried"
-);
-assert.deepStrictEqual(
-  localNodeRound({ current: { up: 40, down: 60 } }),
-  { delta: { up: 0, down: 0 }, carry: { up: 0, down: 0 }, cursor: { up: 40, down: 60 } },
-  "first observation only seeds the cursor"
-);
-
 async function checkApplicationTrafficStore() {
-  let dailyInsert;
-  let hourlyInsert;
-  const client = {
-    async query(sql, params) {
-      if (String(sql).includes("SELECT email, node_guid, last_up, last_down")) return { rows: [{ email: "user@example.com", node_guid: "hk", last_up: "100", last_down: "200" }] };
-      if (String(sql).includes("INSERT INTO xui_daily_traffic")) dailyInsert = { sql: String(sql), params };
-      if (String(sql).includes("INSERT INTO xui_hourly_traffic")) hourlyInsert = { sql: String(sql), params };
-      return { rows: [] };
-    },
-    release() {}
-  };
   const store = createDataStore({ databaseUrl: "postgres://test:test@127.0.0.1/test" });
-  store.pool = { connect: async () => client };
-  const recorded = await store.recordXuiTrafficSamples("2026-09-15", [{ email: "user@example.com", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", up: 130, down: 260 }], "hk");
-  assert.deepStrictEqual(recorded, { applied: 1, seeded: 0 });
-  assert.ok(dailyInsert.sql.includes("user_id, user_label, plan_id, node_name"));
-  assert.deepStrictEqual(dailyInsert.params, ["2026-09-15", ["user@example.com"], ["hk"], ["u1"], ["U1"], ["pro"], ["Hong Kong"], [30], [60]]);
-  assert.ok(hourlyInsert.sql.includes("date_trunc('hour', NOW())"), "hourly rows are bucketed by the current hour");
-  assert.deepStrictEqual(hourlyInsert.params, [["user@example.com"], ["hk"], [30], [60]], "the hourly table gets the same deltas as the daily table");
-
   let pruned;
   store.pool = { async query(sql, params) { pruned = { sql: String(sql), params }; return { rowCount: 4 }; } };
   assert.deepStrictEqual(await store.pruneXuiHourlyTraffic(Date.parse("2026-08-05T00:00:00Z")), { deleted: 4 });
@@ -257,105 +174,7 @@ async function checkApplicationTrafficStore() {
   assert.deepStrictEqual(await store.xuiTrafficRange("2026-09-01", "2026-09-15"), [{ date: "2026-09-15", email: "user@example.com", nodeGuid: "hk", userId: "u1", userLabel: "U1", planId: "pro", nodeName: "Hong Kong", inBytes: 30, outBytes: 60 }]);
 }
 
-// In-memory stand-in for the sampler's three queries, so several sampling rounds can run
-// back to back through the real recordXuiTrafficSamples.
-function memoryTrafficStore() {
-  const cursors = new Map();
-  const daily = new Map();
-  const client = {
-    async query(sql, params) {
-      const text = String(sql);
-      if (text.includes("FROM xui_traffic_cursor")) {
-        return { rows: [...cursors.values()].filter(row => params[0].includes(row.email)) };
-      }
-      if (text.includes("INSERT INTO xui_daily_traffic")) {
-        const [date, emails, nodes] = params;
-        const ups = params[params.length - 2];
-        const downs = params[params.length - 1];
-        emails.forEach((email, index) => {
-          const key = `${date} ${email} ${nodes[index]}`;
-          const row = daily.get(key) || { up: 0, down: 0 };
-          daily.set(key, { up: row.up + Number(ups[index]), down: row.down + Number(downs[index]) });
-        });
-      }
-      if (text.includes("INSERT INTO xui_traffic_cursor")) {
-        const [emails, nodes, ups, downs, carryUps, carryDowns] = params;
-        emails.forEach((email, index) => {
-          cursors.set(`${email} ${nodes[index]}`, {
-            email,
-            node_guid: nodes[index],
-            last_up: String(ups[index]),
-            last_down: String(downs[index]),
-            carry_up: String(carryUps ? carryUps[index] : 0),
-            carry_down: String(carryDowns ? carryDowns[index] : 0)
-          });
-        });
-      }
-      return { rows: [] };
-    },
-    release() {}
-  };
-  const store = createDataStore({ databaseUrl: "postgres://test:test@127.0.0.1/test" });
-  store.pool = { connect: async () => client };
-  const total = node => [...daily].filter(([key]) => key.endsWith(` ${node}`)).reduce((sum, [, row]) => sum + row.up + row.down, 0);
-  const round = (counters, options) => store.recordXuiTrafficSamples("2026-10-02", Object.entries(counters).map(([nodeGuid, bytes]) => ({ email: "u@x", nodeGuid, up: bytes, down: 0 })), "LA", options);
-  return { round, total };
-}
-
-// The local node (LA) carries the client's GLOBAL counter = LA-own + Σremotes. In every
-// scenario below the client never touches LA, so LA must stay at 0 and each remote must
-// record exactly its own growth.
-async function checkLocalNodeDerivation() {
-  {
-    // A remote node read fails for a round while the panel keeps counting its traffic.
-    const sim = memoryTrafficStore();
-    await sim.round({ LA: 1000, HK: 1000 });
-    await sim.round({ LA: 6000 }, { localHeld: true });
-    await sim.round({ LA: 6000, HK: 6000 });
-    assert.strictEqual(sim.total("HK"), 5000, "remote records its own growth once it is readable again");
-    assert.strictEqual(sim.total("LA"), 0, "a failed remote read must not move its traffic onto LA");
-  }
-  {
-    // The panel's global counter briefly drops a remote's share (node unreachable from the
-    // panel or the client record briefly missing), then regains it. Production signature:
-    // LA accrued ≈ the remote's cumulative counter in one day.
-    const sim = memoryTrafficStore();
-    await sim.round({ LA: 9500, HK: 9000, US: 500 });
-    await sim.round({ LA: 500, HK: 9000, US: 500 });
-    await sim.round({ LA: 9500, HK: 9000, US: 500 });
-    assert.strictEqual(sim.total("LA"), 0, "a transient dip in the global counter must not be re-counted on LA");
-  }
-  {
-    // The global read lags the per-node reads by a round.
-    const sim = memoryTrafficStore();
-    await sim.round({ LA: 100, HK: 100 });
-    await sim.round({ LA: 120, HK: 150 });
-    await sim.round({ LA: 150, HK: 150 });
-    assert.strictEqual(sim.total("HK"), 50);
-    assert.strictEqual(sim.total("LA"), 0, "global read lag nets out across rounds");
-  }
-  {
-    // A remote client is re-created (its counter restarts) and the global drops with it.
-    const sim = memoryTrafficStore();
-    await sim.round({ LA: 1000, HK: 1000 });
-    await sim.round({ LA: 10, HK: 10 });
-    assert.strictEqual(sim.total("HK"), 10, "a remote counter reset counts the post-reset usage");
-    assert.strictEqual(sim.total("LA"), 0);
-  }
-  {
-    // Real LA usage is still counted, including after a held round.
-    const sim = memoryTrafficStore();
-    await sim.round({ LA: 1000, HK: 1000 });
-    await sim.round({ LA: 1300, HK: 1200 });
-    await sim.round({ LA: 1500 }, { localHeld: true });
-    await sim.round({ LA: 1700, HK: 1400 });
-    assert.strictEqual(sim.total("HK"), 400);
-    assert.strictEqual(sim.total("LA"), 300, "LA-own growth = global growth minus remote growth");
-  }
-}
-
 checkApplicationTrafficStore()
-  .then(checkLocalNodeDerivation)
   .then(() => console.log("xui-traffic pure-function and application-store checks passed."))
   .catch(error => {
     console.error(error);

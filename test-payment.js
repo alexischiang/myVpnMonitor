@@ -62,79 +62,28 @@ async function main() {
     const result = queryResults.get(params.merOrderTid) || { payOrderStatus: 0, money: "1.03" };
     return sendJson(response, 200, { status: 0, result });
   });
+  // The line backend is a real in-process node-hub behind a proxy that can fail or slow down
+  // writes, the way a node-hub outage or a slow hub would.
   let failProvision = false;
-  // Slows client creation, so a purchase holds the commerce lock long enough for the concurrency checks.
-  let xuiAddDelayMs = 0;
-  const xuiClients = new Map();
-  const xuiRequests = [];
-  // Set to a filter to drop inbounds from the mock inbounds/list (null serves all of them).
-  let xuiInboundFilter = null;
-  const xui = http.createServer(async (request, response) => {
-    let body = {};
+  // Slows each user's entitlement write, so a purchase holds the commerce lock long enough for the concurrency checks.
+  let hubWriteDelayMs = 0;
+  const hubWrites = [];
+  let hubStore;
+  let hubHandler;
+  const hubProxy = http.createServer(async (request, response) => {
     if (request.method !== "GET") {
-      let raw = "";
-      for await (const chunk of request) raw += chunk;
-      if (raw) body = JSON.parse(raw);
+      hubWrites.push(request.url);
+      if (failProvision) return sendJson(response, 503, { error: "simulated delivery outage" });
+      if (hubWriteDelayMs && /^\/internal\/users\/[^/]+$/.test(request.url)) await new Promise(resolve => setTimeout(resolve, hubWriteDelayMs));
     }
-    xuiRequests.push({ url: request.url, body });
-    if (failProvision && request.method === "POST") return sendJson(response, 503, { success: false, msg: "simulated delivery outage" });
-    const clientMatch = request.url.match(/^\/panel\/api\/clients\/get\/(.+)$/);
-    if (clientMatch) {
-      const client = xuiClients.get(decodeURIComponent(clientMatch[1]));
-      return sendJson(response, client ? 200 : 404, client ? { success: true, obj: client } : { success: false, msg: "not found" });
-    }
-    if (request.url === "/panel/api/server/status") return sendJson(response, 200, { success: true, obj: { panelGuid: "local" } });
-    if (request.url === "/panel/api/clients/list") {
-      // Like 3x-ui: a finite totalGB reached by the never-reset panel counter disables the client.
-      for (const client of xuiClients.values()) {
-        const panelUsed = Number(client.traffic?.up || 0) + Number(client.traffic?.down || 0);
-        if (Number(client.totalGB) > 0 && panelUsed >= Number(client.totalGB)) client.enable = false;
-      }
-      return sendJson(response, 200, { success: true, obj: [...xuiClients.values()].map(client => ({ traffic: { up: 0, down: 0, enable: true }, ...client })) });
-    }
-    if (request.url === "/panel/api/inbounds/list") return sendJson(response, 200, { success: true, obj: [
-      { id: 1, remark: "套餐节点", protocol: "vless", enable: true, originNodeGuid: "local" },
-      { id: 2, remark: "个人家宽", protocol: "vless", enable: true, originNodeGuid: "local" },
-      { id: 3, remark: "停用家宽", protocol: "vless", enable: false, originNodeGuid: "local" }
-    ].filter(inbound => !xuiInboundFilter || xuiInboundFilter(inbound)) });
-    if (request.url === "/panel/api/clients/add") {
-      if (xuiAddDelayMs) await new Promise(resolve => setTimeout(resolve, xuiAddDelayMs));
-      const client = { ...body.client, subId: body.client.subId || crypto.randomUUID(), inboundIds: body.inboundIds || [] };
-      xuiClients.set(client.email, client);
-      return sendJson(response, 200, { success: true, obj: client });
-    }
-    const updateMatch = request.url.match(/^\/panel\/api\/clients\/update\/(.+)$/);
-    if (updateMatch) {
-      const oldEmail = decodeURIComponent(updateMatch[1]);
-      const client = { ...(xuiClients.get(oldEmail) || {}), ...body };
-      xuiClients.delete(oldEmail);
-      xuiClients.set(client.email, client);
-      return sendJson(response, 200, { success: true, obj: client });
-    }
-    if (request.url === "/panel/api/clients/bulkAttach") {
-      if ((body.inboundIds || []).includes(999)) return sendJson(response, 500, { success: false, msg: "simulated attach failure" });
-      for (const email of body.emails || []) {
-        const client = xuiClients.get(email);
-        if (client) client.inboundIds = [...new Set([...(client.inboundIds || []), ...(body.inboundIds || [])])];
-      }
-      return sendJson(response, 200, { success: true, obj: {} });
-    }
-    if (request.url === "/panel/api/clients/bulkEnable" || request.url === "/panel/api/clients/bulkDisable") {
-      for (const email of body.emails || []) {
-        const client = xuiClients.get(email);
-        if (client) client.enable = request.url.endsWith("bulkEnable");
-      }
-      return sendJson(response, 200, { success: true, obj: {} });
-    }
-    if (request.url === "/panel/api/clients/bulkDetach") {
-      for (const email of body.emails || []) {
-        const client = xuiClients.get(email);
-        if (client) client.inboundIds = (client.inboundIds || []).filter(id => !(body.inboundIds || []).includes(id));
-      }
-      return sendJson(response, 200, { success: true, obj: {} });
-    }
-    return sendJson(response, 200, { success: true, obj: {} });
+    return hubHandler(request, response);
   });
+  // A user's node-hub entitlement ({ userKey, email, uuid, nodeIds, deviceLimit, enabled }), or undefined.
+  const lineOf = async email => (await hubStore.listUsers()).find(entry => entry.email === String(email).toLowerCase());
+  // Panel-era inbound numbers 1-3 map to hub nodes: 1 package, 2 custom, 3 a disabled package node.
+  const inbound = {};
+  const inboundKey = {};
+  const hubNode = {};
 
   let app;
   let handler;
@@ -143,7 +92,23 @@ async function main() {
   const paymentOptionId = `v2:${catalogV2Ids.flow}:30d`;
   try {
     const gatewayPort = await listen(gateway);
-    const xuiPort = await listen(xui);
+    const { NodeHubStore } = require("./node-hub/store");
+    const { createNodeHubHandler } = require("./node-hub/app");
+    const { normalizeNodeInput } = require("./node-hub/node-config");
+    const { hubInboundId } = require("./node-hub/bridge");
+    await database.query("DROP TABLE IF EXISTS nh_presence, nh_machine_load, nh_report_ids, nh_node_relays, nh_relays, nh_users, nh_nodes, nh_machines, nh_schema_migrations CASCADE");
+    hubStore = new NodeHubStore(new Pool({ connectionString: testDatabaseUrl }));
+    await hubStore.init();
+    const hubInternalToken = crypto.randomBytes(24).toString("hex");
+    hubHandler = createNodeHubHandler({ store: hubStore, internalToken: hubInternalToken, publicUrl: "https://hub.test", logger: { warn() {}, error() {} } });
+    const hubPort = await listen(hubProxy);
+    const hubMachine = await hubStore.createMachine({ name: "Payment VPS", host: "payment-vps.test" });
+    for (const [number, name, inboundType, enabled] of [[1, "套餐节点", "package", true], [2, "个人家宽", "custom", true], [3, "停用家宽", "package", false]]) {
+      const created = await hubStore.createNode(hubMachine.id, normalizeNodeInput({ name, protocol: "vless", host: "payment-vps.test", serverPort: 1000 + number, enabled, inboundType, settings: { network: "tcp", tls: 0 } }));
+      hubNode[number] = created.id;
+      inbound[number] = hubInboundId(created.id);
+      inboundKey[number] = `hub-m${hubMachine.id}:${created.id}`;
+    }
     await database.query(`
       CREATE TABLE IF NOT EXISTS app_records (
         collection TEXT NOT NULL,
@@ -155,11 +120,6 @@ async function main() {
       )
     `);
     await database.query("TRUNCATE app_records");
-    await database.query(
-      "INSERT INTO app_records (collection, id, position, data) VALUES ('xuiInboundGroups', 'state', 0, $1::jsonb)",
-      // Legacy inbound settings, imported into xui_inbounds on first access.
-      [JSON.stringify({ groups: { basic: [1], pro: [1], ultra: [1], self_hosted: [1] }, metadata: { "local:1": { region: "迁移地区", networkLevel: "premium" }, "local:7": { region: "旧入站", inboundType: "custom" } } })]
-    );
     // Legacy pool users still carry the id of a pool that no longer exists.
     const legacyPoolId = "payment-test-pool";
     // A user saved before the snapshot became the only plan source; startup strips the copies.
@@ -185,10 +145,9 @@ async function main() {
       ADMIN_USERNAME: "payment-admin",
       ADMIN_PASSWORD: "payment-admin-password",
       SESSION_SECRET: "payment-test-session-secret",
-      XUI_BASE_URL: `http://127.0.0.1:${xuiPort}`,
-      XUI_API_TOKEN: "xui-test-token",
-      XUI_READ_ONLY: "false",
-      XUI_SUBSCRIPTION_BASE_URL: "https://subscription.test",
+      NODE_HUB_URL: `http://127.0.0.1:${hubPort}`,
+      NODE_HUB_INTERNAL_TOKEN: hubInternalToken,
+      SUB_CONVERTER_URL: "http://127.0.0.1:9",
       COMMERCE_LOCK_WAIT_MS: "4000",
       // Never send real mail from tests; .env may hold live mail credentials.
       RESEND_API_KEY: "",
@@ -303,9 +262,9 @@ async function main() {
     assert.ok(adminPricing.data.some(item => item.group === "friends-lifetime-unlimited" && item.internal === true));
     assert.ok(!shopperPricing.data.some(item => item.internal === true));
 
-    const v2Group = await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys: ["local:1"] } });
+    const v2Group = await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys: [inboundKey[1]] } });
     assert.strictEqual(v2Group.response.status, 201, v2Group.text);
-    const flowGroup = await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: catalogV2Ids.flowGroup, name: "Payment flow", isEnabled: true, sortOrder: 0, inboundKeys: ["local:1"] } });
+    const flowGroup = await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: catalogV2Ids.flowGroup, name: "Payment flow", isEnabled: true, sortOrder: 0, inboundKeys: [inboundKey[1]] } });
     assert.strictEqual(flowGroup.response.status, 201, flowGroup.text);
     // Enabled recurring plans need a value for every comparison row.
     const compareValues = Object.fromEntries((await request("/api/catalog-v2/compare-attributes", { cookie: adminCookie })).data.map(attribute => [attribute.id, attribute.kind === "boolean" ? "yes" : attribute.options[0]]));
@@ -356,7 +315,7 @@ async function main() {
     const currentPrice = await request("/api/orders", { method: "POST", cookie, body: { optionId: `v2:${catalogV2Ids.product}:30d`, useBalance: false, expectedAmount: 1.03 } });
     assert.strictEqual(currentPrice.response.status, 201, currentPrice.text);
     await request(`/api/orders/${currentPrice.data.id}`, { method: "DELETE", cookie });
-    xuiRequests.length = 0;
+    hubWrites.length = 0;
 
     const quote = await request("/api/payments/quote", { method: "POST", cookie, body: { optionId: paymentOptionId } });
     assert.strictEqual(quote.response.status, 200);
@@ -393,7 +352,7 @@ async function main() {
     assert.strictEqual(submittedOnly.response.status, 201);
     assert.strictEqual(submittedOnly.data.status, "pending");
     assert.strictEqual(gatewayRequests.length, callsBeforeSubmission);
-    assert.strictEqual(xuiRequests.length, 0);
+    assert.strictEqual(hubWrites.length, 0);
     const concurrentSubmissions = await Promise.all([createOrder(), createOrder()]);
     assert.ok(concurrentSubmissions.every(item => item.response.status === 400));
     const badMethod = await request(`/api/payments/orders/${submittedOnly.data.id}/start`, { method: "POST", cookie, body: { channelCode: "bad" } });
@@ -492,7 +451,7 @@ async function main() {
     await request(`/api/orders/${mismatchedOrder.data.id}`, { method: "DELETE", cookie });
 
     const paidOrder = await createOrder();
-    assert.strictEqual(xuiClients.size, 0, "pending orders must not touch 3x-ui");
+    assert.deepStrictEqual(hubWrites, [], "pending orders must not touch node-hub");
     await Promise.all([
       callback(paidOrder.data, 1, "1.03", true),
       callback(paidOrder.data, 1, "1.03", true)
@@ -518,7 +477,8 @@ async function main() {
     assert.deepStrictEqual([createdUser.v2ProductSnapshot.productId, createdUser.v2ProductSnapshot.periodId, createdUser.currentProductOrderId], [catalogV2Ids.flow, "30d", paidOrder.data.id]);
     const removedPlanFields = ["unlimited", "group", "activeGroup", "v2LineGroupId", "v2ProductId", "v2PeriodId", "purchasedTrafficGb", "trafficTier", "currentProductId", "currentOptionId", "currentProductSnapshot", "productCatalogVersion", "legacyProductBinding"];
     assert.deepStrictEqual(removedPlanFields.filter(field => field in createdUser), [], "a purchase stores the plan only in v2ProductSnapshot");
-    assert.deepStrictEqual([xuiClients.get("buyer@example.test").flow, xuiClients.get("buyer@example.test").totalGB], ["xtls-rprx-vision", 0], "the panel quota stays unlimited; the app enforces the plan quota");
+    const buyerLine = await lineOf("buyer@example.test");
+    assert.deepStrictEqual([buyerLine?.userKey, buyerLine?.enabled, buyerLine?.nodeIds, buyerLine?.deviceLimit], [createdUser.id, true, [hubNode[1]], createdUser.v2ProductSnapshot.deviceLimit], "a paid plan is provisioned on node-hub with its line group's nodes");
     const adminBills = await request("/api/bills", { cookie: adminCookie });
     const initialBill = adminBills.data.find(item => item.paymentOrderId === paidOrder.data.id);
     assert.deepStrictEqual([initialBill.type, initialBill.merOrderTid, initialBill.productSnapshot?.planName], ["initial", paidOrder.data.merOrderTid, paidOrder.data.planName]);
@@ -529,9 +489,8 @@ async function main() {
     assert.strictEqual(billDetail.data.payment.amount, 1.03);
 
     await database.query(`UPDATE app_records
-      SET data = (data || $2::jsonb) - 'xuiClientEmail' - 'xuiSubId' - 'xuiInboundIds'
+      SET data = (data || $2::jsonb) - 'xuiClientEmail' - 'xuiInboundIds'
       WHERE collection = 'users' AND id = $1`, [createdUser.id, JSON.stringify({ email: "legacy-address@example.test", lineType: "upstream", subscriptionId: legacyPoolId })]);
-    xuiClients.delete("buyer@example.test");
     const polledOrder = await createOrder();
     queryResults.set(polledOrder.data.merOrderTid, {
       tid: `query-${polledOrder.data.merOrderTid}`,
@@ -544,8 +503,8 @@ async function main() {
     assert.strictEqual(status.data.purchaseCountBefore, 1);
     const migratedPoolUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' AND id = $1", [createdUser.id])).rows[0].data;
     assert.deepStrictEqual([migratedPoolUser.email, migratedPoolUser.lineType, migratedPoolUser.subscriptionId], ["buyer@example.test", "self_hosted", ""]);
-    assert.ok(xuiClients.has("buyer@example.test"), "legacy pool users must be provisioned with the authenticated account email");
-    assert.ok(!xuiClients.has("legacy-address@example.test"), "legacy user email must not receive the purchased plan");
+    assert.strictEqual((await lineOf("buyer@example.test"))?.userKey, createdUser.id, "legacy pool users must be provisioned with the authenticated account email");
+    assert.strictEqual(await lineOf("legacy-address@example.test"), undefined, "legacy user email must not receive the purchased plan");
     const billsAfterReplacement = await request("/api/bills", { cookie: adminCookie });
     assert.strictEqual(billsAfterReplacement.data.find(item => item.paymentOrderId === polledOrder.data.id).type, "replacement");
     const adminUsers = await request("/api/users", { cookie: adminCookie });
@@ -553,42 +512,31 @@ async function main() {
     const managedUser = adminUsers.data[0];
     assert.strictEqual(managedUser.lineType, "self_hosted", "new purchases must use self-hosted delivery");
     const saveInboundSettings = (key, settings) => request(`/api/xui-inbounds/${encodeURIComponent(key)}/settings`, { method: "PUT", cookie: adminCookie, body: settings });
-    // The legacy inbound-groups metadata was imported once: known inbounds keep their settings,
-    // keys 3x-ui no longer has are kept as missing rows, and the state is stamped.
-    const importedView = await request("/api/xui-inbounds", { cookie: adminCookie });
-    const importedInbound = importedView.data.inbounds.find(inbound => inbound.key === "local:1");
-    assert.deepStrictEqual([importedInbound.region, importedInbound.networkLevel, importedInbound.inboundType], ["迁移地区", "premium", "package"]);
-    assert.ok(!importedView.data.inbounds.some(inbound => inbound.key === "local:7"), "an imported key 3x-ui does not have stays hidden");
-    assert.deepStrictEqual((await database.query("SELECT region, inbound_type, missing_since IS NOT NULL AS missing FROM xui_inbounds WHERE key='local:7'")).rows, [{ region: "旧入站", inbound_type: "custom", missing: true }]);
-    assert.ok((await database.query("SELECT data FROM app_records WHERE collection='xuiInboundGroups' AND id='state'")).rows[0].data.importedToTableAt, "the import stamps the legacy state");
-    xuiRequests.length = 0;
-    const settingsOnlyInboundSave = await saveInboundSettings("local:1", { region: " 香港 ", networkLevel: "vip", inboundType: "package" });
+    const settingsOnlyInboundSave = await saveInboundSettings(inboundKey[1], { region: " 香港 ", networkLevel: "vip", inboundType: "package" });
     assert.strictEqual(settingsOnlyInboundSave.response.status, 200, settingsOnlyInboundSave.text);
-    assert.deepStrictEqual(settingsOnlyInboundSave.data, { key: "local:1", region: "香港", networkLevel: "", inboundType: "package" });
-    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/")), "settings-only inbound saves must not request 3x-ui");
-    assert.strictEqual((await saveInboundSettings("local:7", { region: "x" })).response.status, 404, "a missing inbound cannot be edited");
+    assert.deepStrictEqual(settingsOnlyInboundSave.data, { key: inboundKey[1], region: "香港", networkLevel: "", inboundType: "package" });
+    assert.strictEqual((await hubStore.getNode(hubNode[1])).region, "香港", "inbound settings are stored on the hub node");
+    assert.strictEqual((await saveInboundSettings("local:7", { region: "x" })).response.status, 404, "a 3x-ui inbound key cannot be edited");
     assert.strictEqual((await request("/api/xui-inbound-groups", { method: "PUT", cookie: adminCookie, body: { metadata: {} } })).response.status, 404, "the whole-metadata route is removed");
     const removedResync = await request("/api/xui-inbound-groups/resync", { method: "POST", cookie: adminCookie, body: {} });
     assert.strictEqual(removedResync.response.status, 404, "the V1 group resync route is removed");
     await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
-    xuiClients.get("buyer@example.test").group = "basic";
-    xuiRequests.length = 0;
+    assert.strictEqual((await lineOf("buyer@example.test")).enabled, false, "a disabled account is disabled on node-hub");
     const reenabledUser = await request(`/api/users/${managedUser.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: false } });
     assert.strictEqual(reenabledUser.response.status, 200);
-    assert.strictEqual(xuiRequests.find(entry => entry.url === "/panel/api/clients/update/buyer%40example.test")?.body.group, catalogV2Ids.flowGroup);
-    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/groups/bulkAdd"));
+    assert.strictEqual((await lineOf("buyer@example.test")).enabled, true, "re-enabling the account re-enables the line");
     const customInboundOptions = await request(`/api/users/${managedUser.id}/custom-inbounds`, { cookie: adminCookie });
     assert.strictEqual(customInboundOptions.response.status, 200);
-    assert.deepStrictEqual(customInboundOptions.data.inheritedInboundIds, [1], "users inherit their V2 line group inbounds");
-    const customInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2] } });
-    assert.strictEqual(customInboundUpdate.response.status, 200);
-    assert.deepStrictEqual(customInboundUpdate.data.xuiExtraInboundIds, [2]);
-    assert.deepStrictEqual(customInboundUpdate.data.xuiInboundIds, [1, 2]);
-    xuiRequests.length = 0;
-    const unchangedCustomInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2] } });
+    assert.deepStrictEqual(customInboundOptions.data.inheritedInboundIds, [inbound[1]], "users inherit their V2 line group inbounds");
+    const customInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [inbound[2]] } });
+    assert.strictEqual(customInboundUpdate.response.status, 200, customInboundUpdate.text);
+    assert.deepStrictEqual(customInboundUpdate.data.xuiExtraInboundIds, [inbound[2]]);
+    assert.deepStrictEqual((await lineOf("buyer@example.test")).nodeIds, [hubNode[1], hubNode[2]], "a custom inbound is granted on node-hub");
+    hubWrites.length = 0;
+    const unchangedCustomInboundUpdate = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [inbound[2]] } });
     assert.strictEqual(unchangedCustomInboundUpdate.response.status, 200);
-    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/")), "unchanged custom inbound assignments must not request 3x-ui");
-    const blockedDisabledInbound = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2, 3] } });
+    assert.deepStrictEqual(hubWrites, [], "unchanged custom inbound assignments must not write to node-hub");
+    const blockedDisabledInbound = await request(`/api/users/${managedUser.id}/custom-inbounds`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [inbound[2], inbound[3]] } });
     assert.strictEqual(blockedDisabledInbound.response.status, 400);
     assert.match(blockedDisabledInbound.data.error, /已停用/);
     const protectedUpdate = await request(`/api/users/${managedUser.id}`, { method: "PUT", cookie: adminCookie, body: { actualPaid: 999, duration: "yearly", expiresAt: "2030-01-01" } });
@@ -642,8 +590,8 @@ async function main() {
     await callback(replacementOrder.data, 1, String(replacementOrder.data.amount), true);
     const replacedUser = (await database.query("SELECT data FROM app_records WHERE collection = 'users' LIMIT 1")).rows[0].data;
     assert.deepStrictEqual([replacedUser.v2ProductSnapshot.productId, replacedUser.v2ProductSnapshot.lineGroupId, replacedUser.v2ProductSnapshot.trafficBytes], [catalogV2Ids.flowBasic, catalogV2Ids.flowGroup, 50 * 1024 ** 3]);
-    assert.deepStrictEqual(replacedUser.xuiExtraInboundIds, [2], "custom inbound grants must survive plan replacement");
-    assert.deepStrictEqual(replacedUser.xuiInboundIds, [1, 2], "the line group inbounds plus custom grants");
+    assert.deepStrictEqual(replacedUser.xuiExtraInboundIds, [inbound[2]], "custom inbound grants must survive plan replacement");
+    assert.deepStrictEqual(replacedUser.xuiInboundIds, [inbound[1], inbound[2]], "the line group inbounds plus custom grants");
     assert.deepStrictEqual([replacedUser.v2ProductSnapshot.productId, `v2:${replacedUser.v2ProductSnapshot.productId}:${replacedUser.v2ProductSnapshot.periodId}`, replacedUser.currentProductOrderId], [catalogV2Ids.flowBasic, basicOptionId, replacementOrder.data.id]);
     assert.deepStrictEqual(removedPlanFields.filter(field => field in replacedUser), []);
     assert.strictEqual(replacedUser.cashValue, replacementOrder.data.amount, "replacement cash value must only include the new payment");
@@ -720,7 +668,7 @@ async function main() {
     let earlyQueued = await earlyUser();
     assert.deepStrictEqual([earlyQueued.expiresAt, earlyQueued.purchasedAt, earlyQueued.v2ProductSnapshot.periodId, earlyQueued.currentProductOrderId], [earlyActive.expiresAt, earlyActive.purchasedAt, "30d", earlyInitialOrder.id], "the current plan runs on unchanged");
     assert.deepStrictEqual([earlyQueued.queuedPlan.orderId, earlyQueued.queuedPlan.productSnapshot.periodId, earlyQueued.queuedPlan.duration], [reversedRenewalOrder.id, "90d", "quarterly"]);
-    assert.strictEqual(xuiClients.get(earlyQueued.xuiClientEmail).expiryTime, Date.parse(earlyQuote.data.renewal.expiresAt), "the panel keeps the client until the queued plan ends");
+    assert.strictEqual((await lineOf(earlyQueued.xuiClientEmail)).enabled, true, "the line stays on through the queued plan");
     const renewalBill = (await request("/api/bills", { cookie: adminCookie })).data.find(bill => bill.paymentOrderId === reversedRenewalOrder.id);
     assert.deepStrictEqual([renewalBill.type, renewalBill.beforeExpiresAt, renewalBill.afterExpiresAt], ["renewal", earlyActive.expiresAt, earlyQuote.data.renewal.expiresAt]);
     const queuedOverview = await request("/api/account/overview", { cookie: earlyCookie });
@@ -732,7 +680,7 @@ async function main() {
     // Reversing the renewal order drops the queued plan.
     assert.strictEqual((await request(`/api/admin/orders/${reversedRenewalOrder.id}/reverse`, { method: "POST", cookie: adminCookie })).response.status, 200);
     assert.strictEqual((await earlyUser()).queuedPlan, undefined);
-    assert.strictEqual(xuiClients.get(earlyQueued.xuiClientEmail).expiryTime, Date.parse(earlyActive.expiresAt), "the panel goes back to the current plan's end");
+    assert.strictEqual((await lineOf(earlyQueued.xuiClientEmail)).enabled, true, "the current plan keeps the line on");
     const renewalOrder = await payEarly({ optionId: basic90OptionId, planAction: "renew" });
     assert.strictEqual((await earlyUser()).queuedPlan.orderId, renewalOrder.id);
     // The traffic sync round starts due renewals; nothing starts before the current plan ends.
@@ -747,15 +695,15 @@ async function main() {
     // Added traffic re-enables the client only when it is allowed: a disabled account stays off after a traffic gift.
     const disableEarly = await request(`/api/users/${earlyRenewed.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: true } });
     assert.strictEqual(disableEarly.response.status, 200, disableEarly.text);
-    assert.strictEqual(xuiClients.get(earlyRenewed.xuiClientEmail).enable, false);
+    assert.strictEqual((await lineOf(earlyRenewed.xuiClientEmail)).enabled, false);
     const disabledTrafficGift = await request(`/api/users/${earlyRenewed.id}/traffic-gift`, { method: "POST", cookie: adminCookie, body: { trafficGb: 1 } });
     assert.strictEqual(disabledTrafficGift.response.status, 200, disabledTrafficGift.text);
-    assert.strictEqual(xuiClients.get(earlyRenewed.xuiClientEmail).enable, false, "added traffic does not re-enable a disabled account's client");
+    assert.strictEqual((await lineOf(earlyRenewed.xuiClientEmail)).enabled, false, "added traffic does not re-enable a disabled account's line");
     assert.strictEqual((await request(`/api/users/${earlyRenewed.id}/account-status`, { method: "POST", cookie: adminCookie, body: { disabled: false } })).response.status, 200);
-    assert.strictEqual(xuiClients.get(earlyRenewed.xuiClientEmail).enable, true);
+    assert.strictEqual((await lineOf(earlyRenewed.xuiClientEmail)).enabled, true);
 
     // Reversing a replacement restores only the plan: days gifted afterwards, a rebound email and the user log stay,
-    // and the panel follows the restored plan.
+    // and node-hub follows the restored plan.
     const revertRegistration = await request("/api/auth/register", { method: "POST", body: { email: "revert@example.test", password: "payment-test-password" } });
     const revertCookie = revertRegistration.response.headers.get("set-cookie").split(";", 1)[0];
     const revertUser = async () => (await database.query("SELECT data FROM app_records WHERE collection = 'users' AND data->>'email' = 'revert@example.test'")).rows[0]?.data;
@@ -786,7 +734,8 @@ async function main() {
     assert.deepStrictEqual([revertAfter.xuiTrafficPackBytes, revertAfter.xuiTrafficPackOrderIds, revertAfter.xuiTrafficLimitBytes], [100 * 1024 ** 3, [revertPack.data.id], revertBefore.v2ProductSnapshot.trafficBytes + 100 * 1024 ** 3], "a traffic pack bought after the replacement stays on the restored plan");
     assert.ok(["user-gifted", "email-changed", "order-reversed"].every(reason => revertAfter.userLogs.some(log => log.reason === reason)), "later user logs are kept");
     assert.strictEqual(revertAfter.actualPaid, revertBefore.actualPaid);
-    assert.strictEqual(xuiClients.get(revertAfter.xuiClientEmail).expiryTime, Date.parse(revertAfter.expiresAt), "the panel follows the restored plan");
+    const revertLine = await lineOf(revertAfter.xuiClientEmail);
+    assert.deepStrictEqual([revertLine.planId, revertLine.deviceLimit, revertLine.enabled], [revertBefore.v2ProductSnapshot.productId, revertBefore.v2ProductSnapshot.deviceLimit, true], "node-hub follows the restored plan");
     assert.strictEqual((await request("/api/auth/login", { method: "POST", body: { account: "revert-new@example.test", password: "payment-test-password" } })).response.status, 200);
 
     const inviterRegistration = await request("/api/auth/register", {
@@ -994,7 +943,7 @@ async function main() {
     assert.ok(Date.parse(keptInvitee[0].expiresAt) <= Date.now(), "the reversed first order ends the plan");
     const keptInviteeDetail = (await request(`/api/users/${keptInvitee[0].id}`, { cookie: adminCookie })).data;
     assert.ok(keptInviteeDetail.userLogs.some(log => log.reason === "order-reversed"));
-    assert.strictEqual(xuiClients.get(keptInviteeDetail.xuiClientEmail)?.enable, false, "the ended plan disables the 3x-ui client");
+    assert.strictEqual((await lineOf(keptInviteeDetail.xuiClientEmail))?.enabled, false, "the ended plan disables the line on node-hub");
     const reversedBills = await database.query("SELECT COUNT(*)::int AS count FROM app_records WHERE collection = 'bills' AND data->>'paymentOrderId' = ANY($1::text[]) AND data->>'reversedAt' <> ''", [[walletOrder.data.id, inviterOrder.data.id, inviteeOrder.data.id]]);
     assert.strictEqual(reversedBills.rows[0].count, 3);
     const reversalEntries = await database.query("SELECT COUNT(*)::int AS count FROM wallet_entries WHERE idempotency_key LIKE 'reversal:%' AND source_id = ANY($1::text[])", [[walletOrder.data.id, rechargeOrder.data.id, inviterOrder.data.id, inviteeOrder.data.id]]);
@@ -1109,37 +1058,31 @@ async function main() {
     const v2ManualOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.product}:30d`, amount: 1 } });
     assert.deepStrictEqual([v2ManualOrder.response.status, v2ManualOrder.data.productSnapshot.catalogVersion, v2ManualOrder.data.fulfillmentStatus], [201, 2, "fulfilled"]);
     const v2User = (await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "v2-sync@example.test");
-    await handler.syncXuiPanel();
+    await handler.syncXuiWeightedTraffic();
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.usedBytes, 0, "a new plan starts at zero even when the purchase day already had traffic");
     await database.query("UPDATE xui_daily_traffic SET down_bytes = down_bytes + $1 WHERE date=$2 AND email='v2-sync@example.test' AND node_guid='local'", [2 * 1024 ** 3, purchaseDayKey]);
-    await handler.syncXuiPanel();
+    await handler.syncXuiWeightedTraffic();
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.usedBytes, 2 * 1024 ** 3, "only traffic after the purchase counts against the new plan");
     // The admin traffic reset must survive the next sync: usage restarts at zero and only later growth counts.
     const trafficReset = await request(`/api/users/${v2User.id}/traffic-reset`, { method: "POST", cookie: adminCookie, body: {} });
     assert.strictEqual(trafficReset.response.status, 200, trafficReset.text);
-    await handler.syncXuiPanel();
+    await handler.syncXuiWeightedTraffic();
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.usedBytes, 0, "a manual traffic reset is not undone by the next sync");
     await database.query("UPDATE xui_daily_traffic SET up_bytes = up_bytes + $1 WHERE date=$2 AND email='v2-sync@example.test' AND node_guid='local'", [1024 ** 3, purchaseDayKey]);
-    await handler.syncXuiPanel();
+    await handler.syncXuiWeightedTraffic();
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.usedBytes, 1024 ** 3, "traffic after a manual reset counts");
     await database.query("DELETE FROM xui_daily_traffic WHERE email='v2-sync@example.test'");
     assert.deepStrictEqual([v2User.v2ProductSnapshot.productId, v2User.v2ProductSnapshot.lineGroupId], [catalogV2Ids.product, catalogV2Ids.group]);
-    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
+    assert.deepStrictEqual((await lineOf("v2-sync@example.test")).nodeIds, [hubNode[1]]);
     assert.strictEqual((await database.query("SELECT stock FROM catalog_v2_products WHERE id=$1", [catalogV2Ids.product])).rows[0].stock, 1);
     const catalogBeforeSync = (await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value;
-    xuiClients.get("v2-sync@example.test").inboundIds = [2];
-    xuiClients.get("v2-sync@example.test").group = "panel-change-must-not-write-back";
-    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiClientPresent: false, xuiClientMissingAt: "2026-01-01T00:00:00.000Z" })]);
-    const syncReport = await handler.syncCatalogV2ToXui({ forceReload: true });
-    assert.deepStrictEqual([syncReport.checked >= 1, syncReport.updated >= 1, syncReport.failed.length], [true, true, 0]);
-    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").group, catalogV2Ids.group);
-    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientPresent, true);
-    const xuiClientChoices = await request(`/api/xui-clients?userId=${v2User.id}`, { cookie: adminCookie });
-    assert.strictEqual(xuiClientChoices.response.status, 200, xuiClientChoices.text);
-    assert.ok(xuiClientChoices.data.clients.some(client => client.email === "v2-sync@example.test" && client.linkedUserId === v2User.id));
-    assert.strictEqual("resetDay" in xuiClientChoices.data.importPreview, false, "no calendar reset day is offered; traffic resets every 30 days from purchase");
-    assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "3x-ui sync must not write panel state back to V2 catalog data");
+    // An entitlement changed on node-hub behind the app's back is put back by the full sync.
+    await hubStore.syncUsers([{ ...(await lineOf("v2-sync@example.test")), nodeIds: [hubNode[2]], deviceLimit: 9 }]);
+    const syncReport = await handler.syncHubUsers();
+    assert.ok(syncReport.users >= 1 && syncReport.changed >= 1, JSON.stringify(syncReport));
+    assert.deepStrictEqual([(await lineOf("v2-sync@example.test")).nodeIds, (await lineOf("v2-sync@example.test")).deviceLimit], [[hubNode[1]], 2]);
+    assert.strictEqual((await request(`/api/xui-clients?userId=${v2User.id}`, { cookie: adminCookie })).response.status, 404, "the 3x-ui client picker route is gone");
+    assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "the entitlement sync must not write back to V2 catalog data");
 
     // 新增用户 creates a plan-less account only; the plan is assigned through 人工收款 (unlisted specs
     // allowed, any amount including 0), which creates and provisions the subscription user.
@@ -1159,7 +1102,7 @@ async function main() {
     const adminAccountOnly = await request("/api/users", { method: "POST", cookie: adminCookie, body: { email: "Admin-V2@Example.test", wechatName: "微信名" } });
     assert.strictEqual(adminAccountOnly.response.status, 201, adminAccountOnly.text);
     assert.deepStrictEqual([adminAccountOnly.data.registeredOnly, adminAccountOnly.data.accountStatus, adminAccountOnly.data.email, Boolean(adminAccountOnly.data.customerID)], [true, "invited", "admin-v2@example.test", true]);
-    assert.strictEqual(xuiClients.has("admin-v2@example.test"), false, "creating a user provisions no line");
+    assert.strictEqual(await lineOf("admin-v2@example.test"), undefined, "creating a user provisions no line");
     assert.ok((await request("/api/users", { cookie: adminCookie })).data.some(item => item.id === adminAccountOnly.data.id), "the plan-less account is listed");
     assert.strictEqual((await request("/api/users", { method: "POST", cookie: adminCookie, body: { email: "admin-v2@example.test" } })).response.status, 409, "one account per email");
     const adminFreeOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: adminAccountOnly.data.accountId, optionId: hiddenOptionId, amount: 0 } });
@@ -1172,7 +1115,7 @@ async function main() {
       [adminCreated.data.v2ProductSnapshot.productId, adminCreated.data.v2ProductSnapshot.lineGroupId, adminCreated.data.currentProductSource, adminCreated.data.wechatName, adminCreated.data.xuiTrafficLimitBytes, adminCreated.data.deviceLimit, removedPlanFields.filter(field => field in adminCreated.data)],
       [catalogV2Ids.product, catalogV2Ids.group, "manual_order", "微信名", 50 * 1024 ** 3, 2, []]
     );
-    assert.deepStrictEqual(xuiClients.get("admin-v2@example.test").inboundIds, [1]);
+    assert.deepStrictEqual((await lineOf("admin-v2@example.test")).nodeIds, [hubNode[1]]);
 
     // Spend an admin records for a customer who already has a wallet joins that wallet instead of being overwritten.
     const preWalletCookie = (await request("/api/auth/register", { method: "POST", body: { email: "admin-vip@example.test", password: "payment-test-password" } })).response.headers.get("set-cookie").split(";", 1)[0];
@@ -1213,7 +1156,7 @@ async function main() {
     const withInput = await request("/api/orders", { method: "POST", cookie: v2Cookie, body: { optionId: `v2:${catalogV2Ids.topUp}`, buyerInput: "me@ai.test", useBalance: false } });
     assert.deepStrictEqual([withInput.response.status, withInput.data.addOnSnapshots[0].buyerInput], [201, "me@ai.test"]);
     await request(`/api/orders/${withInput.data.id}`, { method: "DELETE", cookie: v2Cookie });
-    for (const [key, settings] of [["local:1", { region: "香港", inboundType: "package" }], ["local:2", { region: "美国", inboundType: "custom" }]]) {
+    for (const [key, settings] of [[inboundKey[1], { region: "香港", inboundType: "package" }], [inboundKey[2], { region: "美国", inboundType: "custom" }]]) {
       assert.strictEqual((await saveInboundSettings(key, settings)).response.status, 200);
     }
 
@@ -1224,24 +1167,24 @@ async function main() {
     assert.ok((await request("/api/admin/work-summary", { cookie: adminCookie })).data.pendingDeliveries >= 1);
     const queue = await request("/api/admin/deliveries", { cookie: adminCookie });
     assert.ok(queue.data.pending.some(order => order.id === nodeOrder.data.id && order.services[0].handler === "custom_node"));
-    assert.deepStrictEqual((await request("/api/admin/custom-inbounds", { cookie: adminCookie })).data.map(inbound => inbound.id), [2]);
+    assert.deepStrictEqual((await request("/api/admin/custom-inbounds", { cookie: adminCookie })).data.map(inbound => inbound.id), [inbound[2]]);
     assert.strictEqual((await request("/api/admin/deliveries", { cookie: v2Cookie })).response.status, 403);
     const noInbound = await request(`/api/admin/orders/${nodeOrder.data.id}`, { method: "PUT", cookie: adminCookie, body: { deliveryNote: "x" } });
     assert.match(noInbound.data.error, /定制入站/);
     const beforeDelivery = Date.now();
-    const deliveredNode = await request(`/api/admin/orders/${nodeOrder.data.id}`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [2], deliveryNote: "美国家宽已开通" } });
+    const deliveredNode = await request(`/api/admin/orders/${nodeOrder.data.id}`, { method: "PUT", cookie: adminCookie, body: { inboundIds: [inbound[2]], deliveryNote: "美国家宽已开通" } });
     assert.strictEqual(deliveredNode.response.status, 200, deliveredNode.text);
     assert.deepStrictEqual([deliveredNode.data.fulfillmentStatus, deliveredNode.data.deliveryNotifyError], ["fulfilled", "邮件服务未配置。"], "a mail failure is recorded without undoing delivery");
     const nodeExpiresAt = new Date(deliveredNode.data.services[0].expiresAt).getTime();
     assert.ok(Math.abs(nodeExpiresAt - beforeDelivery - 30 * 86400000) < 60000, "custom node lasts 30 days from delivery");
-    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds.sort(), [1, 2]);
-    assert.deepStrictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiExtraInboundIds, [2]);
+    assert.deepStrictEqual((await lineOf("v2-sync@example.test")).nodeIds, [hubNode[1], hubNode[2]], "the delivered custom node is granted on node-hub");
+    assert.deepStrictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiExtraInboundIds, [inbound[2]]);
     const customerNodeOrder = await request(`/api/orders/${nodeOrder.data.id}`, { cookie: v2Cookie });
-    assert.deepStrictEqual([customerNodeOrder.data.services[0].status, customerNodeOrder.data.services[0].inboundIds], ["active", [2]]);
+    assert.deepStrictEqual([customerNodeOrder.data.services[0].status, customerNodeOrder.data.services[0].inboundIds], ["active", [inbound[2]]]);
     assert.deepStrictEqual(await handler.releaseExpiredCustomNodes(), { released: 0, orders: 0, failed: [] }, "active custom nodes stay bound");
     const expiry = await handler.releaseExpiredCustomNodes(nodeExpiresAt + 1000);
     assert.deepStrictEqual(expiry, { released: 1, orders: 1, failed: [] });
-    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
+    assert.deepStrictEqual((await lineOf("v2-sync@example.test")).nodeIds, [hubNode[1]], "an expired custom node is taken back on node-hub");
     assert.deepStrictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiExtraInboundIds, []);
     assert.deepStrictEqual(await handler.releaseExpiredCustomNodes(nodeExpiresAt + 1000), { released: 0, orders: 0, failed: [] }, "expiry is processed once");
 
@@ -1286,126 +1229,82 @@ async function main() {
     assert.deepStrictEqual([vipAddonQuote.data.vipLevel, vipAddonQuote.data.vipDiscountPercent, vipAddonQuote.data.vipDiscountAmount, vipAddonQuote.data.amount], ["vip3", 10, 0.1, 0.9]);
     await database.query("UPDATE wallet_accounts SET vip_spend_cents=$2 WHERE account_id=$1", [v2Account.accountId, vipSpendBeforeSwitch]);
     await request("/api/checkout-settings", { method: "PUT", cookie: adminCookie, body: { taxRate: 3 } });
-    assert.strictEqual((await saveInboundSettings("local:2", { region: "", inboundType: "package" })).response.status, 200);
+    assert.strictEqual((await saveInboundSettings(inboundKey[2], { region: "", inboundType: "package" })).response.status, 200);
 
-    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 60 * 1024 ** 3 } })]);
-    xuiClients.get("v2-sync@example.test").enable = false;
-    await handler.syncCatalogV2ToXui({ forceReload: true });
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, false, "five-minute V2 sync must not re-enable a client whose traffic is depleted");
-    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 0 } })]);
-    await handler.syncCatalogV2ToXui({ forceReload: true });
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true, "five-minute V2 sync must re-enable a client once traffic is available again");
-    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 60 * 1024 ** 3 } })]);
-    await handler.syncCatalogV2ToXui();
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true, "the timer path must use the fresh in-memory cache instead of re-reading the database");
-    await handler.syncCatalogV2ToXui({ forceReload: true });
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, false, "forceReload must pick up database changes made outside the process");
-    await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: 0 } })]);
-    await handler.syncCatalogV2ToXui({ forceReload: true });
+    // The app caches records for minutes; a manual payment request reloads them before validating
+    // (this one is refused for the unknown account, so nothing else changes).
+    const reloadAppData = async () => assert.strictEqual((await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: "no-such-account", product: "traffic_pack", amount: 1 } })).response.status, 400);
+    const setV2Depleted = async depleted => {
+      await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: { usedBytes: depleted ? 60 * 1024 ** 3 : 0, depleted } })]);
+      await reloadAppData();
+      await handler.syncHubUsers();
+    };
+    await setV2Depleted(true);
+    assert.strictEqual((await lineOf("v2-sync@example.test")).enabled, false, "the entitlement sync keeps a user whose traffic is depleted off");
+    await setV2Depleted(false);
+    assert.strictEqual((await lineOf("v2-sync@example.test")).enabled, true, "the entitlement sync re-enables a user once traffic is available again");
 
-    xuiClients.get("v2-sync@example.test").inboundIds = [2];
-    xuiRequests.length = 0;
-    const panelSync = await handler.syncXuiPanel();
-    assert.deepStrictEqual([panelSync.inboundCatalogError?.message, panelSync.trafficError?.message, panelSync.catalogV2Error?.message, panelSync.catalogV2.failed.length], [undefined, undefined, undefined, 0]);
-    const panelReads = ["/panel/api/server/status", "/panel/api/nodes/list", "/panel/api/inbounds/list", "/panel/api/clients/list", "/panel/api/clients/activeInbounds"]
-      .map(url => xuiRequests.filter(entry => entry.url === url).length);
-    assert.deepStrictEqual(panelReads, [1, 1, 1, 1, 1], "the merged five-minute job must read each shared panel endpoint once");
-    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1], "the merged job must still repair V2 inbound drift");
-    const inboundTable = (await database.query("SELECT key, inbound_id, enabled FROM xui_inbounds WHERE missing_since IS NULL ORDER BY inbound_id")).rows;
-    assert.deepStrictEqual(inboundTable.map(row => [row.key, row.inbound_id, row.enabled]), [["local:1", 1, true], ["local:2", 2, true], ["local:3", 3, false]], "the panel sync must refresh the inbound table");
-    // An inbound deleted in 3x-ui stays in the cached table until a refresh; the inbound page's
-    // ?refresh=1 read hides it immediately.
-    await database.query(`INSERT INTO xui_inbounds (key, inbound_id, node_guid, node_name, node_host, port, protocol, name, tag, enabled, sub_sort_index, client_count, recently_active, synced_at)
-      SELECT 'local:99', 99, node_guid, node_name, node_host, port, protocol, '已删除入站', tag, enabled, sub_sort_index, client_count, recently_active, synced_at FROM xui_inbounds WHERE key='local:1'`);
-    const cachedInbounds = await request("/api/xui-inbounds", { cookie: adminCookie });
-    assert.ok(cachedInbounds.data.inbounds.some(inbound => inbound.key === "local:99"), "the plain read serves the cached table");
+    // node-hub nodes are the inbound list; ?refresh=1 skips the overview cache.
     const liveInbounds = await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
     assert.strictEqual(liveInbounds.response.status, 200, liveInbounds.text);
-    assert.deepStrictEqual([liveInbounds.data.inbounds.map(inbound => inbound.key).sort(), liveInbounds.data.refreshError], [["local:1", "local:2", "local:3"], ""], "?refresh=1 re-reads 3x-ui and hides deleted inbounds");
-    // Soft delete: an inbound 3x-ui stops returning is hidden but keeps its settings, and comes
-    // back with them when 3x-ui returns it again.
-    assert.strictEqual((await saveInboundSettings("local:2", { region: "保留地区", networkLevel: "optimized", inboundType: "custom" })).response.status, 200);
-    xuiInboundFilter = inbound => inbound.id !== 2;
-    const withoutSecond = await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
-    assert.deepStrictEqual(withoutSecond.data.inbounds.map(inbound => inbound.key).sort(), ["local:1", "local:3"]);
-    assert.deepStrictEqual((await database.query("SELECT region, network_level, inbound_type, missing_since IS NOT NULL AS missing FROM xui_inbounds WHERE key='local:2'")).rows, [{ region: "保留地区", network_level: "optimized", inbound_type: "custom", missing: true }]);
-    xuiInboundFilter = null;
-    const restored = (await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie })).data.inbounds.find(inbound => inbound.key === "local:2");
-    assert.deepStrictEqual([restored.region, restored.networkLevel, restored.inboundType], ["保留地区", "optimized", "custom"], "a returning inbound keeps its settings");
-    // An empty panel list (every 3x-ui inbound deleted) is accepted and hides them all; they come
-    // back with their settings once 3x-ui returns them again.
-    xuiInboundFilter = () => false;
-    const emptyPanel = await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
-    assert.deepStrictEqual([emptyPanel.response.status, emptyPanel.data.inbounds.length, emptyPanel.data.refreshError], [200, 0, ""], "an empty 3x-ui list hides every inbound");
-    xuiInboundFilter = null;
-    assert.strictEqual((await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie })).data.inbounds.length, 3, "inbounds return after an empty list");
-    // Rows missing for more than 30 days are deleted on the next refresh.
-    await database.query("UPDATE xui_inbounds SET missing_since = NOW() - INTERVAL '31 days' WHERE key='local:99'");
-    await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie });
-    assert.deepStrictEqual((await database.query("SELECT key FROM xui_inbounds WHERE key IN ('local:7', 'local:99') ORDER BY key")).rows.map(row => row.key), ["local:7"], "only rows missing for 30 days are purged");
-    assert.strictEqual((await saveInboundSettings("local:2", { region: "", inboundType: "package" })).response.status, 200);
+    assert.deepStrictEqual([liveInbounds.data.inbounds.map(row => row.key), liveInbounds.data.refreshError], [[inboundKey[1], inboundKey[2], inboundKey[3]], ""]);
+    const hiddenNode = await hubStore.createNode((await hubStore.getNode(hubNode[1])).machineId, normalizeNodeInput({ name: "已删除节点", protocol: "vless", host: "payment-vps.test", serverPort: 1099, settings: { network: "tcp", tls: 0 } }));
+    assert.ok((await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie })).data.inbounds.some(row => row.hubNodeId === hiddenNode.id));
+    await hubStore.deleteNode(hiddenNode.id);
+    assert.ok(!(await request("/api/xui-inbounds?refresh=1", { cookie: adminCookie })).data.inbounds.some(row => row.hubNodeId === hiddenNode.id), "a node deleted on node-hub leaves the list");
 
     const saveV2Group = async inboundKeys => {
-      xuiRequests.length = 0;
+      hubWrites.length = 0;
       const result = await request(`/api/catalog-v2/line-groups/${catalogV2Ids.group}`, { method: "PUT", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys } });
       assert.strictEqual(result.response.status, 200, result.text);
-      return { result, bulk: xuiRequests.filter(entry => entry.url.startsWith("/panel/api/clients/bulk")) };
+      return { result, writes: [...hubWrites] };
     };
-    const widenedGroup = await saveV2Group(["local:1", "local:2"]);
-    assert.deepStrictEqual(widenedGroup.bulk, [{ url: "/panel/api/clients/bulkAttach", body: { emails: ["v2-sync@example.test"], inboundIds: [2] } }], "saving a line group must attach only the added inbound right away");
-    assert.deepStrictEqual([widenedGroup.result.data.xuiSync?.updated, widenedGroup.result.data.xuiSync?.failed], [1, 0]);
-    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1, 2]);
-    const narrowedGroup = await saveV2Group(["local:1"]);
-    assert.deepStrictEqual(narrowedGroup.bulk, [{ url: "/panel/api/clients/bulkDetach", body: { emails: ["v2-sync@example.test"], inboundIds: [2] } }], "saving a line group must detach the removed inbound right away");
-    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test").inboundIds, [1]);
-    const unchangedGroup = await saveV2Group(["local:1"]);
-    assert.deepStrictEqual([unchangedGroup.bulk, unchangedGroup.result.data.xuiSync], [[], undefined], "a save that keeps the same inbounds must not run the 3x-ui sync");
-    assert.deepStrictEqual(xuiRequests.map(entry => entry.url), [], "a save that keeps the same inbounds must not request 3x-ui");
-    // Name, order and enabled-state edits never contact the panel; neither does a group created without inbounds.
-    xuiRequests.length = 0;
-    const renamedGroup = await request(`/api/catalog-v2/line-groups/${catalogV2Ids.group}`, { method: "PUT", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2 renamed", isEnabled: true, sortOrder: 3, inboundKeys: ["local:1"] } });
-    assert.deepStrictEqual([renamedGroup.response.status, renamedGroup.data.name, renamedGroup.data.sortOrder, renamedGroup.data.inboundKeys], [200, "Payment V2 renamed", 3, ["local:1"]], renamedGroup.text);
+    const widenedGroup = await saveV2Group([inboundKey[1], inboundKey[2]]);
+    assert.ok(widenedGroup.writes.includes("/internal/users"), "saving a changed line group pushes entitlements right away");
+    assert.ok(widenedGroup.result.data.xuiSync?.hubChanged >= 1, JSON.stringify(widenedGroup.result.data.xuiSync));
+    assert.deepStrictEqual((await lineOf("v2-sync@example.test")).nodeIds, [hubNode[1], hubNode[2]]);
+    const narrowedGroup = await saveV2Group([inboundKey[1]]);
+    assert.ok(narrowedGroup.writes.includes("/internal/users"));
+    assert.deepStrictEqual((await lineOf("v2-sync@example.test")).nodeIds, [hubNode[1]]);
+    const unchangedGroup = await saveV2Group([inboundKey[1]]);
+    assert.deepStrictEqual([unchangedGroup.writes, unchangedGroup.result.data.xuiSync], [[], undefined], "a save that keeps the same inbounds must not push entitlements");
+    // Name, order and enabled-state edits never write to node-hub; neither does a group created without inbounds.
+    hubWrites.length = 0;
+    const renamedGroup = await request(`/api/catalog-v2/line-groups/${catalogV2Ids.group}`, { method: "PUT", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2 renamed", isEnabled: true, sortOrder: 3, inboundKeys: [inboundKey[1]] } });
+    assert.deepStrictEqual([renamedGroup.response.status, renamedGroup.data.name, renamedGroup.data.sortOrder, renamedGroup.data.inboundKeys], [200, "Payment V2 renamed", 3, [inboundKey[1]]], renamedGroup.text);
     const emptyGroupId = `${catalogV2Ids.group}-empty`;
     assert.strictEqual((await request("/api/catalog-v2/line-groups", { method: "POST", cookie: adminCookie, body: { id: emptyGroupId, name: "Payment V2 empty", isEnabled: true, sortOrder: 9, inboundKeys: [] } })).response.status, 201);
     assert.strictEqual((await request(`/api/catalog-v2/line-groups/${emptyGroupId}`, { method: "DELETE", cookie: adminCookie })).response.status, 200);
-    assert.deepStrictEqual(xuiRequests.map(entry => entry.url), [], "line group saves that leave the inbound set alone must not request 3x-ui");
-    await saveV2Group(["local:1"]);
-    // A changed inbound set is still validated against a fresh panel list.
-    const unknownInbound = await request(`/api/catalog-v2/line-groups/${catalogV2Ids.group}`, { method: "PUT", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys: ["local:1", "local:404"] } });
+    assert.deepStrictEqual(hubWrites, [], "line group saves that leave the inbound set alone must not write to node-hub");
+    await saveV2Group([inboundKey[1]]);
+    // A changed inbound set is validated against the node-hub node list.
+    const unknownInbound = await request(`/api/catalog-v2/line-groups/${catalogV2Ids.group}`, { method: "PUT", cookie: adminCookie, body: { id: catalogV2Ids.group, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys: [inboundKey[1], "local:404"] } });
     assert.strictEqual(unknownInbound.response.status, 400, unknownInbound.text);
-    assert.ok(xuiRequests.some(entry => entry.url === "/panel/api/inbounds/list"), "a changed inbound set must be validated against a fresh 3x-ui inbound list");
     // Asked for NDJSON, a save reports each step as a line and ends with the plain reply's status and body.
     const saveV2GroupSteps = async (inboundKeys, pathname = `/api/catalog-v2/line-groups/${catalogV2Ids.group}`, method = "PUT", id = catalogV2Ids.group) => {
       const result = await request(pathname, { method, cookie: adminCookie, headers: { accept: "application/x-ndjson" }, body: { id, name: "Payment V2", isEnabled: true, sortOrder: 0, inboundKeys } });
       const lines = result.text.trim().split("\n").map(line => JSON.parse(line));
       return { contentType: result.response.headers.get("content-type"), steps: lines.slice(0, -1).map(line => `${line.step}:${line.status}`), final: lines.at(-1) };
     };
-    const steppedWiden = await saveV2GroupSteps(["local:1", "local:2"]);
+    const steppedWiden = await saveV2GroupSteps([inboundKey[1], inboundKey[2]]);
     assert.match(steppedWiden.contentType, /^application\/x-ndjson/);
     assert.deepStrictEqual(steppedWiden.steps, ["validate:running", "validate:done", "save:running", "save:done", "sync:running", "sync:done"]);
-    assert.deepStrictEqual([steppedWiden.final.status, steppedWiden.final.body.inboundKeys, steppedWiden.final.body.xuiSync], [200, ["local:1", "local:2"], { updated: 1, skipped: 0, failed: 0 }]);
-    const steppedSame = await saveV2GroupSteps(["local:1", "local:2"]);
+    assert.deepStrictEqual([steppedWiden.final.status, steppedWiden.final.body.inboundKeys, steppedWiden.final.body.xuiSync.hubChanged >= 1], [200, [inboundKey[1], inboundKey[2]], true]);
+    const steppedSame = await saveV2GroupSteps([inboundKey[1], inboundKey[2]]);
     assert.deepStrictEqual([steppedSame.steps, steppedSame.final.status, steppedSame.final.body.xuiSync], [["validate:skipped", "save:running", "save:done", "sync:skipped"], 200, undefined]);
-    const steppedUnknown = await saveV2GroupSteps(["local:1", "local:404"]);
+    const steppedUnknown = await saveV2GroupSteps([inboundKey[1], "local:404"]);
     assert.deepStrictEqual([steppedUnknown.steps, steppedUnknown.final.status], [["validate:running"], 400]);
     assert.match(steppedUnknown.final.body.error, /不存在或不可用于套餐的入站/);
-    const steppedCreate = await saveV2GroupSteps(["local:1"], "/api/catalog-v2/line-groups", "POST", emptyGroupId);
+    const steppedCreate = await saveV2GroupSteps([inboundKey[1]], "/api/catalog-v2/line-groups", "POST", emptyGroupId);
     assert.deepStrictEqual([steppedCreate.steps, steppedCreate.final.status, steppedCreate.final.body.id], [["validate:running", "validate:done", "save:running", "save:done", "sync:skipped"], 201, emptyGroupId]);
     assert.strictEqual((await request(`/api/catalog-v2/line-groups/${emptyGroupId}`, { method: "DELETE", cookie: adminCookie })).response.status, 200);
     // An error before the first step is an ordinary JSON reply with its real status.
     const steppedMissing = await request("/api/catalog-v2/line-groups/no-such-group", { method: "PUT", cookie: adminCookie, headers: { accept: "application/x-ndjson" }, body: { id: "no-such-group", name: "Missing", inboundKeys: [] } });
     assert.deepStrictEqual([steppedMissing.response.status, steppedMissing.response.headers.get("content-type"), steppedMissing.data.error], [404, "application/json; charset=utf-8", "权限组不存在。"]);
-    await saveV2Group(["local:1"]);
-
-    xuiRequests.length = 0;
-    await handler.probeXuiInbounds();
-    assert.strictEqual(xuiRequests.length, 0, "the TCP probe must read targets from the inbound table only");
-    const probedRows = (await database.query("SELECT inbound_id, probe_status, probe_checked_at FROM xui_inbounds WHERE missing_since IS NULL ORDER BY inbound_id")).rows;
-    assert.deepStrictEqual(probedRows.map(row => [row.inbound_id, row.probe_status, Boolean(row.probe_checked_at)]), [[1, "unknown", true], [2, "unknown", true], [3, "disabled", true]], "probe results must be written back (the mock inbounds have no port)");
+    await saveV2Group([inboundKey[1]]);
     const inboundView = await request("/api/xui-inbounds", { cookie: adminCookie });
     assert.strictEqual(inboundView.response.status, 200);
-    assert.strictEqual(xuiRequests.length, 0, "the inbound management page must not call 3x-ui or probe");
-    assert.deepStrictEqual(inboundView.data.inbounds.map(inbound => [inbound.key, inbound.probeStatus, inbound.name]), [["local:1", "unknown", "套餐节点"], ["local:2", "unknown", "个人家宽"], ["local:3", "disabled", "停用家宽"]]);
+    assert.deepStrictEqual(inboundView.data.inbounds.map(row => [row.key, row.probeStatus, row.name]), [[inboundKey[1], "offline", "套餐节点"], [inboundKey[2], "offline", "个人家宽"], [inboundKey[3], "disabled", "停用家宽"]], "status comes from each node's own heartbeat");
 
     // Sync job monitor: run history, manual runs and status rules.
     await database.query("DELETE FROM sync_job_runs");
@@ -1418,35 +1317,26 @@ async function main() {
       }
       throw new Error(`${jobId} did not finish`);
     };
-    // Holding the shared lock keeps a manual panel sync running so the duplicate request is deterministic.
+    // Holding the line sync lock keeps a manual billing run going so the duplicate request is deterministic.
     let releaseSyncLock;
-    const heldSyncLock = handler.withXuiSyncLock(() => new Promise(resolve => { releaseSyncLock = resolve; }));
-    const manualPanel = await request("/api/sync-jobs/xui-panel-sync/run", { method: "POST", cookie: adminCookie, body: {} });
-    assert.deepStrictEqual([manualPanel.response.status, Boolean(manualPanel.data.runId)], [202, true]);
-    const duplicatePanel = await request("/api/sync-jobs/xui-panel-sync/run", { method: "POST", cookie: adminCookie, body: {} });
-    assert.deepStrictEqual([duplicatePanel.response.status, duplicatePanel.data.code], [409, "SYNC_JOB_RUNNING"]);
-    const runningPanel = await request("/api/sync-jobs", { cookie: adminCookie });
-    assert.deepStrictEqual([runningPanel.data.modules[0].jobs[0].id, runningPanel.data.modules[0].jobs[0].running, runningPanel.data.modules[0].jobs[0].lastRun.status], ["xui-panel-sync", true, "running"]);
+    const heldSyncLock = handler.withLineSyncLock(() => new Promise(resolve => { releaseSyncLock = resolve; }));
+    const manualBilling = await request("/api/sync-jobs/node-hub-billing/run", { method: "POST", cookie: adminCookie, body: {} });
+    assert.deepStrictEqual([manualBilling.response.status, Boolean(manualBilling.data.runId)], [202, true]);
+    const duplicateBilling = await request("/api/sync-jobs/node-hub-billing/run", { method: "POST", cookie: adminCookie, body: {} });
+    assert.deepStrictEqual([duplicateBilling.response.status, duplicateBilling.data.code], [409, "SYNC_JOB_RUNNING"]);
+    const runningBilling = (await request("/api/sync-jobs", { cookie: adminCookie })).data.modules[0].jobs.find(job => job.id === "node-hub-billing");
+    assert.deepStrictEqual([runningBilling.running, runningBilling.lastRun.status], [true, "running"]);
     releaseSyncLock();
     await heldSyncLock;
-    await waitForSyncJob("xui-panel-sync");
+    const syncJobs = await waitForSyncJob("node-hub-billing");
     assert.strictEqual((await request("/api/sync-jobs/unknown-job/run", { method: "POST", cookie: adminCookie, body: {} })).response.status, 404);
-    const manualProbe = await request("/api/sync-jobs/xui-inbound-probe/run", { method: "POST", cookie: adminCookie, body: {} });
-    assert.strictEqual(manualProbe.response.status, 202);
-    const syncJobs = await waitForSyncJob("xui-inbound-probe");
-    assert.deepStrictEqual(syncJobs.data.modules.map(module => module.id), ["xui", "traffic", "orders", "referrals", "addons"]);
+    assert.strictEqual((await request("/api/sync-jobs/xui-panel-sync/run", { method: "POST", cookie: adminCookie, body: {} })).response.status, 404, "the 3x-ui panel sync job is gone");
+    assert.deepStrictEqual(syncJobs.data.modules.map(module => module.id), ["nodes", "traffic", "orders", "referrals", "addons"]);
     assert.deepStrictEqual(syncJobs.data.modules.find(module => module.id === "addons").jobs.map(job => [job.id, job.configured]), [["addon-service-expiry", true]]);
-    const probeJob = syncJobs.data.modules[0].jobs.find(job => job.id === "xui-inbound-probe");
-    assert.deepStrictEqual([probeJob.configured, probeJob.running, probeJob.lastRun.status, probeJob.lastRun.trigger, probeJob.stats24h.total], [true, false, "success", "manual", 1]);
-    const probeRuns = await request("/api/sync-jobs/xui-inbound-probe/runs?limit=10", { cookie: adminCookie });
-    assert.deepStrictEqual(probeRuns.data.runs.map(run => [run.id, run.status, run.summary.total, run.summary.byStatus.disabled]), [[manualProbe.data.runId, "success", 3, 1]]);
-    const panelRuns = await handler.listSyncJobRuns("xui-panel-sync");
-    assert.deepStrictEqual([panelRuns.length, panelRuns[0].id, panelRuns[0].status, panelRuns[0].summary.steps.map(step => step.status), panelRuns[0].summary.catalogV2.failed], [1, manualPanel.data.runId, "success", ["success", "success", "success"], 0]);
-    const stepError = new Error("boom");
-    assert.strictEqual(handler.xuiPanelSyncJobResult({ inboundCatalogError: null, trafficError: stepError, catalogV2: { checked: 1, updated: 0, missing: 0, skipped: 0, failed: [] }, catalogV2Error: null }).status, "partial");
-    assert.strictEqual(handler.xuiPanelSyncJobResult({ inboundCatalogError: null, trafficError: null, catalogV2: { checked: 2, updated: 0, missing: 0, skipped: 0, failed: [{ userId: "u", error: "x" }] }, catalogV2Error: null }).status, "partial");
-    const allFailed = handler.xuiPanelSyncJobResult({ inboundCatalogError: stepError, trafficError: stepError, catalogV2: null, catalogV2Error: stepError });
-    assert.deepStrictEqual([allFailed.status, allFailed.error.includes("流量计费：boom")], ["failed", true]);
+    const billingJob = syncJobs.data.modules[0].jobs.find(job => job.id === "node-hub-billing");
+    assert.deepStrictEqual([billingJob.configured, billingJob.running, billingJob.lastRun.status, billingJob.lastRun.trigger, billingJob.stats24h.total], [true, false, "success", "manual", 1]);
+    const billingRuns = await handler.listSyncJobRuns("node-hub-billing");
+    assert.deepStrictEqual([billingRuns.length, billingRuns[0].id, billingRuns[0].status], [1, manualBilling.data.runId, "success"]);
     await handler.trackSyncJobRun({ id: "test-failing-job", run: async () => { throw new Error("prune failed"); } }, "schedule");
     assert.deepStrictEqual((await handler.listSyncJobRuns("test-failing-job")).map(run => [run.status, run.error]), [["failed", "prune failed"]]);
     await handler.runTrackedSyncJob("referral-settlement", "schedule");
@@ -1463,34 +1353,6 @@ async function main() {
     assert.ok(await handler.pruneSyncJobHistory() >= 1);
     assert.deepStrictEqual([(await handler.listSyncJobRuns("test-prune-old")).length, (await handler.listSyncJobRuns("test-prune-kept")).length], [0, 1], "runs older than 14 days are pruned and newer ones kept");
     await database.query("DELETE FROM sync_job_runs WHERE job_id LIKE 'test-%'");
-
-    xuiClients.get("v2-sync@example.test").enable = false;
-    xuiRequests.length = 0;
-    await handler.syncXuiPanel();
-    assert.ok(xuiRequests.some(entry => entry.url === "/panel/api/clients/bulkEnable" && entry.body.emails.includes("v2-sync@example.test")));
-    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/update/v2-sync%40example.test"), "the V2 step must see the traffic step's re-enable in the shared snapshot and not resend it");
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true);
-
-    Object.assign(xuiClients.get("v2-sync@example.test"), { totalGB: 50 * 1024 ** 3, traffic: { up: 60 * 1024 ** 3, down: 0, enable: true } });
-    await handler.syncXuiPanel();
-    xuiRequests.length = 0;
-    await handler.syncXuiPanel();
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").totalGB, 0, "the panel quota must stay unlimited; the app enforces quota");
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true, "a client within its app quota must stay enabled even when the panel counter exceeds the old panel quota");
-    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/bulkEnable" && entry.body.emails.includes("v2-sync@example.test")), "no panel-disable/app-enable loop across rounds");
-    delete xuiClients.get("v2-sync@example.test").traffic;
-
-    xuiClients.get("v2-sync@example.test").inboundIds = [2];
-    xuiClients.get("v2-sync@example.test").enable = false;
-    xuiRequests.length = 0;
-    const readOnlyReport = await handler.syncCatalogV2ToXui({ forceReload: true, readOnly: true });
-    const writeUrls = /\/panel\/api\/clients\/(update\/|add$|bulkAttach$|bulkDetach$|bulkEnable$|bulkDisable$)/;
-    assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "read-only V2 sync must not write to 3x-ui");
-    assert.deepStrictEqual([readOnlyReport.updated, readOnlyReport.skipped, readOnlyReport.failed.length], [0, 1, 0]);
-    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").inboundIds, xuiClients.get("v2-sync@example.test").enable], [[2], false]);
-    const repairedReport = await handler.syncCatalogV2ToXui({ forceReload: true });
-    assert.deepStrictEqual([repairedReport.updated, repairedReport.skipped], [1, 0]);
-    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").inboundIds, xuiClients.get("v2-sync@example.test").enable], [[1], true]);
 
     // Syncing a product change to buyers: preview, then apply the reviewed preview.
     const buyerSyncPath = `/api/catalog-v2/products/${catalogV2Ids.product}/buyer-sync`;
@@ -1514,23 +1376,23 @@ async function main() {
     const lowerChange = lowerPreview.changes.find(change => change.userId === v2User.id);
     assert.deepStrictEqual(lowerChange.fields, [{ field: "deviceLimit", before: 2, after: 4 }, { field: "trafficBytes", before: 50 * 1024 ** 3, after: 30 * 1024 ** 3 }]);
     assert.deepStrictEqual([lowerChange.usedBytes, lowerChange.connection, lowerChange.entitlement], [40 * 1024 ** 3, "disable", undefined], "a quota below current usage closes the client, and the preview hides internals");
-    xuiRequests.length = 0;
+    hubWrites.length = 0;
     const staleApply = await request(buyerSyncPath, { method: "POST", cookie: adminCookie, body: { fingerprint: "stale" } });
     assert.deepStrictEqual([staleApply.response.status, staleApply.data.error], [409, "商品在预览后已被修改，请重新生成预览。"]);
-    assert.ok(!xuiRequests.some(entry => writeUrls.test(entry.url)), "a stale preview must not write to 3x-ui");
+    assert.deepStrictEqual(hubWrites, [], "a stale preview must not write to node-hub");
     const lowerApply = await applyBuyerSync(lowerPreview.fingerprint);
     assert.deepStrictEqual(lowerApply.steps[0], { step: "users", status: { done: 0, total: lowerPreview.changes.length } });
     assert.deepStrictEqual(lowerApply.steps.at(-1).status, { done: lowerPreview.changes.length, total: lowerPreview.changes.length });
     assert.strictEqual(lowerApply.final.status, 200, JSON.stringify(lowerApply.final));
     assert.strictEqual(lowerApply.final.body.updated.find(item => item.userId === v2User.id)?.connection, "disable");
-    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").limitIp, xuiClients.get("v2-sync@example.test").enable, xuiClients.get("v2-sync@example.test").totalGB], [4, false, 0]);
+    assert.deepStrictEqual([(await lineOf("v2-sync@example.test")).deviceLimit, (await lineOf("v2-sync@example.test")).enabled], [4, false]);
     const loweredUser = await v2SyncUserRecord();
     assert.deepStrictEqual([loweredUser.v2ProductSnapshot.deviceLimit, loweredUser.v2ProductSnapshot.trafficBytes, loweredUser.xuiTrafficLimitBytes, removedPlanFields.filter(field => field in loweredUser)], [4, 30 * 1024 ** 3, 30 * 1024 ** 3, []], "buyer sync changes only the snapshot");
     assert.deepStrictEqual([loweredUser.userLogs[0].reason, loweredUser.userLogs[0].details.rollbackState.v2ProductSnapshot.deviceLimit], ["product-buyer-sync", 2]);
     assert.strictEqual(loweredUser.expiresAt, v2SyncUserBeforeBuyerSync.expiresAt, "buyer sync keeps the bought expiry");
     const syncedOrder = (await database.query("SELECT data FROM app_records WHERE collection='paymentOrders' AND id=$1", [v2ManualOrder.data.id])).rows[0].data;
     assert.deepStrictEqual([syncedOrder.productSnapshot.v2.deviceLimit, syncedOrder.productSnapshot.v2.trafficBytes], [2, 50 * 1024 ** 3], "the order keeps the snapshot it was bought with");
-    // A failed 3x-ui write restores the user; the change stays pending for the next run.
+    // A failed node-hub write restores the user; the change stays pending for the next run.
     await saveV2Plan({ trafficBytes: 50 * 1024 ** 3, deviceLimit: 2 });
     const raisePreview = await previewBuyerSync();
     assert.strictEqual(raisePreview.changes.find(change => change.userId === v2User.id).connection, "enable", "a quota above current usage reopens the client");
@@ -1539,14 +1401,14 @@ async function main() {
     failProvision = false;
     const failedEntry = failedApply.final.body.failed.find(item => item.userId === v2User.id);
     assert.ok(failedEntry, JSON.stringify(failedApply.final));
-    assert.match(failedEntry.rollback, /^本地已回滚，3x-ui 回滚失败/);
-    assert.deepStrictEqual([(await v2SyncUserRecord()).v2ProductSnapshot.deviceLimit, xuiClients.get("v2-sync@example.test").limitIp], [4, 4], "a failed sync leaves the saved user and the panel client as they were");
+    assert.match(failedEntry.rollback, /^本地已回滚，node-hub 回滚失败/);
+    assert.deepStrictEqual([(await v2SyncUserRecord()).v2ProductSnapshot.deviceLimit, (await lineOf("v2-sync@example.test")).deviceLimit], [4, 4], "a failed sync leaves the saved user and the hub entitlement as they were");
     const retryPreview = await previewBuyerSync();
     assert.strictEqual(retryPreview.fingerprint, raisePreview.fingerprint);
     assert.ok(retryPreview.changes.some(change => change.userId === v2User.id), "the in-memory user is restored, so the change is still pending");
     const retryApply = await applyBuyerSync(retryPreview.fingerprint);
     assert.deepStrictEqual([retryApply.final.status, retryApply.final.body.failed.length], [200, 0], JSON.stringify(retryApply.final));
-    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").limitIp, xuiClients.get("v2-sync@example.test").enable], [2, true]);
+    assert.deepStrictEqual([(await lineOf("v2-sync@example.test")).deviceLimit, (await lineOf("v2-sync@example.test")).enabled], [2, true]);
     assert.deepStrictEqual((await v2SyncUserRecord()).v2ProductSnapshot, v2SyncUserBeforeBuyerSync.v2ProductSnapshot);
    // Traffic packs on a snapshot-only user: both purchase paths add to the quota on top of the
     // snapshot, buyer sync keeps an active pack, and an unlimited snapshot cannot buy one.
@@ -1556,17 +1418,17 @@ async function main() {
       const traffic = { usedBytes: usedGb * GiB, totalBytes: quotaGb * GiB, remainingBytes, depleted: usedGb >= quotaGb, nodes: [], inbounds: [] };
       await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiWeightedTraffic: traffic, xuiLastTraffic: { ...traffic, available: true, status: usedGb >= quotaGb ? "depleted" : "active" } })]);
     };
-    const v2PanelClient = () => xuiClients.get("v2-sync@example.test");
-    // Legacy traffic_pack order: the user has used up the 50 GB plan and the client is closed.
+    const v2LineEnabled = async () => (await lineOf("v2-sync@example.test")).enabled;
+    // Legacy traffic_pack order: the user has used up the 50 GB plan and the line is closed.
     await setV2Usage(55, 50);
-    v2PanelClient().enable = false;
+    await hubStore.syncUsers([{ ...(await lineOf("v2-sync@example.test")), enabled: false }]);
     const legacyPackQuote = await request("/api/orders/quote", { method: "POST", cookie: v2Cookie, body: { product: "traffic_pack" } });
     assert.strictEqual(legacyPackQuote.response.status, 200, legacyPackQuote.text);
     const legacyPack = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, product: "traffic_pack", amount: 1 } });
     assert.deepStrictEqual([legacyPack.response.status, legacyPack.data.purpose, legacyPack.data.fulfillmentStatus], [201, "traffic_pack", "fulfilled"], legacyPack.text);
     let packUser = await v2SyncUserRecord();
     assert.deepStrictEqual([packUser.xuiTrafficPackBytes, packUser.xuiTrafficLimitBytes, packUser.xuiLastTraffic.remainingBytes, packUser.v2ProductSnapshot.trafficBytes], [100 * GiB, 150 * GiB, 95 * GiB, 50 * GiB], "a pack adds to the snapshot quota without changing the snapshot");
-    assert.strictEqual(v2PanelClient().enable, true, "buying a pack reopens a client closed for used-up traffic");
+    assert.strictEqual(await v2LineEnabled(), true, "buying a pack reopens a line closed for used-up traffic");
     // V2 traffic_credit add-on: 20 GB more on top of the plan and the first pack.
     assert.strictEqual((await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: addonProduct(catalogV2Ids.trafficCredit, "20G 流量包", { mode: "automatic", handler: "traffic_credit", config: { trafficBytes: 20 * GiB } }, { purchaseRequirement: "requires_recurring_plan" }) })).response.status, 201);
     const creditPack = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.trafficCredit}`, amount: 1 } });
@@ -1583,12 +1445,12 @@ async function main() {
     assert.deepStrictEqual(packDisablePreview.changes.find(change => change.userId === v2User.id).connection, "disable", "140 GB used reaches 10 GB plan + 120 GB packs");
     assert.strictEqual((await applyBuyerSync(packDisablePreview.fingerprint)).final.status, 200);
     packUser = await v2SyncUserRecord();
-    assert.deepStrictEqual([packUser.xuiTrafficPackBytes, packUser.xuiTrafficPackOrderIds.length, packUser.xuiTrafficLimitBytes, packUser.v2ProductSnapshot.trafficBytes, v2PanelClient().enable], [120 * GiB, 2, 130 * GiB, 10 * GiB, false], "buyer sync keeps the packs and closes the client by the combined quota");
+    assert.deepStrictEqual([packUser.xuiTrafficPackBytes, packUser.xuiTrafficPackOrderIds.length, packUser.xuiTrafficLimitBytes, packUser.v2ProductSnapshot.trafficBytes, await v2LineEnabled()], [120 * GiB, 2, 130 * GiB, 10 * GiB, false], "buyer sync keeps the packs and closes the client by the combined quota");
     await saveV2Plan({ trafficBytes: 50 * GiB });
     const packRestorePreview = await previewBuyerSync();
     assert.strictEqual(packRestorePreview.changes.find(change => change.userId === v2User.id).connection, "enable");
     assert.strictEqual((await applyBuyerSync(packRestorePreview.fingerprint)).final.status, 200);
-    assert.deepStrictEqual([(await v2SyncUserRecord()).xuiTrafficLimitBytes, v2PanelClient().enable], [170 * GiB, true]);
+    assert.deepStrictEqual([(await v2SyncUserRecord()).xuiTrafficLimitBytes, await v2LineEnabled()], [170 * GiB, true]);
     // An unlimited snapshot cannot buy a pack on either path.
     const finiteSnapshot = (await v2SyncUserRecord()).v2ProductSnapshot;
     await database.query("UPDATE app_records SET data=jsonb_set(data, '{v2ProductSnapshot,trafficBytes}', 'null'::jsonb) WHERE collection='users' AND id=$1", [v2User.id]);
@@ -1601,109 +1463,37 @@ async function main() {
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiTrafficPackBytes: 0, xuiTrafficPackOrderIds: [], xuiTrafficPackCycleKey: "", xuiTrafficLimitBytes: 50 * GiB })]);
     await setV2Usage(40, 50);
 
-    xuiRequests.length = 0;
-    const batchFailures = await handler.applyXuiInboundChanges([
-      { email: "batch-a@example.test", attach: [2, 1], detach: [3] },
-      { email: "batch-b@example.test", attach: [1, 2] },
-      { email: "batch-c@example.test", attach: [999], detach: [3] }
-    ]);
-    assert.deepStrictEqual(xuiRequests.map(entry => entry.url === "/panel/api/clients/bulkAttach" || entry.url === "/panel/api/clients/bulkDetach" ? entry : null).filter(Boolean), [
-      { url: "/panel/api/clients/bulkAttach", body: { emails: ["batch-a@example.test", "batch-b@example.test"], inboundIds: [1, 2] } },
-      { url: "/panel/api/clients/bulkAttach", body: { emails: ["batch-c@example.test"], inboundIds: [999] } },
-      { url: "/panel/api/clients/bulkDetach", body: { emails: ["batch-a@example.test"], inboundIds: [3] } }
-    ], "clients with the same sorted inbound set share one request, and a failed attach skips that client's detach");
-    assert.deepStrictEqual([...batchFailures.keys()], ["batch-c@example.test"]);
-
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ expiresAt: "2020-01-01T00:00:00.000Z", xuiIpLimit: 1 })]);
     const lifetimeOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: v2Account.accountId, optionId: `v2:${catalogV2Ids.lifetime}`, amount: 1 } });
     assert.deepStrictEqual([lifetimeOrder.response.status, lifetimeOrder.data.fulfillmentStatus], [201, "fulfilled"], lifetimeOrder.text);
     const lifetimeUser = (await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data;
     assert.deepStrictEqual([lifetimeUser.duration, lifetimeUser.v2ProductSnapshot.productId], ["lifetime", catalogV2Ids.lifetime]);
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").enable, true);
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").limitIp, 3, "a new V2 plan must replace the previous device limit");
+    assert.strictEqual(await v2LineEnabled(), true);
+    assert.strictEqual((await lineOf("v2-sync@example.test")).deviceLimit, 3, "a new V2 plan must replace the previous device limit");
 
-    xuiClients.delete("v2-sync@example.test");
-    xuiRequests.length = 0;
-    const readOnlyMissing = await handler.syncCatalogV2ToXui({ forceReload: true, readOnly: true });
-    assert.deepStrictEqual([readOnlyMissing.missing, readOnlyMissing.skipped, xuiClients.has("v2-sync@example.test")], [1, 1, false]);
-    assert.ok(!xuiRequests.some(entry => entry.url === "/panel/api/clients/add"), "read-only V2 sync must not recreate a missing client");
-    const missingReport = await handler.syncCatalogV2ToXui({ forceReload: true });
-    assert.strictEqual(missingReport.failed.length, 0);
-    assert.ok(xuiClients.has("v2-sync@example.test"), "five-minute V2 sync must restore a missing client");
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
+    // A user who lost their line identity is skipped by the full sync and re-provisioned by a manual sync.
     await database.query("UPDATE app_records SET data=data-'xuiClientEmail' WHERE collection='users' AND id=$1", [v2User.id]);
-    const unlinkedPanelClient = structuredClone(xuiClients.get("v2-sync@example.test"));
-    xuiRequests.length = 0;
-    const unlinkedReport = await handler.syncCatalogV2ToXui({ forceReload: true });
-    assert.deepStrictEqual([unlinkedReport.failed.length, unlinkedReport.updated, unlinkedReport.conflicts], [0, 0, [{ userId: v2User.id, email: "v2-sync@example.test" }]]);
-    assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "an unlinked user must not take over a same-email panel client");
-    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test"), unlinkedPanelClient);
-    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, undefined, "panel data must not flow back into the app user");
-    const conflictRun = handler.xuiPanelSyncJobResult({ inboundCatalogError: null, trafficError: null, catalogV2: unlinkedReport, catalogV2Error: null });
-    assert.deepStrictEqual([conflictRun.status, conflictRun.summary.catalogV2.conflicts, conflictRun.summary.catalogV2.conflictEmails], ["partial", 1, ["v2-sync@example.test"]]);
-    assert.match(conflictRun.error, /请在面板删除.*v2-sync@example\.test/);
-    xuiRequests.length = 0;
-    const unlinkedManualSync = await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: adminCookie, body: {} });
-    assert.deepStrictEqual([unlinkedManualSync.response.status, /未与该用户关联/.test(unlinkedManualSync.data.error)], [409, true], unlinkedManualSync.text);
-    assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "provisionXuiClient entry points must not take over an unlinked panel client either");
-    assert.deepStrictEqual(xuiClients.get("v2-sync@example.test"), unlinkedPanelClient);
+    await reloadAppData();
     assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, undefined);
-    const legacyUser = { id: "legacy-conflict", customerID: "900001", email: "legacy-owner@example.test", lineType: "self_hosted", v2ProductSnapshot: { lineGroupId: "pro", trafficBytes: 1024 ** 3, deviceLimit: 0 }, expiresAt: "2099-01-01T00:00:00.000Z", xuiTrafficLimitBytes: 1024 ** 3 };
-    const legacyClients = new Map([["nexora_900001@internal", { email: "nexora_900001@internal", inboundIds: [1] }]]);
-    const legacyFind = async email => legacyClients.get(email) || null;
-    await assert.rejects(handler.writeXuiClient(structuredClone(legacyUser), { findClient: legacyFind, allInboundIds: [1, 2], groupInboundIds: [1], dryRun: true }), error => error.code === "XUI_CLIENT_CONFLICT" && error.email === "nexora_900001@internal", "a legacy-email panel client must be reported, not adopted");
-    const legacyIgnored = await handler.writeXuiClient(structuredClone(legacyUser), { findClient: legacyFind, allInboundIds: [1, 2], groupInboundIds: [1], checkLegacyEmail: false, dryRun: true });
-    assert.deepStrictEqual([legacyIgnored.created, legacyIgnored.email, legacyIgnored.inboundIds, legacyIgnored.inboundChange], [true, "legacy-owner@example.test", [1], null], "a new client gets its inbounds from clients/add, with no separate bulkAttach/bulkDetach");
-    // The helpers writeXuiClient is built from.
-    assert.deepStrictEqual(handler.xuiInboundChange("a@example.test", [1, 2], [1, 2, 3], [2, 3]), { email: "a@example.test", attach: [1], detach: [3] }, "known inbounds send only differences");
-    assert.deepStrictEqual(handler.xuiInboundChange("a@example.test", [1], [1, 2, 3]), { email: "a@example.test", attach: [1], detach: [2, 3] }, "unknown inbounds attach the full set and detach the rest");
-    assert.strictEqual(handler.xuiInboundChange("a@example.test", [1], [1, 2], [1, 99]), null, "inbounds outside allInboundIds are never detached");
-    const depletedUser = { ...legacyUser, xuiClientEmail: "legacy-owner@example.test", xuiWeightedTraffic: { depleted: true } };
-    const desiredClient = handler.desiredXuiClient(depletedUser, { email: "legacy-owner@example.test", group: "pro", existing: { subId: "keep-sub", uuid: "keep-uuid", traffic: { up: 1 }, inboundIds: [1], totalGB: 50 } });
-    assert.deepStrictEqual([desiredClient.subId, desiredClient.uuid, desiredClient.totalGB, desiredClient.enable, "traffic" in desiredClient, "inboundIds" in desiredClient], ["keep-sub", "keep-uuid", 0, true, false, false], "the desired client keeps panel-owned identity and drops read-only fields");
-    assert.strictEqual(handler.desiredXuiClient(depletedUser, { email: "legacy-owner@example.test", group: "pro", depletionDisables: true }).enable, false);
-    await handler.assertNoUnlinkedXuiClient(depletedUser, { email: "legacy-owner@example.test", existing: { email: "legacy-owner@example.test" }, findClient: legacyFind });
-    await assert.rejects(handler.assertNoUnlinkedXuiClient(legacyUser, { email: "legacy-owner@example.test", existing: { email: "legacy-owner@example.test" }, findClient: legacyFind }), error => error.code === "XUI_CLIENT_CONFLICT" && error.statusCode === 409);
-    xuiClients.delete("v2-sync@example.test");
-    const rebuiltReport = await handler.syncCatalogV2ToXui({ forceReload: true });
-    assert.deepStrictEqual([rebuiltReport.failed.length, rebuiltReport.conflicts.length, rebuiltReport.missing], [0, 0, 1]);
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime(), "the next sync must recreate the deleted client from app data");
-    assert.strictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiClientEmail, "v2-sync@example.test");
+    const relinked = await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: adminCookie, body: {} });
+    assert.deepStrictEqual([relinked.response.status, relinked.data.xuiClientEmail], [200, "v2-sync@example.test"], relinked.text);
 
-    // Legacy pool migration on subscription refresh follows the same rule: a same-email panel
-    // client is reported, not adopted, and the next refresh after deleting it creates one.
+    // Legacy pool migration on subscription refresh moves the user to node-hub.
     const legacyPool = { id: "legacy-pool-user", userId: "legacy-pool@example.test", email: "legacy-pool@example.test", wechatName: "legacy", customerID: "900002", lineType: "upstream", subscriptionId: legacyPoolId, subscriptionToken: "legacy-pool-token", v2ProductSnapshot: { productId: catalogV2Ids.flow, productType: "recurring_plan", periodId: "30d", lineGroupId: catalogV2Ids.flowGroup, name: "PRO", durationDays: 30, trafficBytes: 100 * 1024 ** 3, deviceLimit: 3 }, duration: "monthly", purchasedAt: new Date().toISOString(), expiresAt: "2099-01-01T00:00:00.000Z", createdAt: new Date().toISOString() };
     await database.query("INSERT INTO app_records (collection, id, data) VALUES ('users', $1, $2::jsonb)", [legacyPool.id, JSON.stringify(legacyPool)]);
-    xuiClients.set("legacy-pool@example.test", { email: "legacy-pool@example.test", subId: "panel-only-sub", limitIp: 9, inboundIds: [2], enable: true });
-    const panelOnlyClient = structuredClone(xuiClients.get("legacy-pool@example.test"));
-    await handler.syncCatalogV2ToXui({ forceReload: true });
+    await reloadAppData();
     const legacyPoolState = async () => (await database.query("SELECT data FROM app_records WHERE collection = 'users' AND id = $1", [legacyPool.id])).rows[0].data;
-    xuiRequests.length = 0;
-    await request("/sub/legacy-pool-token");
-    const blockedMigration = await legacyPoolState();
-    assert.deepStrictEqual([blockedMigration.lineType, blockedMigration.xuiMigrationStatus, blockedMigration.xuiClientEmail, blockedMigration.xuiIpLimit], ["upstream", "failed", undefined, undefined]);
-    assert.match(blockedMigration.xuiMigrationError, /未与该用户关联/);
-    assert.deepStrictEqual(xuiRequests.filter(entry => writeUrls.test(entry.url)).map(entry => entry.url), [], "legacy migration must not take over a same-email panel client");
-    assert.deepStrictEqual(xuiClients.get("legacy-pool@example.test"), panelOnlyClient);
-    xuiClients.delete("legacy-pool@example.test");
     await request("/sub/legacy-pool-token");
     const migratedPool = await legacyPoolState();
     assert.deepStrictEqual([migratedPool.lineType, migratedPool.xuiMigrationStatus, migratedPool.xuiMigrationSource, migratedPool.xuiClientEmail], ["self_hosted", "completed", "created", "legacy-pool@example.test"], migratedPool.xuiMigrationError);
-    assert.notStrictEqual(xuiClients.get("legacy-pool@example.test").subId, "panel-only-sub", "the recreated client comes from app data, not the deleted panel client");
+    assert.strictEqual((await lineOf("legacy-pool@example.test"))?.userKey, legacyPool.id, "the migrated user gets a node-hub entitlement");
     await database.query("UPDATE app_records SET data=data || $2::jsonb WHERE collection='users' AND id=$1", [v2User.id, JSON.stringify({ xuiTrafficLimitBytes: 900 * 1024 ** 3, xuiWeightedTraffic: { totalBytes: 900 * 1024 ** 3, usedBytes: 0 }, xuiLastTraffic: { totalBytes: 900 * 1024 ** 3, usedBytes: 0 } })]);
-    xuiClients.get("v2-sync@example.test").expiryTime = 0;
     const manualSync = await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: adminCookie, body: {} });
     assert.strictEqual(manualSync.response.status, 200, manualSync.text);
     assert.strictEqual(manualSync.data.xuiTrafficLimitBytes, lifetimeUser.xuiTrafficLimitBytes, "manual V2 sync must replace a polluted local quota cache from the product entitlement");
     assert.strictEqual(manualSync.data.xuiWeightedTraffic.totalBytes, lifetimeUser.xuiTrafficLimitBytes);
     assert.strictEqual(manualSync.data.xuiLastTraffic.totalBytes, lifetimeUser.xuiTrafficLimitBytes);
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime());
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").limitIp, 3, "manual sync must use V2 device limits");
-    xuiClients.delete("v2-sync@example.test");
-    const manualRestore = await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: adminCookie, body: {} });
-    assert.strictEqual(manualRestore.response.status, 200, manualRestore.text);
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").expiryTime, new Date(lifetimeUser.expiresAt).getTime(), "manual V2 sync must recreate a missing client");
+    assert.deepStrictEqual([(await lineOf("v2-sync@example.test")).deviceLimit, await v2LineEnabled()], [3, true], "manual sync must use V2 device limits");
     assert.strictEqual((await request(`/api/users/${v2User.id}/xui-sync`, { method: "POST", cookie: v2Registration.response.headers.get("set-cookie").split(";", 1)[0], body: {} })).response.status, 403);
 
     const lifetimeBillCount = (await database.query("SELECT COUNT(*)::int AS n FROM app_records WHERE collection='bills' AND data->>'paymentOrderId'=$1", [lifetimeOrder.data.id])).rows[0].n;
@@ -1726,7 +1516,7 @@ async function main() {
     assert.strictEqual(repairedBinding.response.status, 200, repairedBinding.text);
     const repairedUser = (await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data;
     assert.deepStrictEqual([repairedUser.currentProductOrderId, repairedUser.v2ProductSnapshot.productId, repairedUser.duration, repairedUser.expiresAt, repairedUser.actualPaid], [lifetimeOrder.data.id, catalogV2Ids.lifetime, "lifetime", lifetimeUser.expiresAt, lifetimeSpend]);
-    assert.deepStrictEqual([xuiClients.get("v2-sync@example.test").expiryTime, xuiClients.get("v2-sync@example.test").limitIp], [new Date(lifetimeUser.expiresAt).getTime(), 3]);
+    assert.deepStrictEqual([await v2LineEnabled(), (await lineOf("v2-sync@example.test")).deviceLimit], [true, 3]);
     assert.strictEqual((await request(repairPath, { method: "POST", cookie: adminCookie, body: {} })).response.status, 200, "repair must be idempotent");
     assert.strictEqual((await database.query("SELECT COUNT(*)::int AS n FROM app_records WHERE collection='bills' AND data->>'paymentOrderId'=$1", [lifetimeOrder.data.id])).rows[0].n, lifetimeBillCount, "repair must not duplicate the bill");
     assert.strictEqual((await database.query("SELECT COUNT(*)::int AS n FROM wallet_entries WHERE idempotency_key=$1", [`purchase:${lifetimeOrder.data.id}`])).rows[0].n, 1, "repair must not settle the wallet twice");
@@ -1739,12 +1529,10 @@ async function main() {
 
     const currentV2User = (await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data;
     const v2QuotaBeforeGift = currentV2User.xuiTrafficLimitBytes;
-    xuiClients.get("v2-sync@example.test").totalGB = 900 * 1024 ** 3;
     const trafficGift = await request(`/api/users/${v2User.id}/traffic-gift`, { method: "POST", cookie: adminCookie, body: { trafficGb: 5, note: "integration gift" } });
     assert.strictEqual(trafficGift.response.status, 200, trafficGift.text);
-    assert.strictEqual(trafficGift.data.xuiTrafficLimitBytes, v2QuotaBeforeGift + 5 * 1024 ** 3, "admin gifts must add to the local product quota, not the remote panel quota");
+    assert.strictEqual(trafficGift.data.xuiTrafficLimitBytes, v2QuotaBeforeGift + 5 * 1024 ** 3, "admin gifts add to the local product quota");
     assert.deepStrictEqual(trafficGift.data.xuiAdminTrafficGifts.map(item => [item.bytes, item.note]), [[5 * 1024 ** 3, "integration gift"]]);
-    assert.strictEqual(xuiClients.get("v2-sync@example.test").totalGB, 0, "gifts raise only the app quota; the panel quota stays unlimited");
     assert.strictEqual((await request(`/api/users/${v2User.id}/traffic-gift`, { method: "POST", cookie: v2Registration.response.headers.get("set-cookie").split(";", 1)[0], body: { trafficGb: 5 } })).response.status, 403);
 
     const passwordChange = await request("/api/auth/password", {
@@ -1759,17 +1547,17 @@ async function main() {
     const newPasswordLogin = await request("/api/auth/login", { method: "POST", body: { account: "buyer@example.test", password: "payment-test-password-new" } });
     assert.strictEqual(newPasswordLogin.response.status, 200);
 
-    // Admin email rebind: login moves to the new address, the 3x-ui client keeps its email, and users cannot call it.
+    // Admin email rebind: login moves to the new address, the line keeps its identity email, and users cannot call it.
     const rebindPath = `/api/users/${managedUser.id}/email`;
     assert.strictEqual((await request(rebindPath, { method: "POST", cookie: newPasswordLogin.response.headers.get("set-cookie").split(";", 1)[0], body: { email: "buyer-new@example.test" } })).response.status, 403);
     assert.strictEqual((await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: "not-an-email" } })).data.error, "请输入有效邮箱。");
     assert.strictEqual((await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: "v2-sync@example.test" } })).data.error, "该邮箱已被其他账户使用。");
     assert.strictEqual((await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: " Buyer@Example.test " } })).data.error, "新邮箱与当前邮箱相同。");
-    xuiRequests.length = 0;
+    hubWrites.length = 0;
     const rebound = await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: " Buyer-New@Example.test ", note: "用户换邮箱" } });
     assert.strictEqual(rebound.response.status, 200, rebound.text);
     assert.deepStrictEqual([rebound.data.email, rebound.data.xuiClientEmail], ["buyer-new@example.test", "buyer@example.test"]);
-    assert.ok(!xuiRequests.some(entry => entry.url.startsWith("/panel/api/clients/")), "a rebind must not touch the 3x-ui client");
+    assert.deepStrictEqual(hubWrites, [], "a rebind must not touch the node-hub entitlement");
     const reboundDetail = await request(`/api/users/${managedUser.id}`, { cookie: adminCookie });
     assert.match(reboundDetail.data.userLogs.find(log => log.reason === "email-changed")?.message || "", /buyer@example\.test -> buyer-new@example\.test.*备注 用户换邮箱/);
     assert.strictEqual((await request("/api/auth/login", { method: "POST", body: { account: "buyer@example.test", password: "payment-test-password-new" } })).response.status, 401);
@@ -1865,32 +1653,37 @@ async function main() {
       depletedMails.push(mail);
     } });
     try {
-      const clientEnabled = () => xuiClients.get("v2-sync@example.test").enable;
+      const clientEnabled = async () => (await lineOf("v2-sync@example.test")).enabled;
+      // One node-hub-billing round: price the cycle, then push entitlements to node-hub.
+      const billingRound = async () => {
+        await handler.syncXuiWeightedTraffic();
+        await handler.syncHubUsers();
+      };
       const useTraffic = async bytes => {
         await database.query("INSERT INTO xui_daily_traffic (date, email, node_guid, up_bytes, down_bytes) VALUES ($1, 'v2-sync@example.test', 'local', $2, 0) ON CONFLICT (date, email, node_guid) DO UPDATE SET up_bytes = xui_daily_traffic.up_bytes + EXCLUDED.up_bytes", [purchaseDayKey, bytes]);
-        await handler.syncXuiPanel();
+        await billingRound();
       };
       await useTraffic(1);
       assert.deepStrictEqual(depletedMails, [], "no mail below the quota");
       await useTraffic((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiWeightedTraffic.remainingBytes);
-      assert.deepStrictEqual([clientEnabled(), depletedMails.length], [false, 0], "a client over its app quota is disabled even when the mail fails");
-      await handler.syncXuiPanel();
+      assert.deepStrictEqual([await clientEnabled(), depletedMails.length], [false, 0], "a user over the quota is disabled even when the mail fails");
+      await billingRound();
       assert.deepStrictEqual(depletedMails.map(mail => [mail.to, mail.subject]), [["v2-sync@example.test", "流量已用完，服务已暂停"]]);
       assert.match(depletedMails[0].text, /你的流量已用完，服务已暂停。/);
-      await handler.syncXuiPanel();
+      await billingRound();
       assert.strictEqual(depletedMails.length, 1, "a failed send is retried once and the mail is not repeated");
       assert.strictEqual((await request(`/api/users/${v2User.id}/traffic-gift`, { method: "POST", cookie: adminCookie, body: { trafficGb: 1, note: "depleted mail top-up" } })).response.status, 200);
-      await handler.syncXuiPanel();
-      assert.deepStrictEqual([clientEnabled(), depletedMails.length], [true, 1], "a top-up re-enables the client without another mail");
+      await billingRound();
+      assert.deepStrictEqual([await clientEnabled(), depletedMails.length], [true, 1], "a top-up re-enables the line without another mail");
       await useTraffic(2 * 1024 ** 3);
-      assert.deepStrictEqual([clientEnabled(), depletedMails.length], [false, 2], "using up the raised quota mails again");
+      assert.deepStrictEqual([await clientEnabled(), depletedMails.length], [false, 2], "using up the raised quota mails again");
       const savedSettings = (await request("/api/sales-settings", { cookie: adminCookie })).data;
       assert.strictEqual((await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...savedSettings, alertSettings: { ...savedSettings.alertSettings, traffic: { ...savedSettings.alertSettings.traffic, userDepletedMail: false } } } })).response.status, 200);
       assert.strictEqual((await request(`/api/users/${v2User.id}/traffic-gift`, { method: "POST", cookie: adminCookie, body: { trafficGb: 1, note: "depleted mail switch off" } })).response.status, 200);
       await useTraffic(2 * 1024 ** 3);
-      assert.deepStrictEqual([clientEnabled(), depletedMails.length], [false, 2], "no mail while the switch is off");
+      assert.deepStrictEqual([await clientEnabled(), depletedMails.length], [false, 2], "no mail while the switch is off");
       assert.strictEqual((await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: savedSettings })).response.status, 200);
-      await handler.syncXuiPanel();
+      await billingRound();
       assert.strictEqual(depletedMails.length, 2, "a user already out of traffic when the switch is turned on is not mailed");
     } finally {
       Object.assign(notifier, realMailer);
@@ -1898,7 +1691,7 @@ async function main() {
     }
 
     // Many customers buying at once: every order is paid and delivered exactly once, and a slow delivery,
-    // an abandoned request or a 3x-ui outage never blocks the other customers.
+    // an abandoned request or a node-hub outage never blocks the other customers.
     {
       async function newBuyer(email) {
         const registered = await request("/api/auth/register", { method: "POST", body: { email, password: "payment-test-password" } });
@@ -1917,7 +1710,7 @@ async function main() {
         const orders = await ordersOf(buyer);
         assert.strictEqual(orders.length, 1, `${buyer.email} must have exactly one order`);
         assert.deepStrictEqual([orders[0].status, orders[0].fulfillmentStatus], ["paid", "fulfilled"], `${buyer.email} must be paid and delivered`);
-        assert.ok(xuiClients.has(buyer.email), `${buyer.email} must have a 3x-ui client`);
+        assert.ok(await lineOf(buyer.email), `${buyer.email} must have a node-hub entitlement`);
         return orders[0];
       }
 
@@ -1936,7 +1729,7 @@ async function main() {
       // (the client gave up, like nginx 499) must not leave the lock held.
       const [slowBuyer, waitingBuyer] = await Promise.all([newBuyer("slow-delivery@example.test"), newBuyer("abandoned-request@example.test")]);
       const slowOrder = await placeOrder(slowBuyer);
-      xuiAddDelayMs = 2500;
+      hubWriteDelayMs = 2500;
       const slowDelivery = callback(slowOrder.data, 1, "1.03", true);
       await new Promise(resolve => setTimeout(resolve, 200));
       const quoteStartedAt = Date.now();
@@ -1962,7 +1755,7 @@ async function main() {
       // A delivery slower than the lock wait: other customers get a quick JSON 503 and nothing is created.
       const [verySlowBuyer, busyBuyer] = await Promise.all([newBuyer("very-slow-delivery@example.test"), newBuyer("busy-checkout@example.test")]);
       const verySlowOrder = await placeOrder(verySlowBuyer);
-      xuiAddDelayMs = 6000;
+      hubWriteDelayMs = 6000;
       const verySlowDelivery = callback(verySlowOrder.data, 1, "1.03", true);
       await new Promise(resolve => setTimeout(resolve, 200));
       const busyStartedAt = Date.now();
@@ -1971,7 +1764,7 @@ async function main() {
       assert.match(busyOrder.data.error, /系统繁忙/);
       assert.ok(Date.now() - busyStartedAt < 5500, "a busy checkout must answer within the lock wait");
       await verySlowDelivery;
-      xuiAddDelayMs = 0;
+      hubWriteDelayMs = 0;
       await bought(verySlowBuyer);
       assert.deepStrictEqual(await ordersOf(busyBuyer), [], "a request rejected as busy must not create an order");
       const afterBusy = await placeOrder(busyBuyer);
@@ -1979,7 +1772,7 @@ async function main() {
       await callback(afterBusy.data, 1, "1.03", true);
       await bought(busyBuyer);
 
-      // 3x-ui is down while customers pay: payments are kept, and the background retry delivers once 3x-ui is back.
+      // node-hub is down while customers pay: payments are kept, and the background retry delivers once it is back.
       const outageBuyers = await Promise.all([newBuyer("outage-0@example.test"), newBuyer("outage-1@example.test")]);
       const outageOrders = await Promise.all(outageBuyers.map(placeOrder));
       outageOrders.forEach(item => assert.strictEqual(item.response.status, 200, item.text));
@@ -2012,7 +1805,7 @@ async function main() {
     const inviteeAfterRepurchase = (await request("/api/users", { cookie: adminCookie })).data.filter(item => item.email === "invitee@example.test");
     assert.deepStrictEqual(inviteeAfterRepurchase.map(item => item.id), [keptInvitee[0].id], "the repurchase lands on the kept user");
     assert.ok(Date.parse(inviteeAfterRepurchase[0].expiresAt) > Date.now());
-    assert.strictEqual(xuiClients.get(keptInviteeDetail.xuiClientEmail)?.enable, true);
+    assert.strictEqual((await lineOf(keptInviteeDetail.xuiClientEmail))?.enabled, true);
 
     // The user detail lists every paid order of the user (plans, add-ons, traffic packs, recharges, reversed ones
     // marked) plus bills without an order, and cashSpent counts only cash that came in, not wallet deductions.
@@ -2058,7 +1851,8 @@ async function main() {
     if (app) await close(app);
     if (handler) await handler.closeDataStore();
     await close(gateway);
-    await close(xui);
+    await close(hubProxy);
+    await hubStore?.close();
     await database.end();
   }
 }

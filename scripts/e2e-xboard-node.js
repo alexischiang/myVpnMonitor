@@ -214,8 +214,6 @@ async function main() {
     NODE_HUB_PULL_INTERVAL: "10",
     NODE_HUB_SYNC_INTERVAL_MS: "3600000",
     SUB_CONVERTER_URL: `http://127.0.0.1:${subconverterPort}`,
-    XUI_BASE_URL: "",
-    XUI_API_TOKEN: "",
     ADMIN_USERNAME: "e2e-admin",
     ADMIN_PASSWORD: "e2e-admin-password",
     SESSION_SECRET: "e2e-session-secret",

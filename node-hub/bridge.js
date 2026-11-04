@@ -1,11 +1,9 @@
 // Main-app side of node-hub: the internal API client and the pure helpers that map hub nodes
-// into the app's existing inbound, presence, monitor and subscription shapes, so the inbound
-// management page, line groups, custom inbounds, account node status and billing treat hub
-// nodes like 3x-ui inbounds.
+// into the app's inbound, presence, monitor and subscription shapes, so the inbound management
+// page, line groups, custom inbounds, account node status and billing read hub nodes as inbounds.
 
-// Hub nodes appear in the app's inbound lists under ids far above any 3x-ui inbound id. Those
-// ids are never valid 3x-ui ids, so every 3x-ui write (which filters by the panel's own id list)
-// skips them.
+// Hub nodes appear in the app's inbound lists under ids far above the ids the removed 3x-ui panel
+// used, so custom-inbound ids stored on users before the move can never name a hub node.
 const HUB_INBOUND_ID_OFFSET = 1_000_000_000;
 const HUB_KEY_PATTERN = /^hub-[mn]\d+:(\d+)$/;
 
@@ -79,8 +77,8 @@ function hubNodeIdsForUser({ groupInboundKeys = [], extraInboundIds = [], rows =
   return [...ids].filter(Boolean).sort((a, b) => a - b);
 }
 
-// Appends hub proxies to a Clash config body (the 3x-ui Clash config, or an empty one for users
-// on hub nodes only). Names are made unique so subconverter does not drop a node.
+// Appends hub proxies to a Clash config body (usually an empty one). Names are made unique so
+// subconverter does not drop a node.
 function mergeClashProxies(yaml, baseBody, proxies = []) {
   let config = {};
   if (baseBody && String(baseBody).trim()) {
@@ -101,7 +99,7 @@ function mergeClashProxies(yaml, baseBody, proxies = []) {
   return yaml.dump(config, { lineWidth: -1, noRefs: true });
 }
 
-// Merges hub presence into the 3x-ui presence shape kept in billing state:
+// Merges hub presence into the presence shape kept in billing state:
 // { onlineEmails, onlineByGuid: { guid: [email] }, lastOnline: { email: unixSeconds }, nodeNames }.
 function mergeHubPresence(presence = {}, hubPresence = null, overview = null) {
   const result = {
@@ -136,7 +134,7 @@ function hubPresenceForEmail(hubPresence, email) {
   return Object.values(hubPresence?.users || {}).find(entry => String(entry.email || "").toLowerCase() === target) || null;
 }
 
-// Machines in the shape of the 3x-ui monitor node list (one row per VPS, keyed by billing guid).
+// Machines as VPS monitor rows (one row per VPS, keyed by billing guid).
 function hubMonitorNodes(overview) {
   const nodesByMachine = new Map();
   for (const node of overview?.nodes || []) {

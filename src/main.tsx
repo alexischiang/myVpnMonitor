@@ -28,8 +28,6 @@ window.addEventListener("vite:preloadError", event => {
 const DashboardPage = lazy(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
 const SalesAnalyticsPage = lazy(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesAnalyticsPage })))
 const SalesProfitabilityPage = lazy(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesProfitabilityPage })))
-const XuiMonitorPage = lazy(() => import("@/components/features/xui-monitor").then(module => ({ default: module.XuiMonitorPage })))
-const XuiLogsPage = lazy(() => import("@/components/features/xui-logs").then(module => ({ default: module.XuiLogsPage })))
 const SyncJobsPage = lazy(() => import("@/components/features/sync-jobs").then(module => ({ default: module.SyncJobsPage })))
 const NodeHubPage = lazy(() => import("@/components/features/node-hub").then(module => ({ default: module.NodeHubPage })))
 const XuiInboundsPage = lazy(() => import("@/components/features/xui-inbounds").then(module => ({ default: module.XuiInboundsPage })))
@@ -174,8 +172,8 @@ function App() {
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="sales-analytics" element={<SalesAnalyticsPage />} />
               <Route path="sales-analytics/profitability" element={<SalesProfitabilityPage />} />
-              <Route path="xui-monitor" element={<XuiMonitorPage />} />
-              <Route path="xui-logs" element={<XuiLogsPage />} />
+              <Route path="xui-monitor" element={<Navigate to="/node-hub?tab=machines" replace />} />
+              <Route path="xui-logs" element={<Navigate to="/node-hub" replace />} />
               <Route path="sync-jobs" element={<SyncJobsPage />} />
               <Route path="xui-inbounds" element={<XuiInboundsPage />} />
               <Route path="node-hub" element={<NodeHubPage />} />

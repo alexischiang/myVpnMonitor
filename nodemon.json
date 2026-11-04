@@ -3,8 +3,8 @@
     "server.js",
     "database.js",
     "env.js",
-    "main-app.js",
-    "xui-client.js",
+    "xui-traffic.js",
+    "node-hub",
     "public"
   ],
   "ext": "js,html,css,json",

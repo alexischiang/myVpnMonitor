@@ -48,9 +48,9 @@ const emptyLineGroup = (): CatalogV2LineGroup => ({ id: "", name: "", isEnabled:
 const lineGroupSaveSteps = [
   { id: "validate", label: "校验入站" },
   { id: "save", label: "保存权限组" },
-  { id: "sync", label: "同步到 3x-ui" },
+  { id: "sync", label: "同步到 node-hub" },
 ]
-type LineGroupSaveResult = CatalogV2LineGroup & { xuiSync?: { updated?: number; skipped?: number; failed?: number; error?: string } }
+type LineGroupSaveResult = CatalogV2LineGroup & { xuiSync?: { hubChanged?: number; error?: string } }
 
 function InboundProbeBadge({ inbound }: { inbound: XuiInbound }) {
   const online = inbound.probeStatus === "online"
@@ -93,7 +93,7 @@ export function XuiInboundsPage() {
     }, { replace: true })
   }
 
-  // live: read the inbound list from 3x-ui first instead of the last synced table.
+  // live: skip the few-second node-hub overview cache.
   const refresh = React.useCallback(async (live = false, background = false) => {
     setLoading(true)
     try {
@@ -103,9 +103,9 @@ export function XuiInboundsPage() {
       ])
       setData(result)
       setLineGroups(groups)
-      setError(result.refreshError ? `无法从 3x-ui 获取最新入站，当前显示上次同步的数据：${result.refreshError}` : "")
+      setError(result.hubError ? `无法读取 node-hub 节点：${result.hubError}` : "")
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "无法读取 3x-ui 入站")
+      setError(loadError instanceof Error ? loadError.message : "无法读取入站")
     } finally {
       setLoading(false)
     }
@@ -194,10 +194,9 @@ export function XuiInboundsPage() {
         ? current.map(group => group.id === result.id ? { ...result, productCount: group.productCount } : group).toSorted((left, right) => left.sortOrder - right.sortOrder)
         : [...current, { ...result, productCount: 0 }].toSorted((left, right) => left.sortOrder - right.sortOrder))
       setGroupOpen(false)
-      // The group is saved even when the push fails; the five-minute sync retries it.
-      if (xuiSync?.error) toast({ type: "warning", title: `权限组已保存，但同步到 3x-ui 失败：${xuiSync.error}。系统会在下次定时同步时重试。` })
-      else if (xuiSync?.failed) toast({ type: "warning", title: `权限组已保存，但有 ${xuiSync.failed} 个用户未能同步到 3x-ui。系统会在下次定时同步时重试。` })
-      else toast({ type: "success", title: xuiSync?.updated ? `V2 权限组已保存，已同步 ${xuiSync.updated} 个用户` : "V2 权限组已保存" })
+      // The group is saved even when the push fails; the next entitlement sync retries it.
+      if (xuiSync?.error) toast({ type: "warning", title: `权限组已保存，但同步到 node-hub 失败：${xuiSync.error}。系统会在下次定时同步时重试。` })
+      else toast({ type: "success", title: xuiSync?.hubChanged ? `V2 权限组已保存，已同步 ${xuiSync.hubChanged} 个用户` : "V2 权限组已保存" })
     } catch (saveError) {
       // The step that was running is the one that failed; a request rejected before any step has none.
       const failedStep = lineGroupSaveSteps.find(step => step.id === runningStep)?.label
@@ -264,7 +263,7 @@ export function XuiInboundsPage() {
   }), [allInbounds, levelFilter, lineGroups, nodeFilter, planFilter, regionFilter, statusFilter, typeFilter])
 
   if (loading && !data) return <div className="grid gap-4 px-4 lg:px-6"><Skeleton lines={3} /><Skeleton lines={6} /></div>
-  if (!data?.configured) return <div className="px-4 lg:px-6"><Alert title="尚未配置 3x-ui，无法管理入站。" /></div>
+  if (!data?.configured) return <div className="px-4 lg:px-6"><Alert title="尚未配置 node-hub，无法管理入站。" /></div>
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
@@ -314,7 +313,7 @@ export function XuiInboundsPage() {
 
       <Drawer open={Boolean(editingInbound)} onOpenChange={open => { if (!open && !saving) setEditingKey("") }}>
         <DrawerContent title="编辑入站" description={editingInbound ? `${editingInbound.nodeName} · ${editingInbound.name}` : ""} className="xui-inbound-sheet inset-y-4 right-4 h-auto w-[calc(100%-2rem)] rounded-lg border sm:max-w-lg"><div className="grid flex-1 content-start gap-6 overflow-y-auto px-4">
-            <Field orientation="horizontal" className="justify-between"><FieldContent><FieldLabel htmlFor="inbound-enabled">入站状态</FieldLabel><FieldDescription>保存后在 3x-ui 中启用或停用该入站。</FieldDescription></FieldContent><Switch id="inbound-enabled" checked={draft.enabled} onCheckedChange={enabled => setDraft(current => ({ ...current, enabled }))} disabled={saving} /></Field>
+            <Field orientation="horizontal" className="justify-between"><FieldContent><FieldLabel htmlFor="inbound-enabled">入站状态</FieldLabel><FieldDescription>保存后在 node-hub 中启用或停用该节点。</FieldDescription></FieldContent><Switch id="inbound-enabled" checked={draft.enabled} onCheckedChange={enabled => setDraft(current => ({ ...current, enabled }))} disabled={saving} /></Field>
             <Select label="入站类型" description="定制节点只能由管理员单独授权，不参与套餐分组的客户端批量分配。" value={draft.inboundType} onValueChange={(value: "package" | "custom") => setDraft(current => ({ ...current, inboundType: value }))} id="inbound-type" className="w-full" options={[{ value: "package", label: "套餐节点" }, { value: "custom", label: "定制节点" }]} />
             <Select label="网络级别" value={draft.networkLevel || "unset"} onValueChange={value => setDraft(current => ({ ...current, networkLevel: value === "unset" ? "" : value }))} className="w-full" options={[{ value: "unset", label: "未设置" }, ...networkLevels.map(level => ({ value: level.value, label: level.label }))]} />
             <Input label="地区" id="inbound-region" value={draft.region} onChange={event => setDraft(current => ({ ...current, region: event.target.value }))} placeholder="例如：香港、美国、台湾" maxLength={64} />

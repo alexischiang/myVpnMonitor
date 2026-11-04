@@ -1,40 +1,13 @@
-// Pure, side-effect-free helpers for 3x-ui per-node traffic accounting.
+// Pure, side-effect-free helpers for per-node traffic accounting.
 //
 // The `xui_daily_traffic` table (see database.js) is the single source of truth:
-// one row per (date, user, node) holding that day's raw up/down bytes. These
-// functions are the composable building blocks around it — counter→delta,
+// one row per (date, user, node) holding that day's raw up/down bytes, written by
+// node-hub. These functions are the composable building blocks around it —
 // billing-cycle math, quota and weighting — with no I/O so they stay unit-testable
-// and reusable. The DB layer imports the delta helper; the refresh loop composes
-// the rest by passing values in.
+// and reusable. The billing round composes them by passing values in.
 
 const RESET_INTERVAL_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-// --- counter deltas -------------------------------------------------------
-
-// A 3x-ui client counter is cumulative and only grows until the panel resets it
-// (manual reset, scheduled inbound reset, client re-create, node rebuild). We do
-// NOT reset it ourselves, but those external resets still happen, so a value that
-// dropped below the last reading means a reset occurred and the current value is
-// itself the post-reset usage. `last == null` is the first observation of a
-// (user,node): we seed the cursor but record no delta (fresh start).
-function counterDelta(current, last) {
-  const cur = Math.max(0, Number(current) || 0);
-  if (last == null) return 0;
-  const prev = Math.max(0, Number(last) || 0);
-  return cur >= prev ? cur - prev : cur;
-}
-
-// Directional delta for one (user,node) sample against its stored cursor.
-// `cursor` is { up, down } or null/undefined on first observation.
-function directionalDelta(current = {}, cursor = null) {
-  const prevUp = cursor ? cursor.up : null;
-  const prevDown = cursor ? cursor.down : null;
-  return {
-    up: counterDelta(current.up, prevUp),
-    down: counterDelta(current.down, prevDown)
-  };
-}
 
 // --- billing cycle --------------------------------------------------------
 
@@ -171,68 +144,6 @@ function xuiLedgerFromCycle(perNodeBytes = {}, multipliers = {}, options = {}) {
   };
 }
 
-// The central panel reports each client's GLOBAL total on the local node's inbounds (mirrored on
-// every inbound), NOT the local node's own usage. Remote nodes are read from their own APIs and
-// give real per-node usage. So the collected local-node figure = LA-real + Σremotes; subtract the
-// remotes (per direction) to recover the local node's own usage, otherwise remote traffic is
-// counted twice. Mutates and returns the { email: { guid: { inBytes, outBytes } } } map.
-function deductRemotesFromLocalNode(directionalByUser = {}, localGuid) {
-  for (const byNode of Object.values(directionalByUser)) {
-    const local = byNode?.[localGuid];
-    if (!local) continue;
-    let remoteIn = 0;
-    let remoteOut = 0;
-    for (const [guid, dir] of Object.entries(byNode)) {
-      if (guid === localGuid) continue;
-      remoteIn += Math.max(0, Number(dir?.inBytes) || 0);
-      remoteOut += Math.max(0, Number(dir?.outBytes) || 0);
-    }
-    byNode[localGuid] = {
-      inBytes: Math.max(0, (Number(local.inBytes) || 0) - remoteIn),
-      outBytes: Math.max(0, (Number(local.outBytes) || 0) - remoteOut)
-    };
-  }
-  return directionalByUser;
-}
-
-// Derive the local (panel) node's usage for ONE user in ONE sampling round.
-//
-// The panel has no per-user counter for its own node: under the local guid it reports
-// the client's GLOBAL counter, which equals LA-own + Σ(current remote counters) and so
-// drops whenever a remote counter restarts or the panel briefly loses a remote's share.
-// The local node's growth is therefore taken in SIGNED terms:
-//   raw = carry + (global − globalCursor) − Σ(remote − remoteCursor)
-// where the remote term is signed too (a restarted remote and the matching global drop
-// cancel). A negative raw — global read lagging the remote reads, or a transient dip in
-// the global — is carried to later rounds instead of being clamped away, so it nets out
-// rather than re-counting a remote's whole counter on LA.
-//
-// `held` = a remote node could not be read this round, so its growth is unknown while
-// the global already includes it: the global cursor stays put and only the readable
-// remotes' growth is carried, so the whole interval settles in the next complete round.
-// The same applies when the global is absent this round (`current` null).
-//
-// Inputs are { up, down }; `cursor` null = first observation (seed only). Returns the
-// usage to record, the new carry (≤ 0) and the global cursor to store (null = keep).
-function localNodeRound({ current = null, cursor = null, carry = null, remoteChange = null, held = false } = {}) {
-  const value = (source, key) => Number(source?.[key]) || 0;
-  const delta = { up: 0, down: 0 };
-  if (current && !cursor) return { delta, carry: { up: 0, down: 0 }, cursor: { up: value(current, "up"), down: value(current, "down") } };
-  const nextCarry = {};
-  for (const key of ["up", "down"]) {
-    const pending = value(carry, key) - value(remoteChange, key);
-    if (!current || held) {
-      nextCarry[key] = pending;
-      continue;
-    }
-    const raw = pending + value(current, key) - value(cursor, key);
-    delta[key] = Math.max(0, raw);
-    nextCarry[key] = Math.min(0, raw);
-  }
-  const advance = current && !held ? { up: value(current, "up"), down: value(current, "down") } : null;
-  return { delta, carry: nextCarry, cursor: advance };
-}
-
 // --- account overview -----------------------------------------------------
 
 // Shapes one user's per-node daily rows ({ date, nodeGuid, bytes }) for the overview chart.
@@ -310,10 +221,6 @@ module.exports = {
   hourlyUsage,
   RESET_INTERVAL_DAYS,
   MS_PER_DAY,
-  deductRemotesFromLocalNode,
-  localNodeRound,
-  counterDelta,
-  directionalDelta,
   isPeriodicPlan,
   cycleStartMs,
   applyCycleBaseline,

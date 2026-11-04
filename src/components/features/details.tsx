@@ -16,7 +16,6 @@ import { NodeTrafficList } from "@/components/features/node-traffic-list"
 import { OnlineIpList } from "@/components/features/online-ip-list"
 import { BackButton } from "@/components/features/back-button"
 import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalogPurchaseOptionsFor, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
-import { XuiClientDialog } from "@/components/features/xui-client-dialog"
 import type { PlanSnapshot, User, XuiCustomInboundManagement } from "@/types"
 import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, planSnapshotName, planSnapshotOptionId } from "@/utils"
 import { ActionButton } from "@/components/arc/action-button/action-button"
@@ -105,12 +104,6 @@ function xuiMigrationStatus(user: User) {
       : { label: "未触发", variant: "neutral" as const }
 }
 
-function xuiMigrationSource(user: User) {
-  if (user.xuiMigrationSource === "linked_existing" || user.xuiManagementMode === "link") return "关联已有客户端"
-  if (user.xuiMigrationSource === "created" || user.xuiManagementMode === "import") return "新建客户端"
-  return "-"
-}
-
 export function UserDetailPage() {
   const { id } = useParams()
   const location = useLocation()
@@ -128,9 +121,6 @@ export function UserDetailPage() {
   const [referralRate, setReferralRate] = React.useState(10)
   const [recurringReferral, setRecurringReferral] = React.useState(false)
   const [referralSaving, setReferralSaving] = React.useState(false)
-  const [nodeSourceOpen, setNodeSourceOpen] = React.useState(false)
-  const [nodeSourceValue, setNodeSourceValue] = React.useState("mix")
-  const [nodeSourceSaving, setNodeSourceSaving] = React.useState(false)
   const [referralDetails, setReferralDetails] = React.useState<ReferralDetails | null>(null)
   const [referralDetailsError, setReferralDetailsError] = React.useState("")
   const [giftBalanceOpen, setGiftBalanceOpen] = React.useState(false)
@@ -168,7 +158,6 @@ export function UserDetailPage() {
   const [userTypeOpen, setUserTypeOpen] = React.useState(false)
   const [selectedUserType, setSelectedUserType] = React.useState<keyof typeof userTypeLabels>("regular")
   const [userTypeSaving, setUserTypeSaving] = React.useState(false)
-  const [xuiOpen, setXuiOpen] = React.useState(false)
   const [planOpen, setPlanOpen] = React.useState(false)
   const [planConfirmOpen, setPlanConfirmOpen] = React.useState(false)
   const [planOptionId, setPlanOptionId] = React.useState("")
@@ -219,7 +208,7 @@ export function UserDetailPage() {
       `已用流量 ${formatBytes(usedBytes)} 保留，不会清零`,
       "本次后台调整不生成账单，不退款",
       ...(targetExpiresAt && Date.parse(targetExpiresAt) <= Date.now() ? ["按购买日重算后到期日已过，变更后用户将处于过期状态"] : []),
-      "套餐权限、在线IP数量和流量配额会立即同步到 3x-ui",
+      "套餐权限、在线IP数量和流量配额会立即同步到 node-hub",
       ...(targetBytes > 0 && usedBytes >= targetBytes ? ["目标额度不高于已用流量，变更后用户将进入流量耗尽状态"] : []),
     ]
     return { changes, impacts }
@@ -344,32 +333,6 @@ export function UserDetailPage() {
       toast({ type: "error", title: error instanceof Error ? error.message : "账户认领邮件发送失败" })
     } finally {
       setInviteSending(false)
-    }
-  }
-
-  function openNodeSourceDialog() {
-    setNodeSourceValue(user?.nodeSource || "mix")
-    setNodeSourceOpen(true)
-  }
-
-  async function saveNodeSource(nodeSource: string) {
-    if (!user) return
-    if (nodeSource === (user.nodeSource || "mix")) {
-      setNodeSourceOpen(false)
-      return
-    }
-    setNodeSourceSaving(true)
-    try {
-      await runAsync(async () => {
-        await putJson(`/api/users/${encodeURIComponent(user.id)}/node-source`, { nodeSource })
-        await reload(["users"], { silent: true })
-        setNodeSourceOpen(false)
-        toast({ type: "success", title: "节点来源已保存", description: "用户下次更新订阅后生效" })
-      }, "保存节点来源...")
-    } catch (error) {
-      toast({ type: "error", title: error instanceof Error ? error.message : "保存失败" })
-    } finally {
-      setNodeSourceSaving(false)
     }
   }
 
@@ -607,9 +570,9 @@ export function UserDetailPage() {
       await postJson(`/api/users/${user.id}/xui-sync`, {})
       await refreshUserDetails()
       setXuiRecoverOpen(false)
-      toast({ type: "success", title: "已按V2套餐同步到3x-ui" })
+      toast({ type: "success", title: "已按V2套餐同步到 node-hub" })
     } catch (error) {
-      toast({ type: "error", title: error instanceof Error ? error.message : "3x-ui 同步失败" })
+      toast({ type: "error", title: error instanceof Error ? error.message : "node-hub 同步失败" })
     } finally {
       setXuiRecoverSaving(false)
     }
@@ -696,14 +659,14 @@ export function UserDetailPage() {
           </form></DialogContent>
       </Dialog>
       <Dialog open={emailRebindOpen} onOpenChange={setEmailRebindOpen}>
-        <DialogContent title="换绑邮箱" description={`当前邮箱：${user.email || "-"}。${["active", "disabled"].includes(user.accountStatus || "") ? "换绑后用户用新邮箱和原密码登录" : "换绑后将向新邮箱发送认领邮件"}，已发出的重置密码和认领链接失效；3x-ui 客户端保持不变。`}><form className="grid gap-4" onSubmit={rebindEmail} noValidate>
+        <DialogContent title="换绑邮箱" description={`当前邮箱：${user.email || "-"}。${["active", "disabled"].includes(user.accountStatus || "") ? "换绑后用户用新邮箱和原密码登录" : "换绑后将向新邮箱发送认领邮件"}，已发出的重置密码和认领链接失效；线路授权保持不变。`}><form className="grid gap-4" onSubmit={rebindEmail} noValidate>
             <Input label="新邮箱" error={emailRebindError || undefined} id="rebind-email" name="rebindEmail" type="email" value={emailRebindValue} onChange={event => { setEmailRebindValue(event.target.value); setEmailRebindError("") }} aria-invalid={Boolean(emailRebindError)} autoFocus required />
             <Input label="备注" id="rebind-email-note" maxLength={200} placeholder="可选" value={emailRebindNote} onChange={event => setEmailRebindNote(event.target.value)} />
             <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={emailRebindSaving}>取消</Button></DialogClose><ActionButton type="submit" label="确认换绑邮箱" pendingLabel="换绑中..." pending={emailRebindSaving} /></div>
           </form></DialogContent>
       </Dialog>
       <Dialog open={trafficGiftOpen} onOpenChange={setTrafficGiftOpen}>
-        <DialogContent title="单向赠送流量" description="只会增加用户额度，不能覆盖或扣减。最终额度始终由本地套餐、已购流量包和赠送记录计算，不读取 3x-ui 额度。"><form className="grid gap-4" onSubmit={giftTraffic}>
+        <DialogContent title="单向赠送流量" description="只会增加用户额度，不能覆盖或扣减。最终额度始终由本地套餐、已购流量包和赠送记录计算。"><form className="grid gap-4" onSubmit={giftTraffic}>
             <Input label="赠送流量（GB）" error={(trafficGiftError) || undefined} id="traffic-gift-gb" type="number" min="0.01" max="102400" step="0.01" value={trafficGiftGb} onChange={event => { setTrafficGiftGb(event.target.value); setTrafficGiftError("") }} aria-invalid={Boolean(trafficGiftError)} autoFocus required />
             <Input label="备注" id="traffic-gift-note" maxLength={200} placeholder="可选" value={trafficGiftNote} onChange={event => setTrafficGiftNote(event.target.value)} />
             <div className="flex flex-wrap justify-end gap-2"><DialogClose asChild><Button type="button" variant="secondary" disabled={trafficGiftSaving}>取消</Button></DialogClose><ActionButton type="submit" label="确认单向赠送" pendingLabel="赠送中..." pending={trafficGiftSaving} /></div>
@@ -729,7 +692,7 @@ export function UserDetailPage() {
                 { label: "续费套餐到期", before: formatDate(giftPreview.queuedPlan.before.expiresAt), after: formatDate(giftPreview.queuedPlan.after.expiresAt) },
               ] : []),
             ]} rowKey={change => change.label} cells={change => [<span className="font-medium">{change.label}</span>, <span className="whitespace-normal tabular-nums text-muted-foreground">{change.before}</span>, <span className="whitespace-normal tabular-nums">{change.after}</span>]} /></ArcCard>
-            <Alert tone="warning" title="执行影响">赠送 {giftPreview.days} 天，套餐规格、流量额度和线路绑定保持不变{user.lineType === "self_hosted" ? "；新的到期日会同步到 3x-ui" : ""}。</Alert>
+            <Alert tone="warning" title="执行影响">赠送 {giftPreview.days} 天，套餐规格、流量额度和线路绑定保持不变{user.lineType === "self_hosted" ? "；新的到期日会同步到 node-hub" : ""}。</Alert>
             {giftError ? <Alert tone="danger" title={giftError} /> : null}
             <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="secondary" disabled={giftSaving} onClick={() => { setGiftPreview(null); setGiftError("") }}>返回修改</Button><ActionButton type="button" onClick={() => void submitGift()} label="确认赠送" pendingLabel="赠送中..." pending={giftSaving} /></div>
           </div> : <form className="grid gap-4" onSubmit={previewGift} noValidate>
@@ -763,7 +726,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
       <Dialog open={planOpen} onOpenChange={open => { setPlanOpen(open); if (!open) setPlanConfirmOpen(false) }}>
         <DialogContent title="更改套餐" description="可选择商品库中的套餐规格，包括未上架商品；附加商品和旧版规格不可选择。操作原因会写入用户记录。" size="lg" className="max-h-[calc(100dvh-2rem)] overflow-y-auto"><form className="grid gap-4" onSubmit={previewPlanChange}>
             <FieldGroup>
-              <CatalogPlanFields idPrefix="plan" label="目标商品规格" placeholder="没有可用商品规格" options={planOptions} value={planOptionId} onValueChange={setPlanOptionId} trafficTier={planTrafficTier} onTrafficTierChange={setPlanTrafficTier} disabled={planSaving} description="切换周期时按购买日重新计算到期日，赠送时长保留；切换至不限时规格后，到期日改为永久有效。" tierDescription="后台调整不计算价格，所选流量配额会直接同步到 3x-ui。" />
+              <CatalogPlanFields idPrefix="plan" label="目标商品规格" placeholder="没有可用商品规格" options={planOptions} value={planOptionId} onValueChange={setPlanOptionId} trafficTier={planTrafficTier} onTrafficTierChange={setPlanTrafficTier} disabled={planSaving} description="切换周期时按购买日重新计算到期日，赠送时长保留；切换至不限时规格后，到期日改为永久有效。" tierDescription="后台调整不计算价格，所选流量配额会直接同步到 node-hub。" />
               <Input label="变更原因" error={(planError) || undefined} id="plan-note" maxLength={200} value={planNote} onChange={event => { setPlanNote(event.target.value); setPlanError("") }} placeholder="例如：客服补偿、套餐升级" aria-invalid={Boolean(planError)} autoFocus required />
             </FieldGroup>
             {planPreview?.changes.length ? <ArcCard title="变更预览"><SimpleTable caption="项目列表" columns={["项目", "当前", "变更后"]} rows={planPreview.changes} rowKey={(change) => change.label} cells={(change) => [<span className="font-medium">{change.label}</span>, <span className="whitespace-normal text-muted-foreground">{change.before}</span>, <span className="whitespace-normal">{change.after}</span>]} /></ArcCard> : null}
@@ -772,23 +735,19 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
           </form></DialogContent>
       </Dialog>
       <ArcDialog open={planConfirmOpen} onOpenChange={setPlanConfirmOpen}>
-        <ArcDialogContent title="确认执行套餐变更？" description="更改将立即同步到 3x-ui，当前流量包会失效。操作完成后可从用户日志撤销最近一次变更。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={planSaving}>返回修改</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void changePlan() }} disabled={planSaving}>{planSaving ? <Loader2 className="animate-spin" /> : <ArrowRightLeft />}{planSaving ? "同步中..." : "确认更改套餐"}</Button></ArcDialogClose></div></ArcDialogContent>
+        <ArcDialogContent title="确认执行套餐变更？" description="更改将立即同步到 node-hub，当前流量包会失效。操作完成后可从用户日志撤销最近一次变更。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={planSaving}>返回修改</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void changePlan() }} disabled={planSaving}>{planSaving ? <Loader2 className="animate-spin" /> : <ArrowRightLeft />}{planSaving ? "同步中..." : "确认更改套餐"}</Button></ArcDialogClose></div></ArcDialogContent>
       </ArcDialog>
       <ArcDialog open={Boolean(planRollbackId)} onOpenChange={open => { if (!open) setPlanRollbackId("") }}>
-        <ArcDialogContent title="撤销最近一次套餐变更？" description="将恢复变更前的套餐周期、到期日、商品绑定和流量包权益，并重新同步 3x-ui。撤销操作本身也会写入用户日志。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={planRollbackSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void rollbackPlanChange() }} disabled={planRollbackSaving}>{planRollbackSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{planRollbackSaving ? "恢复中..." : "确认撤销变更"}</Button></ArcDialogClose></div></ArcDialogContent>
+        <ArcDialogContent title="撤销最近一次套餐变更？" description="将恢复变更前的套餐周期、到期日、商品绑定和流量包权益，并重新同步 node-hub。撤销操作本身也会写入用户日志。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={planRollbackSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void rollbackPlanChange() }} disabled={planRollbackSaving}>{planRollbackSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{planRollbackSaving ? "恢复中..." : "确认撤销变更"}</Button></ArcDialogClose></div></ArcDialogContent>
       </ArcDialog>
-      <XuiClientDialog user={user} open={xuiOpen} onOpenChange={setXuiOpen} onComplete={refreshUserDetails} />
       <ArcDialog open={trafficResetOpen} onOpenChange={setTrafficResetOpen}>
         <ArcDialogContent title="确认重置用户流量？" description={`将清零 ${user.userId || user.email || "该用户"} 当前已使用流量，套餐额度、流量包和下次自动重置日期保持不变。操作完成后无法恢复。`}><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={trafficResetSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void resetTraffic() }} disabled={trafficResetSaving}>{trafficResetSaving ? <Loader2 className="animate-spin" /> : <RotateCcw />}{trafficResetSaving ? "重置中..." : "确认重置流量"}</Button></ArcDialogClose></div></ArcDialogContent>
       </ArcDialog>
-      <ArcDialog open={nodeSourceOpen} onOpenChange={open => { if (!nodeSourceSaving) setNodeSourceOpen(open) }}>
-        <ArcDialogContent title="设置节点来源" description="决定订阅里下发哪套架构的节点。只影响订阅内容，用户在 3x-ui 和 node-hub 上的授权不变，两边的流量都会计费；用户更新订阅后生效。"><Select label="节点来源" value={nodeSourceValue} onValueChange={setNodeSourceValue} disabled={nodeSourceSaving} id="node-source" className="w-full" options={NODE_SOURCE_OPTIONS} /><div className="mt-4 flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button type="button" variant="secondary" disabled={nodeSourceSaving}>取消</Button></ArcDialogClose><ActionButton type="button" onClick={() => void saveNodeSource(nodeSourceValue)} label="保存节点来源" pendingLabel="保存中..." pending={nodeSourceSaving} /></div></ArcDialogContent>
-      </ArcDialog>
       <ArcDialog open={accountStatusOpen} onOpenChange={setAccountStatusOpen}>
-        <ArcDialogContent title={user.accountStatus === "active" ? "确认停用账户？" : "确认恢复账户？"} description={user.accountStatus === "active" ? "停用后用户将无法登录，当前登录状态也会失效；订阅链接将返回停用提示，3x-ui 客户端也会停用。" : "恢复后用户可以重新登录账户；有效期内的自研线路 3x-ui 客户端也会恢复，原有订阅和余额保持不变。"}><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={accountStatusSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button variant="primary" onClick={event => { event.preventDefault(); void toggleAccountStatus() }} disabled={accountStatusSaving}>{accountStatusSaving ? <Loader2 className="animate-spin" /> : <Power />}{accountStatusSaving ? "处理中..." : user.accountStatus === "active" ? "确认停用" : "确认恢复"}</Button></ArcDialogClose></div></ArcDialogContent>
+        <ArcDialogContent title={user.accountStatus === "active" ? "确认停用账户？" : "确认恢复账户？"} description={user.accountStatus === "active" ? "停用后用户将无法登录，当前登录状态也会失效；订阅链接将返回停用提示，node-hub 节点也会停用。" : "恢复后用户可以重新登录账户；有效期内的自研线路节点也会恢复，原有订阅和余额保持不变。"}><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={accountStatusSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button variant="primary" onClick={event => { event.preventDefault(); void toggleAccountStatus() }} disabled={accountStatusSaving}>{accountStatusSaving ? <Loader2 className="animate-spin" /> : <Power />}{accountStatusSaving ? "处理中..." : user.accountStatus === "active" ? "确认停用" : "确认恢复"}</Button></ArcDialogClose></div></ArcDialogContent>
       </ArcDialog>
       <ArcDialog open={xuiRecoverOpen} onOpenChange={setXuiRecoverOpen}>
-        <ArcDialogContent title="同步V2套餐到3x-ui？" description="将按当前V2套餐的额度、到期时间、在线IP数量和入站组更新或补建3x-ui客户端，不清空已有流量。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={xuiRecoverSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "同步中..." : "立即同步"}</Button></ArcDialogClose></div></ArcDialogContent>
+        <ArcDialogContent title="同步V2套餐到 node-hub？" description="将按当前V2套餐的可用节点、在线IP数量和启用状态重新推送 node-hub 授权，不清空已有流量。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={xuiRecoverSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "同步中..." : "立即同步"}</Button></ArcDialogClose></div></ArcDialogContent>
       </ArcDialog>
       {user.accountStatus === "disabled" ? <Alert tone="warning" title="该用户已停用" /> : null}
       <div className="grid min-w-0 gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
@@ -805,20 +764,17 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "disabled" ? "已停用" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
               <Info label="用户类型" value={userTypeLabels[userType(user)]} />
               <Info label="钱包余额" value={walletBalance === null ? "-" : formatMoney(walletBalance)} />
-              {user.lineType === "self_hosted" ? <Info label="节点来源" value={NODE_SOURCE_LABELS[user.nodeSource || "mix"]} /> : null}
             </div>
           </div>{user.registeredOnly && !["active", "disabled", "invited"].includes(user.accountStatus || "") ? null : <ProfileActions items={[
             ...(["active", "invited"].includes(user.accountStatus || "") && user.accountId ? [{ label: "人工收款", icon: <Banknote />, onSelect: openManualPaymentDialog }] : []),
             ...(user.registeredOnly ? [] : [
               { label: "设置用户类型", icon: <UserCog />, onSelect: openUserTypeDialog },
-              ...(user.lineType === "self_hosted" ? [] : [{ label: "切换到自研线路", icon: <Network />, onSelect: () => setXuiOpen(true) }]),
               ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "管理个人定制入站", icon: <Network />, onSelect: () => void openCustomInbounds() }] : []),
               ...(user.lineType === "self_hosted" ? [{ label: "更改套餐", icon: <ArrowRightLeft />, onSelect: openPlanDialog }] : []),
-              ...(user.lineType === "self_hosted" ? [{ label: "设置节点来源", icon: <Network />, onSelect: openNodeSourceDialog }] : []),
               ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "重置流量", icon: <RotateCcw />, onSelect: () => setTrafficResetOpen(true) }] : []),
               ...(user.lineType === "self_hosted" ? [
                 { label: "单向赠送流量", icon: <Gift />, onSelect: () => { setTrafficGiftError(""); setTrafficGiftOpen(true) } },
-                { label: "同步V2套餐到3x-ui", icon: <RefreshCw />, onSelect: () => setXuiRecoverOpen(true), disabled: xuiRecoverSaving },
+                { label: "同步V2套餐到 node-hub", icon: <RefreshCw />, onSelect: () => setXuiRecoverOpen(true), disabled: xuiRecoverSaving },
               ] : []),
               { label: "赠送时长", icon: <Gift />, onSelect: openGiftDialog },
             ]),
@@ -860,13 +816,11 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
                   <Separator />
                   {weightedTraffic.nodes.length ? <NodeTrafficList nodes={weightedTraffic.nodes} /> : <EmptyState title="暂无节点流量明细" />}
                   <p className="text-xs text-muted-foreground">最后同步：{weightedTraffic.lastSyncedAt ? formatDateTime(weightedTraffic.lastSyncedAt) : "-"}</p>
-                </> : <EmptyState title="暂无倍率流量数据" description="完成首次 3x-ui 流量同步后显示节点明细。" />}
+                </> : <EmptyState title="暂无倍率流量数据" description="完成首次流量同步后显示节点明细。" />}
               </div></Card> : null}
-            <Card className="@4xl:col-start-2" title="3x-ui 信息"><div className="grid gap-4 sm:grid-cols-2">
+            <Card className="@4xl:col-start-2" title="线路信息"><div className="grid gap-4 sm:grid-cols-2">
                 <Info label="迁移状态" value={<Badge tone={migrationStatus.variant}>{migrationStatus.label}</Badge>} />
-                <Info label="迁移方式" value={xuiMigrationSource(user)} />
-                <Info label="客户端" value={user.xuiClientEmail || "-"} />
-                <Info label="客户端状态" value={user.xuiClientPresent === false ? "客户端缺失" : user.xuiClientPresent === true ? "正常" : "等待检查"} />
+                <Info label="线路邮箱" value={user.xuiClientEmail || "-"} />
                 <Info label="迁移时间" value={user.xuiMigratedAt ? formatDateTime(user.xuiMigratedAt) : "-"} />
                 {user.xuiMigrationError ? <Info label="迁移错误" value={user.xuiMigrationError} /> : null}
               </div></Card>
@@ -883,7 +837,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
           </TabsContent>
           <TabsContent value="catalog-v2" className="grid min-w-0 gap-4">
             {user.v2ProductSnapshot ? <>
-              <Card title="当前 V2 商品" description="用户当前套餐的商品快照，套餐权益和 3x-ui 同步只以它为准。" headerAction={<Badge tone="success">生效中</Badge>}><div className="grid gap-4 sm:grid-cols-2">
+              <Card title="当前 V2 商品" description="用户当前套餐的商品快照，套餐权益和 node-hub 授权只以它为准。" headerAction={<Badge tone="success">生效中</Badge>}><div className="grid gap-4 sm:grid-cols-2">
                   <Info label="商品名称" value={user.v2ProductSnapshot.name} />
                   <Info label="商品 ID" value={user.v2ProductSnapshot.productId} />
                   <Info label="商品类型" value={user.v2ProductSnapshot.productType === "recurring_plan" ? "周期性套餐" : "不限时套餐"} />
@@ -914,13 +868,6 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
     </div>
   )
 }
-
-const NODE_SOURCE_OPTIONS = [
-  { value: "mix", label: "mix（3x-ui + node-hub）" },
-  { value: "3xui", label: "3xui（仅 3x-ui 面板节点）" },
-  { value: "nodehub", label: "nodehub（仅 node-hub 节点）" }
-]
-const NODE_SOURCE_LABELS: Record<string, string> = { mix: "mix", "3xui": "3xui", nodehub: "nodehub" }
 
 type ProfileAction = { label: string; icon: React.ReactNode; onSelect: () => void; destructive?: boolean; disabled?: boolean }
 

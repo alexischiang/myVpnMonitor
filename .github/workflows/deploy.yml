@@ -72,59 +72,10 @@ jobs:
             if [ -f dist/index.html ]; then
               touch dist/index.html
             fi
-            xui_base_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_BASE_URL || '')")
-            if [ -n "$xui_base_url" ]; then
-              export XUI_BASE_URL="$xui_base_url"
-              xui_service_env=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_SERVICE_URL || '')")
-              xui_token_env=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_SERVICE_TOKEN || '')")
-              redis_env=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.REDIS_URL || '')")
-              export XUI_SERVICE_URL="${XUI_SERVICE_URL:-${xui_service_env:-http://127.0.0.1:3002}}"
-              export XUI_SERVICE_TOKEN="${XUI_SERVICE_TOKEN:-${xui_token_env:-$(openssl rand -hex 32)}}"
-              export REDIS_URL="${REDIS_URL:-${redis_env:-redis://127.0.0.1:6379}}"
-              xui_database_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_DATABASE_URL || process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL || '')")
-              export XUI_DATABASE_URL="${XUI_DATABASE_URL:-$xui_database_url}"
-              # Persist the derived values in .env: pm2 resurrect after a host reboot only restores the env of the
-              # last `pm2 save`, so values that exist only in this shell are lost and nexora falls back to local storage.
-              touch .env
-              [ -z "$(tail -c 1 .env)" ] || echo >> .env
-              for key in XUI_SERVICE_URL XUI_SERVICE_TOKEN REDIS_URL XUI_DATABASE_URL; do
-                if [ -n "$(printenv "$key")" ] && ! grep -q "^${key}=" .env; then
-                  printf '%s=%s\n' "$key" "$(printenv "$key")" >> .env
-                fi
-              done
-              if [ "$REDIS_URL" = "redis://127.0.0.1:6379" ] && ( ! command -v redis-cli > /dev/null 2>&1 || ! redis-cli ping > /dev/null 2>&1 ); then
-                if ! command -v redis-server > /dev/null 2>&1 && command -v sudo > /dev/null 2>&1 && command -v apt-get > /dev/null 2>&1; then
-                  sudo apt-get update -y && sudo apt-get install -y redis-server
-                fi
-                if command -v redis-server > /dev/null 2>&1 && ! redis-cli ping > /dev/null 2>&1; then
-                  if command -v systemctl > /dev/null 2>&1; then sudo systemctl enable --now redis-server || true; fi
-                  redis-server --daemonize yes || true
-                fi
-              fi
-            fi
-            xui_service_url=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(process.env.XUI_SERVICE_URL || '')")
-            if [ -n "$xui_service_url" ]; then
-              xui_service_host=$(node -e "require('./env').loadLocalEnv(); process.stdout.write(new URL(process.env.XUI_SERVICE_URL).hostname)")
-              if [ "$xui_service_host" = "127.0.0.1" ] || [ "$xui_service_host" = "localhost" ]; then
-              if pm2 describe nexora-xui > /dev/null 2>&1; then
-                pm2 restart nexora-xui --update-env
-              else
-                pm2 start xui-server.js --name nexora-xui
-                  pm2 save
-                fi
-              fi
-              xui_ready=false
-              for attempt in $(seq 1 12); do
-                if curl --fail --silent --max-time 5 "${xui_service_url%/}/health" > /dev/null; then
-                  xui_ready=true
-                  break
-                fi
-                sleep 5
-              done
-              if [ "$xui_ready" != "true" ]; then
-                pm2 logs nexora-xui --lines 50 --nostream || true
-                exit 1
-              fi
+            # The 3x-ui service was removed; its billing state is imported by the app on startup.
+            if pm2 describe nexora-xui > /dev/null 2>&1; then
+              pm2 delete nexora-xui
+              pm2 save
             fi
             # node-hub serves the machine/relay install commands and node configs from this checkout, so it
             # must restart with the new code too. Only hosts that already run it under pm2 are touched.
