@@ -1141,15 +1141,36 @@ async function main() {
     assert.strictEqual("resetDay" in xuiClientChoices.data.importPreview, false, "no calendar reset day is offered; traffic resets every 30 days from purchase");
     assert.deepStrictEqual((await database.query("SELECT row_to_json(p) AS value FROM catalog_v2_products p WHERE id=$1", [catalogV2Ids.product])).rows[0].value, catalogBeforeSync, "3x-ui sync must not write panel state back to V2 catalog data");
 
-    // Admin-created users are bound to a V2 plan spec (unlisted allowed); legacy tier payloads are rejected.
-    const adminLegacyCreate = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "admin-legacy", email: "admin-legacy@example.test", lineType: "self_hosted", activeGroup: "pro", duration: "monthly", actualPaid: 10 } });
-    assert.strictEqual(adminLegacyCreate.response.status, 400);
-    assert.match(adminLegacyCreate.data.error, /V2 商品规格/);
-    const adminCreated = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "admin-v2", email: "admin-v2@example.test", lineType: "self_hosted", optionId: hiddenOptionId, trafficTier: 1, purchasedAt: "2026-01-01", actualPaid: 5 } });
-    assert.strictEqual(adminCreated.response.status, 201, adminCreated.text);
+    // 新增用户 creates a plan-less account only; the plan is assigned through 人工收款 (unlisted specs
+    // allowed, any amount including 0), which creates and provisions the subscription user.
+    const adminCreateUser = async (email, { optionId, amount, wechatName } = {}) => {
+      const created = await request("/api/users", { method: "POST", cookie: adminCookie, body: { email, wechatName } });
+      assert.strictEqual(created.response.status, 201, created.text);
+      const order = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: created.data.accountId, optionId, amount } });
+      assert.strictEqual(order.response.status, 201, order.text);
+      assert.strictEqual(order.data.fulfillmentStatus, "fulfilled", order.text);
+      const user = await request(`/api/users/${order.data.userId}`, { cookie: adminCookie });
+      assert.strictEqual(user.response.status, 200, user.text);
+      return { ...user, account: created.data, order: order.data };
+    };
+    const adminInvalidCreate = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "admin-legacy", lineType: "self_hosted", activeGroup: "pro", duration: "monthly", actualPaid: 10 } });
+    assert.strictEqual(adminInvalidCreate.response.status, 400);
+    assert.match(adminInvalidCreate.data.error, /有效邮箱/);
+    const adminAccountOnly = await request("/api/users", { method: "POST", cookie: adminCookie, body: { email: "Admin-V2@Example.test", wechatName: "微信名" } });
+    assert.strictEqual(adminAccountOnly.response.status, 201, adminAccountOnly.text);
+    assert.deepStrictEqual([adminAccountOnly.data.registeredOnly, adminAccountOnly.data.accountStatus, adminAccountOnly.data.email, Boolean(adminAccountOnly.data.customerID)], [true, "invited", "admin-v2@example.test", true]);
+    assert.strictEqual(xuiClients.has("admin-v2@example.test"), false, "creating a user provisions no line");
+    assert.ok((await request("/api/users", { cookie: adminCookie })).data.some(item => item.id === adminAccountOnly.data.id), "the plan-less account is listed");
+    assert.strictEqual((await request("/api/users", { method: "POST", cookie: adminCookie, body: { email: "admin-v2@example.test" } })).response.status, 409, "one account per email");
+    const adminFreeOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: adminAccountOnly.data.accountId, optionId: hiddenOptionId, amount: 0 } });
+    assert.strictEqual(adminFreeOrder.response.status, 201, adminFreeOrder.text);
+    assert.deepStrictEqual([adminFreeOrder.data.fulfillmentStatus, adminFreeOrder.data.amount], ["fulfilled", 0], "a ¥0 manual payment assigns the plan");
+    // Like any sale it took a unit of the stock-limited product; give it back for the later stock checks.
+    await database.query("UPDATE catalog_v2_products SET stock = stock + 1 WHERE id=$1", [catalogV2Ids.product]);
+    const adminCreated = await request(`/api/users/${adminFreeOrder.data.userId}`, { cookie: adminCookie });
     assert.deepStrictEqual(
-      [adminCreated.data.v2ProductSnapshot.productId, adminCreated.data.v2ProductSnapshot.lineGroupId, adminCreated.data.currentProductSource, adminCreated.data.expiresAt, adminCreated.data.xuiTrafficLimitBytes, adminCreated.data.deviceLimit, removedPlanFields.filter(field => field in adminCreated.data)],
-      [catalogV2Ids.product, catalogV2Ids.group, "admin_create", "2026-01-31T00:00:00.000Z", 50 * 1024 ** 3, 2, []]
+      [adminCreated.data.v2ProductSnapshot.productId, adminCreated.data.v2ProductSnapshot.lineGroupId, adminCreated.data.currentProductSource, adminCreated.data.wechatName, adminCreated.data.xuiTrafficLimitBytes, adminCreated.data.deviceLimit, removedPlanFields.filter(field => field in adminCreated.data)],
+      [catalogV2Ids.product, catalogV2Ids.group, "manual_order", "微信名", 50 * 1024 ** 3, 2, []]
     );
     assert.deepStrictEqual(xuiClients.get("admin-v2@example.test").inboundIds, [1]);
 
@@ -1158,19 +1179,23 @@ async function main() {
     const preWalletRecharge = await request("/api/wallet/recharge", { method: "POST", cookie: preWalletCookie, body: { amount: 2 } });
     await request(`/api/payments/orders/${preWalletRecharge.data.id}/start`, { method: "POST", cookie: preWalletCookie, body: { channelCode: "100" } });
     await callback(preWalletRecharge.data, 1, "2.00", true);
-    const adminForWallet = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "admin-vip", email: "admin-vip@example.test", lineType: "self_hosted", optionId: hiddenOptionId, trafficTier: 1, purchasedAt: "2026-01-01", actualPaid: 5 } });
-    assert.strictEqual(adminForWallet.response.status, 201, adminForWallet.text);
+    // The customer already has an account, so 新增用户 refuses a second one and the sale is recorded on it.
+    assert.strictEqual((await request("/api/users", { method: "POST", cookie: adminCookie, body: { email: "admin-vip@example.test" } })).response.status, 409);
+    const preWalletAccountId = (await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "admin-vip@example.test").accountId;
+    const adminForWalletOrder = await request("/api/admin/manual-payments", { method: "POST", cookie: adminCookie, body: { accountId: preWalletAccountId, optionId: paymentOptionId, amount: 5 } });
+    assert.strictEqual(adminForWalletOrder.response.status, 201, adminForWalletOrder.text);
+    const adminForWallet = { data: { id: adminForWalletOrder.data.userId } };
     assert.deepStrictEqual(
       [(await request("/api/account/wallet", { cookie: preWalletCookie })).data.vipSpend, (await request(`/api/users/${adminForWallet.data.id}`, { cookie: adminCookie })).data.vipSpend],
       [7, 7],
       "the admin-recorded ¥5 is added to the ¥2 recharge"
     );
-    assert.strictEqual((await request(`/api/users/${adminForWallet.data.id}`, { method: "DELETE", cookie: adminCookie })).response.status, 200);
+    assert.strictEqual((await request(`/api/users/${adminForWallet.data.id}`, { method: "DELETE", cookie: adminCookie })).response.status, 400, "the plan was recorded on the customer's claimed account, which cannot be deleted");
     const adminCreatedBill = await database.query("SELECT data FROM app_records WHERE collection='bills' AND data->>'userId'=$1", [adminCreated.data.id]);
-    assert.deepStrictEqual(adminCreatedBill.rows.map(row => [row.data.type, row.data.amount]), [["initial", 5]]);
+    assert.deepStrictEqual(adminCreatedBill.rows.map(row => [row.data.type, row.data.amount]), [["initial", 0]]);
     const adminIdentityEdit = await request(`/api/users/${adminCreated.data.id}`, { method: "PUT", cookie: adminCookie, body: { wechatName: "renamed", duration: "yearly", expiresAt: "2030-01-01", activeGroup: "ultra" } });
     assert.strictEqual(adminIdentityEdit.response.status, 200, adminIdentityEdit.text);
-    assert.deepStrictEqual([adminIdentityEdit.data.wechatName, adminIdentityEdit.data.expiresAt, adminIdentityEdit.data.v2ProductSnapshot], ["renamed", "2026-01-31T00:00:00.000Z", adminCreated.data.v2ProductSnapshot], "editing a user must not touch the plan binding");
+    assert.deepStrictEqual([adminIdentityEdit.data.wechatName, adminIdentityEdit.data.expiresAt, adminIdentityEdit.data.v2ProductSnapshot], ["renamed", adminCreated.data.expiresAt, adminCreated.data.v2ProductSnapshot], "editing a user must not touch the plan binding");
     const adminRenewal = await request(`/api/users/${adminCreated.data.id}/renew`, { method: "POST", cookie: adminCookie, body: { actualPaid: 1, duration: "monthly" } });
     assert.strictEqual(adminRenewal.response.status, 400);
     assert.match(adminRenewal.data.error, /已停用/);
@@ -1754,7 +1779,9 @@ async function main() {
     assert.strictEqual((await request(rebindPath, { method: "POST", cookie: adminCookie, body: { email: "buyer@example.test" } })).response.status, 200);
     assert.ok(!("claimMail" in rebound.data), "a claimed account keeps its password and gets no claim mail");
 
-    // Rebinding an unclaimed user restarts the claim flow under the new email; a failed mail keeps the rebind.
+    // Rebinding a user whose account is not claimed yet restarts the claim flow under the new email;
+    // a failed mail keeps the rebind. (Created before mail is mocked, so creation sends none.)
+    const unclaimedCreate = await adminCreateUser("rebind-unclaimed@example.test", { optionId: paymentOptionId, amount: 1 });
     const notifierForRebind = require("./notifier");
     const realRebindMailer = { isMailConfigured: notifierForRebind.isMailConfigured, sendMail: notifierForRebind.sendMail };
     const rebindMails = [];
@@ -1763,11 +1790,9 @@ async function main() {
       if (failRebindMail) throw new Error("simulated mail outage");
       rebindMails.push(mail);
     } });
-    const unclaimedCreate = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "rebind-unclaimed", email: "rebind-unclaimed@example.test", lineType: "self_hosted", optionId: paymentOptionId, purchasedAt: "2026-01-01", actualPaid: 1 } });
-    assert.strictEqual(unclaimedCreate.response.status, 201, unclaimedCreate.text);
     try {
       const unclaimedPath = `/api/users/${unclaimedCreate.data.id}/email`;
-      assert.strictEqual(unclaimedCreate.data.accountStatus, "unclaimed");
+      assert.strictEqual(unclaimedCreate.data.accountStatus, "invited");
       const unclaimedRebind = await request(unclaimedPath, { method: "POST", cookie: adminCookie, body: { email: "Rebind-Claim@Example.test" } });
       assert.strictEqual(unclaimedRebind.response.status, 200, unclaimedRebind.text);
       assert.deepStrictEqual([unclaimedRebind.data.email, unclaimedRebind.data.accountStatus, unclaimedRebind.data.claimMail], ["rebind-claim@example.test", "invited", { sent: true, to: "rebind-claim@example.test" }]);
@@ -1786,7 +1811,7 @@ async function main() {
     } finally {
       Object.assign(notifierForRebind, realRebindMailer);
     }
-    const failedMailUser = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "rebind-mail-down", email: "rebind-mail-down@example.test", lineType: "self_hosted", optionId: paymentOptionId, purchasedAt: "2026-01-01", actualPaid: 1 } });
+    const failedMailUser = await adminCreateUser("rebind-mail-down@example.test", { optionId: paymentOptionId, amount: 1 });
     Object.assign(notifierForRebind, { isMailConfigured: () => true, sendMail: async () => { throw new Error("simulated mail outage"); } });
     try {
       const failedMailRebind = await request(`/api/users/${failedMailUser.data.id}/email`, { method: "POST", cookie: adminCookie, body: { email: "rebind-mail-down2@example.test" } });
@@ -1799,9 +1824,8 @@ async function main() {
     // An admin plan change may pick any period: the expiry is recomputed as if the new spec had been bought on
     // the purchase date, gifted days are kept, rollback restores it, and a lifetime user starts at the purchase date.
     const addDays = (value, days) => { const date = new Date(value); date.setUTCDate(date.getUTCDate() + days); return date.toISOString(); };
-    const planPurchasedAt = addDays(new Date().toISOString().slice(0, 10), -10);
-    const planUser = await request("/api/users", { method: "POST", cookie: adminCookie, body: { userId: "plan-period", email: "plan-period@example.test", lineType: "self_hosted", optionId: paymentOptionId, purchasedAt: planPurchasedAt, actualPaid: 1 } });
-    assert.strictEqual(planUser.response.status, 201, planUser.text);
+    const planUser = await adminCreateUser("plan-period@example.test", { optionId: paymentOptionId, amount: 1 });
+    const planPurchasedAt = planUser.data.purchasedAt;
     assert.strictEqual(planUser.data.expiresAt, addDays(planPurchasedAt, 30));
     const giftPreview = await request(`/api/users/${planUser.data.id}/gift`, { method: "POST", cookie: adminCookie, body: { days: 5, preview: true } });
     assert.deepStrictEqual([giftPreview.response.status, giftPreview.data.beforeExpiresAt, giftPreview.data.afterExpiresAt, giftPreview.data.plan?.productType], [200, addDays(planPurchasedAt, 30), addDays(planPurchasedAt, 35), "recurring_plan"], giftPreview.text);

@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-03
-- Current Objective: Node Hub multipliers per node only: every hub node billed under hub-m<machine>-n<node>, machine multiplier removed and migrated
+- Last Updated: 2026-11-04
+- Current Objective: 新增用户与分配套餐解耦，node-hub 作为唯一开通目标 (node-hub-first-user-provisioning)
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -566,8 +566,12 @@
 
 - 2026-11-03: npm run verify, npm run verify:harness, git diff --check pass; /node-hub nodes+machines and /xui-monitor verified in browser with no console errors
 
+- 2026-11-04: npm run check, test:hub, verify:fast, verify:harness pass; browser verified /users/detail desktop and 375px with no console errors
+
+- 2026-11-04: npm run verify、verify:fast、verify:harness、git diff --check 通过；浏览器（隔离 app+node-hub）新增用户→¥0 人工收款→node-hub 开通，console/page errors 为空
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `docs/agent/node-hub.md`, `feature_list.json`, `node-hub/app.js`, `node-hub/store.js`, `scripts/e2e-xboard-node.js`, `server.js`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/xui-monitor.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`, `test-xui-traffic.js`, `xui-traffic.js`
+- Files: `PROGRESS.md`, `feature_list.json`, `node-hub/store.js`, `server.js`, `src/components/features/details.tsx`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/user-form-dialog.tsx`, `src/components/features/users.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`, `test-payment.js`, `src/components/features/online-ip-list.tsx`
 - Known risks: none
-- Recommended Next Step: Commit and deploy when asked (app + node-hub together); then on bage hk add a second node per relay (aws jp / gomami hk) and set gomami to 2. scripts/e2e-xboard-node.js not run (needs binaries)
+- Recommended Next Step: 用户确认后提交；上线前确认生产 NODE_HUB_URL/TOKEN 已配置（否则仍走 3x-ui）

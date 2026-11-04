@@ -42,10 +42,12 @@ async function readBody(req) {
 function mockXui() {
   const clients = new Map();
   const requests = [];
-  const state = { inbounds: true };
+  const state = { inbounds: true, clientsDown: false };
   const server = http.createServer(async (req, res) => {
     const body = req.method === "GET" ? {} : await readBody(req);
     requests.push({ url: req.url, body });
+    // A panel that cannot be written (down, or refusing clients): app users must not depend on it.
+    if (state.clientsDown && req.url.startsWith("/panel/api/clients/") && req.url !== "/panel/api/clients/list") return sendJson(res, 500, { success: false, msg: "panel unavailable" });
     if (req.url.startsWith("/clash/")) {
       // Like 3x-ui, a client with no inbound left has no subscription.
       if (!state.inbounds) return sendJson(res, 404, { success: false });
@@ -156,7 +158,10 @@ async function child(mode) {
     id: "hub-app-user", userId: "hub-app-user", email: "hubapp@example.test", customerID: "900300", lineType: "self_hosted", subscriptionId: "",
     subscriptionToken: crypto.randomBytes(16).toString("hex"),
     purchasedAt: new Date(now - 3600000).toISOString(), expiresAt: new Date(now + 30 * 86400000).toISOString(), duration: "monthly",
-    v2ProductSnapshot: { productId: "hub-plan", productType: "recurring_plan", periodId: "30d", lineGroupId: "nh-app-test", name: "Hub", durationDays: 30, trafficBytes: 20 * MiB, deviceLimit: 2 }
+    v2ProductSnapshot: { productId: "hub-plan", productType: "recurring_plan", periodId: "30d", lineGroupId: "nh-app-test", name: "Hub", durationDays: 30, trafficBytes: 20 * MiB, deviceLimit: 2 },
+    // Next to 3x-ui this is a customer who already has a 3x-ui client (a subId), so their panel
+    // client is kept in step; users without one are node-hub only.
+    ...(mode === "mixed" ? { xuiSubId: "mainsub" } : {})
   };
   await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', $1, 0, $2::jsonb)", [user.id, JSON.stringify(user)]);
   // A customer provisioned on 3x-ui before node-hub was configured: the full entitlement sync
@@ -166,6 +171,20 @@ async function child(mode) {
     ...user, id: "hub-legacy-user", userId: "hub-legacy-user", email: "legacy@example.test", customerID: "900301",
     subscriptionToken: crypto.randomBytes(16).toString("hex"), xuiClientEmail: "legacy@example.test", xuiSubId: "legacysub"
   } : null;
+  // A customer still on the upstream line (never migrated to 3x-ui), whose email a stale panel
+  // client already uses: paying for a plan must move them to node-hub, not to 3x-ui.
+  const upstreamUser = xui ? {
+    id: "hub-upstream-user", userId: "hub-upstream-user", email: "upstream@example.test", customerID: "900302", lineType: "upstream", subscriptionId: "upstream-sub",
+    subscriptionToken: crypto.randomBytes(16).toString("hex"), purchasedAt: new Date(now - 40 * 86400000).toISOString(), expiresAt: new Date(now - 86400000).toISOString(), duration: "monthly",
+    v2ProductSnapshot: user.v2ProductSnapshot
+  } : null;
+  if (upstreamUser) {
+    xui.clients.set("upstream@example.test", { email: "upstream@example.test", id: 8, uuid: crypto.randomUUID(), subId: "stale", enable: true, inboundIds: [1] });
+    await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', $1, 2, $2::jsonb)", [upstreamUser.id, JSON.stringify(upstreamUser)]);
+    // Invited to claim their account but not claimed yet: 人工收款 must still be possible.
+    const upstreamAccount = { id: "hub-upstream-account", customerID: upstreamUser.customerID, email: upstreamUser.email, passwordHash: "", status: "invited", linkedUserId: upstreamUser.id, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() };
+    await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('accounts', $1, 0, $2::jsonb)", [upstreamAccount.id, JSON.stringify(upstreamAccount)]);
+  }
   if (legacyUser) {
     xui.clients.set(legacyUser.xuiClientEmail, { email: legacyUser.xuiClientEmail, id: 7, uuid: legacyUuid, subId: "legacysub", enable: true, inboundIds: [1] });
     await database.query("INSERT INTO app_records (collection, id, position, data) VALUES ('users', $1, 1, $2::jsonb)", [legacyUser.id, JSON.stringify(legacyUser)]);
@@ -323,6 +342,10 @@ async function child(mode) {
     assert.equal(billed.xuiWeightedTraffic.usedBytes, 10 * MiB, "hub traffic is billed");
     assert.equal(billed.xuiWeightedTraffic.depleted, false);
     assert.equal(billed.xuiLastTraffic.connectedIpCount, 1, "hub IPs count as connected IPs");
+    const hubIps = billed.xuiOnlineIps.nodes.filter(item => item.source === "hub");
+    assert.deepEqual(hubIps.map(item => item.ips), [["203.0.113.8"]], `the user page lists online IPs per hub node: ${JSON.stringify(billed.xuiOnlineIps)}`);
+    assert.ok(hubIps[0].name.includes("·"), `hub node rows are named machine · node: ${hubIps[0].name}`);
+    assert.equal(billed.xuiOnlineIps.totalIps, billed.xuiOnlineIps.nodes.some(item => item.source === "xui") ? new Set(billed.xuiOnlineIps.nodes.flatMap(item => item.ips)).size : 1);
     const presence = await api("/api/xui-presence");
     assert.ok(presence.onlineEmails.includes("hubapp@example.test"));
     assert.deepEqual(presence.onlineByGuid[`hub-m${machine.id}`], ["hubapp@example.test"]);
@@ -404,7 +427,7 @@ async function child(mode) {
     const buyerHub = await hubStore.getUser(buyer.id);
     buyerUuid = buyerHub.uuid;
     assert.deepEqual([buyerHub.enabled, buyerHub.nodeIds], [true, [node.id]], "a purchased plan grants the line group's hub node");
-    if (xui) assert.equal(buyerHub.uuid, xui.clients.get("hub-buyer@example.test").uuid, "with the 3x-ui client's uuid");
+    if (xui) assert.equal(xui.clients.has("hub-buyer@example.test"), false, "a new buyer gets no 3x-ui client next to node-hub");
     assert.ok(await onNode(buyerHub.uuid));
     // The first billing run after a purchase settles the new cycle's baseline; usage counts after it.
     await runJob(billingJob);
@@ -447,6 +470,56 @@ async function child(mode) {
     assert.match((await manualPayment({ accountId: "no-such-account", product: "traffic_pack" })).message, /400/);
     await runJob("node-hub-sync");
     assert.equal(await onNode(buyerHub.uuid), false, "an expired plan is removed from the node by the entitlement sync");
+
+    if (xui) {
+      // Node-hub is the only provisioning target for users without a 3x-ui client: admin-created
+      // users and customers who never moved to 3x-ui go straight to node-hub, even when the panel
+      // already holds a same-email client or cannot be written at all.
+      xui.clients.set("hub-new@example.test", { email: "hub-new@example.test", id: 9, uuid: crypto.randomUUID(), subId: "stale-new", enable: true, inboundIds: [1] });
+      xui.state.clientsDown = true;
+      const panelWrites = () => xui.requests.filter(request => /clients\/(add|update)/.test(request.url)).length;
+      const panelWritesBefore = panelWrites();
+      // 新增用户 creates the account only; 人工收款 (here ¥0) assigns the plan and provisions it.
+      const createdAccount = await api("/api/users", { method: "POST", body: { email: "hub-new@example.test", wechatName: "new" } }).catch(error => error);
+      assert.ok(!(createdAccount instanceof Error), `admin user creation: ${createdAccount.message}`);
+      assert.deepEqual([createdAccount.registeredOnly, createdAccount.accountStatus], [true, "invited"]);
+      const createdOrder = await manualPayment({ accountId: createdAccount.accountId, optionId: "v2:nh-app-plan:30d", amount: 0 });
+      assert.equal(createdOrder.fulfillmentStatus, "fulfilled", `plan assignment with 3x-ui unavailable: ${createdOrder.message || JSON.stringify(createdOrder)}`);
+      const created = (await api("/api/users")).find(item => item.id === createdOrder.userId);
+      assert.equal(created.wechatName, "new", "the profile entered at creation reaches the user");
+      const createdHub = await hubStore.getUser(created.id);
+      assert.deepEqual([createdHub?.enabled, createdHub?.nodeIds], [true, [node.id]], "a new user is provisioned on node-hub");
+      assert.ok(await onNode(createdHub.uuid), "and is on the hub node at once");
+      assert.equal(created.xuiSubId || "", "", "with no 3x-ui client");
+
+      const upstreamAccountId = (await api("/api/users")).find(item => item.id === upstreamUser.id)?.accountId;
+      assert.equal(upstreamAccountId, "hub-upstream-account");
+      const upstreamOrder = await manualPayment({ accountId: upstreamAccountId, optionId: "v2:nh-app-plan:30d" });
+      assert.equal(upstreamOrder.fulfillmentStatus, "fulfilled", `manual payment for an un-migrated user: ${upstreamOrder.message || JSON.stringify(upstreamOrder)}`);
+      const migrated = (await api("/api/users")).find(item => item.id === upstreamUser.id);
+      assert.equal(migrated.lineType, "self_hosted");
+      const migratedHub = await hubStore.getUser(upstreamUser.id);
+      assert.deepEqual([migratedHub?.enabled, migratedHub?.nodeIds], [true, [node.id]], "the un-migrated user is moved to node-hub");
+      assert.ok(await onNode(migratedHub.uuid));
+      assert.equal(panelWrites(), panelWritesBefore, "neither touches 3x-ui");
+
+      // Their subscription carries the hub nodes, and billing counts their hub traffic without
+      // flagging a missing 3x-ui client.
+      const newSub = await fetch(`${origin}/sub/${created.subscriptionToken}`, { headers: { "user-agent": "clash.meta" } });
+      assert.equal(newSub.status, 200, await newSub.clone().text());
+      assert.ok((require("js-yaml").load(subconverterInput).proxies || []).some(proxy => proxy.name === "Hub 01"));
+      xui.state.clientsDown = false;
+      await runJob(billingJob);
+      await nodeClient.report({ traffic: { [createdHub.id]: [0, 2 * MiB] } });
+      await runJob(billingJob);
+      const createdBilled = (await api("/api/users")).find(item => item.id === created.id);
+      assert.equal(createdBilled.xuiWeightedTraffic?.rawUsedBytes, 2 * MiB, "a hub-only user's traffic is billed next to 3x-ui");
+      assert.notEqual(createdBilled.xuiClientPresent, false, `not flagged as a missing 3x-ui client: ${createdBilled.xuiLastError}`);
+      await runJob("node-hub-sync");
+      assert.ok(await onNode(createdHub.uuid), "the full entitlement sync keeps a hub-only user");
+      assert.equal(xui.clients.get("hub-new@example.test").subId, "stale-new", "the stale panel client is left alone");
+      assert.equal(panelWrites(), panelWritesBefore, "the panel sync does not create clients for hub-only users");
+    }
 
     // Disabling a hub inbound.
     await api(`/api/xui-inbounds/${hubRow.id}/set-enable`, { method: "POST", body: { enable: false } });

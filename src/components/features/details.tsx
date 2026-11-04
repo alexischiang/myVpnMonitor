@@ -13,6 +13,7 @@ import { useData } from "@/components/features/data-provider"
 import { EmptyState, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
 import { UserBillsCard } from "@/components/features/user-bills-card"
 import { NodeTrafficList } from "@/components/features/node-traffic-list"
+import { OnlineIpList } from "@/components/features/online-ip-list"
 import { BackButton } from "@/components/features/back-button"
 import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalogPurchaseOptionsFor, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import { XuiClientDialog } from "@/components/features/xui-client-dialog"
@@ -634,7 +635,9 @@ export function UserDetailPage() {
   }
 
   function openManualPaymentDialog() {
-    const optionId = catalogPurchaseOptions.find(option => option.value === user.currentOptionId)?.value || catalogPurchaseOptions[0]?.value || ""
+    // An account without a plan (e.g. just created by 新增用户) can only buy a plan, so start on one.
+    const defaults = user.registeredOnly || !user.v2ProductSnapshot ? catalogPlanOptions : catalogPurchaseOptions
+    const optionId = catalogPurchaseOptions.find(option => option.value === user.currentOptionId)?.value || defaults[0]?.value || catalogPurchaseOptions[0]?.value || ""
     setManualPaymentOption(optionId)
     setManualPaymentOpen(true)
     if (optionId) void loadManualPaymentQuote(optionId)
@@ -644,8 +647,9 @@ export function UserDetailPage() {
     event.preventDefault()
     if (!manualPaymentQuote) return
     const amount = Number(manualPaymentAmount)
-    if (!/^\d+(\.\d{1,2})?$/.test(manualPaymentAmount.trim()) || amount <= 0 || amount > 10000) {
-      setManualPaymentError("请输入 0.01 至 10,000.00 元，最多两位小数。")
+    // 0 assigns the plan without collecting money.
+    if (!/^\d+(\.\d{1,2})?$/.test(manualPaymentAmount.trim()) || amount < 0 || amount > 10000) {
+      setManualPaymentError("请输入 0 至 10,000.00 元，最多两位小数。")
       return
     }
     setManualPaymentSaving(true)
@@ -803,8 +807,8 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               <Info label="钱包余额" value={walletBalance === null ? "-" : formatMoney(walletBalance)} />
               {user.lineType === "self_hosted" ? <Info label="节点来源" value={NODE_SOURCE_LABELS[user.nodeSource || "mix"]} /> : null}
             </div>
-          </div>{user.registeredOnly && !["active", "disabled"].includes(user.accountStatus || "") ? null : <ProfileActions items={[
-            ...(user.accountStatus === "active" && user.accountId ? [{ label: "人工收款", icon: <Banknote />, onSelect: openManualPaymentDialog }] : []),
+          </div>{user.registeredOnly && !["active", "disabled", "invited"].includes(user.accountStatus || "") ? null : <ProfileActions items={[
+            ...(["active", "invited"].includes(user.accountStatus || "") && user.accountId ? [{ label: "人工收款", icon: <Banknote />, onSelect: openManualPaymentDialog }] : []),
             ...(user.registeredOnly ? [] : [
               { label: "设置用户类型", icon: <UserCog />, onSelect: openUserTypeDialog },
               ...(user.lineType === "self_hosted" ? [] : [{ label: "切换到自研线路", icon: <Network />, onSelect: () => setXuiOpen(true) }]),
@@ -866,6 +870,16 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
                 <Info label="迁移时间" value={user.xuiMigratedAt ? formatDateTime(user.xuiMigratedAt) : "-"} />
                 {user.xuiMigrationError ? <Info label="迁移错误" value={user.xuiMigrationError} /> : null}
               </div></Card>
+            {user.lineType === "self_hosted" ? <Card className="@4xl:col-start-2" title="在线IP" description="每个节点单独计数" headerAction={<Badge tone="neutral"><span className="tabular-nums">限制 {user.deviceLimit ? user.deviceLimit : "不限"}</span></Badge>}><div className="grid gap-4">
+                {user.xuiOnlineIps ? <>
+                  <div className="grid gap-4 sm:grid-cols-2 @4xl:grid-cols-2">
+                    <Info label="在线IP" value={<span className="tabular-nums">{user.xuiOnlineIps.totalIps}</span>} />
+                    <Info label="在线节点" value={<span className="tabular-nums">{user.xuiOnlineIps.nodes.length}</span>} />
+                  </div>
+                  {user.xuiOnlineIps.nodes.length ? <><Separator /><OnlineIpList nodes={user.xuiOnlineIps.nodes} limit={user.deviceLimit || 0} /></> : null}
+                  <p className="text-xs text-muted-foreground">最后同步：{formatDateTime(user.xuiOnlineIps.checkedAt)}</p>
+                </> : <EmptyState title="暂无在线IP数据" description="下一次流量同步后显示。" />}
+              </div></Card> : null}
           </TabsContent>
           <TabsContent value="catalog-v2" className="grid min-w-0 gap-4">
             {user.v2ProductSnapshot ? <>

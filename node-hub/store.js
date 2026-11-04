@@ -729,11 +729,14 @@ class NodeHubStore {
     const users = {};
     const nodes = {};
     for (const row of result.rows) {
-      const entry = users[row.user_key] ||= { email: row.email, lastOnlineAt: iso(row.last_online_at), online: false, ips: [], nodeIds: [] };
+      const entry = users[row.user_key] ||= { email: row.email, lastOnlineAt: iso(row.last_online_at), online: false, ips: [], nodeIds: [], ipsByNode: {} };
       if (row.node_id !== null && row.node_id !== undefined) {
+        const nodeIps = Array.isArray(row.ips) ? row.ips : [];
         entry.online = true;
         entry.nodeIds.push(row.node_id);
-        entry.ips = [...new Set([...entry.ips, ...(Array.isArray(row.ips) ? row.ips : [])])];
+        // Per node as well: the xray kernel enforces the device limit on each node separately.
+        entry.ipsByNode[row.node_id] = nodeIps;
+        entry.ips = [...new Set([...entry.ips, ...nodeIps])];
         (nodes[row.node_id] ||= []).push(row.user_key);
       }
     }
