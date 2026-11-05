@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-04
-- Current Objective: 彻底移除 3x-ui，全部用户接入 node-hub (remove-3x-ui)
+- Last Updated: 2026-11-05
+- Current Objective: 邀请注册自动发放试用套餐，限制可在通用设置配置 (registration-trial-plan)
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -572,8 +572,16 @@
 
 - 2026-11-04: npm run check/test、隔离 schema 下 checkout/payment/wallet/catalog-v2/node-hub/node-hub-app 全部通过；浏览器（隔离 app+node-hub）Node Hub 机器 VPS 成本、用户详情、入站管理、同步任务、旧链接跳转无控制台错误
 
+- 2026-11-05: npm run verify、verify:harness、git diff --check 通过；隔离 app+node-hub 浏览器验证后台设置、邀请注册、试用总览、升级结账和 375px，无页面错误
+
+- 2026-11-05: npm run verify、verify:harness、git diff --check 通过；隔离 app+node-hub 浏览器验证试用套餐设置页、校验提示、同 IP 仅发一次和 375px
+
+- 2026-11-05: 生产 nginx 只读检查：webprovider.top 用 $remote_addr 覆盖 X-Forwarded-For，real_ip 仅信任 Cloudflare 网段，应用只监听 127.0.0.1:3000，客户端无法伪造
+
+- 2026-11-05: IPv6 按 /64 计数；npm run verify、verify:harness、git diff --check 通过；/general-settings?section=trial 桌面与 375px 无控制台错误
+
 ## Next Session
 
-- Files: `.env.example`, `.github/workflows/deploy.yml`, `AGENTS.md`, `PRODUCT.md`, `README.md`, `database.js`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `env.js`, `feature_list.json`, `main-app.js`, `node-hub/bridge.js`, `node-hub/store.js`, `node-hub/xui-import.js`, `nodemon.json`, `package-lock.json`, `package.json`, `redis.js`, `scripts/dev-all.js`, `scripts/e2e-xboard-node.js`, `scripts/migrate-xui-data.js`, `scripts/migrate-xui-to-node-hub.js`, `scripts/seed-local-test-data.js`, `scripts/setup-local-xui-db.js`, `scripts/sync-neon-to-postgres.js`, `server.js`, `src/components/features/bills.tsx`, `src/components/features/catalog-v2.tsx`, `src/components/features/dashboard.tsx`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/online-ip-list.tsx`, `src/components/features/pricing-settings.tsx`, `src/components/features/product-buyer-sync.tsx`, `src/components/features/sync-jobs.tsx`, `src/components/features/users.tsx`, `src/components/features/xui-client-dialog.tsx`, `src/components/features/xui-inbounds.tsx`, `src/components/features/xui-logs.tsx`, `src/components/features/xui-monitor.tsx`, `src/main.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-node-hub.js`, `test-payment.js`, `test-xui-service.js`, `test-xui-traffic.js`, `test.js`, `xui-app.js`, `xui-audit.js`, `xui-client.js`, `xui-database.js`, `xui-server.js`, `xui-traffic.js`, `src/components/features/node-hub-machine-cost.tsx`
+- Files: `PROGRESS.md`, `commerce/orders.js`, `feature_list.json`, `server.js`, `src/components/features/account-onboarding.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/general-settings.tsx`, `src/components/features/public-pages.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 用户确认后提交；部署后检查 nexora 启动日志与 app_records xuiBilling 已导入（updated_at 新于 2026-10-18），再从生产 .env 删除 XUI_* 变量；可逐台下线 VPS 上残留的 3x-ui/xray
+- Recommended Next Step: 用户确认后提交并部署；上线后建未公开销售的 ¥0 试用商品和独立线路组，到 通用设置 → 试用套餐 开启

@@ -44,7 +44,7 @@ import { PasswordField } from "@/components/arc/password-field/password-field"
 import { Card as ArcCard } from "@/components/arc/card/card"
 import { SimpleTable } from "@/components/features/simple-table"
 // Plan figures are derived on the server from planSnapshot, the user's only plan source.
-type Subscription = { status: string; lineGroupId?: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; planSnapshot?: PlanSnapshot | null; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number; early?: boolean } | null; queuedPlan?: { startsAt: string; expiresAt: string; planSnapshot: PlanSnapshot | null } | null }
+type Subscription = { status: string; lineGroupId?: string; lineType?: "upstream" | "self_hosted"; planExpiresAt?: string; expiresAt: string; giftedDays?: number; purchasedAt: string; duration: string; traffic: string; planTrafficBytes?: number; planSnapshot?: PlanSnapshot | null; isTrial?: boolean; devices: number | string; subscriptionUrl: string; vipLevel?: string; productName?: string; renewal?: { optionId: string; trafficTier: number; early?: boolean } | null; queuedPlan?: { startsAt: string; expiresAt: string; planSnapshot: PlanSnapshot | null } | null }
 type SelfHostedTraffic = { status: string; usedBytes: number; totalBytes: number; remainingBytes: number | null; usagePercent: number | null; connectedIpCount: number | null; ipLimit: number; nextResetAt: string; lastSyncedAt: string; nodeUsage: AccountNodeUsage; stale?: boolean; error?: string }
 type NodeStatusSummary = { configured: boolean; totalNodes: number; onlineNodes: number; offlineNodes: number; checkedAt: string }
 type IpInfo = { ip: string; asn?: number; asOrganization?: string; country?: string; countryCode?: string; region?: string; regionCode?: string; city?: string; timezone?: string; fraudScore?: number; isResidential?: boolean; isBroadcast?: boolean }
@@ -232,7 +232,7 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
   const { subscription, status } = plan
   // Plan-only figures: traffic packs and admin gifts show in the traffic usage card, not here.
   const planTrafficGb = subscription?.planTrafficBytes ? Number((subscription.planTrafficBytes / 1024 ** 3).toFixed(2)) : 0
-  const planQuota = subscription?.planSnapshot?.trafficBytes === null ? "不限" : planTrafficGb ? `${planTrafficGb}GB${subscription?.duration === "lifetime" ? "" : "/月"}` : subscription?.traffic || "-"
+  const planQuota = subscription?.planSnapshot?.trafficBytes === null ? "不限" : planTrafficGb ? `${planTrafficGb}GB${subscription?.duration === "lifetime" || subscription?.isTrial ? "" : "/月"}` : subscription?.traffic || "-"
   const canBuyHomeIp = account.homeIp?.enabled && status === "active" && subscription?.duration !== "lifetime"
   const homeIpStartingPrice = Math.min(...(account.homeIp?.regions || []).map(region => Number(region.price)).filter(Number.isFinite))
   const expiresAtTime = Date.parse(subscription?.expiresAt || "")
@@ -244,12 +244,14 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
   const earlyRenewalUrl = subscription && renewal?.early ? renewalUrl : ""
   const queuedPlan = subscription?.queuedPlan
   const queuedParts = queuedPlan ? planSnapshotParts(queuedPlan.planSnapshot) : null
-  const otherAction = subscription && status === "depleted" ? "traffic" : canBuyHomeIp ? "home-ip" : ""
+  const otherAction = subscription?.isTrial ? "" : subscription && status === "depleted" ? "traffic" : canBuyHomeIp ? "home-ip" : ""
 
   // Current or expired plan as "NAME (period-traffic/月)"; the period and traffic part is set smaller.
   const shownPlan = subscription ?? account.subscription
   // The headline name is the snapshot's line group; period and traffic come from the same snapshot.
-  const nameParts = shownPlan ? { ...planSnapshotParts(shownPlan.planSnapshot), name: shownPlan.lineGroupId?.toUpperCase() || "-" } : null
+  const snapshotParts = shownPlan ? planSnapshotParts(shownPlan.planSnapshot) : null
+  // A trial shows its own name and has no monthly quota.
+  const nameParts = shownPlan && snapshotParts ? shownPlan.isTrial ? { ...snapshotParts, perMonth: false } : { ...snapshotParts, name: shownPlan.lineGroupId?.toUpperCase() || "-" } : null
   const planDetail = nameParts ? `${nameParts.duration}-${nameParts.traffic}${nameParts.perMonth ? "/月" : ""}` : ""
   // No card title: plan name and grey facts share the top row; the headline figure sits bottom-left, the action bottom-right.
   return <BentoCard id="subscription" tone="yellow" span={span} rowSpan={rowSpan} className="scroll-mt-16">
@@ -265,7 +267,8 @@ function PlanDetailsCard({ account, plan, span, rowSpan }: { account: Overview; 
       <div className={cn("flex items-end justify-between gap-4", !subscription && "flex-wrap gap-y-3")}>
         {subscription ? subscription.duration === "lifetime" ? <p className="shrink-0 text-3xl font-semibold">永久有效</p> : <p className="flex shrink-0 items-baseline gap-2"><strong className="text-3xl font-semibold tabular-nums">{remainingDays ?? "-"}</strong><span className="text-sm">天后到期</span></p>
           : <p className="max-w-80 text-sm">{renewalUrl ? `套餐已于 ${formatDate(account.subscription?.expiresAt)} 到期，续费后恢复使用。` : "开通套餐后，这里会显示到期时间、流量配额和在线IP数量。"}</p>}
-        {subscription ? earlyRenewalUrl || queuedPlan || otherAction ? <div className="flex min-w-0 flex-col items-end gap-2 text-right">
+        {subscription?.isTrial ? <BentoButton asChild size="lg"><Link to="/account/plans"><PackagePlus />升级正式套餐</Link></BentoButton>
+          : subscription ? earlyRenewalUrl || queuedPlan || otherAction ? <div className="flex min-w-0 flex-col items-end gap-2 text-right">
             {earlyRenewalUrl ? <BentoButton asChild size="lg"><Link to={earlyRenewalUrl}><RefreshCw />提前续费</Link></BentoButton>
               : queuedPlan && queuedParts ? <p className="text-sm text-muted-foreground tabular-nums">已续费 {queuedParts.duration}-{queuedParts.traffic}{queuedParts.perMonth ? "/月" : ""}，{formatDate(queuedPlan.startsAt)} 生效</p> : null}
             {/* Traffic used up: the plan is still active, so the next step is a traffic pack. */}
@@ -290,7 +293,7 @@ function TrafficUsageCard({ plan, trafficError, nextResetAt, span, rowSpan }: { 
     <div className="grid flex-1 content-end gap-2">
       {usedGb == null || !limitGb ? null : <UsageMeter label="流量使用" unit="GB" decimals={1} limit={limitGb} segments={[{ id: "used", label: "已用", value: usedGb }]} />}
       {trafficError ? <p className="truncate text-xs text-muted-foreground" title={trafficError}>流量同步暂不可用：{trafficError}</p>
-        : <p className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground"><span className="tabular-nums">已用 {trafficUsed} / {subscription?.planSnapshot?.trafficBytes === null ? `${UNLIMITED_TRAFFIC_DISPLAY_GB} GB` : trafficTotal}</span>{nextResetAt ? <span>{formatDate(nextResetAt)} 重置</span> : null}</p>}
+        : <p className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground"><span className="tabular-nums">已用 {trafficUsed} / {subscription?.planSnapshot?.trafficBytes === null ? `${UNLIMITED_TRAFFIC_DISPLAY_GB} GB` : trafficTotal}</span>{nextResetAt && !subscription?.isTrial ? <span>{formatDate(nextResetAt)} 重置</span> : null}</p>}
     </div>
   </BentoCard>
 }
@@ -599,7 +602,7 @@ export function AccountReferralPage() {
     <BentoGrid>
       <BentoCard tone="green" span={5} rowSpan={2} className="md:col-span-8" title="邀请好友，一起加速" action={<BentoCardBadge icon={Banknote}>获取{data.referralRate}%返利</BentoCardBadge>}>
         <div className="flex flex-1 flex-col justify-between gap-3">
-          <p className="text-sm">好友通过你的链接注册并购买套餐后，你将获得实付金额 {data.referralRate}% 的返利{data.recurringReferral ? "，好友每次购买都返" : "（仅限首次购买）"}，到账后可直接抵扣。</p>
+          <p className="text-sm">好友通过你的链接注册并购买套餐后，你将获得实付金额 {data.referralRate}% 的返利{data.recurringReferral ? "，好友每次购买都返" : "（仅限首笔现金订单）"}，到账后可直接抵扣。</p>
           <div className="grid gap-2">
             <InviteCopyField id="invite-code" label="邀请码" value={data.code} />
             <InviteCopyField id="invite-url" label="邀请链接" value={inviteUrl} />

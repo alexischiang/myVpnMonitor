@@ -451,6 +451,8 @@ export type SalesSettings = {
   id: string
   registrationMode: "open" | "invite_only" | "disabled"
   onboardingEnabled: boolean
+  /** Plan granted automatically to accounts registered with an invite code. */
+  trial: { enabled: boolean; productId: string; ipLimit: number; inviterDailyLimit: number; speedLimitMbps: number }
   alertSettings: {
     payment: { telegram: boolean; mail: boolean }
     ticket: { telegram: boolean; mail: boolean }

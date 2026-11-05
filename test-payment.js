@@ -1837,6 +1837,108 @@ async function main() {
     assert.ok(checkedBillingUsers > 0);
     for (const type of ["initial", "recharge", "traffic_pack", "addon"]) assert.ok(billedTypes.has(type), `the user bill lists include ${type} orders (${[...billedTypes].join(", ")})`);
 
+    // Registration trial: an unlisted ¥0 plan delivered through the normal checkout to accounts registered with an invite code.
+    const trialProductId = `payment-v2-trial-${Date.now()}`;
+    const trialBody = (overrides = {}) => ({
+      id: trialProductId, type: "recurring_plan", isEnabled: true, isForSale: false, stock: 100, sortOrder: 0, compareValues,
+      name: "试用", description: "Trial", features: [], isRecommended: false, lineGroupId: catalogV2Ids.flowGroup,
+      trafficCustomization: { enabled: false, stepBytes: null, stepPriceCents: null, maxSteps: 10 },
+      periods: [{ id: "3d", durationDays: 3, trafficBytes: 5 * 1024 ** 3, deviceLimit: 2, priceCents: 0, isEnabled: true, sortOrder: 0 }],
+      ...overrides
+    });
+    const paidTrialBody = trialBody({ periods: [{ id: "3d", durationDays: 3, trafficBytes: 5 * 1024 ** 3, deviceLimit: 2, priceCents: 100, isEnabled: true, sortOrder: 0 }] });
+    assert.strictEqual((await request("/api/catalog-v2/products", { method: "POST", cookie: adminCookie, body: paidTrialBody })).response.status, 201);
+    const trialSettings = trial => request("/api/sales-settings", { cookie: adminCookie }).then(current => request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...current.data, trial } }));
+    const trialConfig = { enabled: true, productId: trialProductId, ipLimit: 1, inviterDailyLimit: 2, speedLimitMbps: 50 };
+    assert.strictEqual((await trialSettings(trialConfig)).response.status, 400, "a priced trial product is refused");
+    assert.strictEqual((await request(`/api/catalog-v2/products/${trialProductId}`, { method: "PUT", cookie: adminCookie, body: trialBody({ isForSale: true }) })).response.status, 200);
+    assert.strictEqual((await trialSettings(trialConfig)).response.status, 400, "a publicly sold trial product is refused");
+    assert.strictEqual((await request(`/api/catalog-v2/products/${trialProductId}`, { method: "PUT", cookie: adminCookie, body: trialBody() })).response.status, 200);
+    assert.strictEqual((await trialSettings({ ...trialConfig, productId: "" })).response.status, 400, "enabling needs a product");
+    assert.deepStrictEqual((await trialSettings(trialConfig)).data.trial, trialConfig);
+    assert.ok(!("trial" in (await request("/api/public/sales-settings")).data), "trial limits stay private");
+
+    const trialRegister = async (email, referralCode, ip = "198.51.100.1") => {
+      const registered = await request("/api/auth/register", { method: "POST", headers: { "x-forwarded-for": ip }, body: { email, password: "payment-test-password", ...(referralCode ? { referralCode } : {}) } });
+      assert.strictEqual(registered.response.status, 201, registered.text);
+      const trialCookie = registered.response.headers.get("set-cookie").split(";", 1)[0];
+      return { cookie: trialCookie, overview: (await request("/api/account/overview", { cookie: trialCookie })).data };
+    };
+    const trialInviter = await trialRegister("trial-inviter@example.test");
+    assert.strictEqual(trialInviter.overview.subscription, null, "registering without an invite code grants nothing");
+    const trialCode = trialInviter.overview.referral.code;
+    const trialee = await trialRegister("trialee@example.test", trialCode);
+    assert.strictEqual(trialee.overview.subscription.status, "active");
+    assert.strictEqual(trialee.overview.subscription.isTrial, true);
+    assert.strictEqual(trialee.overview.subscription.productName, "试用");
+    const trialOrders = (await request("/api/admin/orders", { cookie: adminCookie })).data.filter(order => order.email === "trialee@example.test");
+    assert.deepStrictEqual(trialOrders.map(order => [order.status, order.fulfillmentStatus, order.amount, order.purchaseAction]), [["paid", "fulfilled", 0, "initial"]], "the trial is one fulfilled ¥0 order");
+    const trialUser = (await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "trialee@example.test");
+    const trialDetail = (await request(`/api/users/${trialUser.id}`, { cookie: adminCookie })).data;
+    assert.deepStrictEqual((await request("/api/bills", { cookie: adminCookie })).data.filter(bill => bill.userId === trialUser.id).map(bill => [bill.type, Number(bill.amount)]), [["initial", 0]], "the trial has a ¥0 bill");
+    const trialLine = await lineOf(trialDetail.xuiClientEmail);
+    assert.deepStrictEqual([trialLine.enabled, trialLine.speedLimit, trialLine.deviceLimit], [true, 50, 2], "node-hub enforces the trial limits");
+
+    assert.strictEqual((await purchase({ method: "POST", cookie: trialee.cookie, body: { optionId: `v2:${trialProductId}:3d` } })).response.status, 400, "customers cannot order the trial again");
+    const trialTrafficPack = await request("/api/orders/quote", { method: "POST", cookie: trialee.cookie, body: { product: "traffic_pack" } });
+    assert.ok(/试用套餐不能购买/.test(trialTrafficPack.data.error), trialTrafficPack.text);
+    const trialHomeIp = await request("/api/orders/quote", { method: "POST", cookie: trialee.cookie, body: { product: "home_ip" } });
+    assert.ok(/试用套餐不能购买/.test(trialHomeIp.data.error), trialHomeIp.text);
+
+    // Gift balance is not cash: the order delivers the plan but neither earns a rebate nor uses up the first order.
+    const trialRewards = () => database.query("SELECT data FROM app_records WHERE collection = 'referralRewards' AND data->>'inviteeAccountId' = $1", [trialee.overview.customerID ? trialOrders[0].accountId : ""]);
+    assert.strictEqual((await trialRewards()).rowCount, 0, "the ¥0 trial earns no rebate");
+    assert.strictEqual((await request(`/api/users/${trialUser.id}/wallet-gift`, { method: "POST", cookie: adminCookie, body: { amount: 100, note: "trial gift" } })).response.status, 200);
+    const giftUpgradeQuote = await request("/api/orders/quote", { method: "POST", cookie: trialee.cookie, body: { optionId: paymentOptionId } });
+    assert.deepStrictEqual([giftUpgradeQuote.data.purchaseAction, giftUpgradeQuote.data.replacesTrial], ["replace", true]);
+    const giftUpgrade = await purchase({ method: "POST", cookie: trialee.cookie, body: { optionId: paymentOptionId, channelCode: "100" } });
+    assert.strictEqual(giftUpgrade.response.status, 201, giftUpgrade.text);
+    const upgradedOverview = (await request("/api/account/overview", { cookie: trialee.cookie })).data;
+    assert.strictEqual(upgradedOverview.subscription.isTrial, false, "upgrading ends the trial without a replacement confirmation");
+    assert.strictEqual((await lineOf(trialDetail.xuiClientEmail)).speedLimit, 0, "the trial speed limit goes with the trial");
+    assert.strictEqual((await trialRewards()).rowCount, 0, "an order paid only with gift balance earns no rebate");
+    const upgradeBills = (await request("/api/bills", { cookie: adminCookie })).data.filter(bill => bill.userId === trialUser.id && bill.paymentOrderId === giftUpgrade.data.id);
+    assert.deepStrictEqual(upgradeBills.map(bill => bill.type), ["initial"], "upgrading from the trial is billed as a first purchase");
+
+    // The first order with real cash earns the rebate; the next one does not.
+    const firstCash = await purchase({ method: "POST", cookie: trialee.cookie, body: { optionId: `v2:${catalogV2Ids.flowBasic}:30d`, channelCode: "100", confirmReplacement: true, useBalance: false } });
+    assert.strictEqual(firstCash.response.status, 201, firstCash.text);
+    await callback(firstCash.data, 1, String(firstCash.data.amount), true);
+    assert.deepStrictEqual((await trialRewards()).rows.map(row => row.data.sourceOrderId), [firstCash.data.id], "the first real-cash order earns the rebate");
+    const secondCash = await purchase({ method: "POST", cookie: trialee.cookie, body: { optionId: paymentOptionId, channelCode: "100", confirmReplacement: true, useBalance: false } });
+    await callback(secondCash.data, 1, String(secondCash.data.amount), true);
+    assert.strictEqual((await trialRewards()).rowCount, 1, "later cash orders earn nothing on a non-recurring referral");
+    const trialeeOrders = (await request("/api/admin/orders", { cookie: adminCookie })).data.filter(order => order.email === "trialee@example.test");
+    assert.strictEqual(trialeeOrders.find(order => order.id === giftUpgrade.data.id).purchaseCountBefore, 0, "the trial does not make the customer a returning one");
+
+    // Limits: past them the account still registers, without a trial.
+    assert.ok((await trialRegister("trialee-2@example.test", trialCode, "198.51.100.2")).overview.subscription, "second trial of the day");
+    assert.strictEqual((await trialRegister("trialee-3@example.test", trialCode, "198.51.100.3")).overview.subscription, null, "the invite code's daily limit stops the third");
+    assert.strictEqual((await trialSettings({ ...trialConfig, inviterDailyLimit: 100 })).response.status, 200);
+    assert.strictEqual((await trialRegister("trialee-4@example.test", trialCode, "198.51.100.2")).overview.subscription, null, "an IP that already got a trial gets no other");
+    await database.query("UPDATE app_records SET data = jsonb_set(data, '{createdAt}', to_jsonb($1::text)) WHERE collection = 'paymentOrders' AND data->>'trialIp' = $2", [new Date(Date.now() - 400 * 86400000).toISOString(), "198.51.100.2"]);
+    assert.strictEqual((await trialRegister("trialee-4b@example.test", trialCode, "198.51.100.2")).overview.subscription, null, "the per-IP limit never expires");
+    assert.ok((await trialRegister("trialee-3b@example.test", trialCode, "198.51.100.3")).overview.subscription, "an IP stopped only by the invite code's limit has not used its trial");
+    assert.ok((await trialRegister("trialee-5@example.test", trialCode, "198.51.100.5")).overview.subscription, "another IP still gets one");
+    // Every limit is a setting, and 0 turns it off.
+    assert.strictEqual((await trialSettings({ ...trialConfig, inviterDailyLimit: 100, ipLimit: 2 })).response.status, 200);
+    assert.ok((await trialRegister("trialee-4c@example.test", trialCode, "198.51.100.2")).overview.subscription, "a raised IP limit allows a second trial");
+    assert.strictEqual((await trialRegister("trialee-4d@example.test", trialCode, "198.51.100.2")).overview.subscription, null, "but not a third");
+    assert.strictEqual((await trialSettings({ ...trialConfig, inviterDailyLimit: 0, ipLimit: 0 })).response.status, 200);
+    assert.ok((await trialRegister("trialee-4e@example.test", trialCode, "198.51.100.2")).overview.subscription, "0 turns both limits off");
+    assert.strictEqual((await trialSettings({ ...trialConfig, inviterDailyLimit: 100 })).response.status, 200);
+    // IPv6 counts by /64: a household cannot claim again from another address in its prefix.
+    assert.ok((await trialRegister("trialee-v6a@example.test", trialCode, "2001:db8:1:2::a")).overview.subscription, "the first address of a /64 gets a trial");
+    assert.strictEqual((await trialRegister("trialee-v6b@example.test", trialCode, "2001:db8:1:2:ffff::b")).overview.subscription, null, "another address in the /64 does not");
+    assert.ok((await trialRegister("trialee-v6c@example.test", trialCode, "2001:db8:1:3::a")).overview.subscription, "another /64 does");
+    // Concurrent registrations each keep their account, order and plan.
+    const concurrentTrials = await Promise.all(["7", "8", "9"].map(n => trialRegister(`trialee-${n}@example.test`, trialCode, `198.51.100.${n}`)));
+    assert.ok(concurrentTrials.every(item => item.overview.subscription?.isTrial === true), "concurrent registrations all get their trial");
+    assert.strictEqual((await request("/api/admin/orders", { cookie: adminCookie })).data.filter(order => /^trialee-[789]@/.test(order.email)).length, 3);
+    assert.strictEqual((await request(`/api/catalog-v2/products/${trialProductId}`, { method: "PUT", cookie: adminCookie, body: trialBody({ stock: 0 }) })).response.status, 200);
+    assert.strictEqual((await trialRegister("trialee-6@example.test", trialCode, "198.51.100.6")).overview.subscription, null, "no stock, no trial, but the registration succeeds");
+    await trialSettings({ ...trialConfig, enabled: false });
+
     console.log("Payment chain checks passed: payments, wallet priority, referral spending, idempotent reversals, snapshots, ledger entries, and validation.");
   } finally {
     await database.query("DELETE FROM catalog_v2_inventory_reservations WHERE product_id=$1", [catalogV2Ids.product]).catch(() => {});

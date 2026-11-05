@@ -33,6 +33,7 @@ const {
   paymentOrderExpiresAt,
   isPaymentOrderExpired,
   normalizeSalesSettings,
+  trialIpKey,
   normalizePaymentSettings,
   publicInviterLabel,
   adminReferralDetails,
@@ -514,6 +515,18 @@ assert.strictEqual(isPaymentOrderExpired(expiringOrder, Date.parse("2026-07-12T0
 const announcementSettings = normalizeSalesSettings({ announcements: [{ title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true }] });
 assert.deepStrictEqual(announcementSettings.announcements[0], { id: announcementSettings.announcements[0].id, title: "维护通知", content: "今晚升级", publishedAt: "2026-07-14T12:00:00.000Z", enabled: true });
 assert.strictEqual(normalizeSalesSettings({ onboardingEnabled: false }).onboardingEnabled, false);
+assert.deepStrictEqual(normalizeSalesSettings({}).trial, { enabled: false, productId: "", ipLimit: 1, inviterDailyLimit: 5, speedLimitMbps: 50 });
+assert.throws(() => normalizeSalesSettings({ trial: { enabled: true } }), /试用商品/);
+assert.throws(() => normalizeSalesSettings({ trial: { inviterDailyLimit: -1 } }), /邀请码/);
+assert.throws(() => normalizeSalesSettings({ trial: { ipLimit: 1.5 } }), /IP/);
+assert.strictEqual(trialIpKey("198.51.100.7"), "198.51.100.7");
+assert.strictEqual(trialIpKey(""), "");
+for (const same of ["2001:db8:1:2::a", "2001:DB8:1:2:ffff:ffff:ffff:ffff", "2001:0db8:0001:0002:0:0:0:1", "2001:db8:1:2::1%eth0", "2001:db8:1:2:0:0:1.2.3.4"]) assert.strictEqual(trialIpKey(same), "2001:db8:1:2::/64", same);
+assert.strictEqual(trialIpKey("2001:db8:1:3::a"), "2001:db8:1:3::/64");
+assert.strictEqual(trialIpKey("2001:db8::1"), "2001:db8:0:0::/64");
+assert.strictEqual(trialIpKey("::1"), "0:0:0:0::/64");
+assert.strictEqual(trialIpKey("1:2:3::"), "1:2:3:0::/64");
+assert.strictEqual(trialIpKey("::1:2:3:4:5:6:7"), "0:1:2:3::/64");
 assert.strictEqual(normalizeSalesSettings({}).userAlertsEnabled, true);
 assert.strictEqual(normalizeSalesSettings({ userAlertsEnabled: false }).userAlertsEnabled, false);
 const alertSettings = normalizeSalesSettings({ alertSettings: { payment: { telegram: false, mail: true }, traffic: { telegram: true, mail: true, userMail: true }, trafficThresholdPercent: 85 } }).alertSettings;

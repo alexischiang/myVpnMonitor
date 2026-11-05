@@ -37,6 +37,8 @@ function createOrder({ id, number, accountId, email, purpose, quote, purchaseCou
     couponCode: quote.couponCode || "", totalAmount: quote.amount,
     addOns: [...(quote.selectedAddOns || [])], addOnSnapshots: snapshot.addOns,
     addOnAmount: quote.addOnAmount || 0,
+    ...(quote.trialGrant ? { isTrial: true, trialInviterAccountId: quote.trialGrant.inviterAccountId, trialIp: quote.trialGrant.ip } : {}),
+    ...(quote.replacesTrial ? { replacesTrial: true } : {}),
     status: "pending", createdAt: now, updatedAt: now, expiresAt
   };
 }
