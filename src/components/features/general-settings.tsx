@@ -1,5 +1,6 @@
 import * as React from "react"
-import { Bell, UserRound } from "lucide-react"
+import { Bell, Gift, Pencil, UserRound } from "lucide-react"
+import { Link } from "react-router-dom"
 import { toast } from "@/components/features/toast"
 
 import { fetchJson, putJson } from "@/api"
@@ -7,7 +8,7 @@ import { Field, FieldContent, FieldDescription, FieldLabel, FieldSet } from "@/c
 import { PageHeader } from "@/components/features/shared"
 import { useData } from "@/components/features/data-provider"
 import { useSearchParamState } from "@/hooks/use-search-param-state"
-import type { SalesSettings } from "@/types"
+import type { CatalogV2Product, SalesSettings } from "@/types"
 import { Button } from "@/components/arc/button/button"
 import { Card } from "@/components/arc/card/card"
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
@@ -25,15 +26,30 @@ const alertRows = [
   { key: "traffic", label: "用户流量提醒", description: "用户流量达到设定阈值时提醒。" },
 ] as const
 
+// The server grants the first enabled period of the trial product.
+function trialPeriod(product: CatalogV2Product) {
+  return product.periods.filter(period => period.isEnabled).sort((a, b) => a.sortOrder - b.sortOrder)[0]
+}
+
+function trialProductSummary(product: CatalogV2Product) {
+  const period = trialPeriod(product)
+  if (!period) return ""
+  const traffic = period.trafficBytes === null ? "无限流量" : `${Number((period.trafficBytes / 1024 ** 3).toFixed(2))} GB`
+  return `${period.durationDays} 天 · ${traffic} · ${period.deviceLimit} 个在线 IP · 总名额 ${product.stock ?? "不限"}`
+}
+
 export function GeneralSettingsPage() {
   const { runAsync } = useData()
   const [section, setSection] = useSearchParamState("section", "account")
   const [settings, setSettings] = React.useState<SalesSettings | null>(null)
   const [draft, setDraft] = React.useState<SalesSettings | null>(null)
   const [saving, setSaving] = React.useState(false)
+  const [trialProducts, setTrialProducts] = React.useState<CatalogV2Product[]>([])
 
   React.useEffect(() => {
     fetchJson<SalesSettings>("/api/sales-settings").then(result => { setSettings(result); setDraft(result) }).catch(error => toast({ type: "error", title: error.message }))
+    fetchJson<CatalogV2Product[]>("/api/catalog-v2/products").then(products => setTrialProducts(products
+      .filter(product => product.type === "recurring_plan" && product.isEnabled && !product.isForSale && trialPeriod(product)?.priceCents === 0))).catch(error => toast({ type: "error", title: error.message }))
   }, [])
 
   async function save() {
@@ -53,14 +69,16 @@ export function GeneralSettingsPage() {
 
   if (!settings || !draft) return <div className="grid gap-4 px-4 lg:px-6"><Skeleton lines={5} /><Skeleton lines={4} /></div>
 
-  const changed = settings.registrationMode !== draft.registrationMode || settings.onboardingEnabled !== draft.onboardingEnabled || JSON.stringify(settings.alertSettings) !== JSON.stringify(draft.alertSettings)
+  const selectedTrialProduct = trialProducts.find(product => product.id === draft.trial.productId)
+  const changed = settings.registrationMode !== draft.registrationMode || settings.onboardingEnabled !== draft.onboardingEnabled || JSON.stringify(settings.trial) !== JSON.stringify(draft.trial) || JSON.stringify(settings.alertSettings) !== JSON.stringify(draft.alertSettings)
 
   return (
     <div className="grid gap-8 px-4 lg:px-6">
-      <PageHeader title="通用设置" description="管理账户注册、用户中心和提醒功能。" />
-      <Tabs value={section === "alerts" ? "alerts" : "account"} onValueChange={setSection} className="gap-6">
+      <PageHeader title="通用设置" description="管理账户注册、用户中心、试用套餐和提醒功能。" />
+      <Tabs value={section === "alerts" || section === "trial" ? section : "account"} onValueChange={setSection} className="gap-6">
         <TabsList className="max-w-full justify-start">
           <TabsTrigger value="account"><UserRound />注册与用户中心</TabsTrigger>
+          <TabsTrigger value="trial"><Gift />试用套餐</TabsTrigger>
           <TabsTrigger value="alerts"><Bell />提醒设置</TabsTrigger>
         </TabsList>
         <TabsContent value="account">
@@ -78,6 +96,54 @@ export function GeneralSettingsPage() {
                     <FieldDescription>关闭后隐藏用户中心入口，新用户登录或注册后直接进入用户总览。</FieldDescription>
                   </FieldContent>
                   <Switch id="onboarding-enabled" checked={draft.onboardingEnabled} disabled={saving} onCheckedChange={checked => setDraft({ ...draft, onboardingEnabled: checked })} />
+                </Field>
+              </FieldSet><div className="mt-4 flex items-center gap-2 justify-end gap-2 border-t">
+              <Button variant="secondary" disabled={!changed || saving} onClick={() => setDraft(settings)}>放弃更改</Button>
+              <Button disabled={!changed || saving} onClick={() => void save()}>{saving ? "保存中" : "保存设置"}</Button>
+            </div></Card>
+        </TabsContent>
+        <TabsContent value="trial">
+          <Card title="试用套餐" description="通过邀请码注册的新账户自动开通试用套餐；超出限制时账户仍可注册，但不发放试用。"><FieldSet className="gap-0">
+                <Field orientation="responsive" className="justify-between border-b pb-6">
+                  <FieldContent>
+                    <FieldLabel htmlFor="trial-enabled">邀请注册赠送试用</FieldLabel>
+                    <FieldDescription>开启前需要先选择试用商品。</FieldDescription>
+                  </FieldContent>
+                  <Switch id="trial-enabled" checked={draft.trial.enabled} disabled={saving} onCheckedChange={checked => setDraft({ ...draft, trial: { ...draft.trial, enabled: checked } })} />
+                </Field>
+                <Field orientation="responsive" className="justify-between border-b py-6">
+                  <FieldContent>
+                    <FieldLabel htmlFor="trial-product">试用商品</FieldLabel>
+                    <FieldDescription>{selectedTrialProduct ? trialProductSummary(selectedTrialProduct) : trialProducts.length ? "可选已启用、未公开销售且价格为 ¥0 的周期套餐。" : "暂无可用商品，请先创建未公开销售且价格为 ¥0 的周期套餐。"}</FieldDescription>
+                  </FieldContent>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button asChild variant="secondary"><Link to={selectedTrialProduct ? `/catalog-v2/products/${encodeURIComponent(selectedTrialProduct.id)}` : "/catalog-v2/products/new"}><Pencil />{selectedTrialProduct ? "编辑时长、流量和名额" : "新建试用商品"}</Link></Button>
+                    <Select label="选择" hideLabel disabled={saving} value={draft.trial.productId} onValueChange={value => setDraft({ ...draft, trial: { ...draft.trial, productId: value } })} id="trial-product" options={trialProducts.map(product => ({ value: product.id, label: product.name }))} />
+                  </div>
+                </Field>
+                <Field orientation="responsive" className="justify-between border-b py-6">
+                  <FieldContent>
+                    <FieldLabel htmlFor="trial-ip-limit">单个 IP 领取上限</FieldLabel>
+                    <FieldDescription>同一注册 IP 累计最多领取的次数，不会随时间重置，IPv6 按 /64 网段计算；0 表示不限。</FieldDescription>
+                  </FieldContent>
+                  <Input label="输入" hideLabel id="trial-ip-limit" type="number" min={0} step={1} value={draft.trial.ipLimit} disabled={saving} onChange={event => setDraft({ ...draft, trial: { ...draft.trial, ipLimit: Number(event.target.value) } })} />
+                </Field>
+                <Field orientation="responsive" className="justify-between border-b py-6">
+                  <FieldContent>
+                    <FieldLabel htmlFor="trial-inviter-limit">单个邀请码每日上限</FieldLabel>
+                    <FieldDescription>每个邀请码 24 小时内最多发放的次数；0 表示不限。</FieldDescription>
+                  </FieldContent>
+                  <Input label="输入" hideLabel id="trial-inviter-limit" type="number" min={0} step={1} value={draft.trial.inviterDailyLimit} disabled={saving} onChange={event => setDraft({ ...draft, trial: { ...draft.trial, inviterDailyLimit: Number(event.target.value) } })} />
+                </Field>
+                <Field orientation="responsive" className="justify-between pt-6">
+                  <FieldContent>
+                    <FieldLabel htmlFor="trial-speed-limit">试用限速</FieldLabel>
+                    <FieldDescription>升级正式套餐后自动解除；0 表示不限速。</FieldDescription>
+                  </FieldContent>
+                  <div className="flex items-center gap-2">
+                    <Input label="输入" hideLabel id="trial-speed-limit" type="number" min={0} step={1} value={draft.trial.speedLimitMbps} disabled={saving} onChange={event => setDraft({ ...draft, trial: { ...draft.trial, speedLimitMbps: Number(event.target.value) } })} />
+                    <span className="text-sm text-muted-foreground">Mbps</span>
+                  </div>
                 </Field>
               </FieldSet><div className="mt-4 flex items-center gap-2 justify-end gap-2 border-t">
               <Button variant="secondary" disabled={!changed || saving} onClick={() => setDraft(settings)}>放弃更改</Button>

@@ -276,6 +276,54 @@ function catalogV2Selection(payload = {}) {
 }
 
 // Admin-created users get a V2 plan spec (unlisted products allowed), bound the same way as a paid order.
+// What the per-IP trial limit counts: an IPv4 address, or the /64 of an IPv6 address, because one household or VPS
+// holds a whole /64 and could otherwise claim a trial from each address in it.
+function trialIpKey(ip) {
+  const address = String(ip || "").trim().split("%")[0];
+  if (!net.isIPv6(address)) return address;
+  const [left, right] = address.split("::");
+  const head = left ? left.split(":") : [];
+  const tail = right ? right.split(":") : [];
+  const tailSize = tail.reduce((size, group) => size + (group.includes(".") ? 2 : 1), 0);
+  const groups = address.includes("::") ? [...head, ...Array(8 - head.length - tailSize).fill("0"), ...tail] : head;
+  return `${groups.slice(0, 4).map(group => parseInt(group, 16).toString(16)).join(":")}::/64`;
+}
+
+function isTrialPlan(user) {
+  return user?.v2ProductSnapshot?.isTrial === true;
+}
+
+// The trial plan is an enabled, unlisted recurring product whose first enabled period is free.
+function trialPeriodOf(products, productId) {
+  const product = products.find(item => item.id === productId);
+  if (!product || product.type !== "recurring_plan" || !product.isEnabled) throw new Error("试用商品需为已启用的周期套餐。");
+  if (product.isForSale) throw new Error("试用商品不能公开销售，否则用户可以反复领取。");
+  const period = product.periods.filter(item => item.isEnabled).sort((a, b) => a.sortOrder - b.sortOrder)[0];
+  if (!period || period.priceCents !== 0) throw new Error("试用商品的周期价格必须为 ¥0。");
+  return period;
+}
+
+// An account registered with an invite code gets the trial plan through the normal ¥0 checkout, within the limits.
+// Registration is not a commerce route, so the order work takes the commerce lock itself; the lock reloads the data, hence the ids.
+async function grantRegistrationTrial(accountId, inviterId, req) {
+  if (!inviterId || !currentSalesSettings().trial.enabled) return null;
+  return withCommerceOperation(async () => {
+    const config = currentSalesSettings().trial;
+    const account = accounts.find(item => item.id === accountId);
+    if (!config.enabled || !account) return null;
+    const ip = trialIpKey(requestIp(req));
+    // The per-IP limit never resets; 0 turns a limit off.
+    if (config.ipLimit && ip && paymentOrders.filter(order => order.isTrial && order.trialIp === ip).length >= config.ipLimit) return null;
+    const since = Date.now() - 86400000;
+    if (config.inviterDailyLimit && paymentOrders.filter(order => order.isTrial && order.trialInviterAccountId === inviterId && Date.parse(order.createdAt) >= since).length >= config.inviterDailyLimit) return null;
+    const period = trialPeriodOf(await dataStore.listCatalogV2Products(), config.productId);
+    const order = await submitPurchaseOrder({ productId: config.productId, periodId: period.id }, req, account, 0, {
+      inviterAccountId: inviterId, ip, speedLimitMbps: config.speedLimitMbps
+    });
+    return startOrderPayment(order, {}, req);
+  }, "POST /api/auth/register");
+}
+
 async function adminCatalogV2PlanOption(payload) {
   const selection = catalogV2Selection(payload);
   if (!selection.productId) throw new Error("请选择 V2 商品规格。");
@@ -428,7 +476,7 @@ async function applyCatalogV2BuyerSync(productId, fingerprint, { req = null, onP
 }
 
 function userHasV2RecurringPlan(user) {
-  return Boolean(user && !isUserExpired(user) && user.v2ProductSnapshot?.productType === "recurring_plan");
+  return Boolean(user && !isUserExpired(user) && !isTrialPlan(user) && user.v2ProductSnapshot?.productType === "recurring_plan");
 }
 
 async function catalogV2Quote(payload, account, { allowUnlisted = false, wallet = null } = {}) {
@@ -491,6 +539,7 @@ async function catalogV2Quote(payload, account, { allowUnlisted = false, wallet 
     cashCredit: terms.cashCredit,
     purchaseAction: terms.purchaseAction,
     renewal: terms.renewal || null,
+    replacesTrial: terms.replacesTrial === true,
     planAmount: isPlan ? (subtotalCents + taxCents) / 100 : 0,
     cycles
   };
@@ -683,7 +732,7 @@ function ensurePurchaseCountFields() {
         order.purchaseCountBefore = purchaseCount;
         changed = true;
       }
-      if (order.status === "paid" && !order.reversedAt && ["fulfilled", "manual_pending"].includes(order.fulfillmentStatus)) purchaseCount++;
+      if (order.status === "paid" && !order.reversedAt && !order.isTrial && ["fulfilled", "manual_pending"].includes(order.fulfillmentStatus)) purchaseCount++;
     }
     if (account.purchaseCount !== purchaseCount) {
       account.purchaseCount = purchaseCount;
@@ -1679,7 +1728,7 @@ function normalizeAlertSettings(value, strict = false) {
 }
 
 function initialSalesSettings() {
-  return { id: "default", registrationMode: "open", onboardingEnabled: true, alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [], userAlertsEnabled: true, userAlerts: [] };
+  return { id: "default", registrationMode: "open", onboardingEnabled: true, trial: normalizeTrialSettings(), alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [], userAlertsEnabled: true, userAlerts: [] };
 }
 
 function readBuffer(req, limit) {
@@ -1735,7 +1784,7 @@ function normalizeCheckoutSettings(payload = {}) {
 
 function currentSalesSettings() {
   const settings = salesSettings[0];
-  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], userAlertsEnabled: settings.userAlertsEnabled !== false, userAlerts: settings.userAlerts || [] } : initialSalesSettings();
+  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, trial: normalizeTrialSettings(settings.trial), alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], userAlertsEnabled: settings.userAlertsEnabled !== false, userAlerts: settings.userAlerts || [] } : initialSalesSettings();
 }
 
 function paymentCoupons(value) {
@@ -1773,7 +1822,25 @@ function normalizeCouponDate(value, label) {
   return new Date(time).toISOString();
 }
 
+function normalizeTrialSettings(value) {
+  const limit = (raw, fallback, label, min) => {
+    const number = Number(raw ?? fallback);
+    if (!Number.isInteger(number) || number < min) throw new Error(`${label}需为不小于 ${min} 的整数。`);
+    return number;
+  };
+  const trial = {
+    enabled: value?.enabled === true,
+    productId: String(value?.productId || "").trim(),
+    ipLimit: limit(value?.ipLimit, 1, "单个 IP 试用上限", 0),
+    inviterDailyLimit: limit(value?.inviterDailyLimit, 5, "单个邀请码每日试用上限", 0),
+    speedLimitMbps: limit(value?.speedLimitMbps, 50, "试用限速", 0)
+  };
+  if (trial.enabled && !trial.productId) throw new Error("启用试用前请选择试用商品。");
+  return trial;
+}
+
 function normalizeSalesSettings(payload) {
+  const trial = normalizeTrialSettings(payload?.trial);
   const registrationMode = ["open", "invite_only", "disabled"].includes(payload?.registrationMode) ? payload.registrationMode : "open";
   const onboardingEnabled = payload?.onboardingEnabled !== false;
   const alertSettings = normalizeAlertSettings(payload?.alertSettings, true);
@@ -1836,7 +1903,7 @@ function normalizeSalesSettings(payload) {
     if (!title && !message) throw new Error("Alert 标题和内容不能同时为空。");
     return { id: String(item.id || crypto.randomUUID()), page, variant, title, message, enabled: item.enabled !== false };
   });
-  return { id: "default", registrationMode, onboardingEnabled, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, userAlertsEnabled, userAlerts };
+  return { id: "default", registrationMode, onboardingEnabled, trial, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, userAlertsEnabled, userAlerts };
 }
 
 // Validates the docs site's /api/announcements.json. Bad entries are dropped instead of failing the feed, and links must
@@ -2060,8 +2127,9 @@ async function createReferralReward(order, account) {
   const inviter = accounts.find(item => item.id === inviterId);
   const baseCents = referralRewardBaseCents(order);
   if (!inviter || !baseCents) return;
-  const priorPaid = paymentOrders.some(item => item.accountId === account.id && item.id !== order.id && (!item.purpose || item.purpose === "plan") && item.status === "paid");
-  if (priorPaid && inviter.recurringReferral !== true) return;
+  // The first order is the first plan order that took real cash; free orders, gift or referral balance and reversed orders don't count.
+  const priorCashOrder = paymentOrders.some(item => item.accountId === account.id && item.id !== order.id && (!item.purpose || item.purpose === "plan") && item.status === "paid" && !item.reversedAt && referralRewardBaseCents(item) > 0);
+  if (priorCashOrder && inviter.recurringReferral !== true) return;
   if (referralRewards.some(item => item.sourceOrderId === order.id)) return;
   const rate = Math.max(0, Math.min(100, Number(inviter.referralRate ?? 10)));
   const rewardCents = Math.floor(baseCents * rate / 100);
@@ -2152,6 +2220,7 @@ function quoteWithWallet(quote, wallet, useBalance = true) {
 function requireTrafficPackUser(account) {
   const user = userForAccount(account);
   if (!user || isUserExpired(user)) throw new Error("当前没有生效中的套餐。");
+  if (isTrialPlan(user)) throw new Error("试用套餐不能购买附加服务，请先升级正式套餐。");
   if (!isSelfHostedUser(user)) throw new Error("流量包仅适用于自研线路套餐。");
   if (user.duration === "lifetime") throw new Error("不限时套餐不能购买附加服务。");
   if (planIsUnlimited(user)) throw new Error("无限流量套餐无需购买流量包。");
@@ -2216,6 +2285,7 @@ function trafficPackQuote(account) {
 function requireRecurringPlanUser(account) {
   const user = userForAccount(account);
   if (!user || isUserExpired(user)) throw new Error("当前没有生效中的套餐。");
+  if (isTrialPlan(user)) throw new Error("试用套餐不能购买附加服务，请先升级正式套餐。");
   if (user.duration === "lifetime") throw new Error("不限时套餐不能购买附加服务。");
   if (isUserAccountDisabled(user)) throw new Error("当前账户已停用，暂时无法购买附加服务。");
   return user;
@@ -2351,7 +2421,7 @@ function paymentPurchaseTerms(user, now = new Date(), { selected = null, renew =
     return { purchaseAction: "extend", cashCredit: 0, renewal: { startsAt, expiresAt: planExpiryFrom(startsAt, selected.duration, selected.durationDays) } };
   }
   if (!active) return { purchaseAction: "initial", cashCredit: 0 };
-  return { purchaseAction: "replace", cashCredit: 0 };
+  return { purchaseAction: "replace", cashCredit: 0, replacesTrial: isTrialPlan(user) };
 }
 
 function planExpiryFrom(startsAt, duration, durationDays) {
@@ -2711,7 +2781,8 @@ async function fulfillPaymentOrderOnce(order, req) {
       Object.assign(user, previousUserState);
       throw error;
     }
-    const billType = billTypeForPurchaseAction(order.purchaseAction);
+    // Upgrading from the trial is the customer's first real purchase.
+    const billType = order.replacesTrial ? "initial" : billTypeForPurchaseAction(order.purchaseAction);
     bills.unshift(makeBill({
       user,
       type: billType,
@@ -2816,7 +2887,7 @@ async function fulfillPaymentOrderOnce(order, req) {
   }
 
   order.userId = user.id;
-  account.purchaseCount = (Number(order.purchaseCountBefore) || 0) + 1;
+  if (!order.isTrial) account.purchaseCount = (Number(order.purchaseCountBefore) || 0) + 1;
   order.vipSpendBefore = vipSpendBefore;
   user.vipSpend = wallet.vipSpendCents / 100;
   order.vipSpendAfter = wallet.vipSpendCents / 100;
@@ -2835,7 +2906,7 @@ async function fulfillPaymentOrderOnce(order, req) {
   order.fulfillmentStatus = order.fulfillmentStatus === "manual_pending" ? "manual_pending" : "fulfilled";
   order.fulfillmentError = "";
   await savePaymentOrders();
-  await notifyPaymentOrder(order);
+  if (!order.isTrial) await notifyPaymentOrder(order);
   await notifyPendingDelivery(order, req);
   return order;
 }
@@ -3117,7 +3188,7 @@ function checkoutWorkflow(account, req) {
   });
 }
 
-async function submitPurchaseOrder(payload, req, account, manualAmount) {
+async function submitPurchaseOrder(payload, req, account, manualAmount, trialGrant = null) {
   const selection = catalogV2Selection(payload);
   const selected = selection.productId ? await catalogV2Quote(payload, account, { allowUnlisted: manualAmount !== undefined })
     : payload.product === "traffic_pack" ? trafficPackQuote(account)
@@ -3125,7 +3196,7 @@ async function submitPurchaseOrder(payload, req, account, manualAmount) {
     : rejectLegacyPlanOption();
   const purpose = selected.purpose || (payload.product === "traffic_pack" ? "traffic_pack" : payload.product === "home_ip" ? "addon" : "plan");
   if (selection.productId && manualAmount === undefined) addonServices.assertBuyerInputs(selected.selectedAddOnSnapshots);
-  if (manualAmount === undefined && purpose === "plan" && selected.purchaseAction === "replace" && payload.confirmReplacement !== true) throw new Error("请确认新套餐将立即覆盖当前套餐。");
+  if (manualAmount === undefined && purpose === "plan" && selected.purchaseAction === "replace" && !selected.replacesTrial && payload.confirmReplacement !== true) throw new Error("请确认新套餐将立即覆盖当前套餐。");
   // The price is always read fresh here; when it no longer matches what the checkout showed, nothing is created and the
   // customer gets the new quote to confirm.
   if (manualAmount === undefined && payload.expectedAmount !== undefined && Math.round(Number(payload.expectedAmount) * 100) !== Math.round(selected.amount * 100)) {
@@ -3137,6 +3208,8 @@ async function submitPurchaseOrder(payload, req, account, manualAmount) {
   assertPendingPaymentOrderLimit(account.id);
   const quote = manualAmount === undefined ? selected : { ...selected, amount: manualAmount, subtotal: manualAmount, beforeCreditAmount: manualAmount, taxAmount: 0, discountAmount: 0, vipDiscountPercent: 0, vipDiscountAmount: 0, cashCredit: 0 };
   quote.optionId = String(quote.optionId || payload.optionId || "");
+  // The limit sits on the plan snapshot, so buying a real plan removes it.
+  if (trialGrant) Object.assign(quote, { trialGrant, productSnapshotV2: { ...quote.productSnapshotV2, isTrial: true, speedLimitMbps: trialGrant.speedLimitMbps } });
   const totalCents = Math.round(quote.amount * 100);
   const now = new Date().toISOString();
   return checkoutWorkflow(account, req).submit({
@@ -6262,6 +6335,8 @@ async function handleApi(req, res, pathname) {
       account.customerID = nextCustomerID(account.id, [...users, ...accounts]);
       accounts.unshift(account);
       await saveAccounts();
+      // Out of stock, limits or a failed grant never block the registration itself.
+      await grantRegistrationTrial(account.id, inviter?.id, req).catch(error => console.error(`Registration trial failed for ${email}:`, error.message));
       const token = makeSessionToken({ role: "user", accountId: account.id, email }, REMEMBER_MAX_AGE_SECONDS);
       sendJson(res, 201, { ok: true, role: "user", email }, { "set-cookie": authCookie(req, token, REMEMBER_MAX_AGE_SECONDS) });
     } catch (error) {
@@ -6592,6 +6667,7 @@ async function handleApi(req, res, pathname) {
         devices: planDeviceLimit(user),
         productName: user.v2ProductSnapshot?.name || planProductId(user),
         planSnapshot: user.v2ProductSnapshot || null,
+        isTrial: isTrialPlan(user),
         renewal: planRenewalOffer(user, await dataStore.listCatalogV2Products()),
         queuedPlan: user.queuedPlan ? { ...queuedPlanWindow(user), planSnapshot: user.queuedPlan.productSnapshot } : null
       } : null,
@@ -7421,7 +7497,9 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/sales-settings" && req.method === "PUT") {
     try {
-      salesSettings = [normalizeSalesSettings(await readJson(req))];
+      const nextSettings = normalizeSalesSettings(await readJson(req));
+      if (nextSettings.trial.enabled) trialPeriodOf(await dataStore.listCatalogV2Products(), nextSettings.trial.productId);
+      salesSettings = [nextSettings];
       await saveSalesSettings();
       sendJson(res, 200, salesSettingsWithCouponUsage());
     } catch (error) {
@@ -9384,6 +9462,7 @@ module.exports = Object.assign(requestHandler, {
   paymentOrderExpiresAt,
   isPaymentOrderExpired,
   normalizeSalesSettings,
+  trialIpKey,
   normalizePaymentSettings,
   publicInviterLabel,
   adminReferralDetails,

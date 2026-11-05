@@ -301,6 +301,7 @@ type CheckoutQuote = {
   taxAmount: number
   beforeCreditAmount: number
   purchaseAction: "initial" | "extend" | "replace" | "add_on"
+  replacesTrial?: boolean
   /** An early renewal's term: it starts when the current plan ends. */
   renewal?: { startsAt: string; expiresAt: string } | null
   payableAmount: number
@@ -462,7 +463,7 @@ export function CheckoutPage() {
   }
 
   function confirmOrder() {
-    if (quote?.purchaseAction === "replace") setReplacementOpen(true)
+    if (quote?.purchaseAction === "replace" && !quote.replacesTrial) setReplacementOpen(true)
     else void submitOrder()
   }
 
@@ -476,6 +477,8 @@ export function CheckoutPage() {
   const couponApplied = Boolean(quote.couponCode && quote.couponCode === couponCode.trim().toUpperCase())
   const actionMessage = quote.purchaseAction === "add_on"
     ? quote.fulfillment?.mode === "automatic" ? "支付成功后附加服务将自动发放。" : "支付成功后将进入人工交付。"
+    : quote.replacesTrial
+    ? "付款成功后正式套餐立即生效，试用随之结束。"
     : quote.purchaseAction === "replace"
     ? "新套餐支付成功后将立即覆盖当前套餐，原套餐剩余有效期和流量不再保留。"
     : quote.purchaseAction === "extend" && quote.renewal
@@ -486,7 +489,7 @@ export function CheckoutPage() {
     <div className="px-4 lg:px-6">
       <section className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-5">
         <header className="grid gap-1 lg:col-span-5"><h1 className="text-2xl font-semibold tracking-tight">确认订单</h1><p className="text-sm text-muted-foreground">{trafficPack ? "确认流量包信息后提交订单" : homeIp ? "选择服务地区并确认人工交付信息" : "确认商品、计费周期与优惠信息后提交订单"}</p><Separator className="mt-3" /></header>
-        {quote.purchaseAction !== "initial" ? <Alert tone={quote.purchaseAction === "replace" ? "warning" : "info"} className="lg:col-span-5" title={actionMessage} /> : null}
+        {quote.purchaseAction !== "initial" ? <Alert tone={quote.purchaseAction === "replace" && !quote.replacesTrial ? "warning" : "info"} className="lg:col-span-5" title={actionMessage} /> : null}
         <section className="grid content-start gap-4 lg:col-span-3">
           <Card title={orderProductLabel({ planName: quote.planName, optionLabel: quote.title === quote.description ? "" : quote.title }, " · ")} description={quote.description}><div className="grid gap-4">
               <div className="grid gap-3 text-sm">{quote.traffic ? <p className="flex items-center gap-2"><Check className="size-4" />{quote.traffic}</p> : null}{quote.devices ? <p className="flex items-center gap-2"><Check className="size-4" />在线IP数量：{quote.devices}</p> : null}{quote.features.map(feature => <p key={feature} className="flex items-center gap-2"><Check className="size-4" />{feature}</p>)}</div>

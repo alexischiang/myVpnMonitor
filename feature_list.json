@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-04",
+  "updated_at": "2026-11-05",
   "required_fields": [
     "id",
     "name",
@@ -5536,6 +5536,56 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-11-04T10:29:35.753Z"
+      }
+    },
+    {
+      "id": "registration-trial-plan",
+      "name": "邀请注册自动发放试用套餐，首单返利改为首笔现金订单",
+      "description": "Accounts registered with any valid invite code automatically get the trial plan set in 通用设置 (an enabled, unlisted recurring product with a ¥0 period) through the normal ¥0 checkout, with a paid order and an initial ¥0 bill, inside the commerce lock. Off by default. Settings live in 通用设置 → 试用套餐 (/general-settings?section=trial): on/off, product, per-IP lifetime limit (default 1; IPv6 counts by /64), per-invite-code 24-hour limit (default 5) and speed limit (default 50 Mbps); 0 turns a limit off. Duration, traffic, online IPs and the total quota (stock) are set on the trial product, linked from the same tab. Past a limit, or when the grant fails, the account still registers. The trial's speed limit lives on the plan snapshot, so buying a real plan removes it. Trial orders do not count towards purchaseCount and send no payment alert. Upgrading needs no replacement confirmation and is billed as initial. Trial users cannot buy traffic packs or add-ons. The referral first order is now the first non-reversed plan order with real cash (gateway or recharged balance); ¥0 orders and orders paid only with gift or referral balance neither earn a rebate nor use up the first order.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "remove-3x-ui"
+      ],
+      "done_criteria": [
+        "Invite registration grants one ¥0 trial order, bill and node-hub entitlement; registering without a code grants nothing",
+        "Limits, stock and failures never block registration",
+        "Upgrading from the trial is a first purchase without a replacement confirmation; the speed limit goes with the trial",
+        "Only the first real-cash plan order earns the first-order rebate",
+        "npm run verify passes; affected pages have no console or page errors"
+      ],
+      "verification": [
+        "2026-11-05: npm run verify and git diff --check pass. test-payment.js covers settings validation, grant, node-hub limits, refused repurchase and add-ons, gift-only upgrade with no rebate, first-cash rebate, purchaseCountBefore, invite-code, IP and stock limits, and three concurrent registrations; test.js covers settings normalization.",
+        "2026-11-05: per-IP limit became a lifetime, configurable count with a 试用套餐 settings tab. npm run verify and git diff --check pass; test-payment.js covers one trial per IP, a 400-day-old order still counting, an IP stopped only by the invite-code limit keeping its trial, a raised IP limit, and 0 turning both limits off.",
+        "2026-11-05: IPv6 counts by /64 (trialIpKey). npm run verify and git diff --check pass; test.js covers address forms and test-payment.js covers same and different /64 registrations. Production nginx read-only check: webprovider.top overwrites X-Forwarded-For with $remote_addr, real_ip trusts only Cloudflare ranges, the app listens on 127.0.0.1:3000."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/general-settings",
+          "/register",
+          "/account",
+          "/account/plans",
+          "/account/plans/checkout?option=v2:pro-plan:30d",
+          "/cashier/<order>",
+          "/account/referrals",
+          "/general-settings?section=trial",
+          "/catalog-v2/products/trial-plan"
+        ],
+        "interactions": [
+          "Registered through the form with an invite code: /account shows 试用 (3天-5G), 3 天后到期, 升级正式套餐, no /月 and no reset date; admin APIs show one paid fulfilled ¥0 order and one initial ¥0 bill",
+          "升级正式套餐 opens /account/plans; checkout shows the trial-ending notice, and submitting goes to the cashier without the replacement dialog",
+          "/account/referrals shows 仅限首笔现金订单",
+          "375x812: /account and /general-settings have scrollWidth 375 = clientWidth",
+          "Isolated app + node-hub on a throwaway schema: 试用套餐 tab opens from /general-settings?section=trial; 注册与用户中心 no longer holds trial fields",
+          "Enabling without a product and saving returns the expected validation 400 and shows 启用试用前请选择试用商品",
+          "Chose the product (summary 3 天 · 5 GB · 2 个在线 IP · 总名额 不限), set the invite-code limit to 7 and speed to 30, saved; API returns the saved values; 编辑时长、流量和名额 opens /catalog-v2/products/trial-plan",
+          "Same browser IP with ipLimit 1: first invite registration gets a fulfilled ¥0 trial, second registers (201) without a trial or order",
+          "375x812 /general-settings?section=trial: scrollWidth 375 = clientWidth",
+          "/general-settings?section=trial shows the /64 rule in the per-IP limit description at desktop width and 375x812 with scrollWidth 375 = clientWidth"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-05T05:56:30.805Z"
       }
     }
   ]
