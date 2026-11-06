@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-05
-- Current Objective: 邀请注册自动发放试用套餐，限制可在通用设置配置 (registration-trial-plan)
+- Last Updated: 2026-11-06
+- Current Objective: 定制节点订单到期自动解绑：已交付订单可关联节点和到期时间
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -580,8 +580,10 @@
 
 - 2026-11-05: IPv6 按 /64 计数；npm run verify、verify:harness、git diff --check 通过；/general-settings?section=trial 桌面与 375px 无控制台错误
 
+- 2026-11-06: npm run verify、verify:fast、verify:harness、git diff --check 通过；/deliveries 与客户订单页浏览器验证无控制台错误
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `commerce/orders.js`, `feature_list.json`, `server.js`, `src/components/features/account-onboarding.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/general-settings.tsx`, `src/components/features/public-pages.tsx`, `src/types.ts`, `test-payment.js`, `test.js`
+- Files: `commerce/addon-services.js`, `feature_list.json`, `server.js`, `src/components/features/service-delivery.tsx`, `test-payment.js`, `test.js`
 - Known risks: none
-- Recommended Next Step: 用户确认后提交并部署；上线后建未公开销售的 ¥0 试用商品和独立线路组，到 通用设置 → 试用套餐 开启
+- Recommended Next Step: 用户确认后提交部署；部署后把 custom-isp-my 改为节点定制 30 天，并为节点 18 的付费用户补录订单到期时间

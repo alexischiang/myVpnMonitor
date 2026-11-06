@@ -1204,6 +1204,21 @@ async function main() {
     assert.deepStrictEqual([nestedCashier.response.status, nestedCashier.response.headers.get("location")], [302, "/account"], "only /cashier/<id> is opened to customers");
     assert.ok((await request("/api/admin/deliveries", { cookie: adminCookie })).data.delivered.some(order => order.id === topUpOrder.data.id));
 
+    // A delivered manual order linked to a custom node afterwards unbinds when its expiry passes.
+    const bindPath = `/api/admin/orders/${topUpOrder.data.id}/custom-node`;
+    assert.strictEqual((await request(bindPath, { method: "PUT", cookie: v2Cookie, body: {} })).response.status, 403);
+    assert.match((await request(bindPath, { method: "PUT", cookie: adminCookie, body: { inboundIds: [inbound[2]], expiresAt: "2020-01-01T00:00:00Z" } })).data.error, /晚于现在/);
+    assert.deepStrictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiExtraInboundIds, [], "a rejected link binds nothing");
+    const linkExpiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+    const linked = await request(bindPath, { method: "PUT", cookie: adminCookie, body: { inboundIds: [inbound[2]], expiresAt: linkExpiresAt } });
+    assert.strictEqual(linked.response.status, 200, linked.text);
+    assert.deepStrictEqual([linked.data.services[0].handler, linked.data.services[0].expiresAt, linked.data.services[0].inboundIds, linked.data.services[0].status], ["custom_node", linkExpiresAt, [inbound[2]], "active"]);
+    assert.deepStrictEqual((await lineOf("v2-sync@example.test")).nodeIds, [hubNode[1], hubNode[2]], "linking grants the node on node-hub");
+    assert.deepStrictEqual(await handler.releaseExpiredCustomNodes(), { released: 0, orders: 0, failed: [] }, "a linked node stays bound until its expiry");
+    assert.deepStrictEqual(await handler.releaseExpiredCustomNodes(new Date(linkExpiresAt).getTime() + 1000), { released: 1, orders: 1, failed: [] });
+    assert.deepStrictEqual((await lineOf("v2-sync@example.test")).nodeIds, [hubNode[1]], "the linked node is taken back at its expiry");
+    assert.deepStrictEqual((await request(`/api/users/${v2User.id}`, { cookie: adminCookie })).data.xuiExtraInboundIds, []);
+
     // Tax rate is stored in checkoutSettings and each product can opt out of tax.
     assert.strictEqual((await request("/api/checkout-settings", { cookie: v2Cookie })).response.status, 403);
     assert.strictEqual((await request("/api/checkout-settings", { cookie: adminCookie })).data.taxRate, 3, "default tax rate is 3%");
