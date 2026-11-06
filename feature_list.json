@@ -5587,6 +5587,43 @@
         "page_errors": [],
         "checked_at": "2026-11-05T05:56:30.805Z"
       }
+    },
+    {
+      "id": "custom-node-order-link",
+      "name": "Link a delivered order to custom nodes with an expiry",
+      "description": "A delivered manual add-on order can be linked afterwards to custom nodes and an expiry (服务交付 → 最近已交付, PUT /api/admin/orders/:id/custom-node). The order then behaves as a custom-node grant, so the existing sync job unbinds the node from that order's user when the expiry passes. A node may be bound to several users; one user's expiry leaves the others bound. A reversed custom-node order now also releases its node.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "addon-fulfillment-handlers",
+        "admin-service-delivery-page"
+      ],
+      "done_criteria": [
+        "Linking validates the order (paid, delivered, manual, not reversed), at least one node and a future expiry, and a rejected link binds nothing.",
+        "Linking grants the node on node-hub; saving again moves the expiry.",
+        "When the expiry passes, the job unbinds the node on node-hub for that user only, once.",
+        "A reversed custom-node order releases its node unless another running order covers it.",
+        "The delivered list and the customer order page show the node count and expiry, with no console or page errors on desktop and mobile."
+      ],
+      "verification": [
+        "2026-11-06: reproduced with the old expiredCustomNodeGrants: a shared node already released per user, but a manual-handler order carrying an inbound was never released. npm run verify passed on a throwaway local database: node test.js (shared node, linked manual order, reversed order, binding validation) and test-payment.js (customer 403, past expiry rejected with nothing bound, link grants on a real in-process node-hub, stays bound before expiry, released once after it)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/deliveries",
+          "/cashier/<order>"
+        ],
+        "interactions": [
+          "Isolated app + node-hub on a throwaway local database, seeded with a delivered manual order for 纯净家宽 IP 定制 | 马来西亚.",
+          "最近已交付 → 关联定制节点: selected the node, a past expiry returned 400 and kept the order unchanged, 2026-12-06 12:00 saved with the toast 已关联定制节点，到期后自动解绑; the card showed 节点定制, 有效期至 2026/12/06, 定制节点 1 个; the user's xuiExtraInboundIds held the node.",
+          "In a fresh tab, reopened the dialog with the node checked and the expiry filled in, moved it to 2026-12-20 12:00 and saved; the card showed 有效期至 2026/12/20.",
+          "As the buyer, the order page shows 生效中, 节点定制 · 2026/11/06 19:55 至 2026/12/20 12:00 and 已开通 1 个定制节点.",
+          "375x812 /deliveries dialog: scrollWidth 375 = clientWidth, dialog 343 wide with the saved values filled in."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-06T11:57:24.000Z"
+      }
     }
   ]
 }

@@ -242,6 +242,24 @@ assert.strictEqual(taxExemptAddon.chargeTax, false);
   assert.deepStrictEqual([expired.orders.map(item => item.id), expired.releaseInboundIds], [["old"], [7]]);
   assert.deepStrictEqual(addonServices.expiredCustomNodeGrants(grants, "u1", new Date("2026-08-01").getTime()).orders, []);
 
+  const sharedNode = [
+    order("u1-ended", "custom_node", { customInboundIds: [18], serviceExpiresAt: "2026-09-10T00:00:00.000Z" }),
+    order("u2-running", "custom_node", { userId: "u2", customInboundIds: [18], serviceExpiresAt: "2026-12-10T00:00:00.000Z" })
+  ];
+  const sharedAt = new Date("2026-10-01").getTime();
+  assert.deepStrictEqual(addonServices.expiredCustomNodeGrants(sharedNode, "u1", sharedAt).releaseInboundIds, [18], "one user's expiry releases their binding");
+  assert.deepStrictEqual(addonServices.expiredCustomNodeGrants(sharedNode, "u2", sharedAt).orders, [], "another user on the same node keeps it");
+  const linkedManual = order("linked", "manual", { customInboundIds: [18], serviceExpiresAt: "2026-09-10T00:00:00.000Z", addOnSnapshots: [{ fulfillmentHandler: "custom_node" }] });
+  assert.deepStrictEqual(addonServices.expiredCustomNodeGrants([linkedManual], "u1", sharedAt).releaseInboundIds, [18], "a manual order linked afterwards expires like a custom-node order");
+  const reversedGrant = order("reversed", "custom_node", { customInboundIds: [18], fulfillmentStatus: "reversed", reversedAt: "2026-09-20T00:00:00.000Z", serviceExpiresAt: "2026-12-10T00:00:00.000Z" });
+  assert.deepStrictEqual(addonServices.expiredCustomNodeGrants([reversedGrant], "u1", sharedAt).releaseInboundIds, [18], "a reversed order releases its node before the expiry");
+  assert.deepStrictEqual(addonServices.activeCustomNodeInboundIds([sharedNode[1], { ...sharedNode[1], id: "u2-other", customInboundIds: [19] }], "u2", "u2-running", sharedAt), [19]);
+  assert.deepStrictEqual([addonServices.canBindCustomNode(order("m", "manual")), addonServices.canBindCustomNode(order("t", "traffic_credit")), addonServices.canBindCustomNode(order("p", "manual", { fulfillmentStatus: "manual_pending" })), addonServices.canBindCustomNode(order("r", "manual", { reversedAt: deliveredAt }))], [true, false, false, false]);
+  assert.throws(() => addonServices.normalizeCustomNodeBinding({ inboundIds: [], expiresAt: "2027-01-01" }, sharedAt), /定制节点/);
+  assert.throws(() => addonServices.normalizeCustomNodeBinding({ inboundIds: [18] }, sharedAt), /到期时间/);
+  assert.throws(() => addonServices.normalizeCustomNodeBinding({ inboundIds: [18], expiresAt: "2026-09-01" }, sharedAt), /晚于现在/);
+  assert.deepStrictEqual(addonServices.normalizeCustomNodeBinding({ inboundIds: ["18", 18], expiresAt: "2027-01-01T00:00:00Z" }, sharedAt), { inboundIds: [18], expiresAt: "2027-01-01T00:00:00.000Z" });
+
   const mail = addonServices.deliveryNotificationMail({ order: { merOrderTid: "NO<1>", planName: "美区账号", deliveryNote: "SECRET-KEY" }, url: "https://example.test/account/orders/1" });
   assert.ok(mail.text.includes("https://example.test/account/orders/1") && mail.html.includes("NO&lt;1&gt;"));
   assert.ok(!mail.text.includes("SECRET-KEY") && !mail.html.includes("SECRET-KEY"));

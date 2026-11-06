@@ -2668,6 +2668,38 @@ async function deliverAddonOrder(order, payload, req) {
   return order;
 }
 
+// Links an already delivered add-on order to custom nodes with an expiry; releaseExpiredCustomNodes
+// then unbinds them for this user alone. Saving again moves the expiry or changes the nodes.
+async function bindCustomNodeToOrder(order, payload, req) {
+  if (!addonServices.canBindCustomNode(order)) throw new Error("只有已交付的人工附加服务订单可以关联定制节点。");
+  const { inboundIds, expiresAt } = addonServices.normalizeCustomNodeBinding(payload);
+  const account = accounts.find(item => item.id === order.accountId);
+  const user = users.find(item => item.id === order.userId) || (account ? userForAccount(account) : null);
+  if (!user) throw new Error("该订单没有关联用户，无法授权定制节点。");
+  const previousUser = structuredClone(user);
+  const actor = currentSession(req)?.account || "admin";
+  try {
+    const keptIds = addonServices.activeCustomNodeInboundIds(paymentOrders, user.id, order.id);
+    const droppedIds = (order.customInboundIds || []).filter(id => !inboundIds.includes(id) && !keptIds.includes(id));
+    const nextIds = [...new Set([...normalizeXuiInboundIdList(user.xuiExtraInboundIds).filter(id => !droppedIds.includes(id)), ...inboundIds])];
+    const { inboundNames } = await applyUserCustomInbounds(user, nextIds, { req, actor, reason: `关联订单 ${order.merOrderTid}` });
+    const updatedAt = new Date().toISOString();
+    const [firstItem = {}, ...otherItems] = order.addOnSnapshots || [];
+    Object.assign(order, {
+      userId: user.id, customInboundIds: inboundIds, serviceStartedAt: order.serviceStartedAt || order.fulfilledAt || updatedAt, serviceExpiresAt: expiresAt, serviceEndedAt: "", updatedAt,
+      addOnSnapshots: [{ ...firstItem, fulfillmentHandler: "custom_node" }, ...otherItems]
+    });
+    appendUserLogToUser(user, createUserLog({ event: "user-action", status: "recorded", reason: "addon-delivered", req, message: `定制节点已关联订单 ${order.merOrderTid}`, details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, customInboundIds: inboundIds, inboundNames, serviceExpiresAt: expiresAt } }));
+    await saveUsers();
+    await savePaymentOrders();
+  } catch (error) {
+    Object.keys(user).forEach(key => delete user[key]);
+    Object.assign(user, previousUser);
+    throw error;
+  }
+  return order;
+}
+
 async function notifyAddonDelivered(order, req) {
   const account = accounts.find(item => item.id === order.accountId);
   const to = normalizePaymentEmail(order.email || account?.email || "");
@@ -7821,6 +7853,19 @@ async function handleApi(req, res, pathname) {
       pendingDeliveries: paymentOrders.filter(addonServices.isPendingDelivery).length,
       pendingTickets: tickets.filter(ticket => ticket.status === "pending_support").length
     });
+    return;
+  }
+
+  const adminOrderCustomNodeMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)\/custom-node$/);
+  if (adminOrderCustomNodeMatch && req.method === "PUT") {
+    await loadLatestData({ force: true });
+    const order = paymentOrders.find(item => item.id === adminOrderCustomNodeMatch[1]);
+    if (!order) { sendJson(res, 404, { error: "没有找到这个订单。" }); return; }
+    try {
+      sendJson(res, 200, adminPaymentOrder(await bindCustomNodeToOrder(order, await readJson(req), req)));
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, { error: error.message });
+    }
     return;
   }
 

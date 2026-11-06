@@ -109,20 +109,44 @@ function normalizeDelivery(handlerId, payload = {}) {
   return { deliveryNote, inboundIds: handler.delivery === "inbounds" ? inboundIds : [] };
 }
 
+// A reversed order still counts as a grant until it has been released: reversal ends the service.
 function isCustomNodeGrant(order) {
-  return order?.status === "paid" && !order.reversedAt && order.fulfillmentStatus === "fulfilled" &&
+  return order?.status === "paid" && (order.fulfillmentStatus === "fulfilled" || Boolean(order.reversedAt)) &&
     handlerOf(order, order.addOnSnapshots?.[0]).id === "custom_node" && (order.customInboundIds || []).length > 0;
+}
+
+function isEndedCustomNodeGrant(order, now) {
+  return Boolean(order.reversedAt) || Boolean(order.serviceExpiresAt && new Date(order.serviceExpiresAt).getTime() <= now);
 }
 
 // Expired custom-node orders of one user and the inbounds they can release. An inbound still
 // covered by another active custom-node order of the same user stays bound.
 function expiredCustomNodeGrants(orders, userId, now = Date.now()) {
   const grants = orders.filter(order => order.userId === userId && isCustomNodeGrant(order) && !order.serviceEndedAt);
-  const isExpired = order => order.serviceExpiresAt && new Date(order.serviceExpiresAt).getTime() <= now;
-  const expired = grants.filter(isExpired);
-  const stillActive = new Set(grants.filter(order => !isExpired(order)).flatMap(order => order.customInboundIds));
+  const expired = grants.filter(order => isEndedCustomNodeGrant(order, now));
+  const stillActive = new Set(grants.filter(order => !isEndedCustomNodeGrant(order, now)).flatMap(order => order.customInboundIds));
   const releaseInboundIds = [...new Set(expired.flatMap(order => order.customInboundIds))].filter(id => !stillActive.has(id));
   return { orders: expired, releaseInboundIds };
+}
+
+// Delivered manual add-ons can be linked to custom nodes afterwards, so a node granted by hand or
+// sold before custom_node existed still ends with its order.
+function canBindCustomNode(order) {
+  return order?.status === "paid" && !order.reversedAt && order.fulfillmentStatus === "fulfilled" && handlerOf(order, order.addOnSnapshots?.[0]).mode === "manual";
+}
+
+function normalizeCustomNodeBinding(payload = {}, now = Date.now()) {
+  const inboundIds = [...new Set((Array.isArray(payload.inboundIds) ? payload.inboundIds : []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0))];
+  if (!inboundIds.length) throw new Error("请选择要关联的定制节点。");
+  const expiresAt = new Date(payload.expiresAt || NaN).getTime();
+  if (!Number.isFinite(expiresAt)) throw new Error("请填写到期时间。");
+  if (expiresAt <= now) throw new Error("到期时间必须晚于现在。");
+  return { inboundIds, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+// Inbounds another running custom-node order of this user still covers.
+function activeCustomNodeInboundIds(orders, userId, exceptOrderId, now = Date.now()) {
+  return [...new Set(orders.filter(order => order.userId === userId && order.id !== exceptOrderId && isCustomNodeGrant(order) && !order.serviceEndedAt && !isEndedCustomNodeGrant(order, now)).flatMap(order => order.customInboundIds))];
 }
 
 // The mail only points to the order; delivered secrets are shown after signing in.
@@ -139,5 +163,5 @@ function escapeHtml(value) {
 
 module.exports = {
   ADDON_HANDLERS, BUYER_INPUT_MAX_LENGTH, addonHandler, addonHandlerIdFromInput, handlerOf, serviceWindow, serviceRecords,
-  isPendingDelivery, normalizeBuyerInput, assertBuyerInputs, normalizeDelivery, expiredCustomNodeGrants, deliveryNotificationMail
+  isPendingDelivery, normalizeBuyerInput, assertBuyerInputs, normalizeDelivery, expiredCustomNodeGrants, canBindCustomNode, normalizeCustomNodeBinding, activeCustomNodeInboundIds, deliveryNotificationMail
 };

@@ -1,5 +1,6 @@
 import * as React from "react"
-import { Eye, Loader2, Send } from "lucide-react"
+import { format } from "date-fns"
+import { Eye, Link2, Loader2, Send } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "@/components/features/toast"
 
@@ -18,6 +19,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/
 import { Checkbox } from "@/components/arc/checkbox/checkbox"
 import { Textarea } from "@/components/arc/textarea/textarea"
 import { Card } from "@/components/arc/card/card"
+import { Dialog, DialogContent } from "@/components/arc/dialog/dialog"
+import { Input } from "@/components/arc/input/input"
 
 type DeliveredOrder = { id: string; deliveryNotifyError?: string }
 
@@ -90,6 +93,60 @@ export function ServiceDeliveryForm({ order, onDelivered }: { order: { id: strin
   </form>
 }
 
+// Links a delivered order to custom nodes with an expiry, for nodes granted before the order was
+// tied to them. When the expiry passes, the nodes are unbound from this order's user only.
+function CustomNodeBindingDialog({ order, onClose, onSaved }: { order: AdminDeliveryOrder; onClose: () => void; onSaved: () => void }) {
+  const service = order.services[0]
+  const [inboundIds, setInboundIds] = React.useState<number[]>(service?.inboundIds || [])
+  const [expiresAt, setExpiresAt] = React.useState(service?.expiresAt ? format(new Date(service.expiresAt), "yyyy-MM-dd'T'HH:mm") : "")
+  const [inbounds, setInbounds] = React.useState<CustomInboundOption[] | null>(null)
+  const [loadError, setLoadError] = React.useState("")
+  const [saving, setSaving] = React.useState(false)
+  const idPrefix = `binding-${order.id}`
+
+  React.useEffect(() => {
+    loadCustomInbounds().then(setInbounds).catch(error => setLoadError(error instanceof Error ? error.message : "定制节点加载失败"))
+  }, [])
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    try {
+      await putJson(`/api/admin/orders/${encodeURIComponent(order.id)}/custom-node`, { inboundIds, expiresAt: new Date(expiresAt).toISOString() })
+      toast({ type: "success", title: "已关联定制节点，到期后自动解绑" })
+      onSaved()
+    } catch (error) {
+      toast({ type: "error", title: error instanceof Error ? error.message : "关联失败" })
+    } finally { setSaving(false) }
+  }
+
+  const options = (inbounds || []).filter(inbound => inbound.enabled || inboundIds.includes(inbound.id))
+  return <Dialog open onOpenChange={open => { if (!open && !saving) onClose() }}>
+    <DialogContent title="关联定制节点" description={`${order.email || "无邮箱"} · ${order.merOrderTid}`}>
+      <form className="grid gap-4" onSubmit={event => void submit(event)}>
+        <FieldGroup>
+          <FieldSet>
+            <FieldLegend>定制节点</FieldLegend>
+            <FieldDescription>勾选后立即绑定到该用户。同一节点可以绑定多个用户，到期只解绑这个用户。</FieldDescription>
+            {loadError ? <Alert tone="danger" title={loadError} />
+              : inbounds === null ? <Skeleton lines={2} />
+              : options.length ? <div className="grid gap-2 sm:grid-cols-2">{options.map(inbound => <Field key={inbound.id} orientation="horizontal">
+                <Checkbox id={`${idPrefix}-inbound-${inbound.id}`} checked={inboundIds.includes(inbound.id)} onCheckedChange={checked => setInboundIds(current => checked === true ? [...current, inbound.id] : current.filter(id => id !== inbound.id))} />
+                <FieldLabel htmlFor={`${idPrefix}-inbound-${inbound.id}`} className="font-normal">{inbound.name}{inbound.region ? <span className="text-muted-foreground">{inbound.region}</span> : null}</FieldLabel>
+              </Field>)}</div>
+              : <EmptyState title="没有可用的定制节点" description="请先在入站管理中把节点标记为定制类型并启用。" />}
+          </FieldSet>
+          <Input label="到期时间" id={`${idPrefix}-expires`} type="datetime-local" required value={expiresAt} onChange={event => setExpiresAt(event.target.value)} />
+        </FieldGroup>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" disabled={saving} onClick={onClose}>取消</Button>
+          <ActionButton type="submit" disabled={!inboundIds.length || !expiresAt || saving} label="保存关联" pending={saving} />
+        </div>
+      </form>
+    </DialogContent>
+  </Dialog>
+}
+
 function OrderMeta({ order }: { order: AdminDeliveryOrder }) {
   return <p className="text-sm text-muted-foreground line-clamp-none tabular-nums">{order.email || "无邮箱"}{order.customerID ? ` · #${order.customerID}` : ""} · {order.merOrderTid} · {formatMoney(order.totalAmount ?? order.amount)} · 付款 {formatDateTime(order.paidAt)}</p>
 }
@@ -101,6 +158,7 @@ function HandlerBadges({ services }: { services: AddonService[] }) {
 export function ServiceDeliveriesPage() {
   const [data, setData] = React.useState<{ pending: AdminDeliveryOrder[]; delivered: AdminDeliveryOrder[] } | null>(null)
   const [error, setError] = React.useState("")
+  const [bindingOrder, setBindingOrder] = React.useState<AdminDeliveryOrder | null>(null)
   const load = React.useCallback(() => fetchJson<{ pending: AdminDeliveryOrder[]; delivered: AdminDeliveryOrder[] }>("/api/admin/deliveries").then(value => { setData(value); setError("") }).catch(error => setError(error instanceof Error ? error.message : "加载失败")), [])
   React.useEffect(() => { void load() }, [load])
 
@@ -113,8 +171,9 @@ export function ServiceDeliveriesPage() {
         {data.pending.length ? <div className="grid gap-3 gap-4">{data.pending.map(order => <Card key={order.id} className="flex-col items-stretch gap-4" title={<>{serviceNames(order.services)}<HandlerBadges services={order.services} /></>} headerAction={<><ServiceDeliveryForm order={order} onDelivered={() => void load()} /></>}><OrderMeta order={order} />{order.services.map(service => <BuyerInputRow key={service.id} service={service} />)}</Card>)}</div> : <EmptyState scene="inbox" title="没有待交付的服务" description="客户购买人工交付的附加服务并付款后，会出现在这里。" />}
       </TabsContent>
       <TabsContent value="delivered">
-        {data.delivered.length ? <div className="grid gap-3 gap-3">{data.delivered.map(order => <Card key={order.id} title={<>{serviceNames(order.services)}<HandlerBadges services={order.services} />{order.deliveryNotifyError ? <Badge tone="warning">邮件未发送</Badge> : order.deliveryNotifiedAt ? <Badge tone="success">已邮件提醒</Badge> : null}</>} description={`交付于 ${formatDateTime(order.fulfilledAt)}${order.deliveredBy ? ` · ${order.deliveredBy}` : ""}${order.services[0]?.expiresAt ? ` · 有效期至 ${formatDate(order.services[0].expiresAt)}` : ""}${order.deliveryNotifyError ? ` · ${order.deliveryNotifyError}` : ""}`} headerAction={<><Button asChild variant="ghost" size="icon"><Link to={`/orders/${encodeURIComponent(order.id)}`} aria-label={`查看订单 ${order.merOrderTid}`}><Eye /></Link></Button></>}><OrderMeta order={order} /></Card>)}</div> : <EmptyState title="还没有交付记录" description="完成交付的人工服务会显示在这里。" />}
+        {data.delivered.length ? <div className="grid gap-3 gap-3">{data.delivered.map(order => <Card key={order.id} title={<>{serviceNames(order.services)}<HandlerBadges services={order.services} />{order.deliveryNotifyError ? <Badge tone="warning">邮件未发送</Badge> : order.deliveryNotifiedAt ? <Badge tone="success">已邮件提醒</Badge> : null}</>} description={`交付于 ${formatDateTime(order.fulfilledAt)}${order.deliveredBy ? ` · ${order.deliveredBy}` : ""}${order.services[0]?.expiresAt ? ` · 有效期至 ${formatDate(order.services[0].expiresAt)}` : ""}${order.services[0]?.inboundIds.length ? ` · 定制节点 ${order.services[0].inboundIds.length} 个` : ""}${order.deliveryNotifyError ? ` · ${order.deliveryNotifyError}` : ""}`} headerAction={<><Button variant="ghost" size="icon" onClick={() => setBindingOrder(order)} aria-label={`关联定制节点：${order.merOrderTid}`}><Link2 /></Button><Button asChild variant="ghost" size="icon"><Link to={`/orders/${encodeURIComponent(order.id)}`} aria-label={`查看订单 ${order.merOrderTid}`}><Eye /></Link></Button></>}><OrderMeta order={order} /></Card>)}</div> : <EmptyState title="还没有交付记录" description="完成交付的人工服务会显示在这里。" />}
       </TabsContent>
     </Tabs> : null}
+    {bindingOrder ? <CustomNodeBindingDialog key={bindingOrder.id} order={bindingOrder} onClose={() => setBindingOrder(null)} onSaved={() => { setBindingOrder(null); void load() }} /> : null}
   </div>
 }
