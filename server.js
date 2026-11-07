@@ -2489,6 +2489,9 @@ function isQueuedPlanDue(user, now = Date.now()) {
 // Runs at the start of each traffic sync round, without the commerce lock: the renewal was paid long before, and
 // like the round's traffic cycle rollover this only rewrites user fields. The entitlement stayed enabled through the
 // queued expiry, so service does not pause; the entitlement sync after the round pushes the new plan to node-hub.
+// Every user change happens synchronously and saveUsers starts in the same tick: its write mark discards any reload
+// in flight (order-fulfillment-retry forces one on the same 5-minute beat), which would otherwise swap the users
+// array for the database copy and save the old plan back. The billing ledgers are cleared only after that.
 async function activateDueQueuedPlans(now = Date.now()) {
   const summary = { activated: 0, failed: [] };
   const activated = [];
@@ -2496,7 +2499,7 @@ async function activateDueQueuedPlans(now = Date.now()) {
     const previousUserState = structuredClone(user);
     try {
       const result = activateQueuedPlan(user);
-      await resetXuiTrafficAfterPlanPurchase(user, { id: result.orderId });
+      resetXuiTrafficCycleAfterPlanPurchase(user, { id: result.orderId });
       appendUserLogToUser(user, createUserLog({
         event: "user-action",
         status: "recorded",
@@ -2516,6 +2519,9 @@ async function activateDueQueuedPlans(now = Date.now()) {
   await saveUsers();
   summary.activated = activated.length;
   console.log(`[queued-plan] activated ${activated.length} renewal(s): ${activated.map(user => user.id).join(", ")}`);
+  for (const user of activated) {
+    await clearXuiBillingLedger(xuiClientEmail(user)).catch(error => console.error(`[queued-plan] billing ledger reset failed for ${user.id}: ${error.message}`));
+  }
   return summary;
 }
 
@@ -4270,11 +4276,16 @@ async function setNodeMultiplier(guid, multiplier, extra = null) {
 }
 
 async function resetXuiTrafficAfterPlanPurchase(user, order) {
-  // The purchase re-anchors purchasedAt, so the daily-table
-  // SUM window moves to the new cycle, and a cycle baseline taken from the purchase instant
-  // drops the earlier traffic of the purchase day, so the new plan counts from exactly zero.
-  // We also re-anchor the cycle marker, refresh the in-memory display, and clear the
-  // ledger's alert/disable state.
+  resetXuiTrafficCycleAfterPlanPurchase(user, order);
+  await clearXuiBillingLedger(xuiClientEmail(user));
+}
+
+// The purchase re-anchors purchasedAt, so the daily-table
+// SUM window moves to the new cycle, and a cycle baseline taken from the purchase instant
+// drops the earlier traffic of the purchase day, so the new plan counts from exactly zero.
+// We also re-anchor the cycle marker and refresh the in-memory display; the caller clears the
+// ledger's alert/disable state.
+function resetXuiTrafficCycleAfterPlanPurchase(user, order) {
   const now = new Date().toISOString();
   const totalBytes = xuiTrafficLimitBytes(user);
   user.xuiTrafficCycleKey = currentXuiCycleStartKey(user) || `purchase:${order.id}`;
@@ -4283,7 +4294,6 @@ async function resetXuiTrafficAfterPlanPurchase(user, order) {
   user.xuiNextTrafficResetAt = nextXuiCycleResetAt(user);
   user.xuiWeightedTraffic = { rawUsedBytes: 0, usedBytes: 0, uploadBytes: 0, downloadBytes: 0, totalBytes, remainingBytes: totalBytes ? totalBytes : null, usagePercent: totalBytes ? 0 : null, depleted: false, nodes: [], lastSyncedAt: now };
   user.xuiLastTraffic = { ...(user.xuiLastTraffic || {}), available: true, status: "active", uploadBytes: 0, downloadBytes: 0, rawUsedBytes: 0, usedBytes: 0, totalBytes, remainingBytes: totalBytes ? totalBytes : null, usagePercent: totalBytes ? 0 : null, nextResetAt: user.xuiNextTrafficResetAt || "", expiresAt: user.expiresAt, nodes: [], lastSyncedAt: now };
-  await clearXuiBillingLedger(xuiClientEmail(user));
 }
 
 async function resetDueXuiTraffic() {
@@ -9463,6 +9473,7 @@ module.exports = Object.assign(requestHandler, {
   closeDataStore: () => dataStore.close(),
   planRenewalOffer,
   activateDueQueuedPlans,
+  loadLatestData,
   normalizeDocsAnnouncements,
   mergePublicAnnouncements,
   ensureDataFile,

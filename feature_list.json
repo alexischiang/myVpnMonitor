@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-05",
+  "updated_at": "2026-11-07",
   "required_fields": [
     "id",
     "name",
@@ -5624,6 +5624,24 @@
         "page_errors": [],
         "checked_at": "2026-11-06T11:57:24.000Z"
       }
+    },
+    {
+      "id": "queued-plan-activation-survives-reload",
+      "name": "Queued renewal activation is not lost to a concurrent data reload",
+      "description": "activateDueQueuedPlans changed users in memory, then awaited the billing-ledger write before saveUsers. A forced reload landing in that gap (order-fulfillment-retry runs on the same 5-minute beat) swapped the users array for the database copy, so the round logged the activation but saved the old plan back, every round. Production hit it on 2026-11-07 (leo.yinghao.c@gmail.com). Activation now makes every user change synchronously and starts saveUsers in the same tick, and clears the billing ledgers afterwards.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "early-plan-renewal"
+      ],
+      "done_criteria": [
+        "A forced reload completing while the activation is mid-write does not undo the activation.",
+        "The billing ledger of an activated user is still cleared.",
+        "Existing early-renewal behaviour is unchanged."
+      ],
+      "verification": [
+        "2026-11-07: reproduced in test-payment.js by holding the xuiBilling row lock so activation stalls on the ledger write while loadLatestData({ force: true }) completes; the unfixed code logged the activation but kept queuedPlan (assertion at the queuedPlan check failed). After the fix the same test passes, and npm run verify passed on a throwaway local database."
+      ]
     }
   ]
 }
