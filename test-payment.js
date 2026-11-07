@@ -685,7 +685,23 @@ async function main() {
     assert.strictEqual((await earlyUser()).queuedPlan.orderId, renewalOrder.id);
     // The traffic sync round starts due renewals; nothing starts before the current plan ends.
     assert.strictEqual((await handler.activateDueQueuedPlans(Date.parse(earlyActive.expiresAt) - 1000)).activated, 0);
-    const activation = await handler.activateDueQueuedPlans(Date.parse(earlyActive.expiresAt) + 1000);
+    // A forced reload that lands while the activation is still writing (order-fulfillment-retry runs on the same
+    // 5-minute beat) must not replace the users array under it and save the old plan back. Holding the billing
+    // ledger row keeps the activation mid-write while the reload completes.
+    const ledgerLock = await database.connect();
+    let activationTask;
+    try {
+      await ledgerLock.query("BEGIN");
+      await ledgerLock.query(`INSERT INTO app_records (collection, id, position, data) VALUES ('xuiBilling', 'state', 0, '{}'::jsonb)
+        ON CONFLICT (collection, id) DO UPDATE SET updated_at = app_records.updated_at`);
+      activationTask = handler.activateDueQueuedPlans(Date.parse(earlyActive.expiresAt) + 1000);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await handler.loadLatestData({ force: true });
+      await ledgerLock.query("COMMIT");
+    } finally {
+      ledgerLock.release();
+    }
+    const activation = await activationTask;
     assert.deepStrictEqual(activation, { activated: 1, failed: [] });
     const earlyRenewed = await earlyUser();
     assert.strictEqual(earlyRenewed.queuedPlan, undefined);

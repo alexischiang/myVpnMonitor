@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-06
-- Current Objective: 定制节点订单到期自动解绑：已交付订单可关联节点和到期时间
+- Last Updated: 2026-11-07
+- Current Objective: 修复提前续费到期激活被并发重载覆盖
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -582,8 +582,10 @@
 
 - 2026-11-06: npm run verify、verify:fast、verify:harness、git diff --check 通过；/deliveries 与客户订单页浏览器验证无控制台错误
 
+- 2026-11-07: test-payment.js 用行锁确定性复现并在修复后通过；npm run verify 通过
+
 ## Next Session
 
-- Files: `commerce/addon-services.js`, `feature_list.json`, `server.js`, `src/components/features/service-delivery.tsx`, `test-payment.js`, `test.js`
+- Files: `feature_list.json`, `server.js`, `test-payment.js`
 - Known risks: none
-- Recommended Next Step: 用户确认后提交部署；部署后把 custom-isp-my 改为节点定制 30 天，并为节点 18 的付费用户补录订单到期时间
+- Recommended Next Step: 提交并部署修复；之后评估流量用完时「提前续费」按钮的误导问题
