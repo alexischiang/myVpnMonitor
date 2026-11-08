@@ -181,10 +181,17 @@ function resolveCompareValues(product, attributes = []) {
   return values;
 }
 
+// The inbound keys a line group grants. An all-nodes group follows the current inbound table, so a new
+// package node joins it without an edit; custom inbounds stay out because they are sold separately.
+function lineGroupInboundKeys(group, inbounds = []) {
+  if (!group?.includeAllNodes) return group?.inboundKeys || [];
+  return inbounds.filter(inbound => inbound.inboundType !== "custom").map(inbound => inbound.key);
+}
+
 // Regions and network levels a line group reaches, from the app's inbound table. Only enabled package
 // inbounds count; custom inbounds are sold separately and never come with a plan.
 function lineGroupCoverage(group, inbounds = []) {
-  const keys = new Set(group?.inboundKeys || []);
+  const keys = new Set(lineGroupInboundKeys(group, inbounds));
   const reachable = inbounds.filter(inbound => keys.has(inbound.key) && inbound.enabled !== false && inbound.inboundType !== "custom");
   const regions = [...new Set(reachable.map(inbound => String(inbound.region || "").trim()).filter(Boolean))];
   const levels = new Set(reachable.map(inbound => inbound.networkLevel));
@@ -228,4 +235,4 @@ function planEntitlementChanges(snapshot = {}, entitlement = {}) {
     .map(field => ({ field, before: snapshot[field] ?? null, after: entitlement[field] ?? null }));
 }
 
-module.exports = { GB, DURATION_BY_DAYS, BOOLEAN_COMPARE_VALUES, PLAN_ENTITLEMENT_FIELDS, trafficCustomizationCents, optionId, visibleProducts, resolvePurchase, resolveCompareValues, lineGroupCoverage, planEntitlement, planEntitlementChanges };
+module.exports = { GB, DURATION_BY_DAYS, BOOLEAN_COMPARE_VALUES, PLAN_ENTITLEMENT_FIELDS, trafficCustomizationCents, optionId, visibleProducts, resolvePurchase, resolveCompareValues, lineGroupInboundKeys, lineGroupCoverage, planEntitlement, planEntitlementChanges };

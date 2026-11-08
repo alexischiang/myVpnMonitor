@@ -15,6 +15,7 @@ import { UsageMeter } from "@/components/arc/usage-meter/usage-meter"
 import { Separator } from "@/components/ui/separator"
 import { AccountVerificationIcon } from "@/components/features/account-verification-icon"
 import type { AccountNodeUsage } from "@/components/features/account-traffic-chart"
+import { AdCarousel, type AdSlide } from "@/components/features/ad-carousel"
 import { BentoButton, BentoIconLink } from "@/components/features/bento-button"
 import { BentoCard, BentoCardBadge, BentoGrid, bentoSpanClass, bentoSurfaceStyle, type BentoRowSpan, type BentoSpan } from "@/components/features/bento-card"
 import { DataTableRowActions } from "@/components/features/arc-data-table"
@@ -51,7 +52,7 @@ type IpInfo = { ip: string; asn?: number; asOrganization?: string; country?: str
 // Docs-site announcements carry `url`: `content` is then only their summary and the full text lives on the docs site.
 type Announcement = { id: string; title: string; content: string; publishedAt: string; url?: string }
 type AccountService = { id: string; orderId: string; name: string; regionName?: string; amount: number; durationDays?: number; startedAt: string; expiresAt?: string; status: "pending" | "processing" | "active" | "expired"; deliveryNote?: string }
-type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; vipTiers?: VipTier[]; wallet: Omit<WalletData, "entries">; referral: { rate: number; invitedCount: number }; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[] }
+type Overview = { customerID: number; email: string; createdAt: string; isBusiness: boolean; isFamilyFriend: boolean; isSuperAccount: boolean; vipLevel: string; vipSpend: number; vipDiscountPercent: number; vipTiers?: VipTier[]; wallet: Omit<WalletData, "entries">; referral: { rate: number; invitedCount: number }; subscription: Subscription | null; services: AccountService[]; trafficPack?: { trafficGb: number; price: number; enabled: boolean }; homeIp?: { enabled: boolean; regions: Array<{ id: string; name: string; price: number }> }; orders: PaymentOrder[]; announcements: Announcement[]; adCarousel?: AdSlide[] }
 type WalletEntry = { id: string; type: string; cashDelta: number; giftDelta: number; referralDelta: number; realCashDelta?: number; virtualCashDelta?: number; vipDelta: number; balance: number; description: string; createdAt: string }
 type WalletData = { balance: number; cashBalance: number; giftBalance: number; referralBalance: number; realCashBalance?: number; virtualCashBalance?: number; availableRealCashBalance?: number; availableVirtualCashBalance?: number; availableBalance: number; heldBalance: number; vipSpend: number; paymentMethods: { alipay: boolean; wechat: boolean }; entries: WalletEntry[] }
 // Local development cannot resolve a loopback address, so the overview shows this sample instead of an error.
@@ -156,18 +157,6 @@ function ProfileCard({ account, ipInfo, ipInfoError, span, rowSpan, className }:
           <span>{vipTarget ? `距离 ${vipTarget.level} 还差 ${formatMoney(vipTarget.amount - account.vipSpend)}` : "已达到最高等级"}</span>
         </div>
       </section>
-    </div>
-  </BentoCard>
-}
-
-// Placeholder ad slot: promotes the referral program until real ad content is wired in.
-// Hidden for now (SHOW_PROMO_SLOT); the greeting spans the full row while it is off.
-const SHOW_PROMO_SLOT = false
-function PromoCard({ span, rowSpan, className }: { span: BentoSpan; rowSpan: BentoRowSpan; className?: string }) {
-  return <BentoCard tone="green" span={span} rowSpan={rowSpan} className={className} title="邀请好友，一起加速" action={<Badge className="border-transparent bg-white/60">推荐</Badge>}>
-    <div className="flex flex-1 flex-col justify-between gap-4">
-      <p className="text-sm">好友通过你的邀请码购买套餐后，返利会直接计入你的钱包，购买时可抵扣。</p>
-      <BentoButton asChild className="w-fit"><Link to="/account/referrals"><Gift />获取邀请码</Link></BentoButton>
     </div>
   </BentoCard>
 }
@@ -408,6 +397,7 @@ export function AccountOverviewPage() {
   const hasTrafficDetails = subscription?.lineType === "self_hosted"
   const plan = planView(subscription, selfHostedTraffic)
   const hasAnnouncements = data.announcements.length > 0
+  const adSlides = data.adCarousel ?? []
   // With a plan: plan 4x2 on the left; traffic 4x1 on the right above devices 2x1 and nodes 2x1.
   // Without an active plan the traffic, device and node cards are hidden and the plan card spans the row.
   const announcementSpan: BentoSpan = plan.subscription ? 3 : 8
@@ -420,14 +410,14 @@ export function AccountOverviewPage() {
       <div className="grid gap-4">
         <CtaSection variant="banner" bare compactAction title="遇到问题？" description="发送工单联系客服吧！" primaryAction={{ label: "发送工单", href: "/account/tickets/new" }} onNavigate={action => { if (action.href) navigate(action.href) }} />
         <BentoGrid>
-          <section className={cn(bentoSpanClass(SHOW_PROMO_SLOT ? 5 : 8, 2), "flex min-w-0 flex-col justify-center gap-6 py-4")} aria-labelledby="account-greeting">
+          <section className={cn(bentoSpanClass(adSlides.length ? 5 : 8, 2), adSlides.length && "md:col-span-5", "flex min-w-0 flex-col justify-center gap-6 py-4")} aria-labelledby="account-greeting">
             <h2 id="account-greeting" className="grid gap-1 text-3xl font-semibold tracking-tight wrap-anywhere lg:text-4xl"><span>What's up,</span><span>{emailLocal}{emailDomain ? <><wbr />@{emailDomain}</> : null}{"\u00a0"}!</span></h2>
             <div className="flex flex-wrap gap-2">
               <BentoButton asChild size="lg"><Link to="/account/plans"><ArrowRight />前往商城</Link></BentoButton>
               <BentoButton asChild size="lg" variant="secondary"><a href={DOCS_URL} target="_blank" rel="noopener noreferrer"><BookOpen />查看使用教程</a></BentoButton>
             </div>
           </section>
-          {SHOW_PROMO_SLOT ? <PromoCard span={3} rowSpan={2} className="md:col-span-8" /> : null}
+          <AdCarousel label="广告" slides={adSlides} span={3} rowSpan={2} className="md:col-span-3" />
           <PlanDetailsCard account={data} plan={plan} span={plan.subscription ? 4 : 8} rowSpan={2} />
           {plan.subscription ? <>
             <TrafficUsageCard plan={plan} trafficLoading={trafficLoading} trafficError={trafficError} nextResetAt={selfHostedTraffic?.nextResetAt} span={4} rowSpan={1} />

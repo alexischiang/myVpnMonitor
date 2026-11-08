@@ -21,7 +21,7 @@ const { createOperationLock } = require("./commerce/operation-lock");
 const { createSettlementService } = require("./commerce/settlement");
 const { createPaymentService, manualReceipt, transactionError } = require("./commerce/payments");
 const { createCheckoutWorkflow } = require("./commerce/checkout-workflow");
-const { resolvePurchase: resolveCatalogV2Purchase, visibleProducts: visibleCatalogV2Products, resolveCompareValues: resolveCatalogV2CompareValues, lineGroupCoverage: catalogV2LineGroupCoverage, planEntitlement: catalogV2PlanEntitlement, planEntitlementChanges: catalogV2PlanEntitlementChanges } = require("./commerce/catalog-v2");
+const { resolvePurchase: resolveCatalogV2Purchase, visibleProducts: visibleCatalogV2Products, resolveCompareValues: resolveCatalogV2CompareValues, lineGroupInboundKeys: catalogV2LineGroupInboundKeys, lineGroupCoverage: catalogV2LineGroupCoverage, planEntitlement: catalogV2PlanEntitlement, planEntitlementChanges: catalogV2PlanEntitlementChanges } = require("./commerce/catalog-v2");
 const addonServices = require("./commerce/addon-services");
 
 loadLocalEnv();
@@ -118,12 +118,14 @@ function normalizeCatalogV2Features(value) {
 }
 
 function normalizeCatalogV2LineGroup(input = {}) {
-  const inboundKeys = [...new Set((Array.isArray(input.inboundKeys) ? input.inboundKeys : []).map(value => String(value).trim()).filter(value => /^[^:]+:\d+$/.test(value)))];
+  const includeAllNodes = input.includeAllNodes === true;
+  // An all-nodes group stores no list: its inbounds come from the node list whenever they are read.
+  const inboundKeys = includeAllNodes ? [] : [...new Set((Array.isArray(input.inboundKeys) ? input.inboundKeys : []).map(value => String(value).trim()).filter(value => /^[^:]+:\d+$/.test(value)))];
   const name = String(input.name || "").trim().slice(0, 60);
   if (!name) throw new Error("权限组名称不能为空。");
   const speedLimitMbps = Number(input.speedLimitMbps ?? 0);
   if (!Number.isSafeInteger(speedLimitMbps) || speedLimitMbps < 0 || speedLimitMbps > 100000) throw new Error("权限组限速必须是 0-100000 的整数（Mbps，0 为不限速）。");
-  return { id: normalizeCatalogV2Id(input.id, "权限组标识"), name, isEnabled: input.isEnabled !== false, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "权限组排序" }), inboundKeys, speedLimitMbps };
+  return { id: normalizeCatalogV2Id(input.id, "权限组标识"), name, isEnabled: input.isEnabled !== false, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "权限组排序" }), includeAllNodes, inboundKeys, speedLimitMbps };
 }
 
 function normalizeCatalogV2AddonCategory(input = {}) {
@@ -1730,7 +1732,7 @@ function normalizeAlertSettings(value, strict = false) {
 }
 
 function initialSalesSettings() {
-  return { id: "default", registrationMode: "open", onboardingEnabled: true, trial: normalizeTrialSettings(), alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [], userAlertsEnabled: true, userAlerts: [] };
+  return { id: "default", registrationMode: "open", onboardingEnabled: true, trial: normalizeTrialSettings(), alertSettings: defaultAlertSettings(), coupons: legacyPaymentCoupons(), faqs: DEFAULT_PRICING_FAQS.map(item => ({ ...item })), announcements: [], advertisements: [], adCarouselEnabled: false, adCarouselSlides: [], userAlertsEnabled: true, userAlerts: [] };
 }
 
 function readBuffer(req, limit) {
@@ -1786,7 +1788,7 @@ function normalizeCheckoutSettings(payload = {}) {
 
 function currentSalesSettings() {
   const settings = salesSettings[0];
-  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, trial: normalizeTrialSettings(settings.trial), alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], userAlertsEnabled: settings.userAlertsEnabled !== false, userAlerts: settings.userAlerts || [] } : initialSalesSettings();
+  return settings ? { ...settings, registrationMode: settings.registrationMode || "open", onboardingEnabled: settings.onboardingEnabled !== false, trial: normalizeTrialSettings(settings.trial), alertSettings: normalizeAlertSettings(settings.alertSettings), announcements: settings.announcements || [], advertisements: settings.advertisements || [], adCarouselEnabled: settings.adCarouselEnabled === true, adCarouselSlides: settings.adCarouselSlides || [], userAlertsEnabled: settings.userAlertsEnabled !== false, userAlerts: settings.userAlerts || [] } : initialSalesSettings();
 }
 
 function paymentCoupons(value) {
@@ -1839,6 +1841,26 @@ function normalizeTrialSettings(value) {
   };
   if (trial.enabled && !trial.productId) throw new Error("启用试用前请选择试用商品。");
   return trial;
+}
+
+// A click target for the ad board: a path inside the site, or a full http(s) address.
+function normalizeAdLink(value) {
+  const link = String(value || "").trim();
+  if (/^\/(?![/\\])\S*$/.test(link)) return link;
+  try {
+    if (/^https?:$/.test(new URL(link).protocol)) return link;
+  } catch {}
+  throw new Error("广告链接需要以 / 开头（站内页面），或是 http、https 开头的完整地址。");
+}
+
+function normalizeAdCarouselSlides(slides) {
+  return (Array.isArray(slides) ? slides : []).slice(0, 20).map(item => {
+    const title = String(item.title || "").trim();
+    const imageUrl = String(item.imageUrl || "").trim();
+    if (!title || title.length > 80) throw new Error("广告标题不能为空，最多 80 字。");
+    if (!/^\/uploads\/markdown\/[0-9a-f-]+\.(?:png|jpg|webp|gif)$/.test(imageUrl)) throw new Error("请上传广告图片。");
+    return { id: String(item.id || crypto.randomUUID()), title, imageUrl, linkUrl: normalizeAdLink(item.linkUrl), enabled: item.enabled !== false };
+  });
 }
 
 function normalizeSalesSettings(payload) {
@@ -1896,6 +1918,8 @@ function normalizeSalesSettings(payload) {
     if (category.length > 40 || title.length > 80 || description.length > 200 || content.length > 20000) throw new Error("广告分类最多 40 字，标题最多 80 字，简介最多 200 字，正文最多 20000 字。");
     return { id: String(item.id || crypto.randomUUID()), category, title, description, content, enabled: item.enabled !== false };
   });
+  const adCarouselEnabled = payload?.adCarouselEnabled === true;
+  const adCarouselSlides = normalizeAdCarouselSlides(payload?.adCarouselSlides);
   const userAlertsEnabled = payload?.userAlertsEnabled !== false;
   const userAlerts = (Array.isArray(payload?.userAlerts) ? payload.userAlerts : []).slice(0, 50).map(item => {
     const page = ["pricing", "checkout", "account"].includes(item.page) ? item.page : "pricing";
@@ -1905,7 +1929,7 @@ function normalizeSalesSettings(payload) {
     if (!title && !message) throw new Error("Alert 标题和内容不能同时为空。");
     return { id: String(item.id || crypto.randomUUID()), page, variant, title, message, enabled: item.enabled !== false };
   });
-  return { id: "default", registrationMode, onboardingEnabled, trial, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, userAlertsEnabled, userAlerts };
+  return { id: "default", registrationMode, onboardingEnabled, trial, alertSettings, coupons: normalizedCoupons, faqs, announcements, advertisements, adCarouselEnabled, adCarouselSlides, userAlertsEnabled, userAlerts };
 }
 
 // Validates the docs site's /api/announcements.json. Bad entries are dropped instead of failing the feed, and links must
@@ -1961,6 +1985,13 @@ function refreshDocsAnnouncements() {
       docsAnnouncementsCache.pending = null;
     });
   return docsAnnouncementsCache.pending;
+}
+
+// What the overview's ad board shows; empty while the master switch is off, which hides the board.
+function publicAdCarouselSlides() {
+  const settings = currentSalesSettings();
+  if (!settings.adCarouselEnabled) return [];
+  return settings.adCarouselSlides.filter(item => item.enabled !== false).map(({ id, title, imageUrl, linkUrl }) => ({ id, title, imageUrl, linkUrl }));
 }
 
 function publicAnnouncements() {
@@ -3748,7 +3779,7 @@ function hubEntitlementFor(user, { groups, rows }, { forceDisabled = false } = {
   let email;
   try { email = xuiClientEmail(user); } catch { return null; }
   const group = groups.find(item => item.id === planLineGroupId(user) && item.isEnabled) || null;
-  const nodeIds = nodeHub.hubNodeIdsForUser({ groupInboundKeys: group?.inboundKeys || [], extraInboundIds: user.xuiExtraInboundIds, rows });
+  const nodeIds = nodeHub.hubNodeIdsForUser({ groupInboundKeys: catalogV2LineGroupInboundKeys(group, rows), extraInboundIds: user.xuiExtraInboundIds, rows });
   let entitled = true;
   try { xuiTrafficLimitBytes(user); } catch { entitled = false; }
   return {
@@ -4540,7 +4571,7 @@ async function runXuiWeightedTrafficSync() {
 async function lineGroupInboundIds(user, management) {
   const group = (await dataStore.listCatalogV2LineGroups()).find(item => item.id === planLineGroupId(user) && item.isEnabled);
   const idsByKey = new Map(management.inbounds.map(inbound => [inbound.key, inbound.id]));
-  return (group?.inboundKeys || []).map(key => idsByKey.get(key)).filter(Boolean);
+  return catalogV2LineGroupInboundKeys(group, management.inbounds).map(key => idsByKey.get(key)).filter(Boolean);
 }
 
 // Sets a user's personal custom inbounds and pushes the change to node-hub. Used by manual edits,
@@ -4581,10 +4612,11 @@ function publicAccountNodeStatus(user, management, v2Group = null) {
   const currentGroup = accessGroupForUser(user);
   const extraIds = new Set(normalizeXuiInboundIdList(user?.xuiExtraInboundIds));
   const idsByKey = new Map((management.inbounds || []).map(inbound => [inbound.key, inbound.id]));
-  const inheritedIds = v2Group ? v2Group.inboundKeys.map(key => idsByKey.get(key)).filter(Boolean) : [];
+  const groupInboundKeys = catalogV2LineGroupInboundKeys(v2Group, management.inbounds || []);
+  const inheritedIds = groupInboundKeys.map(key => idsByKey.get(key)).filter(Boolean);
   const currentIds = new Set(effectiveXuiInboundIds(inheritedIds, [...extraIds], management.inbounds?.map(inbound => inbound.id) || []));
   const inbounds = (management.inbounds || []).flatMap(inbound => {
-    const permissionGroups = v2Group?.inboundKeys.includes(inbound.key) ? [v2Group.name] : [];
+    const permissionGroups = groupInboundKeys.includes(inbound.key) ? [v2Group.name] : [];
     const custom = inbound.inboundType === "custom";
     if (custom ? !extraIds.has(inbound.id) : !permissionGroups.length) return [];
     return [{
@@ -6736,7 +6768,8 @@ async function handleApi(req, res, pathname) {
       trafficPack: (() => { const config = trafficPackConfig(); return { trafficGb: config.trafficGb, price: config.price, enabled: config.product.enabled !== false }; })(),
       homeIp: (() => { const product = pricingProduct("home_ip"); return { enabled: Boolean(product && product.enabled !== false && product.stock !== 0), regions: Array.isArray(product?.addonRegions) ? product.addonRegions : [] }; })(),
       orders: paymentOrders.filter(item => item.accountId === account.id).slice(0, 5).map(publicPaymentOrder),
-      announcements: publicAnnouncements()
+      announcements: publicAnnouncements(),
+      adCarousel: publicAdCarouselSlides()
     });
     return;
   }
@@ -8161,7 +8194,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/catalog-v2/line-groups" && req.method === "GET") {
     const [groups, inbounds] = await Promise.all([dataStore.listCatalogV2LineGroups(), hubInboundRows().catch(() => [])]);
     // coverage feeds the comparison-row preview in the product editor.
-    sendJson(res, 200, groups.map(group => ({ ...group, coverage: catalogV2LineGroupCoverage(group, inbounds) })));
+    sendJson(res, 200, groups.map(group => ({ ...group, inboundKeys: catalogV2LineGroupInboundKeys(group, inbounds), coverage: catalogV2LineGroupCoverage(group, inbounds) })));
     return;
   }
 
@@ -8183,7 +8216,7 @@ async function handleApi(req, res, pathname) {
       progress.step("save", "done");
       // No product, and so no user, refers to a group that has just been created.
       progress.step("sync", "skipped");
-      progress.end(201, group);
+      progress.end(201, { ...group, inboundKeys: catalogV2LineGroupInboundKeys(group, await hubInboundRows().catch(() => [])) });
     } catch (error) {
       progress.end(error.code === "23505" ? 409 : 400, { error: error.code === "23505" ? "权限组标识已存在。" : error.message });
     }
@@ -8208,7 +8241,7 @@ async function handleApi(req, res, pathname) {
         // Only a changed inbound set is validated against the node-hub node list and pushed below.
         // Name, order and enabled-state edits keep the stored inbounds.
         const sameKeys = (left, right) => [...left].sort().join("\n") === [...right].sort().join("\n");
-        const inboundKeysChanged = !sameKeys(existing.inboundKeys || [], group.inboundKeys);
+        const inboundKeysChanged = Boolean(existing.includeAllNodes) !== group.includeAllNodes || !sameKeys(existing.inboundKeys || [], group.inboundKeys);
         const speedLimitChanged = (existing.speedLimitMbps || 0) !== group.speedLimitMbps;
         if (inboundKeysChanged) {
           progress.step("validate", "running");
@@ -8236,7 +8269,8 @@ async function handleApi(req, res, pathname) {
         } else {
           progress.step("sync", "skipped");
         }
-        progress.end(200, xuiSync ? { ...group, xuiSync } : group);
+        const saved = { ...group, inboundKeys: catalogV2LineGroupInboundKeys(group, await hubInboundRows().catch(() => [])) };
+        progress.end(200, xuiSync ? { ...saved, xuiSync } : saved);
       } catch (error) { progress.end(400, { error: error.message }); }
       return;
     }

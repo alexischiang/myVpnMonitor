@@ -277,6 +277,7 @@ class PostgresDataStore {
           ALTER TABLE catalog_v2_products ADD CONSTRAINT catalog_v2_products_fulfillment_handler_check CHECK (fulfillment_handler IS NULL OR fulfillment_handler IN ('traffic_credit', 'custom_node', 'manual'));
         END IF;
       END $$;
+      ALTER TABLE catalog_v2_line_groups ADD COLUMN IF NOT EXISTS include_all_nodes BOOLEAN NOT NULL DEFAULT FALSE;
       ALTER TABLE catalog_v2_products ADD COLUMN IF NOT EXISTS tagline TEXT NOT NULL DEFAULT '';
       ALTER TABLE catalog_v2_products ADD COLUMN IF NOT EXISTS compare_values JSONB NOT NULL DEFAULT '{}'::jsonb;
       -- Comparison rows shown on the recurring plan comparison page. The default rows are seeded only
@@ -887,7 +888,7 @@ class PostgresDataStore {
        GROUP BY g.id ORDER BY g.sort_order, g.id`
     ), "list catalog v2 line groups");
     return result.rows.map(row => ({
-      id: row.id, name: row.name, isEnabled: row.is_enabled, sortOrder: row.sort_order,
+      id: row.id, name: row.name, isEnabled: row.is_enabled, sortOrder: row.sort_order, includeAllNodes: row.include_all_nodes === true,
       inboundKeys: Array.isArray(row.inbound_keys) ? row.inbound_keys : [], speedLimitMbps: Number(row.speed_limit_mbps) || 0, productCount: Number(row.product_count || 0),
       createdAt: row.created_at, updatedAt: row.updated_at
     }));
@@ -895,11 +896,11 @@ class PostgresDataStore {
 
   async upsertCatalogV2LineGroup(group, { create = false } = {}) {
     const query = create
-      ? `INSERT INTO catalog_v2_line_groups (id, name, is_enabled, sort_order, inbound_keys, speed_limit_mbps)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING *`
-      : `UPDATE catalog_v2_line_groups SET name=$2, is_enabled=$3, sort_order=$4, inbound_keys=$5::jsonb, speed_limit_mbps=$6, updated_at=NOW()
+      ? `INSERT INTO catalog_v2_line_groups (id, name, is_enabled, sort_order, inbound_keys, speed_limit_mbps, include_all_nodes)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING *`
+      : `UPDATE catalog_v2_line_groups SET name=$2, is_enabled=$3, sort_order=$4, inbound_keys=$5::jsonb, speed_limit_mbps=$6, include_all_nodes=$7, updated_at=NOW()
          WHERE id=$1 RETURNING *`;
-    const result = await withPgRetry(() => this.pool.query(query, [group.id, group.name, group.isEnabled, group.sortOrder, JSON.stringify(group.inboundKeys), group.speedLimitMbps || 0]), `save catalog v2 line group ${group.id}`);
+    const result = await withPgRetry(() => this.pool.query(query, [group.id, group.name, group.isEnabled, group.sortOrder, JSON.stringify(group.inboundKeys), group.speedLimitMbps || 0, group.includeAllNodes === true]), `save catalog v2 line group ${group.id}`);
     return result.rows[0] || null;
   }
 

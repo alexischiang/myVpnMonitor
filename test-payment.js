@@ -257,6 +257,35 @@ async function main() {
     assert.strictEqual(hiddenAlerts.data.userAlerts.length, 1);
     assert.deepStrictEqual((await request("/api/public/sales-settings")).data.userAlerts, []);
     await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...hiddenAlerts.data, userAlertsEnabled: true, userAlerts: [] } });
+    const adSlide = { id: "ad-1", title: "测试广告", imageUrl: "/uploads/markdown/0a1b2c3d-1111-4222-8333-444455556666.png", linkUrl: "/account/plans", enabled: true };
+    const adSettings = (await request("/api/sales-settings", { cookie: adminCookie })).data;
+    assert.strictEqual(adSettings.adCarouselEnabled, false);
+    assert.deepStrictEqual((await request("/api/account/overview", { cookie })).data.adCarousel, []);
+    for (const [badSlide, message] of [
+      [{ ...adSlide, linkUrl: "javascript:alert(1)" }, "广告链接"],
+      [{ ...adSlide, linkUrl: "//evil.example" }, "广告链接"],
+      [{ ...adSlide, linkUrl: "" }, "广告链接"],
+      [{ ...adSlide, imageUrl: "https://evil.example/ad.png" }, "广告图片"],
+      [{ ...adSlide, title: " " }, "广告标题"]
+    ]) {
+      const rejected = await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...adSettings, adCarouselSlides: [badSlide] } });
+      assert.strictEqual(rejected.response.status, 400);
+      assert.ok(rejected.data.error.includes(message), rejected.data.error);
+    }
+    const hiddenSlide = { ...adSlide, id: "ad-hidden", enabled: false };
+    const externalSlide = { ...adSlide, id: "ad-2", linkUrl: "https://example.test/promo?a=1" };
+    const savedAds = await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...adSettings, adCarouselSlides: [adSlide, hiddenSlide, externalSlide] } });
+    assert.strictEqual(savedAds.response.status, 200);
+    // Master switch off: slides are kept for the admin but the overview gets none, so the board is hidden.
+    assert.strictEqual(savedAds.data.adCarouselSlides.length, 3);
+    assert.deepStrictEqual((await request("/api/account/overview", { cookie })).data.adCarousel, []);
+    const shownAds = await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...savedAds.data, adCarouselEnabled: true } });
+    assert.strictEqual(shownAds.data.adCarouselEnabled, true);
+    const { enabled: _adEnabled, ...publicAd } = adSlide;
+    const { enabled: _externalEnabled, ...publicExternalAd } = externalSlide;
+    assert.deepStrictEqual((await request("/api/account/overview", { cookie })).data.adCarousel, [publicAd, publicExternalAd]);
+    assert.strictEqual((await request("/api/public/sales-settings")).data.adCarousel, undefined);
+    await request("/api/sales-settings", { method: "PUT", cookie: adminCookie, body: { ...shownAds.data, adCarouselEnabled: false, adCarouselSlides: [] } });
     const adminPricing = await request("/api/pricing", { cookie: adminCookie });
     const shopperPricing = await request("/api/public/pricing");
     assert.ok(adminPricing.data.some(item => item.group === "friends-lifetime-unlimited" && item.internal === true));

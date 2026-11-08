@@ -1,4 +1,5 @@
 .root { --carousel-gap: var(--space-4); display: grid; width: 100%; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--space-4); container-type: inline-size; }
+.stage { position: relative; min-width: 0; }
 /* Only the horizontal axis clips, so focus rings inside the active slide are never cut off at the top or bottom. */
 .viewport { position: relative; min-width: 0; overflow-x: clip; overflow-y: visible; border-radius: var(--radius-panel); cursor: grab; touch-action: pan-y; -webkit-tap-highlight-color: transparent; }
 .viewport[data-dragging] { cursor: grabbing; }
@@ -8,6 +9,11 @@
 .track:not([data-measured]) { translate: calc(var(--carousel-start) * -1 * (var(--carousel-slide) + var(--carousel-gap))) 0; }
 .slide { flex: 0 0 var(--carousel-slide); min-width: 0; transform-origin: 50% 50%; will-change: transform, opacity; }
 .slide img { -webkit-user-drag: none; }
+/* XELA extension: slides stretch to the height left above the controls. */
+/* Only the slides' row is declared, so without controls no empty row keeps a gap below them. */
+.root[data-fill] { height: 100%; grid-template-rows: minmax(0, 1fr); }
+.root[data-fill] .stage, .root[data-fill] .viewport { display: grid; min-height: 0; }
+.root[data-fill] .slide { display: grid; }
 
 /* Controls line up with the edges of the centered slide. */
 .controls { display: flex; min-width: 0; align-items: center; gap: var(--space-2); padding-inline: calc((100cqw - var(--carousel-slide)) / 2); }
@@ -22,6 +28,12 @@
 .tab:focus-visible { --focus-outline-offset: -4px; }
 
 .arrows { display: flex; flex: none; gap: var(--space-2); margin-left: auto; }
+/* XELA extension: arrows over the slide's edges. The layer lets presses through, so only the buttons interrupt a drag. */
+.arrowsInside { position: absolute; inset: 0 var(--space-2); display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
+/* Translucent over the slide until pointed at or focused. */
+.arrowsInside .control { pointer-events: auto; opacity: .6; }
+.arrowsInside .control:focus-visible { opacity: 1; }
+@media (hover: hover) and (pointer: fine) { .arrowsInside .control:hover { opacity: 1; } }
 .control { display: grid; width: var(--control-height-sm); height: var(--control-height-sm); flex: none; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 0; background: var(--surface); color: var(--foreground); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), transform var(--duration-spring) var(--ease-spring); }
 @media (hover: hover) and (pointer: fine) { .control:hover:not([aria-disabled="true"]) { background: var(--surface-muted); } }
 .control:active:not([aria-disabled="true"]) { transform: scale(.97); transition: transform 100ms var(--ease-standard); }

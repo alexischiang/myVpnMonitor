@@ -274,6 +274,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `button`、`badge`、`tabs`、`segmented-control`、`card` | 没有写尺寸类的图标按控件给定尺寸（按钮和标签页 16px，小号按钮 14px，徽标 12px，卡片标题 18px）；带 `size-*` 类的图标不受影响 |
 | 控件尺寸（`src/styles.css`） | 鼠标设备下 `--control-height-sm/md/lg` 为 32/36/40px、`--radius-control` 为 14px；触屏保持 Arc 的 36/44/50px 和 18px |
 | `card`（补充） | `fill`：卡片被网格行拉伸时内容区撑满高度，正文可以贴底 |
+| `carousel` | `fill`：父级高度确定时（被网格行拉伸）幻灯片撑满控件上方的剩余高度；`loop`：幻灯片首尾成环，自动轮播、箭头、键盘和拖动都可越过两端继续同向移动；`arrowsInside`：上一页、下一页按钮叠在幻灯片左右边缘，不再放进控件行，默认 60% 不透明，悬停或键盘聚焦时恢复；`hideControls`：去掉幻灯片下方的控件行（播放按钮和指示点），幻灯片的角色改为 `group`，此时轮播只在悬停、键盘聚焦和拖动时暂停。悬停暂停移到新增的 `.stage` 外层。四者都用于总览页广告板 `features/ad-carousel.tsx`，不传时行为不变 |
 | `filter-toolbar` | 内置文案改中文（触发按钮「筛选」、「清除全部」、「未设置筛选」、移除和返回的读屏文案、变更播报）。业务封装 `features/list-filters.tsx`：`ListFilterMenu`（放在搜索框同一行）和 `ListFilterChips`（已选筛选，全部为默认值时不渲染）；`DataTable` 的 `filters` / `onClearFilters` 用它们 |
 | `sortable-data-table`（补充） | 没有可排序列且不可选择时，手机布局（≤620px）不显示表头排序条（`data-unsortable`），只剩列名的条带没有用处 |
 | `card`（补充） | 头部标题可收缩（`.header > .title { min-width: 0 }`），长标题换行或截断，不再把 `headerAction` 挤出卡片 |

@@ -175,6 +175,23 @@ async function child() {
     const customView = await api(`/api/users/${user.id}/custom-inbounds`);
     assert.ok(customView.effectiveInboundIds.includes(customRow.id) && customView.effectiveInboundIds.includes(hubRow.id));
 
+    // An all-nodes group follows the node list: every package node, a later one included, but no custom node by itself.
+    const groupBody = { name: "Hub 测试", isEnabled: true, sortOrder: 0 };
+    const allNodesGroup = await api("/api/catalog-v2/line-groups/nh-app-test", { method: "PUT", body: { ...groupBody, includeAllNodes: true, inboundKeys: lineKeys } });
+    assert.equal(allNodesGroup.includeAllNodes, true);
+    assert.deepEqual((await hubStore.getUser(user.id)).nodeIds, [legacyNode.id, node.id, customNode.id].sort((a, b) => a - b), "saving an all-nodes group grants every node right away");
+    const lateNode = await api("/api/node-hub/nodes", { method: "POST", body: { machineId: machine.id, name: "Hub 新节点", protocol: "vless", host: "hub-vps.example.com", serverPort: 9443, settings: { network: "tcp", tls: 0 } } });
+    const listedGroup = (await api("/api/catalog-v2/line-groups")).find(item => item.id === "nh-app-test");
+    assert.ok(listedGroup.inboundKeys.includes(`hub-m${machine.id}:${lateNode.id}`), "a new package node is listed in the all-nodes group");
+    assert.ok(!listedGroup.inboundKeys.includes(customRow.key), "a custom node stays out of the all-nodes group");
+    await api(`/api/users/${user.id}/xui-sync`, { method: "POST" });
+    assert.ok((await hubStore.getUser(user.id)).nodeIds.includes(lateNode.id), "a new package node reaches users of the all-nodes group");
+    await api(`/api/node-hub/nodes/${lateNode.id}`, { method: "DELETE" });
+    const manualGroup = await api("/api/catalog-v2/line-groups/nh-app-test", { method: "PUT", body: { ...groupBody, includeAllNodes: false, inboundKeys: lineKeys } });
+    assert.deepEqual([manualGroup.includeAllNodes, manualGroup.inboundKeys], [false, lineKeys], "switching off goes back to the chosen list");
+    // The save above can join the sync started by the node delete, which read the old group, so run a fresh one.
+    await api("/api/node-hub/sync", { method: "POST" });
+    assert.deepEqual((await hubStore.getUser(user.id)).nodeIds, [node.id, customNode.id].sort((a, b) => a - b), "switching off takes the other nodes away");
     // Group speed limit: saving it pushes it to every user of the group; the user's own limit still wins.
     await api("/api/catalog-v2/line-groups/nh-app-test", { method: "PUT", body: { ...group, speedLimitMbps: 40 } });
     assert.equal((await api("/api/catalog-v2/line-groups")).find(item => item.id === "nh-app-test").speedLimitMbps, 40);
