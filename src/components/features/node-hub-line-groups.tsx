@@ -7,6 +7,7 @@ import { SimpleTable } from "@/components/features/simple-table"
 import { StepProgress, type ProgressStep, type StepStatus } from "@/components/features/step-progress"
 import { toast } from "@/components/features/toast"
 import { WideNumberField } from "@/components/features/node-hub-node-form"
+import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Alert } from "@/components/arc/alert/alert"
 import { Badge } from "@/components/arc/badge/badge"
@@ -17,6 +18,7 @@ import { Input } from "@/components/arc/input/input"
 import { SearchField } from "@/components/arc/search-field/search-field"
 import { Select } from "@/components/arc/select/select"
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
+import { Switch } from "@/components/arc/switch/switch"
 import type { CatalogV2LineGroup, XuiInboundManagement } from "@/types"
 
 // V2 line permission groups on the Node Hub page: which node-hub inbounds each group (and so each
@@ -24,7 +26,7 @@ import type { CatalogV2LineGroup, XuiInboundManagement } from "@/types"
 
 type Inbound = XuiInboundManagement["inbounds"][number]
 
-const emptyLineGroup = (): CatalogV2LineGroup => ({ id: "", name: "", isEnabled: true, sortOrder: 0, inboundKeys: [], speedLimitMbps: 0 })
+const emptyLineGroup = (): CatalogV2LineGroup => ({ id: "", name: "", isEnabled: true, sortOrder: 0, includeAllNodes: false, inboundKeys: [], speedLimitMbps: 0 })
 // Steps the server reports while it saves a line group.
 const lineGroupSaveSteps = [
   { id: "validate", label: "校验入站" },
@@ -152,7 +154,7 @@ export function NodeHubLineGroupsTab({ refreshKey }: { refreshKey: number }) {
         <Button onClick={() => openSettings()} disabled={lineGroups === null}><Plus />新建权限组</Button>
       </div>
       {lineGroups === null ? error ? null : <Skeleton lines={3} />
-        : lineGroups.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{lineGroups.map(group => <Card key={group.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate text-lg font-medium">{group.name}</h3><p className="truncate text-sm text-muted-foreground">{group.id}</p></div>{group.isEnabled ? <Badge tone="success">启用</Badge> : <Badge>停用</Badge>}</div><div className="flex items-end justify-between gap-3"><div className="text-sm text-muted-foreground"><span className="tabular-nums">{group.inboundKeys.length}</span> 个入站 · <span className="tabular-nums">{group.productCount || 0}</span> 个商品 · <span className="whitespace-nowrap tabular-nums">{group.speedLimitMbps ? `限速 ${group.speedLimitMbps} Mbps` : "不限速"}</span></div><Button variant="secondary" size="sm" onClick={() => openSettings(group)}><Pencil />编辑</Button></div></Card>)}</div>
+        : lineGroups.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{lineGroups.map(group => <Card key={group.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate text-lg font-medium">{group.name}</h3><p className="truncate text-sm text-muted-foreground">{group.id}</p></div>{group.isEnabled ? <Badge tone="success">启用</Badge> : <Badge>停用</Badge>}</div><div className="flex items-end justify-between gap-3"><div className="text-sm text-muted-foreground">{group.includeAllNodes ? "全部节点" : <><span className="tabular-nums">{group.inboundKeys.length}</span> 个入站</>} · <span className="tabular-nums">{group.productCount || 0}</span> 个商品 · <span className="whitespace-nowrap tabular-nums">{group.speedLimitMbps ? `限速 ${group.speedLimitMbps} Mbps` : "不限速"}</span></div><Button variant="secondary" size="sm" onClick={() => openSettings(group)}><Pencil />编辑</Button></div></Card>)}</div>
         : <Card title="尚未创建 V2 权限组" description="新建权限组后即可为 V2 套餐选择可用入站。"></Card>}
 
       <Dialog open={open} onOpenChange={next => { if (!saving) setOpen(next) }}>
@@ -163,7 +165,9 @@ export function NodeHubLineGroupsTab({ refreshKey }: { refreshKey: number }) {
           <WideNumberField label="排序" id="line-group-order" value={draft.sortOrder} onValueChange={next => setDraft(current => ({ ...current, sortOrder: next }))} min={0} />
           <WideNumberField label="用户限速" id="line-group-speed" description="0 为不限速，用户单独限速优先" value={draft.speedLimitMbps || 0} onValueChange={next => setDraft(current => ({ ...current, speedLimitMbps: Math.max(0, Math.floor(next || 0)) }))} min={0} max={100000} step={1} suffix=" Mbps" formatOptions={{ useGrouping: false }} />
           <Select label="状态" id="line-group-enabled" className="w-full" value={draft.isEnabled ? "enabled" : "disabled"} onValueChange={value => setDraft(current => ({ ...current, isEnabled: value === "enabled" }))} options={[{ value: "enabled", label: "启用" }, { value: "disabled", label: "停用" }]} />
-        </div><div className="grid items-start gap-3 sm:grid-cols-2">
+        </div>
+        <Field orientation="horizontal" className="justify-between"><FieldContent><FieldLabel htmlFor="line-group-all-nodes">包含全部节点</FieldLabel><FieldDescription>{draft.includeAllNodes ? `当前 ${inbounds.filter(inbound => inbound.inboundType === "package").length} 个套餐节点，新节点自动加入；定制节点除外` : "新建的套餐节点自动加入；定制节点除外"}</FieldDescription></FieldContent><Switch id="line-group-all-nodes" checked={draft.includeAllNodes === true} onCheckedChange={includeAllNodes => setDraft(current => ({ ...current, includeAllNodes }))} /></Field>
+        {draft.includeAllNodes ? null : <><div className="grid items-start gap-3 sm:grid-cols-2">
           <SearchField label="搜索入站" id="group-inbound-search" value={search} onValueChange={setSearch} placeholder="节点、入站、地区或协议" />
           <Select label="节点" value={nodeFilter} onValueChange={setNodeFilter} id="group-node-filter" className="w-full" options={[{ value: "all", label: "全部节点" }, ...nodeOptions]} />
         </div><div className="grid gap-3 sm:grid-cols-2">
@@ -175,7 +179,7 @@ export function NodeHubLineGroupsTab({ refreshKey }: { refreshKey: number }) {
             <div className="border-b px-4 py-3"><h3 className="font-semibold">不可用入站 ({unavailableInbounds.length})</h3></div>
             <InboundTable rows={unavailableInbounds} empty="没有符合筛选条件的不可用入站" action={inbound => <Button variant="success" size="icon" className="bg-emerald-600/10 text-emerald-600 hover:bg-emerald-600/20 focus-visible:ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-400 dark:hover:bg-emerald-400/20 dark:focus-visible:ring-emerald-400/40" onClick={() => setAvailability(inbound.key, true)} aria-label={`新增 ${inbound.name}`} title={`新增 ${inbound.name}`}><CirclePlus /></Button>} />
           </div>
-        </div><div className="grid gap-4">
+        </div></>}<div className="grid gap-4">
           {saveSteps ? <StepProgress steps={saveSteps} label="保存权限组进度" /> : null}
           <div className="flex flex-wrap justify-end gap-2">{original ? <><Button variant="danger" className="mr-auto" onClick={() => setConfirmDelete(true)} disabled={saving}><Trash2 />删除权限组</Button><ConfirmDialog open={confirmDelete} onOpenChange={setConfirmDelete} title={`删除权限组「${original.name}」？`} description="删除后不能恢复。" onConfirm={remove} /></> : null}<Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>取消</Button><ActionButton icon={<Save />} onClick={() => void save()} disabled={saving || !changed} label="保存权限组" pending={saving} /></div>
         </div></DialogContent>

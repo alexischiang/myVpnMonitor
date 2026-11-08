@@ -31,6 +31,14 @@ export interface CarouselProps {
   interval?: number;
   /** Starts rotating on mount. Off by default, so motion begins with the viewer. */
   autoplay?: boolean;
+  /** XELA extension: fills a parent with a set height (a stretched grid row): slides take the height left above the controls. */
+  fill?: boolean;
+  /** XELA extension: the slides form a ring, so moving past either end carries on in the same direction. Needs at least two slides. */
+  loop?: boolean;
+  /** XELA extension: the previous and next arrows sit over the slide's left and right edges instead of in the controls row. */
+  arrowsInside?: boolean;
+  /** XELA extension: removes the row below the slides (play control and indicators). Rotation then pauses only on hover, keyboard focus, and drag; pair with `arrowsInside` to keep the arrows. */
+  hideControls?: boolean;
   className?: string;
 }
 
@@ -45,6 +53,8 @@ const DOT = 6, PILL = 22;
 /** Scale and opacity of a slide one full step from the center. */
 const SCALE = .9, DIM = .5;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+/** Signed distance around a ring of `count` slides, the shortest way. */
+const ringOffset = (distance: number, count: number) => distance - Math.round(distance / count) * count;
 /** Momentum projection with a paging deceleration rate: where a flick would come to rest. */
 const project = (velocity: number, rate = .995) => velocity / 1000 * rate / (1 - rate);
 /** Past an edge every pixel costs more, like pulling against elastic. */
@@ -65,10 +75,15 @@ function velocityOf(samples: [number, number][], now: number) {
   return lastTime > firstTime ? (lastX - firstX) / ((lastTime - firstTime) / 1000) : 0;
 }
 
-export function Carousel({ label, children, index: controlledIndex, defaultIndex = 0, onIndexChange, slideSize = "min(80cqw, 340px)", slideLabel = defaultSlideLabel, interval, autoplay = false, className }: CarouselProps) {
+export function Carousel({ label, children, index: controlledIndex, defaultIndex = 0, onIndexChange, slideSize = "min(80cqw, 340px)", slideLabel = defaultSlideLabel, interval, autoplay = false, fill = false, loop: loopProp = false, arrowsInside = false, hideControls = false, className }: CarouselProps) {
   const slides = Children.toArray(children);
   const count = slides.length;
   const last = Math.max(0, count - 1);
+  const loop = loopProp && count > 1;
+  // In a loop `target` and the track position keep counting past the ends; `index` is always the real slide.
+  const slideOf = (position: number) => loop ? ((position % count) + count) % count : position;
+  /** The nearest track position that shows a real slide. */
+  const positionOf = (slide: number) => loop ? target.current + ringOffset(slide - slideOf(target.current), count) : slide;
   const id = useId();
   const reduced = useReducedMotion() ?? false;
   const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
@@ -100,7 +115,7 @@ export function Carousel({ label, children, index: controlledIndex, defaultIndex
   const canRotate = Boolean(interval) && count > 1 && !(hydrated && reduced);
   const running = canRotate && playing && !hovered && !focusPaused && !dragging && inView && pageVisible;
 
-  const bounds = () => ({ min: -last * metrics.current.step, max: 0 });
+  const bounds = () => loop ? { min: -Infinity, max: Infinity } : { min: -last * metrics.current.step, max: 0 };
   const band = (raw: number) => {
     const { min, max } = bounds(), size = metrics.current.width || 1;
     return raw > max ? max + rubber(raw - max, size) : raw < min ? min - rubber(min - raw, size) : raw;
@@ -121,9 +136,10 @@ export function Carousel({ label, children, index: controlledIndex, defaultIndex
   }
 
   function select(to: number, { velocity = 0, announce = true }: { velocity?: number; announce?: boolean } = {}) {
-    const next = clamp(to, 0, last);
-    target.current = next;
-    glide(next, velocity);
+    const position = loop ? to : clamp(to, 0, last);
+    const next = slideOf(position);
+    target.current = position;
+    glide(position, velocity);
     if (next === index) return;
     if (controlledIndex === undefined) setOwnIndex(next);
     onIndexChange?.(next);
@@ -136,7 +152,8 @@ export function Carousel({ label, children, index: controlledIndex, defaultIndex
     if (!track || !viewport || !first) return;
     // Centers are unaffected by each slide's scale, and rects keep the sub-pixel step that offsetLeft would round away.
     const center = (node: HTMLElement) => { const rect = node.getBoundingClientRect(); return rect.left + rect.width / 2; };
-    const step = second ? center(second) - center(first) : first.offsetWidth;
+    // Looping slides are shifted around the ring, so their centers do not give the step; the laid-out size and gap do.
+    const step = loop ? parseFloat(getComputedStyle(first).width) + (parseFloat(getComputedStyle(track).columnGap) || 0) : second ? center(second) - center(first) : first.offsetWidth;
     const changed = step !== metrics.current.step;
     metrics.current = { step, width: viewport.clientWidth };
     // The server positions the start slide with CSS; from here on the motion value owns the track.
@@ -159,13 +176,13 @@ export function Carousel({ label, children, index: controlledIndex, defaultIndex
     if (!step) return;
     const position = -value / step;
     progress.set(position);
-    drains.forEach((drain, i) => { if (i !== target.current && Math.abs(position - i) >= 1 && drain.get() !== 0) drain.jump(0); });
-  }), [x, progress, drains]);
+    drains.forEach((drain, i) => { if (i !== slideOf(target.current) && Math.abs(loop ? ringOffset(position - i, count) : position - i) >= 1 && drain.get() !== 0) drain.jump(0); });
+  }), [x, progress, drains, loop, count]);
 
-  const followIndexProp = useEffectEvent((next: number) => { if (target.current !== next) { target.current = next; glide(next); } });
+  const followIndexProp = useEffectEvent((next: number) => { if (slideOf(target.current) !== next) { const position = positionOf(next); target.current = position; glide(position); } });
   useEffect(() => { followIndexProp(index); }, [index]);
 
-  const advance = useEffectEvent(() => select(index >= last ? 0 : index + 1, { announce: false }));
+  const advance = useEffectEvent(() => select(loop ? target.current + 1 : index >= last ? 0 : index + 1, { announce: false }));
   useEffect(() => {
     if (!running || !interval) return;
     const drain = drains[index];
@@ -262,7 +279,7 @@ export function Carousel({ label, children, index: controlledIndex, defaultIndex
       select(Math.round(-x.get() / step));
     } else if (!cancelled && current.locked === null) {
       const hit = slideAt(event.clientX);
-      if (hit !== null && hit !== target.current) { swallowClick.current = true; select(hit); }
+      if (hit !== null && hit !== slideOf(target.current)) { swallowClick.current = true; select(positionOf(hit)); }
     } else if (cancelled) {
       select(target.current);
     }
@@ -273,12 +290,12 @@ export function Carousel({ label, children, index: controlledIndex, defaultIndex
     const node = event.target as HTMLElement;
     if (node.closest("input, textarea, select, [contenteditable]")) return;
     const from = target.current;
-    const to = event.key === "ArrowLeft" ? from - 1 : event.key === "ArrowRight" ? from + 1 : event.key === "Home" ? 0 : event.key === "End" ? last : null;
+    const to = event.key === "ArrowLeft" ? from - 1 : event.key === "ArrowRight" ? from + 1 : event.key === "Home" ? positionOf(0) : event.key === "End" ? positionOf(last) : null;
     if (to === null) return;
     event.preventDefault();
-    const next = clamp(to, 0, last);
+    const next = loop ? to : clamp(to, 0, last);
     select(next);
-    if (node.getAttribute("role") === "tab") tabRefs.current[next]?.focus({ preventScroll: true });
+    if (node.getAttribute("role") === "tab") tabRefs.current[slideOf(next)]?.focus({ preventScroll: true });
     else if (trackRef.current?.contains(node)) viewportRef.current?.focus({ preventScroll: true });
   }
 
@@ -290,21 +307,29 @@ export function Carousel({ label, children, index: controlledIndex, defaultIndex
     if (drain) { if (reduced) drain.jump(0); else animate(drain, 0, { duration: motionTokens.duration.standard, ease: [...motionTokens.ease.standard] }); }
   }
 
+  const arrows = <div className={arrowsInside ? styles.arrowsInside : styles.arrows}>
+    <button type="button" className={styles.control} aria-label="上一页" aria-disabled={!loop && index === 0} onClick={() => { if (loop || target.current > 0) select(target.current - 1); }}><ChevronLeft size={18} strokeWidth={1.75} aria-hidden="true" /></button>
+    <button type="button" className={styles.control} aria-label="下一页" aria-disabled={!loop && index === last} onClick={() => { if (loop || target.current < last) select(target.current + 1); }}><ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" /></button>
+  </div>;
+
   const rootStyle = { "--carousel-slide": slideSize, "--carousel-start": startIndex } as CSSProperties;
 
-  return <section ref={rootRef} className={[styles.root, className].filter(Boolean).join(" ")} style={rootStyle} aria-roledescription="carousel" aria-label={label} onKeyDown={onKeyDown}
+  return <section ref={rootRef} className={[styles.root, className].filter(Boolean).join(" ")} style={rootStyle} data-fill={fill || undefined} aria-roledescription="carousel" aria-label={label} onKeyDown={onKeyDown}
     onFocus={event => setFocusPaused(event.target !== playRef.current && event.target.matches(":focus-visible"))}
     onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusPaused(false); }}>
+    {/* The hover pause lives on the stage so that moving onto an inside arrow does not restart rotation. */}
+    <div className={styles.stage} onPointerEnter={event => { if (event.pointerType === "mouse") setHovered(true); }} onPointerLeave={() => setHovered(false)}>
     <div ref={viewportRef} className={styles.viewport} role="group" aria-label="幻灯片" tabIndex={0} data-dragging={dragging || undefined}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={event => finish(event, false)} onPointerCancel={event => finish(event, true)}
-      onPointerEnter={event => { if (event.pointerType === "mouse") setHovered(true); }} onPointerLeave={() => setHovered(false)}
       onClickCapture={event => { if (swallowClick.current) { event.preventDefault(); event.stopPropagation(); swallowClick.current = false; } }}
       onDragStart={event => event.preventDefault()}>
       <motion.div ref={trackRef} className={styles.track} style={{ x }}>
-        {slides.map((slide, i) => <Slide key={isValidElement(slide) && slide.key != null ? slide.key : i} id={`${id}-slide-${i}`} index={i} progress={progress} active={i === index} label={slideLabel(i, count)}>{slide}</Slide>)}
+        {slides.map((slide, i) => <Slide key={isValidElement(slide) && slide.key != null ? slide.key : i} id={`${id}-slide-${i}`} index={i} count={count} loop={loop} standalone={hideControls} progress={progress} active={i === index} label={slideLabel(i, count)}>{slide}</Slide>)}
       </motion.div>
     </div>
-    {count > 1 && <div className={styles.controls}>
+    {arrowsInside && count > 1 && arrows}
+    </div>
+    {count > 1 && !hideControls && <div className={styles.controls}>
       {canRotate && <button ref={playRef} type="button" className={styles.control} aria-label={playing ? "暂停轮播" : "开始轮播"} onClick={toggleRotation}>
         <span className={styles.iconSlot}><AnimatePresence initial={false}>
           <motion.span key={playing ? "pause" : "play"} className={styles.icon} initial={reduced ? { opacity: 0 } : iconIn} animate={iconRest} exit={reduced ? { opacity: 0, transition: { duration: motionTokens.duration.instant } } : iconOut} transition={reduced ? { duration: motionTokens.duration.instant } : iconEnter}>
@@ -313,28 +338,31 @@ export function Carousel({ label, children, index: controlledIndex, defaultIndex
         </AnimatePresence></span>
       </button>}
       <div className={styles.tabs} role="tablist" aria-label="选择一页">
-        {slides.map((_, i) => <Dot key={i} index={i} last={last} progress={progress} drain={drains[i]!} selected={i === index} label={slideLabel(i, count)} controls={`${id}-slide-${i}`}
-          tabRef={node => { tabRefs.current[i] = node; }} onSelect={() => select(i)} />)}
+        {slides.map((_, i) => <Dot key={i} index={i} last={last} count={count} loop={loop} progress={progress} drain={drains[i]!} selected={i === index} label={slideLabel(i, count)} controls={`${id}-slide-${i}`}
+          tabRef={node => { tabRefs.current[i] = node; }} onSelect={() => select(positionOf(i))} />)}
       </div>
-      <div className={styles.arrows}>
-        <button type="button" className={styles.control} aria-label="上一页" aria-disabled={index === 0} onClick={() => { if (target.current > 0) select(target.current - 1); }}><ChevronLeft size={18} strokeWidth={1.75} aria-hidden="true" /></button>
-        <button type="button" className={styles.control} aria-label="下一页" aria-disabled={index === last} onClick={() => { if (target.current < last) select(target.current + 1); }}><ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" /></button>
-      </div>
+      {!arrowsInside && arrows}
     </div>}
     <span className={styles.visuallyHidden} aria-live="polite" aria-atomic="true">{announcement}</span>
   </section>;
 }
 
 /** A slide shrinks and dims with its distance from the center, read straight from the track position so it never lags the finger. */
-function Slide({ id, index, progress, active, label, children }: { id: string; index: number; progress: MotionValue<number>; active: boolean; label: string; children: ReactNode }) {
-  const scale = useTransform(progress, [index - 1, index, index + 1], [SCALE, 1, SCALE]);
-  const opacity = useTransform(progress, [index - 1, index, index + 1], [DIM, 1, DIM]);
-  return <motion.div id={id} className={styles.slide} role="tabpanel" aria-roledescription="slide" aria-label={label} inert={!active} style={{ scale, opacity }}>{children}</motion.div>;
+function Slide({ id, index, count, loop, standalone, progress, active, label, children }: { id: string; index: number; count: number; loop: boolean; standalone: boolean; progress: MotionValue<number>; active: boolean; label: string; children: ReactNode }) {
+  const nearness = (position: number) => 1 - Math.min(1, Math.abs(loop ? ringOffset(position - index, count) : position - index));
+  const scale = useTransform(progress, position => SCALE + (1 - SCALE) * nearness(position));
+  const opacity = useTransform(progress, position => DIM + (1 - DIM) * nearness(position));
+  // In a loop each slide stays on the lap nearest the track position, so the ring has no end to run out of.
+  const translate = useTransform(progress, position => {
+    const laps = loop ? Math.round((position - index) / count) * count : 0;
+    return laps ? `calc(${laps} * (var(--carousel-slide) + var(--carousel-gap))) 0` : "none";
+  });
+  return <motion.div id={id} className={styles.slide} role={standalone ? "group" : "tabpanel"} aria-roledescription="slide" aria-label={label} inert={!active} style={{ scale, opacity, translate }}>{children}</motion.div>;
 }
 
 /** Each indicator grows toward a pill as the track nears its slide, so the pill hands over continuously instead of hopping. */
-function Dot({ index, last, progress, drain, selected, label, controls, tabRef, onSelect }: { index: number; last: number; progress: MotionValue<number>; drain: MotionValue<number>; selected: boolean; label: string; controls: string; tabRef: Ref<HTMLButtonElement>; onSelect: () => void }) {
-  const emphasis = useTransform(progress, value => Math.max(0, 1 - Math.abs(clamp(value, 0, last) - index)));
+function Dot({ index, last, count, loop, progress, drain, selected, label, controls, tabRef, onSelect }: { index: number; last: number; count: number; loop: boolean; progress: MotionValue<number>; drain: MotionValue<number>; selected: boolean; label: string; controls: string; tabRef: Ref<HTMLButtonElement>; onSelect: () => void }) {
+  const emphasis = useTransform(progress, value => Math.max(0, 1 - Math.abs(loop ? ringOffset(value - index, count) : clamp(value, 0, last) - index)));
   const width = useTransform(emphasis, value => DOT + (PILL - DOT) * value);
   return <button ref={tabRef} type="button" role="tab" className={styles.tab} aria-selected={selected} aria-controls={controls} aria-label={label} tabIndex={selected ? 0 : -1} onClick={onSelect}>
     <motion.span className={styles.dot} style={{ width }} aria-hidden="true">

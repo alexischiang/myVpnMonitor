@@ -1,6 +1,6 @@
 import * as React from "react"
 import { addDays, format, startOfDay, subDays } from "date-fns"
-import { CalendarIcon, Loader2, Plus, Trash2 } from "lucide-react"
+import { CalendarIcon, ImageUp, Loader2, Plus, Trash2 } from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { toast } from "@/components/features/toast"
 
@@ -11,7 +11,8 @@ import { Drawer, DrawerClose, DrawerContent } from "@/components/arc/drawer/draw
 import { EmptyState, PageHeader, UserAlert } from "@/components/features/shared"
 import { MarkdownEditor } from "@/components/features/markdown-editor"
 import { useData } from "@/components/features/data-provider"
-import type { AnnouncementSetting, CouponSetting, FaqSetting, MarkdownDocumentSetting, SalesSettings, UserAlertSetting } from "@/types"
+import { AD_IMAGE_ASPECT } from "@/components/features/ad-carousel"
+import type { AdCarouselSlideSetting, AnnouncementSetting, CouponSetting, FaqSetting, MarkdownDocumentSetting, SalesSettings, UserAlertSetting } from "@/types"
 import { ActionButton } from "@/components/arc/action-button/action-button"
 import { Badge } from "@/components/arc/badge/badge"
 import { Button } from "@/components/arc/button/button"
@@ -32,6 +33,7 @@ type Editor =
   | { type: "announcement"; value: AnnouncementSetting; isNew: boolean }
   | { type: "advertisement"; value: MarkdownDocumentSetting; isNew: boolean }
   | { type: "alert"; value: UserAlertSetting; isNew: boolean }
+  | { type: "adSlide"; value: AdCarouselSlideSetting; isNew: boolean }
 
 const couponGroups = [
   { value: "basic", label: "BASIC" },
@@ -65,6 +67,7 @@ const editorLabels: Record<Editor["type"], { name: string; description: string; 
   announcement: { name: "公告", description: "使用 Markdown 编写正文，可在编辑器中实时预览。", size: "xl" },
   advertisement: { name: "广告", description: "使用 Markdown 编写正文，可在编辑器中实时预览。", size: "xl" },
   alert: { name: "Alert", description: "选择显示页面和类型，填写提醒内容后可在下方预览。", size: "md" },
+  adSlide: { name: "广告图片", description: "上传图片并设置点击后跳转的链接。", size: "md" },
 }
 
 function alertSummary(item: UserAlertSetting) {
@@ -99,6 +102,37 @@ function couponLimit(coupon: CouponSetting) {
   const total = coupon.totalLimit ? `总量 ${coupon.totalLimit}（已占用 ${coupon.usedCount || 0}）` : "不限总量"
   const account = coupon.perAccountLimit ? `每账户 ${coupon.perAccountLimit} 次` : "不限账户次数"
   return `${total} · ${account}`
+}
+
+function AdImageField({ value, onChange }: { value: string; onChange: (url: string) => void }) {
+  const [uploading, setUploading] = React.useState(false)
+  const inputRef = React.useRef<HTMLInputElement>(null)
+
+  async function upload(file?: File) {
+    if (!file) return
+    if (!file.type.startsWith("image/") || file.size > 8 * 1024 * 1024) {
+      toast({ type: "error", title: "请选择不超过 8MB 的 PNG、JPEG、WebP 或 GIF 图片" })
+      return
+    }
+    setUploading(true)
+    try {
+      const { url } = await fetchJson<{ url: string }>("/api/markdown/images", { method: "POST", body: file, headers: { "content-type": file.type } })
+      onChange(url)
+    } catch (error) {
+      toast({ type: "error", title: error instanceof Error ? error.message : "图片上传失败" })
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ""
+    }
+  }
+
+  return <Field>
+    <FieldLabel htmlFor="sales-ad-image">广告图片</FieldLabel>
+    {value ? <img src={value} alt="广告图片预览" className={`${AD_IMAGE_ASPECT} w-full rounded-2xl bg-muted object-cover`} /> : null}
+    <input ref={inputRef} id="sales-ad-image" className="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={event => void upload(event.target.files?.[0])} />
+    <Button type="button" variant="secondary" className="w-fit" disabled={uploading} onClick={() => inputRef.current?.click()}>{uploading ? <Loader2 className="animate-spin" /> : <ImageUp />}{uploading ? "上传中..." : value ? "更换图片" : "上传图片"}</Button>
+    <FieldDescription>建议 1000×600（5:3），重要内容放在中间；不同屏幕下四周可能被裁切。支持 PNG、JPEG、WebP、GIF，不超过 8MB。</FieldDescription>
+  </Field>
 }
 
 function MarkdownDocumentList({ title, description, empty, items, onAdd, onEdit }: { title: string; description: string; empty: string; items: MarkdownDocumentSetting[]; onAdd: () => void; onEdit: (value: MarkdownDocumentSetting) => void }) {
@@ -153,6 +187,14 @@ export function SalesSettingsPage() {
     if (!(await persist(next, enabled ? "已开启用户端 Alert" : "已隐藏全部用户端 Alert"))) setSettings(previous)
   }
 
+  async function toggleAdCarousel(enabled: boolean) {
+    if (!settings) return
+    const previous = settings
+    const next = { ...settings, adCarouselEnabled: enabled }
+    setSettings(next)
+    if (!(await persist(next, enabled ? "已开启广告轮播" : "已关闭广告轮播"))) setSettings(previous)
+  }
+
   async function saveEditor() {
     if (!settings || !editor) return
     if (editor.type === "coupon" && Boolean(editor.value.validFrom) !== Boolean(editor.value.validUntil)) {
@@ -170,6 +212,7 @@ export function SalesSettingsPage() {
         : editor.type === "announcement"
           ? { ...settings, announcements: editor.isNew ? [...settings.announcements, editor.value] : settings.announcements.map(item => item.id === editor.value.id ? editor.value : item) }
           : editor.type === "advertisement" ? { ...settings, advertisements: editor.isNew ? [...settings.advertisements, editor.value] : settings.advertisements.map(item => item.id === editor.value.id ? editor.value : item) }
+            : editor.type === "adSlide" ? { ...settings, adCarouselSlides: editor.isNew ? [...settings.adCarouselSlides, editor.value] : settings.adCarouselSlides.map(item => item.id === editor.value.id ? editor.value : item) }
             : { ...settings, userAlerts: editor.isNew ? [...settings.userAlerts, editor.value] : settings.userAlerts.map(item => item.id === editor.value.id ? editor.value : item) }
     setSavingAction("save")
     try {
@@ -187,7 +230,8 @@ export function SalesSettingsPage() {
         ? { ...settings, faqs: settings.faqs.filter(item => item.id !== editor.value.id) }
         : editor.type === "announcement"
           ? { ...settings, announcements: settings.announcements.filter(item => item.id !== editor.value.id) }
-          : editor.type === "advertisement" ? { ...settings, advertisements: settings.advertisements.filter(item => item.id !== editor.value.id) } : { ...settings, userAlerts: settings.userAlerts.filter(item => item.id !== editor.value.id) }
+          : editor.type === "advertisement" ? { ...settings, advertisements: settings.advertisements.filter(item => item.id !== editor.value.id) }
+            : editor.type === "adSlide" ? { ...settings, adCarouselSlides: settings.adCarouselSlides.filter(item => item.id !== editor.value.id) } : { ...settings, userAlerts: settings.userAlerts.filter(item => item.id !== editor.value.id) }
     setSavingAction("delete")
     try {
       if (await persist(next, "已删除")) setEditor(null)
@@ -206,6 +250,7 @@ export function SalesSettingsPage() {
           <TabsTrigger value="coupons">优惠码</TabsTrigger>
           <TabsTrigger value="faqs">价格页 FAQ</TabsTrigger>
           <TabsTrigger value="announcements">网站公告</TabsTrigger>
+          <TabsTrigger value="ad-carousel">广告轮播</TabsTrigger>
           <TabsTrigger value="advertisements">广告草稿</TabsTrigger>
           <TabsTrigger value="alerts">Alert 管理</TabsTrigger>
         </TabsList>
@@ -242,6 +287,21 @@ export function SalesSettingsPage() {
             {settings.announcements.length ? <div className="grid gap-3">{settings.announcements.slice().sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt)).map(announcement => <Card key={announcement.id} title={<>{announcement.title}<Badge tone={announcement.enabled ? "neutral" : "neutral"}>{announcement.enabled ? "已启用" : "已停用"}</Badge></>} description={format(new Date(announcement.publishedAt), "yyyy/MM/dd HH:mm")} headerAction={<><Button variant="link" size="sm" onClick={() => setEditor({ type: "announcement", value: { ...announcement }, isNew: false })}>编辑</Button></>} />)}</div> : <EmptyState title="暂无公告" description="发布后会显示在用户端的公告栏中。" />}
           </section>
         </TabsContent>
+        <TabsContent value="ad-carousel">
+          <section className="grid gap-4">
+            <header className="flex flex-wrap items-end justify-between gap-3"><div className="grid gap-1"><h2 className="text-lg font-semibold">广告轮播</h2><p className="text-sm text-muted-foreground">启用的图片按当前顺序轮播在用户总览右上角。</p></div><Button variant="secondary" size="sm" onClick={() => setEditor({ type: "adSlide", value: { id: crypto.randomUUID(), title: "", imageUrl: "", linkUrl: "", enabled: true }, isNew: true })}><Plus />添加广告</Button></header>
+            <Card>
+              <Field orientation="horizontal" className="justify-between gap-6">
+                <FieldContent>
+                  <FieldLabel htmlFor="ad-carousel-enabled">在用户总览显示广告</FieldLabel>
+                  <FieldDescription>{settings.adCarouselEnabled ? "已启用的广告会在用户总览轮播。" : "已隐藏广告组件，下方各条的设置会保留，重新开启后恢复显示。"}</FieldDescription>
+                </FieldContent>
+                <Switch id="ad-carousel-enabled" checked={settings.adCarouselEnabled} disabled={saving} onCheckedChange={checked => void toggleAdCarousel(checked)} />
+              </Field>
+            </Card>
+            {settings.adCarouselSlides.length ? <div className={`grid gap-3 transition-opacity ${settings.adCarouselEnabled ? "" : "opacity-60"}`}>{settings.adCarouselSlides.map(item => <Card key={item.id} title={<>{item.title}<Badge tone={item.enabled && settings.adCarouselEnabled ? "success" : "neutral"}>{!item.enabled ? "已停用" : settings.adCarouselEnabled ? "显示中" : "已隐藏"}</Badge></>} description={<span className="break-all">{item.linkUrl}</span>} headerAction={<Button variant="link" size="sm" onClick={() => setEditor({ type: "adSlide", value: { ...item }, isNew: false })}>编辑</Button>}><img src={item.imageUrl} alt="" className={`${AD_IMAGE_ASPECT} w-40 rounded-xl bg-muted object-cover`} /></Card>)}</div> : <EmptyState title="暂无广告" description="添加广告后，开启上方开关即可在用户总览显示。" />}
+          </section>
+        </TabsContent>
         <TabsContent value="advertisements">
           <MarkdownDocumentList
             title="广告草稿"
@@ -275,6 +335,17 @@ export function SalesSettingsPage() {
                     <FieldDescription>关闭后保留设置，不在用户端显示。</FieldDescription>
                   </FieldContent>
                   <Switch id="sales-alert-enabled" checked={editor.value.enabled} onCheckedChange={enabled => setEditor({ ...editor, value: { ...editor.value, enabled } })} />
+                </Field>
+              </FieldGroup> : editor.type === "adSlide" ? <FieldGroup className="gap-5">
+                <AdImageField value={editor.value.imageUrl} onChange={imageUrl => setEditor(current => current?.type === "adSlide" ? { ...current, value: { ...current.value, imageUrl } } : current)} />
+                <Input label="广告标题" id="sales-ad-title" maxLength={80} value={editor.value.title} description="作为图片的替代文字，读屏和图片加载失败时显示。" onChange={event => setEditor({ ...editor, value: { ...editor.value, title: event.target.value } })} />
+                <Input label="跳转链接" id="sales-ad-link" placeholder="/account/plans 或 https://example.com" value={editor.value.linkUrl} description="/ 开头的站内页面在当前窗口打开，完整地址在新标签页打开。" onChange={event => setEditor({ ...editor, value: { ...editor.value, linkUrl: event.target.value } })} />
+                <Field orientation="horizontal" className="justify-between gap-6 border-t pt-5">
+                  <FieldContent>
+                    <FieldLabel htmlFor="sales-ad-enabled">启用此广告</FieldLabel>
+                    <FieldDescription>关闭后保留设置，不在用户总览显示。</FieldDescription>
+                  </FieldContent>
+                  <Switch id="sales-ad-enabled" checked={editor.value.enabled} onCheckedChange={enabled => setEditor({ ...editor, value: { ...editor.value, enabled } })} />
                 </Field>
               </FieldGroup> : editor.type === "coupon" ? <FieldGroup className="gap-5">
                 <Input label="优惠码" id="sales-coupon-code" autoFocus value={editor.value.code} onChange={event => setEditor({ ...editor, value: { ...editor.value, code: event.target.value.toUpperCase() } })} />

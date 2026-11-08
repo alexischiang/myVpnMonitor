@@ -90,9 +90,10 @@ const ipInfoPromise = lookupIpInfo("203.0.113.8", {
 }).then(info => assert.deepStrictEqual(info, { ip: "203.0.113.8", asn: 64500, asOrganization: "Example ISP", country: "United States", countryCode: "US", region: "California", regionCode: "CA", city: "Los Angeles", timezone: "America/Los_Angeles" }));
 const invalidIpInfoPromise = assert.rejects(() => lookupIpInfo("not-an-ip"), /无效的访客 IP/);
 
-assert.deepStrictEqual(normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", inboundKeys: ["node-a:1", "node-a:1", "invalid"], sortOrder: 10 }), { id: "premium-1", name: "精品线路", isEnabled: true, sortOrder: 10, inboundKeys: ["node-a:1"], speedLimitMbps: 0 });
+assert.deepStrictEqual(normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", inboundKeys: ["node-a:1", "node-a:1", "invalid"], sortOrder: 10 }), { id: "premium-1", name: "精品线路", isEnabled: true, sortOrder: 10, includeAllNodes: false, inboundKeys: ["node-a:1"], speedLimitMbps: 0 });
 assert.strictEqual(normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", speedLimitMbps: 40 }).speedLimitMbps, 40);
 assert.throws(() => normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", speedLimitMbps: 1.5 }), /权限组限速/);
+assert.deepStrictEqual(normalizeCatalogV2LineGroup({ id: "all-nodes", name: "全节点", includeAllNodes: true, inboundKeys: ["node-a:1"] }).inboundKeys, [], "an all-nodes group stores no list");
 assert.throws(() => normalizeCatalogV2LineGroup({ id: "UPPER", name: "无效" }), /小写字母/);
 assert.deepStrictEqual(validateCatalogV2LineGroupInbounds({ inboundKeys: ["node-a:1", "deleted-node:2"] }, [{ key: "node-a:1", inboundType: "package" }], { inboundKeys: ["node-a:1", "deleted-node:2"] }), { inboundKeys: ["node-a:1"] });
 assert.throws(() => validateCatalogV2LineGroupInbounds({ inboundKeys: ["node-a:1", "unknown-node:2"] }, [{ key: "node-a:1", inboundType: "package" }], { inboundKeys: ["node-a:1"] }), /不存在或不可用于套餐/);

@@ -274,7 +274,7 @@ export type CatalogV2Period = { id: string; durationDays: number; trafficBytes: 
 export type CatalogV2CompareAttribute = { id: string; label: string; kind: "choice" | "boolean" | "text"; options: string[]; sortOrder: number; createdAt?: string; updatedAt?: string }
 /** Regions and network levels a line group reaches, for the plan comparison page. */
 export type CatalogV2LineGroupCoverage = { regions: string[]; networkLevels: Array<"premium" | "optimized" | "standard"> }
-export type CatalogV2LineGroup = { id: string; name: string; isEnabled: boolean; sortOrder: number; inboundKeys: string[]; speedLimitMbps?: number; productCount?: number; coverage?: CatalogV2LineGroupCoverage; createdAt?: string; updatedAt?: string }
+export type CatalogV2LineGroup = { id: string; name: string; isEnabled: boolean; sortOrder: number; includeAllNodes?: boolean; inboundKeys: string[]; speedLimitMbps?: number; productCount?: number; coverage?: CatalogV2LineGroupCoverage; createdAt?: string; updatedAt?: string }
 export type AddonHandler = "traffic_credit" | "custom_node" | "manual"
 export type AddonService = {
   id: string
@@ -438,6 +438,15 @@ export type MarkdownDocumentSetting = {
   enabled: boolean
 }
 
+export type AdCarouselSlideSetting = {
+  id: string
+  /** Alternative text of the image. */
+  title: string
+  imageUrl: string
+  linkUrl: string
+  enabled: boolean
+}
+
 export type UserAlertSetting = {
   id: string
   page: "pricing" | "checkout" | "account"
@@ -464,6 +473,9 @@ export type SalesSettings = {
   faqs: FaqSetting[]
   announcements: AnnouncementSetting[]
   advertisements: MarkdownDocumentSetting[]
+  /** Master switch: when off, the overview shows no ad board. */
+  adCarouselEnabled: boolean
+  adCarouselSlides: AdCarouselSlideSetting[]
   /** Master switch: when off, no configured alert is shown at the top of any user page. */
   userAlertsEnabled: boolean
   userAlerts: UserAlertSetting[]

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-07",
+  "updated_at": "2026-11-08",
   "required_fields": [
     "id",
     "name",
@@ -5742,6 +5742,115 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-11-08"
+      }
+    },
+    {
+      "id": "overview-ad-carousel",
+      "name": "Rotating ad board at the top right of the account overview",
+      "description": "New reusable AdCarousel (features/ad-carousel.tsx) takes a slide list and renders bento-style panels in the Arc Carousel, which gains fill (stretch into a grid row), loop (the slides form a ring) arrowsInside (translucent arrows over the slide edges) and hideControls (no play control or indicators) props. It replaces the hidden PromoCard placeholder in the 3x2 slot beside the greeting. Slides are derived from the overview payload and only offer what the account can act on: plan purchase or upgrade without a paid plan, traffic pack and home IP on a paid plan, referral when the rate is above zero. Slides rotate endlessly every 6 seconds, the last moving forward into the first; rotation pauses on hover, keyboard focus and drag, and is off with reduced motion. With no slides the greeting spans the full row. Its slides derived from the overview payload were replaced by admin-configured images in admin-image-ad-carousel; the Carousel props and the position remain.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-promo-slot-node-link-subscription-row"
+      ],
+      "done_criteria": [
+        "The board sits at the top right of /account from lg and stacks under the greeting below lg, matching the greeting height with no horizontal overflow.",
+        "Slides rotate endlessly in one direction and can be moved past either end by arrows inside the ad, keyboard and drag; no controls row is shown; the arrows are translucent until hovered or focused.",
+        "Each slide's action goes to the matching purchase or referral route, and only offers available to the account are shown.",
+        "No console or page errors.",
+        "Carousels that do not opt in keep their behaviour: the announcement carousel still stops at its ends with arrows in the controls row."
+      ],
+      "verification": [
+        "2026-11-08: npm run check, npm run verify:fast and git diff --check passed against the local database."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/account",
+          "/account/referrals"
+        ],
+        "interactions": [
+          "Paid self-hosted plan, 1440x900: board 422x256 level with the 714x256 greeting, no tablist or play control; arrows at 0.6 opacity, 1 on hover and on keyboard focus. Three slides 流量不够用 ¥20.00 / 100 GB, 定制家宽IP ¥39.00 起, 邀请好友 10% 返利.",
+          "Loop: auto-rotation sampled over 1199 frames went 1, 2, 3, 1 about 6 seconds apart with the track moving forward on every frame and 0 backward frames.",
+          "Next arrow from 3 to 1 and on to 2, previous arrow 2 to 1, ArrowLeft 1 to 3, mouse drag 3 to 1: the expected slide was aligned to the viewport after each. Resizing to 1100 after these moves kept it aligned with no overflow.",
+          "Hovering the inside next arrow for 8 seconds held the slide.",
+          "Regression with three temporary local announcements: the announcement carousel keeps arrows in the controls row, previous disabled on the first, next disabled on the last, and a further next click stays on the last.",
+          "After hiding the controls: next and previous arrows, including previous from the first slide to the last direction, moved one slide each; rotation still advanced and held while hovered.",
+          "375x812 after hiding the controls: board 343x218, no controls row, no overflow.",
+          "Not rechecked since the loop and hideControls changes: expired-plan slides and the referral action link; not checked in a browser at all: trial plan, one slide, no slides."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-08T08:44:25.927Z"
+      }
+    },
+    {
+      "id": "admin-image-ad-carousel",
+      "name": "Admin-managed image ad carousel on the account overview",
+      "description": "Sales settings gains a 广告轮播 tab with a master switch and image ads (title as alt text, uploaded image, link, per-ad switch). The overview receives only enabled ads while the switch is on (adCarousel), and hides the board with the greeting spanning the row otherwise; the automatic offers are gone. Links must be a site path or a full http(s) address, images must be uploads. A click on a site path stays in the app; a full address opens a new tab. The older 广告草稿 tab and its data are untouched. Carousel fill no longer leaves an empty row and gap when the controls are hidden.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "overview-ad-carousel"
+      ],
+      "done_criteria": [
+        "An admin can add, edit and delete image ads and turn the master switch on and off.",
+        "With the master switch off, or no enabled ad, the overview shows no board and the greeting spans the row; ad settings are kept.",
+        "Disabled ads are never sent to the overview.",
+        "Clicking an ad goes to its link; dragging only changes the slide.",
+        "Unsafe links and non-upload images are rejected with a specific message."
+      ],
+      "verification": [
+        "2026-11-08: test-payment.js gained ad settings coverage: default off, master switch, disabled ad filtered, rejected javascript: and // links, empty link, external image and blank title, nothing added to the public settings. Passed on a throwaway local database. npm run check, npm run verify:fast and git diff --check passed."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/sales-settings",
+          "/account",
+          "/account/plans"
+        ],
+        "interactions": [
+          "Admin: opened 广告轮播, uploaded generated 1000x600 PNGs through the file input with preview, saved a javascript: link and got the toast while the drawer kept the values, added an in-app ad, an external ad and a disabled ad.",
+          "Admin: edited an ad's title, deleted an ad, master switch on and off; badges follow 显示中, 已隐藏, 已停用.",
+          "Overview 1440x900: board and image 422x256 level with the 714x256 greeting, two enabled ads shown and the disabled one absent; external link has target _blank and rel noopener noreferrer.",
+          "Rotation advanced; next arrow looped with two ads; a mouse drag changed the slide and stayed on /account; clicking the image opened /account/plans.",
+          "Master switch off: no board, greeting 1152 wide, both ads kept in settings.",
+          "375x812: image 343x206, no overflow. 768x1024: board 260x186 beside the greeting. 1024x768: board 356x273 beside the greeting. No overflow at any width.",
+          "Clean-tab console checks on /sales-settings and /account were empty; earlier 400s were the deliberately invalid saves and 401s were sessions overwritten while another local server shared the localhost cookie."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-08T09:04:23.206Z"
+      }
+    },
+    {
+      "id": "line-group-all-nodes",
+      "name": "Line groups can include every package node automatically",
+      "description": "A line group gains includeAllNodes (column include_all_nodes). Such a group stores no inbound list; lineGroupInboundKeys expands it from the current inbound table wherever a group's inbounds are read: hub entitlements, account node status, custom inbound management, coverage and the line group API. Custom nodes stay out. The line group editor on /node-hub?tab=groups has a switch that hides the manual lists while on, and the group card shows 全部节点.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "An all-nodes group grants every package node, including one created later, and never a custom node on its own.",
+        "Switching the option off returns the group to a manual list, and users lose the nodes that are no longer in it.",
+        "Other line groups behave as before.",
+        "No console or page errors."
+      ],
+      "verification": [
+        "2026-11-08: after rebasing onto 0e26799 (groups moved to Node Hub, group speed limits), npm run verify and git diff --check passed against the disposable vpn_test database; test-node-hub-app.js covers save, a later node, custom exclusion and switching off.",
+        "2026-11-08: not deployed; the production super group has not been switched yet. A save can join a sync already running and read the old group; the next 60-second sync corrects it. That behaviour predates this feature."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=groups"
+        ],
+        "interactions": [
+          "Isolated server and hub on vpn_test, on the rebased code: switch on hides the manual lists, off shows them; saved off the group stays at 3 keys when a node is added, saved on it lists 4 and leaves the custom key out; the card reads 全部节点 or 4 个入站.",
+          "375x812: dialog with no horizontal overflow and the switch in view; off and on both saved and read back.",
+          "Fresh tab, off then on through the dialog, console read afterwards."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-08T09:13:03.000Z"
       }
     }
   ]

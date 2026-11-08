@@ -15,6 +15,7 @@ VPS: xboard-node (machine 模式) ──HTTPS /api/v1|v2/server/*──> 反向�
 - 授权由本站计算：每个用户 `{userKey, uuid, planId, nodeIds, speedLimit, deviceLimit, enabled}`，每 60 秒全量同步（同步任务「node-hub 授权同步」，兜底到期等没有事件的变化），开通、续费、套餐变更、流量耗尽、个人定制入站变更时立即同步单个用户。node-hub 收到后立刻推给已连接的机器。
 - 流量：xboard-node 每次上报的是每用户增量；node-hub 在一个事务里按 report id 去重后累加到本站的 `xui_daily_traffic`（中国日期，每个节点一个计费键 `node_guid = hub-m<机器id>-n<节点id>`）。所以加权计费、日流量图、节点盈利分析都沿用原逻辑（按机器统计的地方把节点键归到机器，见「已知限制」里的流量倍率）。上报失败时节点会自己回滚重报，不会丢流量。
 - 在本站里，hub 节点以入站形式出现：key `hub-m<机器id>:<节点id>`，入站 id `1000000000 + 节点id`（远高于原 3x-ui 入站 id，用户上残留的旧 id 不会指到 hub 节点）。线路组、入站设置（地区、网络等级、套餐/定制）、启用停用、个人定制入站、在线状态、节点监控都直接可用。
+- 线路组可以打开「包含全部节点」（`includeAllNodes`）：不存节点列表，读取和计算授权时按当前节点表展开为全部套餐节点（`lineGroupInboundKeys`），定制节点除外。新建的套餐节点最迟在下一次「node-hub 授权同步」（60 秒）推给这个组的用户。
 - 订阅：`/sub/<token>` 用用户有权使用的 hub 节点生成 Clash 配置，再交给 subconverter。
 
 ## 配置与计费

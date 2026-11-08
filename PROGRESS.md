@@ -1,7 +1,7 @@
 # Current State
 
 - Last Updated: 2026-11-08
-- Current Objective: 权限组编辑弹窗排版对齐
+- Current Objective: super 权限组改为自动收纳全部节点
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -597,3 +597,18 @@
 - Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/xui-inbounds.tsx`, `src/main.tsx`, `src/styles.css`, `src/types.ts`, `test-node-hub-app.js`, `test-xui-traffic.js`, `test.js`, `xui-traffic.js`, `src/components/features/node-hub-line-groups.tsx`, `src/components/features/user-node-speed-limit.tsx`
 - Known risks: none
 - Recommended Next Step: 确认线上权限组、限速和订阅流量显示正常；之后评估流量用完时「提前续费」按钮的误导问题
+- 2026-11-08: npm run check、npm run verify:fast、git diff --check 通过；/account 在 1440、1024、768、375 宽度及深浅主题下验证，轮播、暂停、箭头、键盘、拖动和跳转正常，console_errors/page_errors 为空
+
+- 2026-11-08: npm run check、npm run verify:fast、git diff --check 通过；/account 验证循环无倒退帧、内置箭头、键盘、拖动、悬停暂停和多尺寸，公告轮播回归不变，console_errors/page_errors 为空
+
+- 2026-11-08: npm run check、npm run verify:fast、git diff --check 通过；/account 在 1440 和 375 宽度验证无控件行、箭头 0.6 且悬停和聚焦恢复为 1、箭头切换和轮播正常，console_errors/page_errors 为空
+
+- 2026-11-08: test-payment、npm run check、npm run verify:fast、git diff --check 通过；/sales-settings 与 /account 走通上传、编辑、删除、总开关、图片跳转和多尺寸，console_errors/page_errors 为空
+
+- 2026-11-08: npm run verify、verify:harness、git diff --check 通过；/xui-inbounds 桌面与手机验证无控制台错误
+
+## Next Session
+
+- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `database.js`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `feature_list.json`, `server.js`, `src/components/arc/carousel/carousel.module.css`, `src/components/arc/carousel/carousel.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/sales-settings.tsx`, `src/components/features/xui-inbounds.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-payment.js`, `test.js`, `src/components/features/ad-carousel.tsx`
+- Known risks: none
+- Recommended Next Step: 用户确认后提交并部署，再把生产 super 组打开包含全部节点；节点 19 届时会进入 super
