@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-07
-- Current Objective: 修复提前续费到期激活被并发重载覆盖
+- Last Updated: 2026-11-08
+- Current Objective: 权限组编辑弹窗排版对齐
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -584,8 +584,16 @@
 
 - 2026-11-07: test-payment.js 用行锁确定性复现并在修复后通过；npm run verify 通过
 
+- 2026-11-05: main dd2d530、production efab183 已推送；GitHub Actions 41977688436 成功；线上 /api/health 全部服务正常，部署后无新增错误日志
+
+- 2026-11-08: npm run check、verify:harness、git diff --check 通过；隔离 app+node-hub 浏览器验证新建/编辑/删除权限组与旧地址跳转，无控制台错误
+
+- 2026-11-08: npm run verify 通过；隔离 app+node-hub 浏览器验证权限组限速与用户详情限速，无控制台错误
+
+- 2026-11-08: npm run check、verify:harness 通过；浏览器在 1366/820/375 宽度测量弹窗字段对齐，无控制台错误
+
 ## Next Session
 
-- Files: `feature_list.json`, `server.js`, `test-payment.js`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/xui-inbounds.tsx`, `src/main.tsx`, `src/styles.css`, `src/types.ts`, `test-node-hub-app.js`, `test-xui-traffic.js`, `test.js`, `xui-traffic.js`, `src/components/features/node-hub-line-groups.tsx`, `src/components/features/user-node-speed-limit.tsx`
 - Known risks: none
-- Recommended Next Step: 提交并部署修复；之后评估流量用完时「提前续费」按钮的误导问题
+- Recommended Next Step: 确认线上权限组、限速和订阅流量显示正常；之后评估流量用完时「提前续费」按钮的误导问题

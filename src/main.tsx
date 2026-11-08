@@ -30,7 +30,6 @@ const SalesAnalyticsPage = lazy(() => import("@/components/features/sales-analyt
 const SalesProfitabilityPage = lazy(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesProfitabilityPage })))
 const SyncJobsPage = lazy(() => import("@/components/features/sync-jobs").then(module => ({ default: module.SyncJobsPage })))
 const NodeHubPage = lazy(() => import("@/components/features/node-hub").then(module => ({ default: module.NodeHubPage })))
-const XuiInboundsPage = lazy(() => import("@/components/features/xui-inbounds").then(module => ({ default: module.XuiInboundsPage })))
 const UsersPage = lazy(() => import("@/components/features/users").then(module => ({ default: module.UsersPage })))
 const OrdersPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrdersPage })))
 const OrderDetailPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrderDetailPage })))
@@ -175,7 +174,7 @@ function App() {
               <Route path="xui-monitor" element={<Navigate to="/node-hub?tab=machines" replace />} />
               <Route path="xui-logs" element={<Navigate to="/node-hub" replace />} />
               <Route path="sync-jobs" element={<SyncJobsPage />} />
-              <Route path="xui-inbounds" element={<XuiInboundsPage />} />
+              <Route path="xui-inbounds" element={<Navigate to="/node-hub?tab=groups" replace />} />
               <Route path="node-hub" element={<NodeHubPage />} />
               <Route path="users" element={<UsersPage />} />
               <Route path="users/detail/:id" element={<UserDetailPage />} />
@@ -192,7 +191,7 @@ function App() {
               <Route path="pricing-settings/:group" element={<PricingDetailPage />} />
               <Route path="catalog-v2" element={<CatalogV2ProductsPage />} />
               <Route path="catalog-v2/products/:id" element={<CatalogV2ProductDetailPage />} />
-              <Route path="catalog-v2/line-groups/*" element={<Navigate to="/xui-inbounds" replace />} />
+              <Route path="catalog-v2/line-groups/*" element={<Navigate to="/node-hub?tab=groups" replace />} />
               <Route path="sales-settings" element={<SalesSettingsPage />} />
               <Route path="general-settings" element={<GeneralSettingsPage />} />
               <Route path="payment-settings" element={<PaymentSettingsPage />} />

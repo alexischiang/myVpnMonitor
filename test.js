@@ -41,6 +41,8 @@ const {
   restoreUpstreamClashConfig,
   injectPlaceholderNodes,
   buildUserInfoNodes,
+  selfHostedUserinfo,
+  nodeSpeedLimitParts,
   postSubconverter,
   sendSubconverterSubscription,
   normalizeXuiInboundIdList,
@@ -88,7 +90,9 @@ const ipInfoPromise = lookupIpInfo("203.0.113.8", {
 }).then(info => assert.deepStrictEqual(info, { ip: "203.0.113.8", asn: 64500, asOrganization: "Example ISP", country: "United States", countryCode: "US", region: "California", regionCode: "CA", city: "Los Angeles", timezone: "America/Los_Angeles" }));
 const invalidIpInfoPromise = assert.rejects(() => lookupIpInfo("not-an-ip"), /无效的访客 IP/);
 
-assert.deepStrictEqual(normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", inboundKeys: ["node-a:1", "node-a:1", "invalid"], sortOrder: 10 }), { id: "premium-1", name: "精品线路", isEnabled: true, sortOrder: 10, inboundKeys: ["node-a:1"] });
+assert.deepStrictEqual(normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", inboundKeys: ["node-a:1", "node-a:1", "invalid"], sortOrder: 10 }), { id: "premium-1", name: "精品线路", isEnabled: true, sortOrder: 10, inboundKeys: ["node-a:1"], speedLimitMbps: 0 });
+assert.strictEqual(normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", speedLimitMbps: 40 }).speedLimitMbps, 40);
+assert.throws(() => normalizeCatalogV2LineGroup({ id: "premium-1", name: "精品线路", speedLimitMbps: 1.5 }), /权限组限速/);
 assert.throws(() => normalizeCatalogV2LineGroup({ id: "UPPER", name: "无效" }), /小写字母/);
 assert.deepStrictEqual(validateCatalogV2LineGroupInbounds({ inboundKeys: ["node-a:1", "deleted-node:2"] }, [{ key: "node-a:1", inboundType: "package" }], { inboundKeys: ["node-a:1", "deleted-node:2"] }), { inboundKeys: ["node-a:1"] });
 assert.throws(() => validateCatalogV2LineGroupInbounds({ inboundKeys: ["node-a:1", "unknown-node:2"] }, [{ key: "node-a:1", inboundType: "package" }], { inboundKeys: ["node-a:1"] }), /不存在或不可用于套餐/);
@@ -489,6 +493,20 @@ assert.deepStrictEqual(
   [selfHostedTraffic.status, selfHostedTraffic.uploadBytes, selfHostedTraffic.downloadBytes, selfHostedTraffic.usedBytes, selfHostedTraffic.totalBytes, selfHostedTraffic.remainingBytes, selfHostedTraffic.usagePercent, selfHostedTraffic.connectedIpCount],
   ["active", 100, 250, 350, 1000, 650, 35, 2]
 );
+// The subscription-userinfo header bills like the user panel: upload + download is the
+// node-multiplied usedBytes, not the raw bytes (raw 100 up / 250 down on a 2x node → 700 used).
+const multipliedUser = { expiresAt: "2099-01-01T00:00:00.000Z", v2ProductSnapshot: { trafficBytes: 1000 } };
+multipliedUser.xuiWeightedTraffic = { rawUsedBytes: 350, usedBytes: 700, uploadBytes: 100, downloadBytes: 250, totalBytes: 1000, depleted: false };
+multipliedUser.xuiLastTraffic = xuiTrafficPayload(multipliedUser);
+const multipliedUserinfo = Object.fromEntries(selfHostedUserinfo(multipliedUser).split("; ").map(part => part.split("=")).map(([key, value]) => [key, Number(value)]));
+assert.strictEqual(multipliedUserinfo.upload + multipliedUserinfo.download, multipliedUser.xuiLastTraffic.usedBytes, "subscription-userinfo used traffic matches the panel's multiplied usedBytes");
+assert.deepStrictEqual([multipliedUserinfo.upload, multipliedUserinfo.download, multipliedUserinfo.total], [200, 500, 1000], "multiplied usage keeps the raw upload/download split");
+// Node speed limit: the user's own limit wins; otherwise the stricter of plan and group, where 0 sets none.
+assert.deepStrictEqual(nodeSpeedLimitParts({}, null), { override: null, plan: 0, group: 0, effective: 0 });
+assert.strictEqual(nodeSpeedLimitParts({}, { speedLimitMbps: 40 }).effective, 40, "a group limit applies to a plan with none");
+assert.strictEqual(nodeSpeedLimitParts({ v2ProductSnapshot: { speedLimitMbps: 50 } }, { speedLimitMbps: 100 }).effective, 50, "a trial's stricter plan limit stays");
+assert.strictEqual(nodeSpeedLimitParts({ v2ProductSnapshot: { speedLimitMbps: 50 } }, { speedLimitMbps: 20 }).effective, 20, "a stricter group limit applies");
+assert.strictEqual(nodeSpeedLimitParts({ nodeSpeedLimitMbps: 0, v2ProductSnapshot: { speedLimitMbps: 50 } }, { speedLimitMbps: 20 }).effective, 0, "the user's own 0 lifts every limit");
 assert.strictEqual(xuiTrafficPayload({ expiresAt: "2099-01-01T00:00:00.000Z" }).usedBytes, 0);
 assert.strictEqual(xuiTrafficPayload({ expiresAt: "2000-01-01T00:00:00.000Z" }).status, "disabled", "an expired plan is reported disabled, like its hub entitlement");
 assert.deepStrictEqual(xuiBillingPayload({ users: { user: {} }, nodeTokens: { hk: "secret" }, costConfigs: { hk: [{}] } }), { users: { user: {} } });

@@ -9,7 +9,6 @@ import {
   IconReportAnalytics,
   IconServer2,
   IconShoppingBag,
-  IconNetwork,
   IconRefresh,
   IconSettings,
   IconTag,
@@ -58,7 +57,6 @@ export const navEntries: NavEntry[] = [
     title: "节点",
     icon: IconServer2,
     items: [
-      { title: "入站管理", url: "/xui-inbounds", icon: IconNetwork },
       { title: "Node Hub", url: "/node-hub", icon: IconTopologyStar3 },
       { title: "同步任务", url: "/sync-jobs", icon: IconRefresh },
     ],

@@ -90,6 +90,17 @@ function weightedBytes(perNodeBytes = {}, multipliers = {}) {
   );
 }
 
+// Splits the billed (multiplied) total into upload/download for clients that only show
+// directions, such as the subscription-userinfo header. The split follows the raw up/down
+// ratio and the two parts always add up to `billedBytes`, the same usedBytes the panel shows.
+function billedDirectionalBytes(rawUpBytes, rawDownBytes, billedBytes) {
+  const up = Math.max(0, Number(rawUpBytes) || 0);
+  const down = Math.max(0, Number(rawDownBytes) || 0);
+  const billed = Math.max(0, Math.round(Number(billedBytes) || 0));
+  const upload = up + down > 0 ? Math.round(billed * up / (up + down)) : 0;
+  return { upload, download: billed - upload };
+}
+
 // Collapse a per-node { guid: { up, down } } map into a per-node { guid: totalBytes } map.
 function perNodeTotals(perNodeDirectional = {}) {
   return Object.fromEntries(
@@ -228,6 +239,7 @@ module.exports = {
   billingMachineGuid,
   sumRawBytes,
   weightedBytes,
+  billedDirectionalBytes,
   perNodeTotals,
   isTrafficPackActive,
   effectiveQuotaBytes,

@@ -136,7 +136,7 @@ function FormSection({ title, children }: { title: string; children: React.React
 }
 
 /** A number field that fills its grid cell like the text inputs next to it. */
-function WideNumberField(props: React.ComponentProps<typeof NumberField>) {
+export function WideNumberField(props: React.ComponentProps<typeof NumberField>) {
   return <div className="min-w-0" style={{ "--number-field-width": "100%" } as React.CSSProperties}><NumberField size="md" locale="zh-CN" {...props} /></div>
 }
 

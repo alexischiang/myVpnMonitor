@@ -41,6 +41,11 @@ assert.strictEqual(sumRawBytes(perNode), 350);
 assert.strictEqual(weightedBytes(perNode, { a: 1, b: 2, c: 1.3 }), 100 * 1 + 200 * 2 + 50 * 1.3);
 assert.strictEqual(weightedBytes(perNode, {}), 350, "no multipliers → raw");
 assert.deepStrictEqual(perNodeTotals({ a: { up: 10, down: 20 }, b: { up: 5, down: 0 } }), { a: 30, b: 5 });
+const { billedDirectionalBytes } = require("./xui-traffic");
+assert.deepStrictEqual(billedDirectionalBytes(100, 250, 700), { upload: 200, download: 500 }, "billed total split by the raw up/down ratio");
+assert.deepStrictEqual(billedDirectionalBytes(1, 2, 10), { upload: 3, download: 7 }, "rounded parts still add up to the billed total");
+assert.deepStrictEqual(billedDirectionalBytes(0, 0, 0), { upload: 0, download: 0 });
+assert.deepStrictEqual(billedDirectionalBytes(undefined, undefined, 50), { upload: 0, download: 50 }, "no raw split → all billed bytes count as download");
 
 // traffic pack scoping and quota
 assert.strictEqual(isTrafficPackActive("cycle-1", "cycle-1"), true);

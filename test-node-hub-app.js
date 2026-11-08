@@ -175,8 +175,17 @@ async function child() {
     const customView = await api(`/api/users/${user.id}/custom-inbounds`);
     assert.ok(customView.effectiveInboundIds.includes(customRow.id) && customView.effectiveInboundIds.includes(hubRow.id));
 
+    // Group speed limit: saving it pushes it to every user of the group; the user's own limit still wins.
+    await api("/api/catalog-v2/line-groups/nh-app-test", { method: "PUT", body: { ...group, speedLimitMbps: 40 } });
+    assert.equal((await api("/api/catalog-v2/line-groups")).find(item => item.id === "nh-app-test").speedLimitMbps, 40);
+    assert.equal((await hubStore.getUser(user.id)).speedLimit, 40, "a group speed limit reaches node-hub");
+    const groupSpeed = await api(`/api/users/${user.id}/node-speed-limit`);
+    assert.deepEqual([groupSpeed.override, groupSpeed.plan, groupSpeed.group, groupSpeed.effective, groupSpeed.groupName], [null, 0, 40, 40, "Hub 测试"]);
+    await assert.rejects(api("/api/catalog-v2/line-groups/nh-app-test", { method: "PUT", body: { ...group, speedLimitMbps: -1 } }), error => error.status === 400);
+
     // Speed limit.
-    await api(`/api/users/${user.id}/node-speed-limit`, { method: "PUT", body: { speedLimitMbps: 30 } });
+    const ownSpeed = await api(`/api/users/${user.id}/node-speed-limit`, { method: "PUT", body: { speedLimitMbps: 30 } });
+    assert.deepEqual([ownSpeed.override, ownSpeed.group, ownSpeed.effective], [30, 40, 30], "the user's own limit wins over the group");
     const nodeClient = new XboardNodeClient(`http://127.0.0.1:${hubPort}`, { token: (await hubStore.getMachine(machine.id)).token, machineId: machine.id, nodeId: node.id });
     // These checks follow the main user. Like xboard-node, a 304 (null) means the node keeps the list it already has.
     let nodeUserList = [];
