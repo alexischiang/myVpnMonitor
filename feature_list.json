@@ -5642,6 +5642,107 @@
       "verification": [
         "2026-11-07: reproduced in test-payment.js by holding the xuiBilling row lock so activation stalls on the ledger write while loadLatestData({ force: true }) completes; the unfixed code logged the activation but kept queuedPlan (assertion at the queuedPlan check failed). After the fix the same test passes, and npm run verify passed on a throwaway local database."
       ]
+    },
+    {
+      "id": "node-hub-line-groups",
+      "name": "入站管理的权限组并入 Node Hub，移除入站列表",
+      "description": "The V2 line permission groups (cards plus the group editor dialog) move from 入站管理 into a 权限组 tab on the Node Hub page (/node-hub?tab=groups). The per-inbound list and its editor drawer are removed: region, network level and inbound type are already set on the node-hub node form. The 入站管理 nav entry is gone; /xui-inbounds and /catalog-v2/line-groups/* redirect to /node-hub?tab=groups. Backend APIs are unchanged.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "remove-3x-ui"
+      ],
+      "done_criteria": [
+        "Node Hub has a 权限组 tab that lists groups and creates, edits and deletes them with the same dialog as before",
+        "The inbound list page and the 入站管理 nav entry no longer exist; old URLs redirect to the new tab",
+        "npm run check passes and the affected pages show no console errors"
+      ],
+      "verification": [
+        "2026-11-08: npm run check and git diff --check pass. Browser check on an isolated app + node-hub (NODE_ENV=test, test DB, ports 3010/3013)."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/xui-inbounds",
+          "/catalog-v2/line-groups/x",
+          "/node-hub?tab=groups",
+          "/node-hub?tab=nodes"
+        ],
+        "interactions": [
+          "/xui-inbounds and /catalog-v2/line-groups/x redirect to /node-hub?tab=groups; tabs read 概览,机器,中转机,节点,权限组,用户限速; sidebar has no 入站管理",
+          "新建权限组: ID and name typed, HK-VLESS added, the custom inbound is not listed, saved with toast V2 权限组已保存 and the card appears",
+          "编辑: HK-SS added and saved; card shows 2 个入站",
+          "删除权限组 → confirm: card removed",
+          "刷新 button reloads the tab",
+          "375x812: /node-hub?tab=groups scrollWidth 375 = clientWidth"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-08"
+      }
+    },
+    {
+      "id": "speed-limit-group-and-user-detail",
+      "name": "权限组统一限速，用户单独限速移到用户详情页",
+      "description": "Permission groups get a speed limit (catalog_v2_line_groups.speed_limit_mbps, 0 = none) set in the group dialog on Node Hub → 权限组; saving a changed limit pushes it to node-hub at once. A user's own limit is set from 设置节点限速 on the user details page (GET/PUT /api/users/:id/node-speed-limit, which now return plan, group, override and effective). Rule: the user's own limit wins (0 = unlimited); otherwise the stricter non-zero of the plan limit (such as a trial's) and the group limit. The Node Hub 用户限速 tab is removed.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-line-groups"
+      ],
+      "done_criteria": [
+        "The group dialog sets a speed limit that reaches node-hub for every user of the group",
+        "The user details page sets and clears a user's own limit and shows plan, group and effective values",
+        "Node Hub no longer has a 用户限速 tab"
+      ],
+      "verification": [
+        "2026-11-08: npm run verify passes (exit 0), npm run check and git diff --check pass. test.js covers nodeSpeedLimitParts and group normalization; test-node-hub-app.js covers a group limit reaching node-hub, the GET breakdown, a rejected -1 and a user limit winning over the group."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=groups",
+          "/users/detail/<hub user>"
+        ],
+        "interactions": [
+          "Node Hub tabs read 概览,机器,中转机,节点,权限组 (no 用户限速)",
+          "Edited group Hub 测试: 用户限速 40 → 25, saved; card shows 限速 25 Mbps without wrapping mid-word; API returns 25",
+          "User details 设置节点限速 shows 套餐 不限速, 权限组「Hub 测试」25 Mbps, 当前生效 25 Mbps; set 10 and saved (effective 10); reopened shows 10 and 恢复默认限速, which restores effective 25",
+          "375x812: both pages scrollWidth 375 = clientWidth"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-08"
+      }
+    },
+    {
+      "id": "line-group-dialog-alignment",
+      "name": "权限组编辑弹窗排版，输入组件高度对齐",
+      "description": "The permission group dialog lays its five fields out as label-over-control cells that share one control height and width: 权限组 ID, 名称, 排序 and 用户限速 (number fields fill their cell through the shared WideNumberField, now exported from node-hub-node-form) and 状态 (a 启用/停用 Select replacing the horizontal switch row, whose label and description made the row uneven). Five columns from lg, two from sm, one on phones.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "speed-limit-group-and-user-detail"
+      ],
+      "done_criteria": [
+        "All fields in a row share label top, control top, height and width",
+        "The status select changes the group state and enables saving"
+      ],
+      "verification": [
+        "2026-11-08: npm run check and git diff --check pass. No backend change."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=groups (edit dialog of Hub 测试)"
+        ],
+        "interactions": [
+          "1366 wide: the five fields measure label top 316, control top 342, same height and width 196",
+          "820 wide: two columns, rows aligned, each control 341 wide",
+          "375x812: controls 40px tall (number field shells included), scrollWidth 375 = clientWidth",
+          "状态 select switched 启用 → 停用 enables 保存权限组; closed without saving"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-08"
+      }
     }
   ]
 }

@@ -1,7 +1,7 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { useSearchParams } from "react-router-dom"
-import { Gauge, KeyRound, Pencil, Plus, Power, PowerOff, RefreshCw, Save, Terminal, Trash2, Undo2, Users as UsersIcon } from "lucide-react"
+import { KeyRound, Pencil, Plus, Power, PowerOff, RefreshCw, Save, Terminal, Trash2, Users as UsersIcon } from "lucide-react"
 
 import { deleteJson, fetchJson, postJson, putJson } from "@/api"
 import { DataTable, DataTableColumnHeader, DataTableRowActions } from "@/components/features/arc-data-table"
@@ -11,6 +11,7 @@ import { InfoList } from "@/components/features/shared"
 import { toast } from "@/components/features/toast"
 import { advancedSettingsText, applyAdvancedSettings, emptyNodeDraft, NODE_HUB_NETWORK_LEVELS, NODE_HUB_PROTOCOLS, NodeHubNodeForm, nodeDraftFrom, nodeSecurityLabel, protocolLabel, type NodeHubNodeDraft } from "@/components/features/node-hub-node-form"
 import { NodeHubRelaysTab } from "@/components/features/node-hub-relays"
+import { NodeHubLineGroupsTab } from "@/components/features/node-hub-line-groups"
 import { MachineCostSection, MachineCostSummary, useMachineCosts } from "@/components/features/node-hub-machine-cost"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ActionButton } from "@/components/arc/action-button/action-button"
@@ -28,14 +29,15 @@ import { Skeleton } from "@/components/arc/skeleton/skeleton"
 import { Switch } from "@/components/arc/switch/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs"
 import { Textarea } from "@/components/arc/textarea/textarea"
-import type { NodeHubLoadStatus, NodeHubMachine, NodeHubNode, NodeHubOverview, User } from "@/types"
+import type { NodeHubLoadStatus, NodeHubMachine, NodeHubNode, NodeHubOverview } from "@/types"
 import { formatBytes, formatDateTime } from "@/utils"
 
 // Admin page for node-hub: the machines (VPS running xboard-node, with their monthly VPS cost),
-// relay machines (realm in front of nodes) and nodes it serves, and the per-user node speed limit.
+// relay machines (realm in front of nodes), the nodes it serves and the V2 line permission groups.
+// A user's own speed limit is set on the user details page.
 // Everything goes through the app's /api/node-hub/* proxy.
 
-const TABS = ["overview", "machines", "relays", "nodes", "speed"] as const
+const TABS = ["overview", "machines", "relays", "nodes", "groups"] as const
 type TabId = typeof TABS[number]
 type MachineDraft = { name: string; host: string; notes: string; isActive: boolean }
 const emptyMachineDraft = (): MachineDraft => ({ name: "", host: "", notes: "", isActive: true })
@@ -99,6 +101,8 @@ export function NodeHubPage() {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState("")
   const [syncing, setSyncing] = React.useState(false)
+  // Bumped by the page's 刷新 button so the 权限组 tab reloads too.
+  const [refreshKey, setRefreshKey] = React.useState(0)
 
   // Machines
   const [machineCreateOpen, setMachineCreateOpen] = React.useState(false)
@@ -119,14 +123,6 @@ export function NodeHubPage() {
   const [advancedError, setAdvancedError] = React.useState("")
   const [nodeSaving, setNodeSaving] = React.useState(false)
   const [confirmDeleteNode, setConfirmDeleteNode] = React.useState<NodeHubNode | null>(null)
-
-  // Speed limits
-  const [users, setUsers] = React.useState<User[] | null>(null)
-  const [usersError, setUsersError] = React.useState("")
-  const [speedUser, setSpeedUser] = React.useState<User | null>(null)
-  const [speedValue, setSpeedValue] = React.useState("")
-  const [speedError, setSpeedError] = React.useState("")
-  const [speedSaving, setSpeedSaving] = React.useState(false)
 
   const machineFilter = searchParams.get("machine") || "all"
   const protocolFilter = searchParams.get("protocol") || "all"
@@ -170,19 +166,6 @@ export function NodeHubPage() {
       document.removeEventListener("visibilitychange", onVisibilityChange)
     }
   }, [refresh])
-
-  const loadUsers = React.useCallback(async () => {
-    try {
-      setUsers(await fetchJson<User[]>("/api/users"))
-      setUsersError("")
-    } catch (loadError) {
-      setUsersError(errorMessage(loadError, "读取用户失败"))
-    }
-  }, [])
-
-  React.useEffect(() => {
-    if (tab === "speed" && users === null && !notConfigured) void loadUsers()
-  }, [loadUsers, notConfigured, tab, users])
 
   async function syncEntitlements() {
     setSyncing(true)
@@ -343,35 +326,6 @@ export function NodeHubPage() {
     }
   }
 
-  // --- speed limits ----------------------------------------------------------
-
-  function openSpeed(user: User) {
-    setSpeedUser(user)
-    setSpeedValue(user.nodeSpeedLimitMbps === undefined || user.nodeSpeedLimitMbps === null ? "" : String(user.nodeSpeedLimitMbps))
-    setSpeedError("")
-  }
-
-  async function saveSpeed(clear = false) {
-    if (!speedUser) return
-    const raw = clear ? "" : speedValue.trim()
-    const value = raw === "" ? null : Number(raw)
-    if (value !== null && (!Number.isSafeInteger(value) || value < 0 || value > 100000)) {
-      setSpeedError("请输入 0-100000 的整数，0 表示不限速。")
-      return
-    }
-    setSpeedSaving(true)
-    try {
-      const result = await putJson<{ speedLimitMbps: number; override: number | null }>(`/api/users/${encodeURIComponent(speedUser.id)}/node-speed-limit`, { speedLimitMbps: value })
-      setUsers(current => current && current.map(user => user.id === speedUser.id ? { ...user, nodeSpeedLimitMbps: result.override } : user))
-      setSpeedUser(null)
-      toast({ type: "success", title: result.override === null ? "已恢复套餐限速" : "限速已保存", description: result.speedLimitMbps ? `当前生效 ${result.speedLimitMbps} Mbps` : "当前不限速" })
-    } catch (saveError) {
-      setSpeedError(errorMessage(saveError, "保存限速失败"))
-    } finally {
-      setSpeedSaving(false)
-    }
-  }
-
   // --- derived ---------------------------------------------------------------
 
   const machines = React.useMemo(() => data?.machines || [], [data])
@@ -381,7 +335,6 @@ export function NodeHubPage() {
     (machineFilter === "all" || String(node.machineId) === machineFilter)
     && (protocolFilter === "all" || node.protocol === protocolFilter)
     && (statusFilter === "all" || (statusFilter === "enabled" ? node.enabled : statusFilter === "disabled" ? !node.enabled : statusFilter === "online" ? node.online : node.enabled && !node.online))), [machineFilter, nodes, protocolFilter, statusFilter])
-  const hubUsers = React.useMemo(() => (users || []).filter(user => user.lineType === "self_hosted" && (user.hubUuid || user.hubNodeIds?.length || user.nodeSpeedLimitMbps !== undefined)), [users])
   const issues = React.useMemo(() => [
     ...machines.filter(machine => machine.isActive && !machine.online).map(machine => ({ key: `m${machine.id}`, title: `机器「${machine.name}」${machine.lastSeenAt ? "离线" : "尚未连接"}`, detail: machine.lastSeenAt ? `最后上报 ${formatDateTime(machine.lastSeenAt)}` : "在 VPS 上执行安装命令后会自动上线。" })),
     ...nodes.filter(node => node.enabled && node.online && kernelRunning(node) === false).map(node => ({ key: `k${node.id}`, title: `节点「${node.name}」的内核未运行`, detail: "机器已拉取配置但代理内核没有启动，请在 VPS 上查看 journalctl -u xboard-node。" })),
@@ -410,15 +363,6 @@ export function NodeHubPage() {
       { label: "删除节点", icon: <Trash2 />, destructive: true, separatorBefore: true, onSelect: () => setConfirmDeleteNode(row.original) },
     ]} /> },
   ], [openNodeEditor, setNodeEnabled])
-
-  const speedColumns = React.useMemo<ColumnDef<User>[]>(() => [
-    { id: "user", accessorFn: user => `${user.email || ""} ${user.customerID} ${user.id}`, header: DataTableColumnHeader({ title: "用户" }), meta: { label: "用户" }, cell: ({ row }) => <div className="grid min-w-0"><span className="truncate font-medium">{row.original.email || row.original.id}</span><span className="text-xs text-muted-foreground tabular-nums">#{row.original.customerID}</span></div> },
-    { id: "nodes", accessorFn: user => user.hubNodeIds?.length || 0, header: DataTableColumnHeader({ title: "可用节点" }), meta: { label: "可用节点" }, cell: ({ row }) => <span className="tabular-nums">{row.original.hubNodeIds?.length || 0}</span> },
-    { id: "plan", accessorFn: user => planSpeed(user), header: DataTableColumnHeader({ title: "套餐限速" }), meta: { label: "套餐限速" }, cell: ({ row }) => <span className="tabular-nums">{speedLabel(planSpeed(row.original))}</span> },
-    { id: "override", accessorFn: user => user.nodeSpeedLimitMbps ?? -1, header: DataTableColumnHeader({ title: "单独设置" }), meta: { label: "单独设置" }, cell: ({ row }) => row.original.nodeSpeedLimitMbps === undefined || row.original.nodeSpeedLimitMbps === null ? <span className="text-muted-foreground">无</span> : <Badge tone="info">{speedLabel(row.original.nodeSpeedLimitMbps)}</Badge> },
-    { id: "effective", accessorFn: user => effectiveSpeed(user), header: DataTableColumnHeader({ title: "生效限速" }), meta: { label: "生效限速" }, cell: ({ row }) => <span className="font-medium tabular-nums">{speedLabel(effectiveSpeed(row.original))}</span> },
-    { id: "actions", header: "操作", enableHiding: false, enableSorting: false, cell: ({ row }) => <DataTableRowActions detail={<Button variant="ghost" size="icon" onClick={() => openSpeed(row.original)} aria-label={`设置 ${row.original.email || row.original.id} 的限速`}><Gauge /></Button>} /> },
-  ], [])
 
   const loadChart = React.useMemo(() => {
     const history = machineDetail?.loadHistory || []
@@ -451,10 +395,10 @@ export function NodeHubPage() {
             <TabsTrigger value="machines">机器</TabsTrigger>
             <TabsTrigger value="relays">中转机</TabsTrigger>
             <TabsTrigger value="nodes">节点</TabsTrigger>
-            <TabsTrigger value="speed">用户限速</TabsTrigger>
+            <TabsTrigger value="groups">权限组</TabsTrigger>
           </TabsList>
           <div className="flex flex-wrap items-center gap-2">
-            <ActionButton variant="secondary" icon={<RefreshCw />} collapse onClick={() => { void refresh(); void reloadMachineCosts(true) }} disabled={loading} pending={loading} label="刷新" />
+            <ActionButton variant="secondary" icon={<RefreshCw />} collapse onClick={() => { void refresh(); void reloadMachineCosts(true); setRefreshKey(key => key + 1) }} disabled={loading} pending={loading} label="刷新" />
             <ActionButton icon={<UsersIcon />} collapse onClick={() => void syncEntitlements()} disabled={syncing} pending={syncing} label="同步用户授权" />
           </div>
         </div>
@@ -494,10 +438,10 @@ export function NodeHubPage() {
           ]} onClearFilters={() => setSearchParams(current => { const next = new URLSearchParams(current); for (const key of ["machine", "protocol", "status"]) next.delete(key); return next }, { replace: true })} renderMobileItem={node => <Card title={node.name} description={`${node.machineName || `机器 ${node.machineId}`} · ${protocolLabel(node.protocol)} ${nodeSecurityLabel(node)} · ${node.serverPort}`} headerAction={<Button variant="ghost" size="icon" onClick={() => openNodeEditor(node)} aria-label={`编辑 ${node.name}`}><Pencil /></Button>}><div className="flex flex-wrap items-start justify-between gap-3"><NodeStatus node={node} /><span className="text-sm tabular-nums">授权 {node.userCount || 0} · 在线 {node.onlineCount || 0}</span></div></Card>} toolbar={<Button collapse onClick={() => openNodeEditor()} disabled={!machines.length}><Plus />新建节点</Button>} /></DataTableCard>
         </TabsContent>
 
-        <TabsContent value="speed" className="grid gap-4">
-          {usersError ? <Alert tone="danger" title={`读取用户失败：${usersError}`} action={<Button variant="secondary" size="sm" onClick={() => void loadUsers()}><RefreshCw />重试</Button>} /> : null}
-          {users === null && !usersError ? <Skeleton lines={6} /> : <DataTableCard><DataTable columns={speedColumns} data={hubUsers} searchKey="user" searchPlaceholder="搜索邮箱或客户编号" stateKey="speed" emptyTitle="没有使用 node-hub 节点的用户" emptyDescription="自建线路用户同步授权后会出现在这里。" pageSize={30} frame="card" renderMobileItem={user => <Card title={user.email || user.id} description={`可用节点 ${user.hubNodeIds?.length || 0} · 套餐 ${speedLabel(planSpeed(user))}`} headerAction={<Button variant="ghost" size="icon" onClick={() => openSpeed(user)} aria-label={`设置 ${user.email || user.id} 的限速`}><Gauge /></Button>}><span className="text-sm">生效限速 <span className="font-medium tabular-nums">{speedLabel(effectiveSpeed(user))}</span></span></Card>} toolbar={<ActionButton variant="secondary" icon={<RefreshCw />} collapse onClick={() => void loadUsers()} label="刷新用户" />} /></DataTableCard>}
+        <TabsContent value="groups">
+          <NodeHubLineGroupsTab refreshKey={refreshKey} />
         </TabsContent>
+
       </Tabs>
 
       <Dialog open={machineCreateOpen} onOpenChange={open => { if (!machineSaving) setMachineCreateOpen(open) }}>
@@ -569,29 +513,6 @@ export function NodeHubPage() {
       </Dialog>
       <ConfirmDialog open={Boolean(confirmDeleteNode)} onOpenChange={open => { if (!open) setConfirmDeleteNode(null) }} title={`删除节点「${confirmDeleteNode?.name || ""}」？`} description="用户会立即失去这个节点，线路组里的这个节点也会失效。删除后不能恢复。" confirmLabel="删除节点" onConfirm={deleteNode} />
 
-      <Dialog open={Boolean(speedUser)} onOpenChange={open => { if (!open && !speedSaving) setSpeedUser(null) }}>
-        <DialogContent title="设置用户限速" description={speedUser ? `${speedUser.email || speedUser.id} · 套餐限速 ${speedLabel(planSpeed(speedUser))}` : ""}>
-          <Input label="单独限速（Mbps）" id="speed-limit" type="number" inputMode="numeric" min={0} max={100000} step={1} value={speedValue} onChange={event => { setSpeedValue(event.target.value); setSpeedError("") }} description="0 表示不限速；留空则使用套餐限速。按节点生效。" error={speedError} placeholder={String(planSpeed(speedUser) || "")} />
-          <div className="flex flex-wrap justify-end gap-2">
-            {speedUser?.nodeSpeedLimitMbps !== undefined && speedUser?.nodeSpeedLimitMbps !== null ? <Button variant="secondary" className="mr-auto" onClick={() => void saveSpeed(true)} disabled={speedSaving}><Undo2 />恢复套餐限速</Button> : null}
-            <Button variant="secondary" onClick={() => setSpeedUser(null)} disabled={speedSaving}>取消</Button>
-            <ActionButton icon={<Save />} onClick={() => void saveSpeed()} disabled={speedSaving} pending={speedSaving} label="保存限速" />
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   )
-}
-
-function planSpeed(user: User | null) {
-  const snapshot = user?.v2ProductSnapshot as { speedLimitMbps?: number } | undefined
-  return Math.max(0, Math.floor(Number(snapshot?.speedLimitMbps) || 0))
-}
-
-function effectiveSpeed(user: User) {
-  return user.nodeSpeedLimitMbps === undefined || user.nodeSpeedLimitMbps === null ? planSpeed(user) : user.nodeSpeedLimitMbps
-}
-
-function speedLabel(mbps: number) {
-  return mbps ? `${mbps} Mbps` : "不限速"
 }

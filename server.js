@@ -121,7 +121,9 @@ function normalizeCatalogV2LineGroup(input = {}) {
   const inboundKeys = [...new Set((Array.isArray(input.inboundKeys) ? input.inboundKeys : []).map(value => String(value).trim()).filter(value => /^[^:]+:\d+$/.test(value)))];
   const name = String(input.name || "").trim().slice(0, 60);
   if (!name) throw new Error("权限组名称不能为空。");
-  return { id: normalizeCatalogV2Id(input.id, "权限组标识"), name, isEnabled: input.isEnabled !== false, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "权限组排序" }), inboundKeys };
+  const speedLimitMbps = Number(input.speedLimitMbps ?? 0);
+  if (!Number.isSafeInteger(speedLimitMbps) || speedLimitMbps < 0 || speedLimitMbps > 100000) throw new Error("权限组限速必须是 0-100000 的整数（Mbps，0 为不限速）。");
+  return { id: normalizeCatalogV2Id(input.id, "权限组标识"), name, isEnabled: input.isEnabled !== false, sortOrder: catalogV2Integer(input.sortOrder ?? 0, { label: "权限组排序" }), inboundKeys, speedLimitMbps };
 }
 
 function normalizeCatalogV2AddonCategory(input = {}) {
@@ -3714,8 +3716,24 @@ async function hubInboundRows(options = {}) {
   return hubConfigured() ? nodeHub.hubManagementRows(await getHubOverview(options)) : [];
 }
 
-function userNodeSpeedLimitMbps(user = {}) {
-  return Math.max(0, Math.floor(Number(user.nodeSpeedLimitMbps ?? user.v2ProductSnapshot?.speedLimitMbps) || 0));
+// A user's own limit wins (0 = unlimited). Otherwise the stricter of the plan's limit (such as the
+// trial's) and the user's permission group limit applies; 0 on either side sets no limit there.
+function nodeSpeedLimitParts(user = {}, group = null) {
+  const mbps = value => Math.max(0, Math.floor(Number(value) || 0));
+  const override = user.nodeSpeedLimitMbps === undefined || user.nodeSpeedLimitMbps === null ? null : mbps(user.nodeSpeedLimitMbps);
+  const plan = mbps(user.v2ProductSnapshot?.speedLimitMbps);
+  const groupLimit = mbps(group?.speedLimitMbps);
+  const inherited = [plan, groupLimit].filter(Boolean);
+  return { override, plan, group: groupLimit, effective: override ?? (inherited.length ? Math.min(...inherited) : 0) };
+}
+
+function userNodeSpeedLimitMbps(user = {}, group = null) {
+  return nodeSpeedLimitParts(user, group).effective;
+}
+
+async function userNodeSpeedLimitView(user) {
+  const group = (await dataStore.listCatalogV2LineGroups()).find(item => item.id === planLineGroupId(user) && item.isEnabled) || null;
+  return { userId: user.id, ...nodeSpeedLimitParts(user, group), speedLimitMbps: userNodeSpeedLimitMbps(user, group), groupName: group?.name || "" };
 }
 
 async function hubEntitlementContext() {
@@ -3740,7 +3758,7 @@ function hubEntitlementFor(user, { groups, rows }, { forceDisabled = false } = {
     userLabel: billUserLabel(user),
     planId: planProductId(user),
     nodeIds,
-    speedLimit: userNodeSpeedLimitMbps(user),
+    speedLimit: userNodeSpeedLimitMbps(user, group),
     deviceLimit: planDeviceLimit(user),
     enabled: !forceDisabled && entitled && nodeIds.length > 0 && xuiClientShouldBeEnabled(user)
   };
@@ -5942,8 +5960,9 @@ function relaySubconverterConfig() {
 }
 
 function selfHostedUserinfo(user) {
-  const upload = Math.max(0, Number(user?.xuiLastTraffic?.uploadBytes) || 0);
-  const download = Math.max(0, Number(user?.xuiLastTraffic?.downloadBytes) || 0);
+  // Report the node-multiplied usage the panel and billing use, not the raw bytes.
+  const traffic = user?.xuiLastTraffic;
+  const { upload, download } = xuiTraffic.billedDirectionalBytes(traffic?.uploadBytes, traffic?.downloadBytes, traffic?.usedBytes);
   const total = xuiTrafficLimitBytes(user);
   const expire = Math.floor(new Date(user.expiresAt).getTime() / 1000);
   return `upload=${upload}; download=${download}; total=${total}; expire=${expire}`;
@@ -7464,6 +7483,12 @@ async function handleApi(req, res, pathname) {
   }
 
   const nodeSpeedLimitMatch = pathname.match(/^\/api\/users\/([^/]+)\/node-speed-limit$/);
+  if (nodeSpeedLimitMatch && req.method === "GET") {
+    const user = users.find(item => item.id === decodeURIComponent(nodeSpeedLimitMatch[1]));
+    if (!user) sendJson(res, 404, { error: "用户不存在。" });
+    else sendJson(res, 200, await userNodeSpeedLimitView(user));
+    return;
+  }
   if (nodeSpeedLimitMatch && req.method === "PUT") {
     try {
       const payload = await readJson(req);
@@ -7478,7 +7503,7 @@ async function handleApi(req, res, pathname) {
       }
       if (hubConfigured() && user.xuiClientEmail) await syncHubUser(user);
       await saveUser(user);
-      sendJson(res, 200, { userId: user.id, speedLimitMbps: userNodeSpeedLimitMbps(user), override: user.nodeSpeedLimitMbps ?? null });
+      sendJson(res, 200, await userNodeSpeedLimitView(user));
     } catch (error) {
       sendJson(res, error.statusCode || 400, { error: error.message });
     }
@@ -8184,6 +8209,7 @@ async function handleApi(req, res, pathname) {
         // Name, order and enabled-state edits keep the stored inbounds.
         const sameKeys = (left, right) => [...left].sort().join("\n") === [...right].sort().join("\n");
         const inboundKeysChanged = !sameKeys(existing.inboundKeys || [], group.inboundKeys);
+        const speedLimitChanged = (existing.speedLimitMbps || 0) !== group.speedLimitMbps;
         if (inboundKeysChanged) {
           progress.step("validate", "running");
           const management = await xuiInboundManagementView();
@@ -8195,10 +8221,10 @@ async function handleApi(req, res, pathname) {
         progress.step("save", "running");
         await dataStore.upsertCatalogV2LineGroup(group);
         progress.step("save", "done");
-        // Push changed inbounds to node-hub now instead of waiting for the next entitlement sync. The
-        // group is already saved, so a failed push is reported and left to the next scheduled run.
+        // Push changed inbounds or speed limit to node-hub now instead of waiting for the next entitlement
+        // sync. The group is already saved, so a failed push is reported and left to the next scheduled run.
         let xuiSync = null;
-        if (inboundKeysChanged) {
+        if (inboundKeysChanged || speedLimitChanged) {
           progress.step("sync", "running");
           try {
             const hubReport = await syncHubUsers();
@@ -9568,5 +9594,7 @@ module.exports = Object.assign(requestHandler, {
   injectPlaceholderNodes,
   postSubconverter,
   disabledAccountPlaceholderSubscription,
-  buildUserInfoNodes
+  buildUserInfoNodes,
+  selfHostedUserinfo,
+  nodeSpeedLimitParts
 });

@@ -262,6 +262,8 @@ class PostgresDataStore {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      -- Node speed limit for every user of the group, in Mbps; 0 sets no group limit.
+      ALTER TABLE catalog_v2_line_groups ADD COLUMN IF NOT EXISTS speed_limit_mbps INTEGER NOT NULL DEFAULT 0 CHECK (speed_limit_mbps BETWEEN 0 AND 100000);
       ALTER TABLE catalog_v2_products ADD COLUMN IF NOT EXISTS addon_category_id TEXT REFERENCES catalog_v2_addon_categories(id) ON UPDATE RESTRICT ON DELETE SET NULL;
       ALTER TABLE catalog_v2_products ADD COLUMN IF NOT EXISTS buyer_input_label TEXT NOT NULL DEFAULT '';
       ALTER TABLE catalog_v2_products ADD COLUMN IF NOT EXISTS charge_tax BOOLEAN NOT NULL DEFAULT TRUE;
@@ -886,18 +888,18 @@ class PostgresDataStore {
     ), "list catalog v2 line groups");
     return result.rows.map(row => ({
       id: row.id, name: row.name, isEnabled: row.is_enabled, sortOrder: row.sort_order,
-      inboundKeys: Array.isArray(row.inbound_keys) ? row.inbound_keys : [], productCount: Number(row.product_count || 0),
+      inboundKeys: Array.isArray(row.inbound_keys) ? row.inbound_keys : [], speedLimitMbps: Number(row.speed_limit_mbps) || 0, productCount: Number(row.product_count || 0),
       createdAt: row.created_at, updatedAt: row.updated_at
     }));
   }
 
   async upsertCatalogV2LineGroup(group, { create = false } = {}) {
     const query = create
-      ? `INSERT INTO catalog_v2_line_groups (id, name, is_enabled, sort_order, inbound_keys)
-         VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING *`
-      : `UPDATE catalog_v2_line_groups SET name=$2, is_enabled=$3, sort_order=$4, inbound_keys=$5::jsonb, updated_at=NOW()
+      ? `INSERT INTO catalog_v2_line_groups (id, name, is_enabled, sort_order, inbound_keys, speed_limit_mbps)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING *`
+      : `UPDATE catalog_v2_line_groups SET name=$2, is_enabled=$3, sort_order=$4, inbound_keys=$5::jsonb, speed_limit_mbps=$6, updated_at=NOW()
          WHERE id=$1 RETURNING *`;
-    const result = await withPgRetry(() => this.pool.query(query, [group.id, group.name, group.isEnabled, group.sortOrder, JSON.stringify(group.inboundKeys)]), `save catalog v2 line group ${group.id}`);
+    const result = await withPgRetry(() => this.pool.query(query, [group.id, group.name, group.isEnabled, group.sortOrder, JSON.stringify(group.inboundKeys), group.speedLimitMbps || 0]), `save catalog v2 line group ${group.id}`);
     return result.rows[0] || null;
   }
 

@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
-import { AlertCircle, ArrowRightLeft, AtSign, Banknote, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, Settings2, UserCog } from "lucide-react"
+import { AlertCircle, ArrowRightLeft, AtSign, Banknote, Gauge, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, Settings2, UserCog } from "lucide-react"
 import { toast } from "@/components/features/toast"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -15,6 +15,7 @@ import { UserBillsCard } from "@/components/features/user-bills-card"
 import { NodeTrafficList } from "@/components/features/node-traffic-list"
 import { OnlineIpList } from "@/components/features/online-ip-list"
 import { BackButton } from "@/components/features/back-button"
+import { UserNodeSpeedLimitDialog } from "@/components/features/user-node-speed-limit"
 import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalogPurchaseOptionsFor, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import type { PlanSnapshot, User, XuiCustomInboundManagement } from "@/types"
 import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, planSnapshotName, planSnapshotOptionId } from "@/utils"
@@ -154,6 +155,7 @@ export function UserDetailPage() {
   const [accountStatusOpen, setAccountStatusOpen] = React.useState(false)
   const [accountStatusSaving, setAccountStatusSaving] = React.useState(false)
   const [xuiRecoverOpen, setXuiRecoverOpen] = React.useState(false)
+  const [speedLimitOpen, setSpeedLimitOpen] = React.useState(false)
   const [xuiRecoverSaving, setXuiRecoverSaving] = React.useState(false)
   const [userTypeOpen, setUserTypeOpen] = React.useState(false)
   const [selectedUserType, setSelectedUserType] = React.useState<keyof typeof userTypeLabels>("regular")
@@ -749,6 +751,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
       <ArcDialog open={xuiRecoverOpen} onOpenChange={setXuiRecoverOpen}>
         <ArcDialogContent title="同步V2套餐到 node-hub？" description="将按当前V2套餐的可用节点、在线IP数量和启用状态重新推送 node-hub 授权，不清空已有流量。"><div className="flex flex-wrap justify-end gap-2"><ArcDialogClose asChild><Button variant="secondary" disabled={xuiRecoverSaving}>取消</Button></ArcDialogClose><ArcDialogClose asChild><Button onClick={event => { event.preventDefault(); void recoverXuiClient() }} disabled={xuiRecoverSaving}>{xuiRecoverSaving ? <Loader2 className="animate-spin" /> : <RefreshCw />}{xuiRecoverSaving ? "同步中..." : "立即同步"}</Button></ArcDialogClose></div></ArcDialogContent>
       </ArcDialog>
+      {user.lineType === "self_hosted" && user.xuiClientEmail ? <UserNodeSpeedLimitDialog userId={user.id} open={speedLimitOpen} onOpenChange={setSpeedLimitOpen} /> : null}
       {user.accountStatus === "disabled" ? <Alert tone="warning" title="该用户已停用" /> : null}
       <div className="grid min-w-0 gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
         <Card className="self-start xl:sticky xl:top-4" title={<>{user.wechatName || user.userId || user.email || "用户"}
@@ -771,6 +774,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               { label: "设置用户类型", icon: <UserCog />, onSelect: openUserTypeDialog },
               ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "管理个人定制入站", icon: <Network />, onSelect: () => void openCustomInbounds() }] : []),
               ...(user.lineType === "self_hosted" ? [{ label: "更改套餐", icon: <ArrowRightLeft />, onSelect: openPlanDialog }] : []),
+              ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "设置节点限速", icon: <Gauge />, onSelect: () => setSpeedLimitOpen(true) }] : []),
               ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "重置流量", icon: <RotateCcw />, onSelect: () => setTrafficResetOpen(true) }] : []),
               ...(user.lineType === "self_hosted" ? [
                 { label: "单向赠送流量", icon: <Gift />, onSelect: () => { setTrafficGiftError(""); setTrafficGiftOpen(true) } },
