@@ -24,6 +24,8 @@ export interface DatePickerProps extends Omit<ButtonHTMLAttributes<HTMLButtonEle
   format?: Intl.DateTimeFormatOptions;
   /** Adds a Today button to the calendar header. */
   showToday?: boolean;
+  /** XELA extension: which trigger edge the calendar lines up with; "end" for triggers near the right edge (card header actions). */
+  align?: "start" | "end";
 }
 
 const monthStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
@@ -44,7 +46,7 @@ const statusRise: Variants = {
   exit: { opacity: 0, y: "-0.3em", filter: `blur(${blur.subtle}px)`, transition: { duration: 0.14, ease: ease.standard } },
 };
 
-export function DatePicker({ label, hideLabel, value, onChange, description, placeholder = "选择日期", minDate, maxDate, disabledDates, locale = "zh-CN", format = { month: "short", day: "numeric", year: "numeric" }, showToday, id, className, disabled, ...buttonProps }: DatePickerProps) {
+export function DatePicker({ label, hideLabel, value, onChange, description, placeholder = "选择日期", minDate, maxDate, disabledDates, locale = "zh-CN", format = { month: "short", day: "numeric", year: "numeric" }, showToday, align = "start", id, className, disabled, ...buttonProps }: DatePickerProps) {
   const generatedId = useId();
   const controlId = id ?? generatedId;
   const hintId = description ? `${controlId}-description` : undefined;
@@ -119,12 +121,12 @@ export function DatePicker({ label, hideLabel, value, onChange, description, pla
         <ChevronDown className={styles.chevron} size={16} strokeWidth={1.75} aria-hidden="true" />
       </button>
       <AnimatePresence>
-        {open && <motion.div ref={popoverRef} className={styles.popover} role="dialog" aria-label={`${label}日历`} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(); } }}
+        {open && <motion.div ref={popoverRef} className={styles.popover} data-align={align} role="dialog" aria-label={`${label}日历`} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(); } }}
           initial={reduce ? { opacity: 0 } : { opacity: 0, y: -8, scale: .95 }}
           animate={{ opacity: 1, y: 0, scale: 1, transition: reduce ? instant : { ...spring.snappy, opacity: { duration: duration.fast, ease: ease.enter } } }}
           exit={{ opacity: 0, ...(reduce ? {} : { y: -6, scale: .97 }), transition: { duration: 0.14, ease: ease.standard } }}>
           <Calendar value={value} onChange={selectDate} month={month} onMonthChange={setMonth} minDate={minDate} maxDate={maxDate} disabledDates={disabledDates} locale={locale} showToday={showToday} />
-          <div className={styles.footer}><button type="button" onClick={() => selectDate(undefined)} disabled={!value}>清除</button><span className={styles.status}><AnimatePresence initial={false}><motion.span key={time ?? "none"} variants={reduce ? valueFade : statusRise} initial="enter" animate="center" exit="exit">{value ? `Selected ${formatter.format(value)}` : "选择日期"}</motion.span></AnimatePresence></span></div>
+          <div className={styles.footer}><button type="button" onClick={() => selectDate(undefined)} disabled={!value}>清除</button><span className={styles.status}><AnimatePresence initial={false}><motion.span key={time ?? "none"} variants={reduce ? valueFade : statusRise} initial="enter" animate="center" exit="exit">{value ? `已选 ${formatter.format(value)}` : "选择日期"}</motion.span></AnimatePresence></span></div>
         </motion.div>}
       </AnimatePresence>
     </div>

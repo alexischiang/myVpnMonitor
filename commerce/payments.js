@@ -47,14 +47,18 @@ function createPaymentService({ get, put, getCurrent, setCurrent, configure, cha
     };
     try {
       const { result } = await createGateway(config, params);
-      Object.assign(attempt, { tid: result.tid || "", payUrl: result.payUrl || "", status: statusOf(result.payOrderStatus), error: "" });
+      // qrCode is the raw scannable content when the provider returns one (qr.alipay.com, weixin://...).
+      Object.assign(attempt, { tid: result.tid || "", payUrl: result.payUrl || "", qrCode: result.qrCode || result.qrcode || "", status: statusOf(result.payOrderStatus), error: "" });
       attempt.error = transactionError(attempt.status);
       if (attempt.status === "paid") {
         const error = amountError(attempt.amount, result.money);
         if (error) Object.assign(attempt, { status: "abnormal", error });
       }
-    } catch {
-      Object.assign(attempt, { status: "unknown", error: "支付渠道暂时不可用，订单已保留。请重试或联系客服。" });
+    } catch (cause) {
+      // The provider's own reason stays internal (logs and admin views); customers get the generic message.
+      const gatewayError = String(cause?.message || cause || "").slice(0, 300);
+      console.error(`Payment gateway create failed (${config.name || config.id}, ${attempt.merOrderTid}):`, gatewayError);
+      Object.assign(attempt, { status: "unknown", gatewayError, error: "支付渠道暂时不可用，订单已保留。请重试或联系客服。" });
     }
     attempt.updatedAt = new Date().toISOString();
     await put(attempt);

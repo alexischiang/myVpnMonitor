@@ -1,5 +1,6 @@
 const http = require("http");
 const net = require("net");
+const dns = require("dns").promises;
 const { execFileSync } = require("child_process");
 const fsSync = require("fs");
 const fs = require("fs/promises");
@@ -10,6 +11,8 @@ const { createDataStore } = require("./database");
 const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const { loadLocalEnv } = require("./env");
 const xuiTraffic = require("./xui-traffic");
+const subscriptionAccess = require("./subscription-access");
+const { lookupIpRegion, ipRegionReady } = require("./ip-region");
 const nodeHub = require("./node-hub/bridge");
 const yaml = require("js-yaml");
 const notifier = require("./notifier");
@@ -23,6 +26,7 @@ const { createPaymentService, manualReceipt, transactionError } = require("./com
 const { createCheckoutWorkflow } = require("./commerce/checkout-workflow");
 const { resolvePurchase: resolveCatalogV2Purchase, visibleProducts: visibleCatalogV2Products, resolveCompareValues: resolveCatalogV2CompareValues, lineGroupInboundKeys: catalogV2LineGroupInboundKeys, lineGroupCoverage: catalogV2LineGroupCoverage, planEntitlement: catalogV2PlanEntitlement, planEntitlementChanges: catalogV2PlanEntitlementChanges } = require("./commerce/catalog-v2");
 const addonServices = require("./commerce/addon-services");
+const QRCode = require("qrcode");
 
 loadLocalEnv();
 
@@ -1706,6 +1710,7 @@ function defaultAlertSettings() {
     ticket: { telegram: true, mail: false },
     delivery: { telegram: true, mail: false },
     traffic: { telegram: false, mail: false, userMail: false, userDepletedMail: true },
+    subscriptionShare: { telegram: true, mail: false },
     trafficThresholdPercent: 80
   };
 }
@@ -1722,6 +1727,7 @@ function normalizeAlertSettings(value, strict = false) {
     payment: channelScope("payment"),
     ticket: channelScope("ticket"),
     delivery: channelScope("delivery"),
+    subscriptionShare: channelScope("subscriptionShare"),
     traffic: {
       ...channelScope("traffic"),
       userMail: typeof value?.traffic?.userMail === "boolean" ? value.traffic.userMail : defaults.traffic.userMail,
@@ -3318,7 +3324,7 @@ function onlinePayments() {
 function projectAttempt(order, attempt) {
   Object.assign(order, { paymentAttemptId: attempt.id, paymentPlatformId: attempt.platformId,
     paymentPlatformName: attempt.platformName, paymentProvider: attempt.provider,
-    channelCode: attempt.channelCode, tid: attempt.tid || "", payUrl: attempt.payUrl || "",
+    channelCode: attempt.channelCode, tid: attempt.tid || "", payUrl: attempt.payUrl || "", payQrCode: attempt.qrCode || "",
     paymentError: attempt.error || "", updatedAt: new Date().toISOString() });
 }
 
@@ -3413,6 +3419,64 @@ async function markPaymentOrderPaidManually(order, req, note = "") {
   const session = currentSession(req);
   return checkoutWorkflow(null, req).collect(order, manualReceipt({ amount: order.amount,
     actor: session?.account || session?.username || session?.accountId || session?.role || "admin", note, now: new Date().toISOString() }), req);
+}
+
+// What the customer scans for an admin-created order: the provider's raw QR content when it returned one,
+// else its pay page. The test provider has no pay page, so its code opens the customer's own cashier.
+function adminPaymentLinkContent(order, req) {
+  if (order.payQrCode) return order.payQrCode;
+  if (order.payUrl) return order.payUrl;
+  if (order.paymentProvider === "test") return `${String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "")}/cashier/${encodeURIComponent(order.id)}`;
+  return "";
+}
+
+async function adminPaymentLinkResult(order, req) {
+  const view = adminPaymentOrder(order);
+  const content = view.status === "pending" ? adminPaymentLinkContent(order, req) : "";
+  const qr = content ? { content, imageDataUrl: await QRCode.toDataURL(content, { width: 320, margin: 2, errorCorrectionLevel: "M" }) } : null;
+  return { order: view, qr };
+}
+
+async function cancelAdminPaymentLinkOrder(order, req) {
+  try { await cancelPaymentOrder(order, req); }
+  catch (error) { console.error("Admin payment link cancel failed:", order.id, error.message); }
+}
+
+// An admin creates the customer's own order at the normal price (wallet balance untouched) and starts the
+// gateway payment for them, so a customer whose phone cannot open the pay page can scan the code instead.
+async function createAdminPaymentLink(payload, req, account) {
+  const existing = paymentOrders.find(order => order.accountId === account.id && order.status === "pending" && !isPaymentOrderExpired(order));
+  if (existing) throw Object.assign(new Error(`该用户已有待付款订单 ${existing.merOrderTid}，请先完成或取消该订单。`), { statusCode: 409, orderId: existing.id });
+  const channelCode = String(payload.channelCode || "");
+  if (!["100", "200"].includes(channelCode)) throw new Error("请选择支付宝或微信支付。");
+  const paymentPlatformId = String(payload.paymentPlatformId || "");
+  configuredPaymentChannel(requirePaymentConfig(channelCode, paymentPlatformId), channelCode);
+  const order = await submitPurchaseOrder({ ...payload, useBalance: false, confirmReplacement: payload.confirmReplacement === true }, req, account);
+  const session = currentSession(req);
+  Object.assign(order, { paymentSource: "admin-link", createdByAdmin: session?.account || session?.username || session?.role || "admin" });
+  await savePaymentOrders();
+  try {
+    await startOrderPayment(order, { channelCode, paymentPlatformId }, req);
+  } catch (error) {
+    await cancelAdminPaymentLinkOrder(order, req);
+    throw error;
+  }
+  if (order.status === "pending" && !adminPaymentLinkContent(order, req)) {
+    // Admins see the provider's own reason; the customer-facing "订单已保留" text would contradict the cancel.
+    const attempt = order.paymentAttemptId ? await onlinePayments().get(order.paymentAttemptId) : null;
+    const reason = attempt?.gatewayError ? `支付渠道拒绝创建付款：${attempt.gatewayError}` : "支付渠道未返回支付链接";
+    await cancelAdminPaymentLinkOrder(order, req);
+    throw new Error(`${reason.replace(/[。.]$/, "")}。订单已取消，请检查支付平台配置后重试。`);
+  }
+  const owner = userForAccount(account) || account;
+  appendUserLogToUser(owner, createUserLog({
+    event: "user-action", status: "recorded", reason: "admin-payment-link", req,
+    message: `管理员代下单：${order.planName} / ${order.optionLabel}（${channelCode === "200" ? "微信支付" : "支付宝"}）`,
+    details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, amount: order.amount }
+  }));
+  if (owner === account) await saveAccounts();
+  else await saveUsers();
+  return order;
 }
 
 async function handleCheckoutCallback(attempt, payload, req) {
@@ -6150,6 +6214,7 @@ async function handleRelaySubscription(req, res, token) {
   ensureUserRelayTokens();
 
   const user = users.find(item => item.subscriptionToken === token);
+  if (user) recordSubscriptionAccessOnClose(req, res, user);
   if (!user) {
     relayLog("user-not-found", {
       relayRequestId,
@@ -6164,6 +6229,7 @@ async function handleRelaySubscription(req, res, token) {
       relayRequestId,
       userId: user.id
     });
+    res.subscriptionAccessResult = "disabled";
     sendDisabledAccountPlaceholderSubscription(res, user);
     return;
   }
@@ -6194,6 +6260,7 @@ async function handleRelaySubscription(req, res, token) {
       stage: "user-date-check",
       message: "\u7528\u6237\u8ba2\u9605\u5df2\u5230\u671f\u3002"
     });
+    res.subscriptionAccessResult = "expired";
     sendExpiredPlaceholderSubscription(res, user);
     return;
   }
@@ -6202,17 +6269,132 @@ async function handleRelaySubscription(req, res, token) {
     try {
       const migration = await migrateLegacyUserOnSubscriptionRefresh(user, req);
       if (migration.status === "activation_required") {
+        res.subscriptionAccessResult = "activation-required";
         sendPlaceholderSubscription(res, activationRequiredPlaceholderSubscription(user));
         return;
       }
     } catch (error) {
       relayLog("xui-migration-failed", { relayRequestId, userId: user.id, error: error.message });
+      res.subscriptionAccessResult = "migration-failed";
       sendPlaceholderSubscription(res, placeholderSubscription(user, "账户迁移失败-请联系客服"));
       return;
     }
   }
 
   await handleSelfHostedRelay(req, res, user, relayRequestId);
+}
+
+// Records the pull once the response is over, so the row carries the status the client got.
+// Fire and forget: a failed insert never affects the subscription itself.
+function recordSubscriptionAccessOnClose(req, res, user) {
+  const { ip, source } = subscriptionAccess.subscriptionClientIp(req);
+  const query = new URL(req.url || "/", "http://localhost").search.slice(1);
+  res.once("close", () => {
+    const statusCode = res.headersSent ? res.statusCode : null;
+    const result = res.subscriptionAccessResult
+      || (!res.writableFinished ? "aborted" : statusCode && statusCode < 400 ? "ok" : "error");
+    void (async () => {
+      const region = await lookupIpRegion(ip).catch(() => null);
+      const row = {
+        userId: user.id,
+        ip,
+        ipSource: source,
+        country: String(req.headers["cf-ipcountry"] || "").slice(0, 8).toUpperCase(),
+        geoCountry: region?.country || "",
+        province: region?.province || "",
+        city: region?.city || "",
+        isp: region?.isp || "",
+        userAgent: String(req.headers["user-agent"] || ""),
+        target: query.slice(0, 200),
+        result,
+        statusCode,
+        headers: subscriptionAccess.headersForAccessLog(req.headers)
+      };
+      await dataStore.recordSubscriptionAccess(row);
+      if (subscriptionAccess.mainlandLocation(row)) await checkSubscriptionShareAlert(user);
+    })().catch(error => console.error(`[subscription-access] record failed for ${user.id}:`, error.message));
+  });
+}
+
+// One check at a time per user, so a burst of pulls from two cities sends one alert, not several.
+const subscriptionShareChecks = new Map();
+function checkSubscriptionShareAlert(user) {
+  const previous = subscriptionShareChecks.get(user.id) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => runSubscriptionShareCheck(user));
+  subscriptionShareChecks.set(user.id, next);
+  next.finally(() => { if (subscriptionShareChecks.get(user.id) === next) subscriptionShareChecks.delete(user.id); }).catch(() => {});
+  return next;
+}
+
+// Telegram (and mail, per the alert settings) when the last 24 hours of a user's pulls come from two or
+// more mainland cities. Repeats only after 24 hours or when a new city shows up.
+async function runSubscriptionShareCheck(user, now = Date.now()) {
+  const [rows, nodeIps, lastAlert] = await Promise.all([
+    dataStore.listSubscriptionAccess(user.id, { since: new Date(now - 24 * 3600000) }),
+    ownNodeIps(),
+    dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id)
+  ]);
+  const counted = rows.filter(row => !nodeIps.has(row.ip));
+  const { send, cities } = subscriptionAccess.crossCityAlert(counted, lastAlert, now);
+  if (!send) return null;
+  const alert = { at: new Date(now).toISOString(), cities };
+  await dataStore.setRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id, alert);
+  const text = subscriptionShareAlertText(user, counted, cities);
+  console.log(`[subscription-share] ${user.id} pulled from ${cities.join(", ")} in 24h; alerting.`);
+  await sendAdminAlert("subscriptionShare", { subject: `订阅疑似分享：${subscriptionUserLabel(user)}`, text, parseMode: "" });
+  return { ...alert, text };
+}
+
+const SUBSCRIPTION_SHARE_ALERT_COLLECTION = "subscriptionShareAlerts";
+
+function subscriptionUserLabel(user) {
+  return user.email || user.userId || user.wechatName || user.xuiClientEmail || user.id;
+}
+
+function subscriptionShareAlertText(user, rows, cities) {
+  const base = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  const recent = rows
+    .filter(row => subscriptionAccess.mainlandLocation(row))
+    .slice(0, 8)
+    .map(row => `${formatChinaTime(row.at)} ${row.city || row.province} ${row.isp || ""} ${row.ip} ${subscriptionAccess.subscriptionClientLabel(row.userAgent)}`.replace(/\s+/g, " "));
+  return [
+    "⚠️ 订阅疑似分享",
+    `用户：${subscriptionUserLabel(user)}`,
+    `24 小时内从 ${cities.length} 个城市拉取订阅：${cities.join("、")}`,
+    "",
+    "最近拉取：",
+    ...recent,
+    ...(base ? ["", `${base}/users/detail/${encodeURIComponent(user.id)}`] : [])
+  ].join("\n");
+}
+
+function formatChinaTime(value) {
+  return new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+// Our own machines' addresses (node-hub machines, nodes and relays). Clients that refresh the
+// subscription through the proxy reach us from these. Hostnames are resolved; cached 10 minutes.
+const nodeIpCache = { at: 0, value: new Set() };
+async function ownNodeIps() {
+  if (Date.now() - nodeIpCache.at < 10 * 60 * 1000) return nodeIpCache.value;
+  const overview = await getHubOverview().catch(() => null);
+  const hosts = new Set([...(overview?.machines || []), ...(overview?.nodes || []), ...(overview?.relays || [])]
+    .map(item => String(item?.host || "").trim().replace(/^\[|\]$/g, "")).filter(Boolean));
+  const ips = new Set();
+  await Promise.all([...hosts].map(async host => {
+    if (net.isIP(host)) { ips.add(host); return; }
+    const addresses = await Promise.race([
+      dns.lookup(host, { all: true }),
+      new Promise(resolve => setTimeout(() => resolve([]), 2000))
+    ]).catch(() => []);
+    for (const { address } of addresses) ips.add(address);
+  }));
+  Object.assign(nodeIpCache, { at: Date.now(), value: ips });
+  return ips;
+}
+
+function pruneSubscriptionAccessHistory(now = Date.now()) {
+  return dataStore.pruneSubscriptionAccess(new Date(now - subscriptionAccess.SUBSCRIPTION_ACCESS_RETENTION_DAYS * 24 * 60 * 60 * 1000));
 }
 
 function isLocalRequest(req) {
@@ -7798,6 +7980,39 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (["/api/admin/payment-links/quote", "/api/admin/payment-links"].includes(pathname) && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      await loadLatestData({ force: pathname === "/api/admin/payment-links" });
+      const account = accounts.find(item => item.id === String(payload.accountId || "") && ["active", "invited"].includes(item.status));
+      if (!account) throw new Error("只有已启用或等待认领的账户可以代客下单。");
+      if (pathname.endsWith("/quote")) {
+        sendJson(res, 200, await paymentQuoteForAccount({ ...payload, useBalance: false }, account));
+      } else {
+        sendJson(res, 201, await adminPaymentLinkResult(await createAdminPaymentLink(payload, req, account), req));
+      }
+    } catch (error) {
+      sendJson(res, error.statusCode === 409 ? 409 : 400, { error: error.message, ...(error.orderId ? { orderId: error.orderId } : {}), ...(error.quote ? { quote: error.quote } : {}) });
+    }
+    return;
+  }
+
+  // Re-reads the order (and asks the gateway while it is pending) so an open QR dialog sees the payment land.
+  const adminPaymentLinkMatch = pathname.match(/^\/api\/admin\/payment-links\/([^/]+)$/);
+  if (adminPaymentLinkMatch && req.method === "GET") {
+    await loadLatestData({ force: true });
+    const order = paymentOrders.find(item => item.id === adminPaymentLinkMatch[1]);
+    if (!order) return sendJson(res, 404, { error: "没有找到这个订单。" });
+    try {
+      await refreshCheckoutOrder(order, req);
+      if (order.status === "paid") await checkoutWorkflow(null, req).fulfill(order, req);
+      sendJson(res, 200, await adminPaymentLinkResult(order, req));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/admin/orders" && req.method === "GET") {
     sendJson(res, 200, paymentOrders.map(adminPaymentOrder).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
     return;
@@ -8784,7 +8999,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic|subscription-access))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -8816,16 +9031,44 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    // Admin time-of-day view: the last 7, 30 or 90 China days of hourly rows (raw bytes).
-    if (action === "hourly-traffic" && req.method === "GET") {
+    // Subscription pulls of this user's link over the last 7, 30 or 90 days, for spotting a shared link.
+    if (action === "subscription-access" && req.method === "GET") {
       const requested = Number(new URL(req.url, "http://localhost").searchParams.get("days"));
-      const days = [7, 30, 90].includes(requested) ? requested : 30;
-      const email = item ? String(xuiClientEmail(item) || "").trim().toLowerCase() : "";
+      const days = [7, 30, 90].includes(requested) ? requested : 7;
       const now = Date.now();
-      const dates = Array.from({ length: days }, (_, index) => chinaDateKey(now - (days - 1 - index) * 86400000));
-      const rows = email ? await dataStore.xuiUserHourlySeries(email, now - (days + 1) * 86400000) : [];
-      // Raw bytes, so a hub node's own billing key simply counts as its machine.
-      sendJson(res, 200, xuiTraffic.hourlyUsage(rows.map(row => ({ ...row, nodeGuid: xuiTraffic.billingMachineGuid(row.nodeGuid) })), dates));
+      const [rows, nodeIps, lastAlert] = item
+        ? await Promise.all([dataStore.listSubscriptionAccess(item.id, { since: new Date(now - days * 86400000) }), ownNodeIps(), dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, item.id)])
+        : [[], new Set(), null];
+      sendJson(res, 200, {
+        days,
+        retentionDays: subscriptionAccess.SUBSCRIPTION_ACCESS_RETENTION_DAYS,
+        lastAlert: lastAlert ? { at: lastAlert.at, cities: lastAlert.cities || [] } : null,
+        summary: subscriptionAccess.summarizeSubscriptionAccess(rows, { now, nodeIps }),
+        rows: rows.slice(0, 200).map(row => ({ ...row, client: subscriptionAccess.subscriptionClientLabel(row.userAgent), viaNode: nodeIps.has(row.ip) }))
+      });
+      return;
+    }
+
+    // Admin time-of-day view: 7 China days of hourly rows ending on `end` (YYYY-MM-DD, default and
+    // upper bound today), in billed bytes (node multipliers applied).
+    if (action === "hourly-traffic" && req.method === "GET") {
+      const days = 7;
+      const today = chinaDateKey();
+      const requested = String(new URL(req.url, "http://localhost").searchParams.get("end") || "");
+      const end = /^\d{4}-\d{2}-\d{2}$/.test(requested) && Number.isFinite(Date.parse(`${requested}T00:00:00Z`)) && requested < today ? requested : today;
+      const email = item ? String(xuiClientEmail(item) || "").trim().toLowerCase() : "";
+      const endNoon = Date.parse(`${end}T12:00:00+08:00`);
+      const dates = Array.from({ length: days }, (_, index) => chinaDateKey(endNoon - (days - 1 - index) * 86400000));
+      const [rows, billingState] = await Promise.all([
+        email ? dataStore.xuiUserHourlySeries(email, Date.parse(`${dates[0]}T00:00:00+08:00`)) : [],
+        getXuiBillingState()
+      ]);
+      const multipliers = billingState?.multipliers || {};
+      // A hub node key is weighted with the node's multiplier, then labelled like its machine.
+      sendJson(res, 200, xuiTraffic.hourlyUsage(rows.map(row => {
+        const multiplier = xuiMultiplier(multipliers[row.nodeGuid]);
+        return { ...row, nodeGuid: xuiTraffic.billingMachineGuid(row.nodeGuid), up: Math.round(row.up * multiplier), down: Math.round(row.down * multiplier) };
+      }), dates));
       return;
     }
 
@@ -9504,7 +9747,12 @@ async function main() {
     if (syncJobRunning.has(jobId)) return Promise.resolve();
     return runTrackedSyncJob(jobId, trigger).catch(error => console.error(`[sync-jobs] ${jobId} failed:`, error));
   };
-  const pruneSyncJobHistoryInBackground = () => pruneSyncJobHistory().catch(error => console.error("Sync job history prune failed:", error));
+  // Opens the ip2region databases now, so the first subscription pull doesn't wait for it.
+  void ipRegionReady();
+  const pruneSyncJobHistoryInBackground = () => {
+    pruneSyncJobHistory().catch(error => console.error("Sync job history prune failed:", error));
+    pruneSubscriptionAccessHistory().catch(error => console.error("Subscription access prune failed:", error));
+  };
   pruneSyncJobHistoryInBackground();
   setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000);
 
@@ -9615,6 +9863,8 @@ module.exports = Object.assign(requestHandler, {
   runTrackedSyncJob,
   recoverInterruptedSyncJobRuns,
   pruneSyncJobHistory,
+  runSubscriptionShareCheck,
+  subscriptionShareAlertText,
   listSyncJobRuns,
   withXuiUserMigrationLock,
   xuiTrafficPayload,

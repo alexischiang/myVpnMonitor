@@ -567,7 +567,7 @@ assert.strictEqual(trialIpKey("::1:2:3:4:5:6:7"), "0:1:2:3::/64");
 assert.strictEqual(normalizeSalesSettings({}).userAlertsEnabled, true);
 assert.strictEqual(normalizeSalesSettings({ userAlertsEnabled: false }).userAlertsEnabled, false);
 const alertSettings = normalizeSalesSettings({ alertSettings: { payment: { telegram: false, mail: true }, traffic: { telegram: true, mail: true, userMail: true }, trafficThresholdPercent: 85 } }).alertSettings;
-assert.deepStrictEqual(alertSettings, { payment: { telegram: false, mail: true }, ticket: { telegram: true, mail: false }, delivery: { telegram: true, mail: false }, traffic: { telegram: true, mail: true, userMail: true, userDepletedMail: true }, trafficThresholdPercent: 85 });
+assert.deepStrictEqual(alertSettings, { payment: { telegram: false, mail: true }, ticket: { telegram: true, mail: false }, delivery: { telegram: true, mail: false }, subscriptionShare: { telegram: true, mail: false }, traffic: { telegram: true, mail: true, userMail: true, userDepletedMail: true }, trafficThresholdPercent: 85 });
 assert.strictEqual(normalizeSalesSettings({ alertSettings: { traffic: { userDepletedMail: false } } }).alertSettings.traffic.userDepletedMail, false);
 assert.throws(() => normalizeSalesSettings({ alertSettings: { trafficThresholdPercent: 0 } }), /1-100/);
 assert.throws(() => normalizeSalesSettings({ announcements: [{ title: "", content: "内容" }] }), /不能为空/);

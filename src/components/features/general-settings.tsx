@@ -24,6 +24,7 @@ const alertRows = [
   { key: "ticket", label: "工单待处理提醒", description: "用户创建工单或追加回复时提醒。" },
   { key: "delivery", label: "待交付提醒", description: "用户付款后有服务等待人工交付时提醒。" },
   { key: "traffic", label: "用户流量提醒", description: "用户流量达到设定阈值时提醒。" },
+  { key: "subscriptionShare", label: "订阅疑似分享提醒", description: "24 小时内同一订阅链接从境内两个以上城市拉取时提醒，同一用户 24 小时内只提醒一次（出现新城市除外）。" },
 ] as const
 
 // The server grants the first enabled period of the trial product.

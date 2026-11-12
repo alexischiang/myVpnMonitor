@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-08",
+  "updated_at": "2026-11-12",
   "required_fields": [
     "id",
     "name",
@@ -5851,6 +5851,116 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-11-08T09:13:03.000Z"
+      }
+    },
+    {
+      "id": "user-hourly-traffic-arc-heatmap",
+      "name": "用户详情流量时段：Arc 热力图、固定 7 天加截止日期选择、按倍率折算",
+      "description": "The user detail 流量时段 tab renders a fixed 7-day day × hour grid with Arc ActivityHeatmap, extended with an hourly mode (the 24 hours run across, one row per day, square cells sized so the 24 columns fill the card), byte formatting and a breakdown line in the tooltip. An Arc date picker in the card header (align=\"end\", from today back to 83 days ago so the window stays inside the 90-day hourly retention) picks the window's last day; /api/users/:id/hourly-traffic takes end=YYYY-MM-DD (default and upper bound today, invalid input falls back to today) instead of days, and returns billed bytes: each hourly row is multiplied by its node's multiplier before hub node keys collapse to their machine.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The heatmap always shows 7 days, ending today by default",
+        "The Arc date picker in the card header chooses the last day; future dates are disabled",
+        "Cells, totals, peak and the 24-hour profile use node-multiplied bytes",
+        "Hours on the horizontal axis, dates on the vertical axis, every cell square"
+      ],
+      "verification": [
+        "2026-11-12: npm run check and npm run verify:fast pass.",
+        "2026-11-12: isolated server on a copy of the dev DB (hourly rows shifted into the last 7 days, demo:HK Gomami multiplier set to 2): GET /api/users/:id/hourly-traffic with no days returns 7 dates; upload/download sums 542679376866/102347890371 equal the DB rows over the same 7 China dates with HK ×2 (raw 409800557690/75559573109).",
+        "2026-11-12 (transpose): npm run check passes; layout re-verified on a fresh isolated copy.",
+        "2026-11-12 (date picker): npm run check, verify:fast and verify:harness pass. Endpoint on the demo server: no end → 11-06…11-12; end=2026-10-01 → 09-25…10-01 (150 cells); end=2030-01-01 and end=junk&days=90 → 7 days ending today."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/:id → 流量时段 (cellojh, isolated server with 90 days of fake hourly traffic)"
+        ],
+        "interactions": [
+          "Header shows the date picker (2026年11月12日) instead of the range tabs; summary 302 GB · 11/6 – 11/12; 7 rows × 24 square cells",
+          "Picker opens right-aligned inside the card, days after today disabled, footer reads 已选 2026年11月12日",
+          "Picking 11月5日 requests end=2026-11-05 and redraws 10/30 – 11/5 with new totals",
+          "375x812: calendar spans 28–332px, page scrollWidth 375",
+          "Console: no new errors; the buffered 403/ERR_CONNECTION_REFUSED entries predate this change (cookie clash with :3000 and server restarts); every hourly-traffic request returned 200"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-12"
+      }
+    },
+    {
+      "id": "subscription-access-log",
+      "name": "记录用户拉取订阅链接的 IP 和请求头，排查订阅分享",
+      "description": "Every pull of /sub/<token> (and /api/sub/<token>) for a known user writes a subscription_access_logs row once the response closes: client IP (CF-Connecting-IP, else X-Real-IP, else the last X-Forwarded-For hop), Cloudflare country, ip2region place (country, province, prefecture city, ISP; offline lookup in ip-region.js on data/ip2region/*.xdb, fetched by scripts/fetch-ip2region.js, refreshed monthly by the deploy), user agent, query string, result, status code and all request headers with cookie/authorization redacted. Kept 90 days. Suspicious = mainland pulls (HK/Macau/Taiwan, abroad and our own node IPs excluded) from two or more prefecture cities; a province-only pull counts only when no known city lies in that province. When the last 24 hours cross cities, a Telegram (and optional mail) alert goes out through the new 订阅疑似分享提醒 alert setting (Telegram on by default), at most once per user per 24 hours unless a new city appears (state in app_records subscriptionShareAlerts). Admin user detail 订阅访问 tab (7/30/90 days): suspicion banner with cities, last Telegram alert, stats, 城市切换 table with the gap between consecutive mainland pulls, per-IP list with 归属地, latest 200 requests with a header dialog.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "A pull stores IP, country, ip2region province/city/ISP, UA, result and redacted headers",
+        "A forged first X-Forwarded-For hop is not taken as the client IP",
+        "Mainland pulls from two or more prefecture cities mark the link suspicious; HK/Macau/Taiwan, abroad and node IPs don't count",
+        "Cross-city pulls within 24 hours send one Telegram alert, repeated only after 24 hours or for a new city",
+        "Admin user detail shows the suspicion, city switches with gaps, IP places and request headers"
+      ],
+      "verification": [
+        "2026-11-12: node test-subscription-access.js (cities, province-only rule, HK/TW exclusion, city changes, alert dedupe, region parsing), npm run verify:fast and npm run verify pass; git diff --check clean",
+        "2026-11-12: ip2region lookups checked on known IPs: 202.96.134.133 深圳 电信, 61.139.2.69 成都 电信, 117.136.0.1 北京 移动, 240e:3b7:… 深圳 电信 (IPv6), 2408:8207:… 北京 联通; HK/Macau/TW report 中国 with an SAR/台湾省 province and are excluded",
+        "2026-11-12: seeded 68 fake pulls into test DB schema subaccess_demo: the Shenzhen+Beijing+Chengdu user produced one alert text (北京市、成都市、深圳市), an immediate second check was suppressed, the Hangzhou-only user got none"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/a6bd7a8b-d4d2-4286-8adf-5c1c45d0b47c (订阅访问 tab, test DB schema subaccess_demo)",
+          "/users/detail/hub-upstream-user (API)",
+          "/general-settings?section=alerts"
+        ],
+        "interactions": [
+          "订阅访问 shows 疑似分享：境内跨城市拉取 with 24 小时内从 3 个城市拉取：北京市、成都市、深圳市 and 最近一次 Telegram 提醒",
+          "城市切换 lists 14 switches with the gap next to the time (10 分钟 Shenzhen → Beijing); 来源 IP shows 归属地 such as 广东省 深圳市 · 电信 and 香港特别行政区 · 电讯盈科",
+          "查看 opens the 请求头 dialog with cf-connecting-ip; 7 天 → 30 天 relabels the stats",
+          "Hangzhou-only user: suspicious false, no hints, no city changes",
+          "提醒设置 has 订阅疑似分享提醒 with Telegram checked and mail unchecked",
+          "689px pane: scrollWidth 674 <= clientWidth 689; tables scroll inside their cards",
+          "A ResizeObserver loop notice fires when closing any Arc dialog on this page, including the existing 人工收款 dialog; not introduced here"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-12"
+      }
+    },
+    {
+      "id": "admin-payment-link",
+      "name": "管理员代客下单并生成付款二维码",
+      "description": "Admin picks a user, a V2 product spec and Alipay/WeChat; the server creates the order at the normal price (no wallet balance), starts the gateway payment and returns a QR code PNG of the gateway qrcode (or payUrl). Lets a customer whose phone shows a blank payment page pay by scanning from another screen or from a saved image. The order stays the customer's own pending order; callback, fulfillment and delivery are unchanged. Plan specs only (add-ons need buyer inputs). Entry points: user detail 代客下单, Orders 代客下单, pending online order detail 付款二维码.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "POST /api/admin/payment-links creates a pending order for the chosen account and returns a QR image",
+        "A failed payment start cancels the new order so the customer is not blocked",
+        "An existing pending order is reported with its id instead of creating a second one",
+        "Admin dialog (user detail + orders list) shows quote, method, QR, copy/download and turns to paid after the test payment completes"
+      ],
+      "verification": [
+        "2026-11-12: test-payment.js covers 403 for customers, quote without wallet, bad channel 400, changed price 409, gateway rejection cancels the order, duplicate pending 409 with orderId, QR content = gateway payUrl, callback -> paid + fulfilled + QR cleared; npm run verify passes; git diff --check clean",
+        "2026-11-12: gateway create failures keep the provider reason (attempt.gatewayError, server log) and the admin error shows it; test-payment asserts the reason; real 富通 gateway from localhost returned 系统异常 (code: EP3996AS), suspected clientip ::1, to be confirmed in production"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/orders (test DB, test payment provider)",
+          "/users/detail/87172622-35ed-4dd6-8f4c-fc2d8b5de570",
+          "/orders/33979317-ea3c-4a1e-b9e6-97a62e8a10f5"
+        ],
+        "interactions": [
+          "Orders 代客下单: combobox search picks trialee-9, Hub plan quote ¥1.03, 微信支付 selected, QR image + copy/download/refresh shown",
+          "Order marked paid by API: dialog poll switched to 已支付 within 7s",
+          "User detail 代客下单 (customer fixed): created Alipay QR; second attempt shows 已有待付款订单 alert with 查看该订单 link",
+          "Order detail 付款二维码 shows the same code; 刷新状态 works; 关闭 replaces 查看订单",
+          "375x812: dialog 343px, QR 267px, no horizontal scroll; Orders button icon-only 50x40",
+          "Clean pass in a fresh tab over the three routes and dialogs: no console errors (the only earlier entry was the network log of the intentional 409 duplicate test)"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-12"
       }
     }
   ]

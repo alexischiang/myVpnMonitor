@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-08
-- Current Objective: super 权限组改为自动收纳全部节点
+- Last Updated: 2026-11-12
+- Current Objective: 订阅访问日志：境内跨地级市拉取判定疑似分享并 Telegram 提醒
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -592,11 +592,16 @@
 
 - 2026-11-08: npm run check、verify:harness 通过；浏览器在 1366/820/375 宽度测量弹窗字段对齐，无控制台错误
 
-## Next Session
+- 2026-11-08: main 0e26799、production 096b0b1 已推送；GitHub Actions 42451373478 成功；线上 /api/health 全部服务正常，部署后 nexora-error.log 无新增
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/xui-inbounds.tsx`, `src/main.tsx`, `src/styles.css`, `src/types.ts`, `test-node-hub-app.js`, `test-xui-traffic.js`, `test.js`, `xui-traffic.js`, `src/components/features/node-hub-line-groups.tsx`, `src/components/features/user-node-speed-limit.tsx`
-- Known risks: none
-- Recommended Next Step: 确认线上权限组、限速和订阅流量显示正常；之后评估流量用完时「提前续费」按钮的误导问题
+- 2026-11-12: 用户详情流量时段改用 Arc ActivityHeatmap（小时模式：横轴 24 小时、纵轴日期、正方形格子），固定 7 天并用 Arc 日期选择器选截止日期，流量按节点倍率折算；npm run check、verify:fast、verify:harness 通过，浏览器验证无新增控制台错误
+
+- 2026-11-12: 2026-11-12: npm run verify、verify:harness、git diff --check 通过；测试库隔离服务器上 订阅访问 tab 浏览器验证无控制台/页面错误
+
+- 2026-11-12: npm run verify 通过；test-payment 覆盖代客下单全链路；浏览器 /orders、用户详情、订单详情无控制台错误
+
+- 2026-11-12: 2026-11-12: npm run verify、verify:harness、git diff --check 通过；测试库 subaccess_demo 假数据浏览器验证订阅访问 tab 与提醒设置，无新增控制台/页面错误
+
 - 2026-11-08: npm run check、npm run verify:fast、git diff --check 通过；/account 在 1440、1024、768、375 宽度及深浅主题下验证，轮播、暂停、箭头、键盘、拖动和跳转正常，console_errors/page_errors 为空
 
 - 2026-11-08: npm run check、npm run verify:fast、git diff --check 通过；/account 验证循环无倒退帧、内置箭头、键盘、拖动、悬停暂停和多尺寸，公告轮播回归不变，console_errors/page_errors 为空
@@ -609,6 +614,6 @@
 
 ## Next Session
 
-- Files: `PROGRESS.md`, `commerce/catalog-v2.js`, `database.js`, `docs/agent/arc-migration.md`, `docs/agent/node-hub.md`, `feature_list.json`, `server.js`, `src/components/arc/carousel/carousel.module.css`, `src/components/arc/carousel/carousel.tsx`, `src/components/features/account-pages.tsx`, `src/components/features/sales-settings.tsx`, `src/components/features/xui-inbounds.tsx`, `src/types.ts`, `test-node-hub-app.js`, `test-payment.js`, `test.js`, `src/components/features/ad-carousel.tsx`
+- Files: `.claude/launch.json`, `.github/workflows/deploy.yml`, `PROGRESS.md`, `commerce/gateway.js`, `commerce/payments.js`, `database.js`, `feature_list.json`, `package-lock.json`, `package.json`, `server.js`, `src/components/features/bills.tsx`, `src/components/features/details.tsx`, `src/components/features/general-settings.tsx`, `src/types.ts`, `test-payment.js`, `test.js`, `ip-region.js`, `scripts/fetch-ip2region.js`, `src/components/features/admin-payment-link-dialog.tsx`, `src/components/features/user-subscription-access.tsx`, `subscription-access.js`, `test-subscription-access.js`
 - Known risks: none
-- Recommended Next Step: 用户确认后提交并部署，再把生产 super 组打开包含全部节点；节点 19 届时会进入 super
+- Recommended Next Step: 部署前确认生产机能访问 raw.githubusercontent.com（deploy 会下载 data/ip2region）；部署后检查 subscription_access_logs 的 city 字段有值、IP 来源为 cf-connecting-ip；本地演示数据在测试库 schema subaccess_demo，用完删除；另：用户确认后提交并部署，再把生产 super 组打开包含全部节点；节点 19 届时会进入 super

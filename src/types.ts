@@ -466,6 +466,7 @@ export type SalesSettings = {
     payment: { telegram: boolean; mail: boolean }
     ticket: { telegram: boolean; mail: boolean }
     delivery: { telegram: boolean; mail: boolean }
+    subscriptionShare: { telegram: boolean; mail: boolean }
     traffic: { telegram: boolean; mail: boolean; userMail: boolean; userDepletedMail: boolean }
     trafficThresholdPercent: number
   }

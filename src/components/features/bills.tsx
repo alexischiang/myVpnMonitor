@@ -1,7 +1,8 @@
 import * as React from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Link, useNavigate, useParams } from "react-router-dom"
-import { AlertCircle, BadgeCheck, Eye, Link2, Loader2, Undo2 } from "lucide-react"
+import { AlertCircle, BadgeCheck, Eye, Link2, Loader2, QrCode, Undo2 } from "lucide-react"
+import { AdminPaymentLinkDialog } from "@/components/features/admin-payment-link-dialog"
 
 import { fetchJson, postJson } from "@/api"
 import { DataTableCard } from "@/components/features/data-table-card"
@@ -139,10 +140,12 @@ export function OrdersPage() {
   const [statusFilter, setStatusFilter] = useSearchParamState("status", "all")
   const [purposeFilter, setPurposeFilter] = useSearchParamState("purpose", "all")
   const clearFilters = useClearSearchParams(["status", "purpose"])
+  const [paymentLinkOpen, setPaymentLinkOpen] = React.useState(false)
 
-  React.useEffect(() => {
+  const loadOrders = React.useCallback(() => {
     fetchJson<AdminOrder[]>("/api/admin/orders").then(setOrders).catch(error => setError(error.message))
   }, [])
+  React.useEffect(loadOrders, [loadOrders])
 
   const filteredOrders = React.useMemo(() => (orders || []).filter(order =>
     (statusFilter === "all" || orderStatus(order) === statusFilter) &&
@@ -213,7 +216,8 @@ export function OrdersPage() {
 
   return (
     <div className="grid gap-4 px-4 lg:px-6">
-      <PageHeader title="Orders" description="显示所有客户创建的订单，包括待付款、取消、失败、未发放和已完成订单。" />
+      <PageHeader title="Orders" description="显示所有客户创建的订单，包括待付款、取消、失败、未发放和已完成订单。" actions={<Button className="ml-auto" onClick={() => setPaymentLinkOpen(true)}><QrCode /><span className="max-sm:sr-only">代客下单</span></Button>} />
+      <AdminPaymentLinkDialog open={paymentLinkOpen} onOpenChange={setPaymentLinkOpen} onChanged={loadOrders} />
       <DataTableCard>
         <DataTable filters={[
           { id: "status", label: "订单状态", value: statusFilter, onChange: setStatusFilter, options: [{ value: "all", label: "全部状态" }, ...Object.entries(orderStatusLabels).map(([status, label]) => ({ value: status, label }))] },
@@ -237,6 +241,7 @@ export function OrderDetailPage() {
   const [reverseOpen, setReverseOpen] = React.useState(false)
   const [reversing, setReversing] = React.useState(false)
   const [markPaidOpen, setMarkPaidOpen] = React.useState(false)
+  const [paymentQrOpen, setPaymentQrOpen] = React.useState(false)
   const [manualNote, setManualNote] = React.useState("")
   const [markingPaid, setMarkingPaid] = React.useState(false)
 
@@ -309,6 +314,10 @@ export function OrderDetailPage() {
     <div className="grid gap-4 px-4 lg:px-6">
       <DetailHeader breadcrumbs={[{ label: "Orders", href: "/orders", onClick: event => { event.preventDefault(); navigate("/orders") } }, { label: "订单详情" }]} title="订单详情" status={<Badge tone={statusBadgeVariant(status)}>{orderStatusLabels[status] || order.statusText}</Badge>} description={order.merOrderTid} actions={<>
         {status === "pending" ? <>
+          {["100", "200"].includes(order.channelCode || "") ? <>
+            <Button size="sm" variant="secondary" onClick={() => setPaymentQrOpen(true)}><QrCode />付款二维码</Button>
+            <AdminPaymentLinkDialog open={paymentQrOpen} onOpenChange={setPaymentQrOpen} orderId={order.id} onChanged={() => void fetchJson<AdminOrder>(`/api/admin/orders/${encodeURIComponent(order.id)}`).then(setOrder)} />
+          </> : null}
           <Button size="sm" disabled={markingPaid} onClick={() => setMarkPaidOpen(true)}><BadgeCheck />已人工收款</Button>
           <Dialog open={markPaidOpen} onOpenChange={setMarkPaidOpen}>
             <DialogContent title="确认已收到转账？" description={`客户 ${order.email}，套餐 ${order.optionLabel}。本次需要线下收取 ${formatMoney(order.amount)}。已预留的余额将另行结算，确认后按原订单发放服务。请勿在尚未到账时操作。`}><Textarea label="收款备注" id="manual-collection-note" value={manualNote} onChange={event => setManualNote(event.target.value)} maxLength={500} placeholder="例如收款方式、转账流水号或核对说明" disabled={markingPaid} /><div className="mt-4 flex flex-wrap justify-end gap-2"><DialogClose asChild><Button variant="secondary" disabled={markingPaid}>取消</Button></DialogClose><DialogClose asChild><Button disabled={markingPaid} onClick={event => { event.preventDefault(); void markOrderPaid() }}>{markingPaid ? <Loader2 className="animate-spin" /> : null}确认已收款</Button></DialogClose></div></DialogContent>

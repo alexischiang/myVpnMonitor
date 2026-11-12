@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
-import { AlertCircle, ArrowRightLeft, AtSign, Banknote, Gauge, Gift, Loader2, MailCheck, Network, Power, RefreshCw, RotateCcw, Settings2, UserCog } from "lucide-react"
+import { AlertCircle, ArrowRightLeft, AtSign, Banknote, Gauge, Gift, Loader2, MailCheck, Network, Power, QrCode, RefreshCw, RotateCcw, Settings2, UserCog } from "lucide-react"
 import { toast } from "@/components/features/toast"
 
 import { fetchJson, postJson, putJson } from "@/api"
@@ -16,6 +16,7 @@ import { NodeTrafficList } from "@/components/features/node-traffic-list"
 import { OnlineIpList } from "@/components/features/online-ip-list"
 import { BackButton } from "@/components/features/back-button"
 import { UserNodeSpeedLimitDialog } from "@/components/features/user-node-speed-limit"
+import { AdminPaymentLinkDialog } from "@/components/features/admin-payment-link-dialog"
 import { CatalogPlanFields, catalogPlanConfig, catalogPurchaseOptions as catalogPurchaseOptionsFor, useCatalogV2Products } from "@/components/features/catalog-plan-fields"
 import type { PlanSnapshot, User, XuiCustomInboundManagement } from "@/types"
 import { absoluteUrl, durationLabels, formatBytes, formatDate, formatDateTime, formatMoney, formatUserExpiry, planSnapshotName, planSnapshotOptionId } from "@/utils"
@@ -37,6 +38,7 @@ import { SimpleTable } from "@/components/features/simple-table"
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
 
 const UserHourlyTraffic = React.lazy(() => import("@/components/features/user-hourly-traffic").then(module => ({ default: module.UserHourlyTraffic })))
+const UserSubscriptionAccess = React.lazy(() => import("@/components/features/user-subscription-access").then(module => ({ default: module.UserSubscriptionAccess })))
 
 type GiftPreview = {
   days: number
@@ -140,6 +142,7 @@ export function UserDetailPage() {
   const [trafficGiftError, setTrafficGiftError] = React.useState("")
   const [trafficGiftSaving, setTrafficGiftSaving] = React.useState(false)
   const [manualPaymentOpen, setManualPaymentOpen] = React.useState(false)
+  const [paymentLinkOpen, setPaymentLinkOpen] = React.useState(false)
   const [manualPaymentOption, setManualPaymentOption] = React.useState("")
   const [manualPaymentQuote, setManualPaymentQuote] = React.useState<ManualPaymentQuote | null>(null)
   const [manualPaymentAmount, setManualPaymentAmount] = React.useState("")
@@ -638,9 +641,14 @@ export function UserDetailPage() {
   }
 
   const migrationStatus = xuiMigrationStatus(user)
+  // Registered-only accounts have no subscription link yet, so nothing to show.
+  const showSubscriptionAccess = !user.registeredOnly
+  const tabCount = 4 + (user.lineType === "self_hosted" ? 1 : 0) + (showSubscriptionAccess ? 1 : 0)
+  const tabListColumns = { 4: "grid-cols-2 sm:grid-cols-4", 5: "grid-cols-3 sm:grid-cols-5", 6: "grid-cols-3 sm:grid-cols-6" }[tabCount]
 
   return (
     <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
+      {user.accountId ? <AdminPaymentLinkDialog open={paymentLinkOpen} onOpenChange={setPaymentLinkOpen} accountId={user.accountId} customerLabel={user.email || user.userId} onChanged={() => void reload(["users", "bills"])} /> : null}
       <Dialog open={manualPaymentOpen} onOpenChange={setManualPaymentOpen}>
         <DialogContent title="人工收款"><form className="grid gap-4" onSubmit={submitManualPayment}>
             <FieldGroup>
@@ -769,7 +777,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
               <Info label="钱包余额" value={walletBalance === null ? "-" : formatMoney(walletBalance)} />
             </div>
           </div>{user.registeredOnly && !["active", "disabled", "invited"].includes(user.accountStatus || "") ? null : <ProfileActions items={[
-            ...(["active", "invited"].includes(user.accountStatus || "") && user.accountId ? [{ label: "人工收款", icon: <Banknote />, onSelect: openManualPaymentDialog }] : []),
+            ...(["active", "invited"].includes(user.accountStatus || "") && user.accountId ? [{ label: "人工收款", icon: <Banknote />, onSelect: openManualPaymentDialog }, { label: "代客下单", icon: <QrCode />, onSelect: () => setPaymentLinkOpen(true) }] : []),
             ...(user.registeredOnly ? [] : [
               { label: "设置用户类型", icon: <UserCog />, onSelect: openUserTypeDialog },
               ...(user.lineType === "self_hosted" && user.xuiClientEmail ? [{ label: "管理个人定制入站", icon: <Network />, onSelect: () => void openCustomInbounds() }] : []),
@@ -794,12 +802,13 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
           ]} />}</Card>
 
         <Tabs defaultValue="overview" className="@container min-w-0 gap-4">
-          <TabsList className={`grid w-full group-data-[orientation=horizontal]/tabs:h-auto ${user.lineType === "self_hosted" ? "grid-cols-3 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4"}`}>
+          <TabsList className={`grid w-full group-data-[orientation=horizontal]/tabs:h-auto ${tabListColumns}`}>
             <TabsTrigger value="overview" className="h-9">基本信息</TabsTrigger>
             <TabsTrigger value="catalog-v2" className="h-9">V2 商品</TabsTrigger>
             <TabsTrigger value="bills" className="h-9">用户日志</TabsTrigger>
             <TabsTrigger value="referral" className="h-9">邀请返利</TabsTrigger>
             {user.lineType === "self_hosted" ? <TabsTrigger value="hourly-traffic" className="h-9">流量时段</TabsTrigger> : null}
+            {showSubscriptionAccess ? <TabsTrigger value="subscription-access" className="h-9">订阅访问</TabsTrigger> : null}
           </TabsList>
           <TabsContent value="overview" className={`grid min-w-0 gap-4 ${user.lineType === "self_hosted" ? "@4xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] @4xl:grid-rows-[auto_auto_auto_1fr] @4xl:items-start" : ""}`}>
             {/* Wide panes: node traffic on the left, plan and status stacked on the right. Narrow panes: one column with the plan first. */}
@@ -866,6 +875,9 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
           </TabsContent>
           {user.lineType === "self_hosted" ? <TabsContent value="hourly-traffic" className="grid min-w-0 gap-4">
             <React.Suspense fallback={<Skeleton lines={1} className="h-72" />}><UserHourlyTraffic userId={user.id} /></React.Suspense>
+          </TabsContent> : null}
+          {showSubscriptionAccess ? <TabsContent value="subscription-access" className="grid min-w-0 gap-4">
+            <React.Suspense fallback={<Skeleton lines={1} className="h-40" />}><UserSubscriptionAccess userId={user.id} /></React.Suspense>
           </TabsContent> : null}
         </Tabs>
       </div>

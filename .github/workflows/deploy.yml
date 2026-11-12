@@ -72,6 +72,9 @@ jobs:
             if [ -f dist/index.html ]; then
               touch dist/index.html
             fi
+            # City lookup for subscription pulls (data/ip2region, gitignored). Refreshed monthly; a failed
+            # download keeps the old files, and without any file the app only turns city lookup off.
+            node scripts/fetch-ip2region.js --max-age-days 30 || echo "ip2region download failed; continuing with the existing files"
             # The 3x-ui service was removed; its billing state is imported by the app on startup.
             if pm2 describe nexora-xui > /dev/null 2>&1; then
               pm2 delete nexora-xui
