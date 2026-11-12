@@ -5926,6 +5926,42 @@
         "page_errors": [],
         "checked_at": "2026-11-12"
       }
+    },
+    {
+      "id": "admin-payment-link",
+      "name": "管理员代客下单并生成付款二维码",
+      "description": "Admin picks a user, a V2 product spec and Alipay/WeChat; the server creates the order at the normal price (no wallet balance), starts the gateway payment and returns a QR code PNG of the gateway qrcode (or payUrl). Lets a customer whose phone shows a blank payment page pay by scanning from another screen or from a saved image. The order stays the customer's own pending order; callback, fulfillment and delivery are unchanged. Plan specs only (add-ons need buyer inputs). Entry points: user detail 代客下单, Orders 代客下单, pending online order detail 付款二维码.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "POST /api/admin/payment-links creates a pending order for the chosen account and returns a QR image",
+        "A failed payment start cancels the new order so the customer is not blocked",
+        "An existing pending order is reported with its id instead of creating a second one",
+        "Admin dialog (user detail + orders list) shows quote, method, QR, copy/download and turns to paid after the test payment completes"
+      ],
+      "verification": [
+        "2026-11-12: test-payment.js covers 403 for customers, quote without wallet, bad channel 400, changed price 409, gateway rejection cancels the order, duplicate pending 409 with orderId, QR content = gateway payUrl, callback -> paid + fulfilled + QR cleared; npm run verify passes; git diff --check clean",
+        "2026-11-12: gateway create failures keep the provider reason (attempt.gatewayError, server log) and the admin error shows it; test-payment asserts the reason; real 富通 gateway from localhost returned 系统异常 (code: EP3996AS), suspected clientip ::1, to be confirmed in production"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/orders (test DB, test payment provider)",
+          "/users/detail/87172622-35ed-4dd6-8f4c-fc2d8b5de570",
+          "/orders/33979317-ea3c-4a1e-b9e6-97a62e8a10f5"
+        ],
+        "interactions": [
+          "Orders 代客下单: combobox search picks trialee-9, Hub plan quote ¥1.03, 微信支付 selected, QR image + copy/download/refresh shown",
+          "Order marked paid by API: dialog poll switched to 已支付 within 7s",
+          "User detail 代客下单 (customer fixed): created Alipay QR; second attempt shows 已有待付款订单 alert with 查看该订单 link",
+          "Order detail 付款二维码 shows the same code; 刷新状态 works; 关闭 replaces 查看订单",
+          "375x812: dialog 343px, QR 267px, no horizontal scroll; Orders button icon-only 50x40",
+          "Clean pass in a fresh tab over the three routes and dialogs: no console errors (the only earlier entry was the network log of the intentional 409 duplicate test)"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-12"
+      }
     }
   ]
 }

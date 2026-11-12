@@ -63,7 +63,7 @@ function createGatewayClient({ sign, compact }) {
     const payload = await postXinhuiForm("/mapi.php", requestParams, config);
     return {
       requestParams: { ...requestParams, sign_type: "MD5" },
-      result: { tid: payload.trade_no, payUrl: payload.payurl || payload.qrcode || payload.urlscheme, payOrderStatus: 0 }
+      result: { tid: payload.trade_no, payUrl: payload.payurl || payload.qrcode || payload.urlscheme, qrCode: payload.qrcode || "", payOrderStatus: 0 }
     };
   }
 

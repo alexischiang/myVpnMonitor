@@ -26,6 +26,7 @@ const { createPaymentService, manualReceipt, transactionError } = require("./com
 const { createCheckoutWorkflow } = require("./commerce/checkout-workflow");
 const { resolvePurchase: resolveCatalogV2Purchase, visibleProducts: visibleCatalogV2Products, resolveCompareValues: resolveCatalogV2CompareValues, lineGroupInboundKeys: catalogV2LineGroupInboundKeys, lineGroupCoverage: catalogV2LineGroupCoverage, planEntitlement: catalogV2PlanEntitlement, planEntitlementChanges: catalogV2PlanEntitlementChanges } = require("./commerce/catalog-v2");
 const addonServices = require("./commerce/addon-services");
+const QRCode = require("qrcode");
 
 loadLocalEnv();
 
@@ -3323,7 +3324,7 @@ function onlinePayments() {
 function projectAttempt(order, attempt) {
   Object.assign(order, { paymentAttemptId: attempt.id, paymentPlatformId: attempt.platformId,
     paymentPlatformName: attempt.platformName, paymentProvider: attempt.provider,
-    channelCode: attempt.channelCode, tid: attempt.tid || "", payUrl: attempt.payUrl || "",
+    channelCode: attempt.channelCode, tid: attempt.tid || "", payUrl: attempt.payUrl || "", payQrCode: attempt.qrCode || "",
     paymentError: attempt.error || "", updatedAt: new Date().toISOString() });
 }
 
@@ -3418,6 +3419,64 @@ async function markPaymentOrderPaidManually(order, req, note = "") {
   const session = currentSession(req);
   return checkoutWorkflow(null, req).collect(order, manualReceipt({ amount: order.amount,
     actor: session?.account || session?.username || session?.accountId || session?.role || "admin", note, now: new Date().toISOString() }), req);
+}
+
+// What the customer scans for an admin-created order: the provider's raw QR content when it returned one,
+// else its pay page. The test provider has no pay page, so its code opens the customer's own cashier.
+function adminPaymentLinkContent(order, req) {
+  if (order.payQrCode) return order.payQrCode;
+  if (order.payUrl) return order.payUrl;
+  if (order.paymentProvider === "test") return `${String(process.env.PUBLIC_BASE_URL || requestOrigin(req)).replace(/\/+$/, "")}/cashier/${encodeURIComponent(order.id)}`;
+  return "";
+}
+
+async function adminPaymentLinkResult(order, req) {
+  const view = adminPaymentOrder(order);
+  const content = view.status === "pending" ? adminPaymentLinkContent(order, req) : "";
+  const qr = content ? { content, imageDataUrl: await QRCode.toDataURL(content, { width: 320, margin: 2, errorCorrectionLevel: "M" }) } : null;
+  return { order: view, qr };
+}
+
+async function cancelAdminPaymentLinkOrder(order, req) {
+  try { await cancelPaymentOrder(order, req); }
+  catch (error) { console.error("Admin payment link cancel failed:", order.id, error.message); }
+}
+
+// An admin creates the customer's own order at the normal price (wallet balance untouched) and starts the
+// gateway payment for them, so a customer whose phone cannot open the pay page can scan the code instead.
+async function createAdminPaymentLink(payload, req, account) {
+  const existing = paymentOrders.find(order => order.accountId === account.id && order.status === "pending" && !isPaymentOrderExpired(order));
+  if (existing) throw Object.assign(new Error(`该用户已有待付款订单 ${existing.merOrderTid}，请先完成或取消该订单。`), { statusCode: 409, orderId: existing.id });
+  const channelCode = String(payload.channelCode || "");
+  if (!["100", "200"].includes(channelCode)) throw new Error("请选择支付宝或微信支付。");
+  const paymentPlatformId = String(payload.paymentPlatformId || "");
+  configuredPaymentChannel(requirePaymentConfig(channelCode, paymentPlatformId), channelCode);
+  const order = await submitPurchaseOrder({ ...payload, useBalance: false, confirmReplacement: payload.confirmReplacement === true }, req, account);
+  const session = currentSession(req);
+  Object.assign(order, { paymentSource: "admin-link", createdByAdmin: session?.account || session?.username || session?.role || "admin" });
+  await savePaymentOrders();
+  try {
+    await startOrderPayment(order, { channelCode, paymentPlatformId }, req);
+  } catch (error) {
+    await cancelAdminPaymentLinkOrder(order, req);
+    throw error;
+  }
+  if (order.status === "pending" && !adminPaymentLinkContent(order, req)) {
+    // Admins see the provider's own reason; the customer-facing "订单已保留" text would contradict the cancel.
+    const attempt = order.paymentAttemptId ? await onlinePayments().get(order.paymentAttemptId) : null;
+    const reason = attempt?.gatewayError ? `支付渠道拒绝创建付款：${attempt.gatewayError}` : "支付渠道未返回支付链接";
+    await cancelAdminPaymentLinkOrder(order, req);
+    throw new Error(`${reason.replace(/[。.]$/, "")}。订单已取消，请检查支付平台配置后重试。`);
+  }
+  const owner = userForAccount(account) || account;
+  appendUserLogToUser(owner, createUserLog({
+    event: "user-action", status: "recorded", reason: "admin-payment-link", req,
+    message: `管理员代下单：${order.planName} / ${order.optionLabel}（${channelCode === "200" ? "微信支付" : "支付宝"}）`,
+    details: { paymentOrderId: order.id, merOrderTid: order.merOrderTid, amount: order.amount }
+  }));
+  if (owner === account) await saveAccounts();
+  else await saveUsers();
+  return order;
 }
 
 async function handleCheckoutCallback(attempt, payload, req) {
@@ -7915,6 +7974,39 @@ async function handleApi(req, res, pathname) {
         const order = await createPaymentOrder(input, req, account, "manual");
         sendJson(res, 201, adminPaymentOrder(order));
       }
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (["/api/admin/payment-links/quote", "/api/admin/payment-links"].includes(pathname) && req.method === "POST") {
+    try {
+      const payload = await readJson(req);
+      await loadLatestData({ force: pathname === "/api/admin/payment-links" });
+      const account = accounts.find(item => item.id === String(payload.accountId || "") && ["active", "invited"].includes(item.status));
+      if (!account) throw new Error("只有已启用或等待认领的账户可以代客下单。");
+      if (pathname.endsWith("/quote")) {
+        sendJson(res, 200, await paymentQuoteForAccount({ ...payload, useBalance: false }, account));
+      } else {
+        sendJson(res, 201, await adminPaymentLinkResult(await createAdminPaymentLink(payload, req, account), req));
+      }
+    } catch (error) {
+      sendJson(res, error.statusCode === 409 ? 409 : 400, { error: error.message, ...(error.orderId ? { orderId: error.orderId } : {}), ...(error.quote ? { quote: error.quote } : {}) });
+    }
+    return;
+  }
+
+  // Re-reads the order (and asks the gateway while it is pending) so an open QR dialog sees the payment land.
+  const adminPaymentLinkMatch = pathname.match(/^\/api\/admin\/payment-links\/([^/]+)$/);
+  if (adminPaymentLinkMatch && req.method === "GET") {
+    await loadLatestData({ force: true });
+    const order = paymentOrders.find(item => item.id === adminPaymentLinkMatch[1]);
+    if (!order) return sendJson(res, 404, { error: "没有找到这个订单。" });
+    try {
+      await refreshCheckoutOrder(order, req);
+      if (order.status === "paid") await checkoutWorkflow(null, req).fulfill(order, req);
+      sendJson(res, 200, await adminPaymentLinkResult(order, req));
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }

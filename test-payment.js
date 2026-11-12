@@ -8,6 +8,8 @@ const { Pool } = require("pg");
 const secret = "payment-test-secret";
 const gatewayRequests = [];
 const queryResults = new Map();
+// Makes the next CreateOrderPay rejected by the gateway (admin payment links cannot set clientUserName).
+let rejectNextCreate = false;
 
 function sign(params) {
   const pairs = Object.entries(params)
@@ -53,6 +55,7 @@ async function main() {
       if (params.clientUserName === "non-json") return response.end("not json");
       if (params.clientUserName === "http-error") return sendJson(response, 502, { errMsg: "gateway unavailable" });
       if (params.clientUserName === "reject") return sendJson(response, 200, { status: 1, errMsg: "order rejected" });
+      if (rejectNextCreate) { rejectNextCreate = false; return sendJson(response, 200, { status: 1, errMsg: "order rejected" }); }
       return sendJson(response, 200, {
         status: 0,
         result: { tid: `tid-${params.merOrderTid}`, payUrl: `https://pay.test/${params.merOrderTid}`, payOrderStatus: 0 }
@@ -1998,6 +2001,47 @@ async function main() {
     assert.strictEqual((await request(`/api/catalog-v2/products/${trialProductId}`, { method: "PUT", cookie: adminCookie, body: trialBody({ stock: 0 }) })).response.status, 200);
     assert.strictEqual((await trialRegister("trialee-6@example.test", trialCode, "198.51.100.6")).overview.subscription, null, "no stock, no trial, but the registration succeeds");
     await trialSettings({ ...trialConfig, enabled: false });
+
+    // Admin payment link: the customer's own order at the normal price, started on the gateway, returned as a QR code.
+    const linkRegistration = await request("/api/auth/register", { method: "POST", body: { email: "paylink@example.test", password: "payment-test-password", confirmPassword: "payment-test-password" } });
+    assert.strictEqual(linkRegistration.response.status, 201);
+    const linkCookie = linkRegistration.response.headers.get("set-cookie").split(";", 1)[0];
+    const linkAccount = (await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "paylink@example.test");
+    const linkBody = { accountId: linkAccount.accountId, optionId: paymentOptionId, channelCode: "100" };
+    assert.strictEqual((await request("/api/admin/payment-links", { method: "POST", cookie: linkCookie, body: linkBody })).response.status, 403, "customers cannot create payment links");
+    const linkQuote = await request("/api/admin/payment-links/quote", { method: "POST", cookie: adminCookie, body: linkBody });
+    assert.strictEqual(linkQuote.response.status, 200);
+    assert.strictEqual(linkQuote.data.walletAmount, 0);
+    assert.ok(linkQuote.data.paymentPlatforms.some(item => item.methods.alipay));
+    assert.strictEqual((await request("/api/admin/payment-links", { method: "POST", cookie: adminCookie, body: { ...linkBody, channelCode: "bad" } })).response.status, 400);
+    const staleLink = await request("/api/admin/payment-links", { method: "POST", cookie: adminCookie, body: { ...linkBody, expectedAmount: linkQuote.data.amount + 1 } });
+    assert.strictEqual(staleLink.response.status, 409, "a changed price is confirmed first");
+    // A gateway rejection cancels the new order, so the customer is not left with a blocking pending order.
+    rejectNextCreate = true;
+    const rejectedLink = await request("/api/admin/payment-links", { method: "POST", cookie: adminCookie, body: { ...linkBody, expectedAmount: linkQuote.data.amount } });
+    assert.strictEqual(rejectedLink.response.status, 400);
+    assert.match(rejectedLink.data.error, /订单已取消/);
+    assert.match(rejectedLink.data.error, /order rejected/, "the admin sees the gateway's own reason");
+    assert.ok(!(await request("/api/admin/orders", { cookie: adminCookie })).data.some(order => order.accountId === linkAccount.accountId && order.status === "pending"));
+    const link = await request("/api/admin/payment-links", { method: "POST", cookie: adminCookie, body: { ...linkBody, expectedAmount: linkQuote.data.amount } });
+    assert.strictEqual(link.response.status, 201);
+    assert.strictEqual(link.data.order.status, "pending");
+    assert.strictEqual(link.data.order.accountId, linkAccount.accountId);
+    assert.strictEqual(link.data.order.amount, linkQuote.data.amount);
+    assert.strictEqual(link.data.qr.content, `https://pay.test/${link.data.order.merOrderTid}`);
+    assert.match(link.data.qr.imageDataUrl, /^data:image\/png;base64,/);
+    const duplicateLink = await request("/api/admin/payment-links", { method: "POST", cookie: adminCookie, body: { ...linkBody, expectedAmount: linkQuote.data.amount } });
+    assert.strictEqual(duplicateLink.response.status, 409);
+    assert.strictEqual(duplicateLink.data.orderId, link.data.order.id);
+    // The customer sees it as their own pending order.
+    assert.strictEqual((await request(`/api/payments/orders/${link.data.order.id}`, { cookie: linkCookie })).data.status, "pending");
+    assert.strictEqual((await request(`/api/admin/payment-links/${link.data.order.id}`, { cookie: adminCookie })).data.qr.content, link.data.qr.content);
+    await callback(link.data.order, 1, link.data.order.amount.toFixed(2));
+    const paidLink = await request(`/api/admin/payment-links/${link.data.order.id}`, { cookie: adminCookie });
+    assert.strictEqual(paidLink.data.order.status, "paid");
+    assert.strictEqual(paidLink.data.order.fulfillmentStatus, "fulfilled");
+    assert.strictEqual(paidLink.data.qr, null, "a paid order has no code to scan");
+    assert.ok((await request("/api/users", { cookie: adminCookie })).data.find(item => item.email === "paylink@example.test" && !item.registeredOnly), "the plan is delivered");
 
     console.log("Payment chain checks passed: payments, wallet priority, referral spending, idempotent reversals, snapshots, ledger entries, and validation.");
   } finally {

@@ -598,6 +598,8 @@
 
 - 2026-11-12: 2026-11-12: npm run verify、verify:harness、git diff --check 通过；测试库隔离服务器上 订阅访问 tab 浏览器验证无控制台/页面错误
 
+- 2026-11-12: npm run verify 通过；test-payment 覆盖代客下单全链路；浏览器 /orders、用户详情、订单详情无控制台错误
+
 - 2026-11-12: 2026-11-12: npm run verify、verify:harness、git diff --check 通过；测试库 subaccess_demo 假数据浏览器验证订阅访问 tab 与提醒设置，无新增控制台/页面错误
 
 - 2026-11-08: npm run check、npm run verify:fast、git diff --check 通过；/account 在 1440、1024、768、375 宽度及深浅主题下验证，轮播、暂停、箭头、键盘、拖动和跳转正常，console_errors/page_errors 为空
@@ -612,6 +614,6 @@
 
 ## Next Session
 
-- Files: `.github/workflows/deploy.yml`, `PROGRESS.md`, `database.js`, `feature_list.json`, `ip-region.js`, `package-lock.json`, `package.json`, `scripts/fetch-ip2region.js`, `server.js`, `src/components/features/details.tsx`, `src/components/features/general-settings.tsx`, `src/components/features/user-subscription-access.tsx`, `src/types.ts`, `subscription-access.js`, `test-subscription-access.js`, `test.js`
+- Files: `.claude/launch.json`, `.github/workflows/deploy.yml`, `PROGRESS.md`, `commerce/gateway.js`, `commerce/payments.js`, `database.js`, `feature_list.json`, `package-lock.json`, `package.json`, `server.js`, `src/components/features/bills.tsx`, `src/components/features/details.tsx`, `src/components/features/general-settings.tsx`, `src/types.ts`, `test-payment.js`, `test.js`, `ip-region.js`, `scripts/fetch-ip2region.js`, `src/components/features/admin-payment-link-dialog.tsx`, `src/components/features/user-subscription-access.tsx`, `subscription-access.js`, `test-subscription-access.js`
 - Known risks: none
 - Recommended Next Step: 部署前确认生产机能访问 raw.githubusercontent.com（deploy 会下载 data/ip2region）；部署后检查 subscription_access_logs 的 city 字段有值、IP 来源为 cf-connecting-ip；本地演示数据在测试库 schema subaccess_demo，用完删除；另：用户确认后提交并部署，再把生产 super 组打开包含全部节点；节点 19 届时会进入 super
