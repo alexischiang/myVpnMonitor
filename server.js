@@ -8816,16 +8816,26 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    // Admin time-of-day view: the last 7, 30 or 90 China days of hourly rows (raw bytes).
+    // Admin time-of-day view: 7 China days of hourly rows ending on `end` (YYYY-MM-DD, default and
+    // upper bound today), in billed bytes (node multipliers applied).
     if (action === "hourly-traffic" && req.method === "GET") {
-      const requested = Number(new URL(req.url, "http://localhost").searchParams.get("days"));
-      const days = [7, 30, 90].includes(requested) ? requested : 30;
+      const days = 7;
+      const today = chinaDateKey();
+      const requested = String(new URL(req.url, "http://localhost").searchParams.get("end") || "");
+      const end = /^\d{4}-\d{2}-\d{2}$/.test(requested) && Number.isFinite(Date.parse(`${requested}T00:00:00Z`)) && requested < today ? requested : today;
       const email = item ? String(xuiClientEmail(item) || "").trim().toLowerCase() : "";
-      const now = Date.now();
-      const dates = Array.from({ length: days }, (_, index) => chinaDateKey(now - (days - 1 - index) * 86400000));
-      const rows = email ? await dataStore.xuiUserHourlySeries(email, now - (days + 1) * 86400000) : [];
-      // Raw bytes, so a hub node's own billing key simply counts as its machine.
-      sendJson(res, 200, xuiTraffic.hourlyUsage(rows.map(row => ({ ...row, nodeGuid: xuiTraffic.billingMachineGuid(row.nodeGuid) })), dates));
+      const endNoon = Date.parse(`${end}T12:00:00+08:00`);
+      const dates = Array.from({ length: days }, (_, index) => chinaDateKey(endNoon - (days - 1 - index) * 86400000));
+      const [rows, billingState] = await Promise.all([
+        email ? dataStore.xuiUserHourlySeries(email, Date.parse(`${dates[0]}T00:00:00+08:00`)) : [],
+        getXuiBillingState()
+      ]);
+      const multipliers = billingState?.multipliers || {};
+      // A hub node key is weighted with the node's multiplier, then labelled like its machine.
+      sendJson(res, 200, xuiTraffic.hourlyUsage(rows.map(row => {
+        const multiplier = xuiMultiplier(multipliers[row.nodeGuid]);
+        return { ...row, nodeGuid: xuiTraffic.billingMachineGuid(row.nodeGuid), up: Math.round(row.up * multiplier), down: Math.round(row.down * multiplier) };
+      }), dates));
       return;
     }
 

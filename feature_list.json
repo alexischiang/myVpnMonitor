@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-08",
+  "updated_at": "2026-11-12",
   "required_fields": [
     "id",
     "name",
@@ -5851,6 +5851,41 @@
         "console_errors": [],
         "page_errors": [],
         "checked_at": "2026-11-08T09:13:03.000Z"
+      }
+    },
+    {
+      "id": "user-hourly-traffic-arc-heatmap",
+      "name": "用户详情流量时段：Arc 热力图、固定 7 天加截止日期选择、按倍率折算",
+      "description": "The user detail 流量时段 tab renders a fixed 7-day day × hour grid with Arc ActivityHeatmap, extended with an hourly mode (the 24 hours run across, one row per day, square cells sized so the 24 columns fill the card), byte formatting and a breakdown line in the tooltip. An Arc date picker in the card header (align=\"end\", from today back to 83 days ago so the window stays inside the 90-day hourly retention) picks the window's last day; /api/users/:id/hourly-traffic takes end=YYYY-MM-DD (default and upper bound today, invalid input falls back to today) instead of days, and returns billed bytes: each hourly row is multiplied by its node's multiplier before hub node keys collapse to their machine.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "The heatmap always shows 7 days, ending today by default",
+        "The Arc date picker in the card header chooses the last day; future dates are disabled",
+        "Cells, totals, peak and the 24-hour profile use node-multiplied bytes",
+        "Hours on the horizontal axis, dates on the vertical axis, every cell square"
+      ],
+      "verification": [
+        "2026-11-12: npm run check and npm run verify:fast pass.",
+        "2026-11-12: isolated server on a copy of the dev DB (hourly rows shifted into the last 7 days, demo:HK Gomami multiplier set to 2): GET /api/users/:id/hourly-traffic with no days returns 7 dates; upload/download sums 542679376866/102347890371 equal the DB rows over the same 7 China dates with HK ×2 (raw 409800557690/75559573109).",
+        "2026-11-12 (transpose): npm run check passes; layout re-verified on a fresh isolated copy.",
+        "2026-11-12 (date picker): npm run check, verify:fast and verify:harness pass. Endpoint on the demo server: no end → 11-06…11-12; end=2026-10-01 → 09-25…10-01 (150 cells); end=2030-01-01 and end=junk&days=90 → 7 days ending today."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/:id → 流量时段 (cellojh, isolated server with 90 days of fake hourly traffic)"
+        ],
+        "interactions": [
+          "Header shows the date picker (2026年11月12日) instead of the range tabs; summary 302 GB · 11/6 – 11/12; 7 rows × 24 square cells",
+          "Picker opens right-aligned inside the card, days after today disabled, footer reads 已选 2026年11月12日",
+          "Picking 11月5日 requests end=2026-11-05 and redraws 10/30 – 11/5 with new totals",
+          "375x812: calendar spans 28–332px, page scrollWidth 375",
+          "Console: no new errors; the buffered 403/ERR_CONNECTION_REFUSED entries predate this change (cookie clash with :3000 and server restarts); every hourly-traffic request returned 200"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-12"
       }
     }
   ]

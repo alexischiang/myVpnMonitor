@@ -264,7 +264,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `button`（补充） | `orange-soft`、`orange-outline`、`orange-ghost`、`orange-link` variant |
 | `metric-card`（补充） | `density="compact"`，用于固定行高的网格 |
 | `sortable-data-table`（补充） | 列的 `header`（表头显示节点，如带说明气泡的标题） |
-| `date-picker` | `hideLabel`；默认 `locale` 改为 `zh-CN`；文案改中文 |
+| `date-picker` | `hideLabel`；默认 `locale` 改为 `zh-CN`；文案改中文（含日历底部的「已选 …」）；`align`（`"start"`/`"end"`）：`end` 时日历与触发器右边对齐，用于卡片右上角的 `headerAction` |
 | `calendar`、`date-range-picker`、`carousel`、`stepper`、`chat-thread`、`bar-chart`、`line-chart`、`donut-chart`、`number-field`、`money-input`、`usage-meter` | 内置文案改中文，日期类默认 `locale` 改为 `zh-CN` |
 | `blocks/page-header` | 去掉演示用的滚动容器、标签页、议题面板和模拟操作，改为可传参的头部：`breadcrumbs`、`title`、`status`、`description`、`meta`、`actions` |
 | `blocks/faq-section`、`blocks/site-footer` | 默认文案改中文 |
@@ -304,6 +304,7 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `usage-meter` | 用量正好等于配额时角标显示「已用完」而不是「即将用完」 |
 | `number-field` | `md` 的步进按钮尺寸改为由控件高度推导（`--nf-height - 2 × --nf-inset - 2px`，原为固定 34px），整体高度与同尺寸 `Input` 一致（鼠标设备 36px）；`sm`/`lg` 不变。占满网格单元用 `--number-field-width: 100%`（`features/node-hub-node-form.tsx` 的 `WideNumberField`） |
 | `blocks/empty-states` | 手动安装（只复制 block 的 tsx、css 和 `empty-states-art.ts`，`button`、`lib/motion-tokens` 沿用已有版本）；新增 `EmptyScene` 导出：单个场景插画加标题、说明和操作，不带标签页和演示动作，`scene`（`search` 无结果 / `inbox` 已处理完 / `map` 未找到 / `offline` 加载失败）、`phase`（`idle`/`done`）、`compact`（卡片和表格内的小尺寸插画）变化时插画按原动画形变；对应样式 `.scene*`；场景无障碍标签和演示文案改中文。业务里通过 `features/shared` 的 `EmptyState` 的 `scene` 属性使用 |
+| `activity-heatmap` | 新安装；`hourly`：每格一小时，横轴是 24 小时（每 3 小时一个列标签）、纵轴是日期（每天一行），格子为正方形，边长按 24 列撑满容器（9px 至 32px，容器太窄时横向滚动）；超过 10 天且容器窄于 440px 时日期标签只保留从最新一天往前每 7 天一个；网格可能高于屏幕，所以进入视口任意部分即开始显现动画（原为 35%）；数据项可带 `hour`，`selectedDate`/`onSelectDate` 在该模式下用 `YYYY-MM-DD HH`；`formatCount`：带单位的计数格式（如字节），替换全部「数字 + `unit`」文案，档位说明改为区间；`describe`：提示气泡的第三行（如上下行和节点）；总数滚动数字里的空格改为不换行空格（否则在 flex 里被吞掉）；修复提示气泡首次打开时按 0.96 缩放后的尺寸测量宽度、文字被裁的问题（改用 `offsetWidth`）；默认 `locale` 改为 `zh-CN`，内置文案改中文。业务用法见 `features/user-hourly-traffic.tsx` |
 
 ## 7. 进度
 

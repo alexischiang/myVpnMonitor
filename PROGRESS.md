@@ -592,6 +592,8 @@
 
 - 2026-11-08: npm run check、verify:harness 通过；浏览器在 1366/820/375 宽度测量弹窗字段对齐，无控制台错误
 
+- 2026-11-12: 用户详情流量时段改用 Arc ActivityHeatmap（小时模式：横轴 24 小时、纵轴日期、正方形格子），固定 7 天并用 Arc 日期选择器选截止日期，流量按节点倍率折算；npm run check、verify:fast、verify:harness 通过，浏览器验证无新增控制台错误
+
 ## Next Session
 
 - Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/navigation.ts`, `src/components/features/node-hub-node-form.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/xui-inbounds.tsx`, `src/main.tsx`, `src/styles.css`, `src/types.ts`, `test-node-hub-app.js`, `test-xui-traffic.js`, `test.js`, `xui-traffic.js`, `src/components/features/node-hub-line-groups.tsx`, `src/components/features/user-node-speed-limit.tsx`

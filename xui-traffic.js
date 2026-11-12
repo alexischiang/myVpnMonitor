@@ -196,7 +196,7 @@ function accountNodeUsage(rows = [], labelByGuid = new Map(), dates = [], maxSer
 // Shapes one user's hourly rows ({ date, hour, nodeName, up, down }) for the admin time-of-day
 // charts: one cell per (date, hour) with traffic, carrying its busiest node's name, plus the
 // 24-hour profile summed over the range. `dates` (oldest first) bounds the range; rows outside
-// it are ignored. Raw bytes, no multipliers.
+// it are ignored. Bytes are used as given; the caller applies node multipliers.
 function hourlyUsage(rows = [], dates = []) {
   const inRange = new Set(dates);
   const cells = new Map();
