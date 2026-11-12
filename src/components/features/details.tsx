@@ -37,6 +37,7 @@ import { SimpleTable } from "@/components/features/simple-table"
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
 
 const UserHourlyTraffic = React.lazy(() => import("@/components/features/user-hourly-traffic").then(module => ({ default: module.UserHourlyTraffic })))
+const UserSubscriptionAccess = React.lazy(() => import("@/components/features/user-subscription-access").then(module => ({ default: module.UserSubscriptionAccess })))
 
 type GiftPreview = {
   days: number
@@ -638,6 +639,10 @@ export function UserDetailPage() {
   }
 
   const migrationStatus = xuiMigrationStatus(user)
+  // Registered-only accounts have no subscription link yet, so nothing to show.
+  const showSubscriptionAccess = !user.registeredOnly
+  const tabCount = 4 + (user.lineType === "self_hosted" ? 1 : 0) + (showSubscriptionAccess ? 1 : 0)
+  const tabListColumns = { 4: "grid-cols-2 sm:grid-cols-4", 5: "grid-cols-3 sm:grid-cols-5", 6: "grid-cols-3 sm:grid-cols-6" }[tabCount]
 
   return (
     <div className="grid min-w-0 w-full gap-4 px-4 lg:px-6">
@@ -794,12 +799,13 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
           ]} />}</Card>
 
         <Tabs defaultValue="overview" className="@container min-w-0 gap-4">
-          <TabsList className={`grid w-full group-data-[orientation=horizontal]/tabs:h-auto ${user.lineType === "self_hosted" ? "grid-cols-3 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4"}`}>
+          <TabsList className={`grid w-full group-data-[orientation=horizontal]/tabs:h-auto ${tabListColumns}`}>
             <TabsTrigger value="overview" className="h-9">基本信息</TabsTrigger>
             <TabsTrigger value="catalog-v2" className="h-9">V2 商品</TabsTrigger>
             <TabsTrigger value="bills" className="h-9">用户日志</TabsTrigger>
             <TabsTrigger value="referral" className="h-9">邀请返利</TabsTrigger>
             {user.lineType === "self_hosted" ? <TabsTrigger value="hourly-traffic" className="h-9">流量时段</TabsTrigger> : null}
+            {showSubscriptionAccess ? <TabsTrigger value="subscription-access" className="h-9">订阅访问</TabsTrigger> : null}
           </TabsList>
           <TabsContent value="overview" className={`grid min-w-0 gap-4 ${user.lineType === "self_hosted" ? "@4xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] @4xl:grid-rows-[auto_auto_auto_1fr] @4xl:items-start" : ""}`}>
             {/* Wide panes: node traffic on the left, plan and status stacked on the right. Narrow panes: one column with the plan first. */}
@@ -866,6 +872,9 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
           </TabsContent>
           {user.lineType === "self_hosted" ? <TabsContent value="hourly-traffic" className="grid min-w-0 gap-4">
             <React.Suspense fallback={<Skeleton lines={1} className="h-72" />}><UserHourlyTraffic userId={user.id} /></React.Suspense>
+          </TabsContent> : null}
+          {showSubscriptionAccess ? <TabsContent value="subscription-access" className="grid min-w-0 gap-4">
+            <React.Suspense fallback={<Skeleton lines={1} className="h-40" />}><UserSubscriptionAccess userId={user.id} /></React.Suspense>
           </TabsContent> : null}
         </Tabs>
       </div>

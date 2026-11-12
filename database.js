@@ -187,6 +187,27 @@ class PostgresDataStore {
       CREATE INDEX IF NOT EXISTS sync_job_runs_job_started_idx ON sync_job_runs (job_id, started_at DESC)
       `), "sync job runs init");
       await withPgRetry(() => pool.query(`
+      CREATE TABLE IF NOT EXISTS subscription_access_logs (
+        id BIGSERIAL PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ip TEXT NOT NULL DEFAULT '',
+        ip_source TEXT NOT NULL DEFAULT '',
+        country TEXT NOT NULL DEFAULT '',
+        user_agent TEXT NOT NULL DEFAULT '',
+        target TEXT NOT NULL DEFAULT '',
+        result TEXT NOT NULL DEFAULT '',
+        status_code INTEGER,
+        headers JSONB NOT NULL DEFAULT '{}'
+      );
+      ALTER TABLE subscription_access_logs ADD COLUMN IF NOT EXISTS geo_country TEXT NOT NULL DEFAULT '';
+      ALTER TABLE subscription_access_logs ADD COLUMN IF NOT EXISTS province TEXT NOT NULL DEFAULT '';
+      ALTER TABLE subscription_access_logs ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
+      ALTER TABLE subscription_access_logs ADD COLUMN IF NOT EXISTS isp TEXT NOT NULL DEFAULT '';
+      CREATE INDEX IF NOT EXISTS subscription_access_logs_user_at_idx ON subscription_access_logs (user_id, at DESC);
+      CREATE INDEX IF NOT EXISTS subscription_access_logs_at_idx ON subscription_access_logs (at)
+      `), "subscription access logs init");
+      await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS catalog_v2_line_groups (
         id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9-]{1,63}$'),
         name TEXT NOT NULL,
@@ -1259,6 +1280,44 @@ class PostgresDataStore {
 
   async pruneSyncJobRuns(cutoff) {
     const result = await withPgRetry(() => this.pool.query("DELETE FROM sync_job_runs WHERE started_at < $1", [cutoff]), "prune sync job runs");
+    return result.rowCount || 0;
+  }
+
+  // One row per pull of a user's subscription link (subscription-access.js).
+  async recordSubscriptionAccess({ userId, at = null, ip = "", ipSource = "", country = "", geoCountry = "", province = "", city = "", isp = "", userAgent = "", target = "", result = "", statusCode = null, headers = {} }) {
+    await this.pool.query(
+      `INSERT INTO subscription_access_logs (user_id, at, ip, ip_source, country, geo_country, province, city, isp, user_agent, target, result, status_code, headers)
+       VALUES ($1, COALESCE($2::timestamptz, NOW()), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)`,
+      [String(userId), at, String(ip), String(ipSource), String(country), String(geoCountry), String(province), String(city), String(isp), String(userAgent).slice(0, 512), String(target), String(result), Number.isFinite(statusCode) ? statusCode : null, JSON.stringify(headers || {})]
+    );
+  }
+
+  async listSubscriptionAccess(userId, { since, limit = 5000 } = {}) {
+    const result = await withPgRetry(() => this.pool.query(
+      `SELECT id, at, ip, ip_source, country, geo_country, province, city, isp, user_agent, target, result, status_code, headers
+       FROM subscription_access_logs WHERE user_id = $1 AND at >= $2 ORDER BY at DESC, id DESC LIMIT $3`,
+      [String(userId), since, Math.min(20000, Math.max(1, Number(limit) || 5000))]
+    ), "list subscription access");
+    return result.rows.map(row => ({
+      id: String(row.id),
+      at: row.at instanceof Date ? row.at.toISOString() : String(row.at),
+      ip: row.ip,
+      ipSource: row.ip_source,
+      country: row.country,
+      geoCountry: row.geo_country,
+      province: row.province,
+      city: row.city,
+      isp: row.isp,
+      userAgent: row.user_agent,
+      target: row.target,
+      result: row.result,
+      statusCode: row.status_code,
+      headers: row.headers || {}
+    }));
+  }
+
+  async pruneSubscriptionAccess(cutoff) {
+    const result = await withPgRetry(() => this.pool.query("DELETE FROM subscription_access_logs WHERE at < $1", [cutoff]), "prune subscription access");
     return result.rowCount || 0;
   }
 }

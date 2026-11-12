@@ -5887,6 +5887,45 @@
         "page_errors": [],
         "checked_at": "2026-11-12"
       }
+    },
+    {
+      "id": "subscription-access-log",
+      "name": "记录用户拉取订阅链接的 IP 和请求头，排查订阅分享",
+      "description": "Every pull of /sub/<token> (and /api/sub/<token>) for a known user writes a subscription_access_logs row once the response closes: client IP (CF-Connecting-IP, else X-Real-IP, else the last X-Forwarded-For hop), Cloudflare country, ip2region place (country, province, prefecture city, ISP; offline lookup in ip-region.js on data/ip2region/*.xdb, fetched by scripts/fetch-ip2region.js, refreshed monthly by the deploy), user agent, query string, result, status code and all request headers with cookie/authorization redacted. Kept 90 days. Suspicious = mainland pulls (HK/Macau/Taiwan, abroad and our own node IPs excluded) from two or more prefecture cities; a province-only pull counts only when no known city lies in that province. When the last 24 hours cross cities, a Telegram (and optional mail) alert goes out through the new 订阅疑似分享提醒 alert setting (Telegram on by default), at most once per user per 24 hours unless a new city appears (state in app_records subscriptionShareAlerts). Admin user detail 订阅访问 tab (7/30/90 days): suspicion banner with cities, last Telegram alert, stats, 城市切换 table with the gap between consecutive mainland pulls, per-IP list with 归属地, latest 200 requests with a header dialog.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "A pull stores IP, country, ip2region province/city/ISP, UA, result and redacted headers",
+        "A forged first X-Forwarded-For hop is not taken as the client IP",
+        "Mainland pulls from two or more prefecture cities mark the link suspicious; HK/Macau/Taiwan, abroad and node IPs don't count",
+        "Cross-city pulls within 24 hours send one Telegram alert, repeated only after 24 hours or for a new city",
+        "Admin user detail shows the suspicion, city switches with gaps, IP places and request headers"
+      ],
+      "verification": [
+        "2026-11-12: node test-subscription-access.js (cities, province-only rule, HK/TW exclusion, city changes, alert dedupe, region parsing), npm run verify:fast and npm run verify pass; git diff --check clean",
+        "2026-11-12: ip2region lookups checked on known IPs: 202.96.134.133 深圳 电信, 61.139.2.69 成都 电信, 117.136.0.1 北京 移动, 240e:3b7:… 深圳 电信 (IPv6), 2408:8207:… 北京 联通; HK/Macau/TW report 中国 with an SAR/台湾省 province and are excluded",
+        "2026-11-12: seeded 68 fake pulls into test DB schema subaccess_demo: the Shenzhen+Beijing+Chengdu user produced one alert text (北京市、成都市、深圳市), an immediate second check was suppressed, the Hangzhou-only user got none"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/a6bd7a8b-d4d2-4286-8adf-5c1c45d0b47c (订阅访问 tab, test DB schema subaccess_demo)",
+          "/users/detail/hub-upstream-user (API)",
+          "/general-settings?section=alerts"
+        ],
+        "interactions": [
+          "订阅访问 shows 疑似分享：境内跨城市拉取 with 24 小时内从 3 个城市拉取：北京市、成都市、深圳市 and 最近一次 Telegram 提醒",
+          "城市切换 lists 14 switches with the gap next to the time (10 分钟 Shenzhen → Beijing); 来源 IP shows 归属地 such as 广东省 深圳市 · 电信 and 香港特别行政区 · 电讯盈科",
+          "查看 opens the 请求头 dialog with cf-connecting-ip; 7 天 → 30 天 relabels the stats",
+          "Hangzhou-only user: suspicious false, no hints, no city changes",
+          "提醒设置 has 订阅疑似分享提醒 with Telegram checked and mail unchecked",
+          "689px pane: scrollWidth 674 <= clientWidth 689; tables scroll inside their cards",
+          "A ResizeObserver loop notice fires when closing any Arc dialog on this page, including the existing 人工收款 dialog; not introduced here"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-12"
+      }
     }
   ]
 }

@@ -1,5 +1,6 @@
 const http = require("http");
 const net = require("net");
+const dns = require("dns").promises;
 const { execFileSync } = require("child_process");
 const fsSync = require("fs");
 const fs = require("fs/promises");
@@ -10,6 +11,8 @@ const { createDataStore } = require("./database");
 const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const { loadLocalEnv } = require("./env");
 const xuiTraffic = require("./xui-traffic");
+const subscriptionAccess = require("./subscription-access");
+const { lookupIpRegion, ipRegionReady } = require("./ip-region");
 const nodeHub = require("./node-hub/bridge");
 const yaml = require("js-yaml");
 const notifier = require("./notifier");
@@ -1706,6 +1709,7 @@ function defaultAlertSettings() {
     ticket: { telegram: true, mail: false },
     delivery: { telegram: true, mail: false },
     traffic: { telegram: false, mail: false, userMail: false, userDepletedMail: true },
+    subscriptionShare: { telegram: true, mail: false },
     trafficThresholdPercent: 80
   };
 }
@@ -1722,6 +1726,7 @@ function normalizeAlertSettings(value, strict = false) {
     payment: channelScope("payment"),
     ticket: channelScope("ticket"),
     delivery: channelScope("delivery"),
+    subscriptionShare: channelScope("subscriptionShare"),
     traffic: {
       ...channelScope("traffic"),
       userMail: typeof value?.traffic?.userMail === "boolean" ? value.traffic.userMail : defaults.traffic.userMail,
@@ -6150,6 +6155,7 @@ async function handleRelaySubscription(req, res, token) {
   ensureUserRelayTokens();
 
   const user = users.find(item => item.subscriptionToken === token);
+  if (user) recordSubscriptionAccessOnClose(req, res, user);
   if (!user) {
     relayLog("user-not-found", {
       relayRequestId,
@@ -6164,6 +6170,7 @@ async function handleRelaySubscription(req, res, token) {
       relayRequestId,
       userId: user.id
     });
+    res.subscriptionAccessResult = "disabled";
     sendDisabledAccountPlaceholderSubscription(res, user);
     return;
   }
@@ -6194,6 +6201,7 @@ async function handleRelaySubscription(req, res, token) {
       stage: "user-date-check",
       message: "\u7528\u6237\u8ba2\u9605\u5df2\u5230\u671f\u3002"
     });
+    res.subscriptionAccessResult = "expired";
     sendExpiredPlaceholderSubscription(res, user);
     return;
   }
@@ -6202,17 +6210,132 @@ async function handleRelaySubscription(req, res, token) {
     try {
       const migration = await migrateLegacyUserOnSubscriptionRefresh(user, req);
       if (migration.status === "activation_required") {
+        res.subscriptionAccessResult = "activation-required";
         sendPlaceholderSubscription(res, activationRequiredPlaceholderSubscription(user));
         return;
       }
     } catch (error) {
       relayLog("xui-migration-failed", { relayRequestId, userId: user.id, error: error.message });
+      res.subscriptionAccessResult = "migration-failed";
       sendPlaceholderSubscription(res, placeholderSubscription(user, "账户迁移失败-请联系客服"));
       return;
     }
   }
 
   await handleSelfHostedRelay(req, res, user, relayRequestId);
+}
+
+// Records the pull once the response is over, so the row carries the status the client got.
+// Fire and forget: a failed insert never affects the subscription itself.
+function recordSubscriptionAccessOnClose(req, res, user) {
+  const { ip, source } = subscriptionAccess.subscriptionClientIp(req);
+  const query = new URL(req.url || "/", "http://localhost").search.slice(1);
+  res.once("close", () => {
+    const statusCode = res.headersSent ? res.statusCode : null;
+    const result = res.subscriptionAccessResult
+      || (!res.writableFinished ? "aborted" : statusCode && statusCode < 400 ? "ok" : "error");
+    void (async () => {
+      const region = await lookupIpRegion(ip).catch(() => null);
+      const row = {
+        userId: user.id,
+        ip,
+        ipSource: source,
+        country: String(req.headers["cf-ipcountry"] || "").slice(0, 8).toUpperCase(),
+        geoCountry: region?.country || "",
+        province: region?.province || "",
+        city: region?.city || "",
+        isp: region?.isp || "",
+        userAgent: String(req.headers["user-agent"] || ""),
+        target: query.slice(0, 200),
+        result,
+        statusCode,
+        headers: subscriptionAccess.headersForAccessLog(req.headers)
+      };
+      await dataStore.recordSubscriptionAccess(row);
+      if (subscriptionAccess.mainlandLocation(row)) await checkSubscriptionShareAlert(user);
+    })().catch(error => console.error(`[subscription-access] record failed for ${user.id}:`, error.message));
+  });
+}
+
+// One check at a time per user, so a burst of pulls from two cities sends one alert, not several.
+const subscriptionShareChecks = new Map();
+function checkSubscriptionShareAlert(user) {
+  const previous = subscriptionShareChecks.get(user.id) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => runSubscriptionShareCheck(user));
+  subscriptionShareChecks.set(user.id, next);
+  next.finally(() => { if (subscriptionShareChecks.get(user.id) === next) subscriptionShareChecks.delete(user.id); }).catch(() => {});
+  return next;
+}
+
+// Telegram (and mail, per the alert settings) when the last 24 hours of a user's pulls come from two or
+// more mainland cities. Repeats only after 24 hours or when a new city shows up.
+async function runSubscriptionShareCheck(user, now = Date.now()) {
+  const [rows, nodeIps, lastAlert] = await Promise.all([
+    dataStore.listSubscriptionAccess(user.id, { since: new Date(now - 24 * 3600000) }),
+    ownNodeIps(),
+    dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id)
+  ]);
+  const counted = rows.filter(row => !nodeIps.has(row.ip));
+  const { send, cities } = subscriptionAccess.crossCityAlert(counted, lastAlert, now);
+  if (!send) return null;
+  const alert = { at: new Date(now).toISOString(), cities };
+  await dataStore.setRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id, alert);
+  const text = subscriptionShareAlertText(user, counted, cities);
+  console.log(`[subscription-share] ${user.id} pulled from ${cities.join(", ")} in 24h; alerting.`);
+  await sendAdminAlert("subscriptionShare", { subject: `订阅疑似分享：${subscriptionUserLabel(user)}`, text, parseMode: "" });
+  return { ...alert, text };
+}
+
+const SUBSCRIPTION_SHARE_ALERT_COLLECTION = "subscriptionShareAlerts";
+
+function subscriptionUserLabel(user) {
+  return user.email || user.userId || user.wechatName || user.xuiClientEmail || user.id;
+}
+
+function subscriptionShareAlertText(user, rows, cities) {
+  const base = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  const recent = rows
+    .filter(row => subscriptionAccess.mainlandLocation(row))
+    .slice(0, 8)
+    .map(row => `${formatChinaTime(row.at)} ${row.city || row.province} ${row.isp || ""} ${row.ip} ${subscriptionAccess.subscriptionClientLabel(row.userAgent)}`.replace(/\s+/g, " "));
+  return [
+    "⚠️ 订阅疑似分享",
+    `用户：${subscriptionUserLabel(user)}`,
+    `24 小时内从 ${cities.length} 个城市拉取订阅：${cities.join("、")}`,
+    "",
+    "最近拉取：",
+    ...recent,
+    ...(base ? ["", `${base}/users/detail/${encodeURIComponent(user.id)}`] : [])
+  ].join("\n");
+}
+
+function formatChinaTime(value) {
+  return new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+// Our own machines' addresses (node-hub machines, nodes and relays). Clients that refresh the
+// subscription through the proxy reach us from these. Hostnames are resolved; cached 10 minutes.
+const nodeIpCache = { at: 0, value: new Set() };
+async function ownNodeIps() {
+  if (Date.now() - nodeIpCache.at < 10 * 60 * 1000) return nodeIpCache.value;
+  const overview = await getHubOverview().catch(() => null);
+  const hosts = new Set([...(overview?.machines || []), ...(overview?.nodes || []), ...(overview?.relays || [])]
+    .map(item => String(item?.host || "").trim().replace(/^\[|\]$/g, "")).filter(Boolean));
+  const ips = new Set();
+  await Promise.all([...hosts].map(async host => {
+    if (net.isIP(host)) { ips.add(host); return; }
+    const addresses = await Promise.race([
+      dns.lookup(host, { all: true }),
+      new Promise(resolve => setTimeout(() => resolve([]), 2000))
+    ]).catch(() => []);
+    for (const { address } of addresses) ips.add(address);
+  }));
+  Object.assign(nodeIpCache, { at: Date.now(), value: ips });
+  return ips;
+}
+
+function pruneSubscriptionAccessHistory(now = Date.now()) {
+  return dataStore.pruneSubscriptionAccess(new Date(now - subscriptionAccess.SUBSCRIPTION_ACCESS_RETENTION_DAYS * 24 * 60 * 60 * 1000));
 }
 
 function isLocalRequest(req) {
@@ -8784,7 +8907,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic|subscription-access))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -8813,6 +8936,24 @@ async function handleApi(req, res, pathname) {
       } catch (error) {
         sendJson(res, 200, { availableBalance: 0, balance: 0, error: error.message });
       }
+      return;
+    }
+
+    // Subscription pulls of this user's link over the last 7, 30 or 90 days, for spotting a shared link.
+    if (action === "subscription-access" && req.method === "GET") {
+      const requested = Number(new URL(req.url, "http://localhost").searchParams.get("days"));
+      const days = [7, 30, 90].includes(requested) ? requested : 7;
+      const now = Date.now();
+      const [rows, nodeIps, lastAlert] = item
+        ? await Promise.all([dataStore.listSubscriptionAccess(item.id, { since: new Date(now - days * 86400000) }), ownNodeIps(), dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, item.id)])
+        : [[], new Set(), null];
+      sendJson(res, 200, {
+        days,
+        retentionDays: subscriptionAccess.SUBSCRIPTION_ACCESS_RETENTION_DAYS,
+        lastAlert: lastAlert ? { at: lastAlert.at, cities: lastAlert.cities || [] } : null,
+        summary: subscriptionAccess.summarizeSubscriptionAccess(rows, { now, nodeIps }),
+        rows: rows.slice(0, 200).map(row => ({ ...row, client: subscriptionAccess.subscriptionClientLabel(row.userAgent), viaNode: nodeIps.has(row.ip) }))
+      });
       return;
     }
 
@@ -9514,7 +9655,12 @@ async function main() {
     if (syncJobRunning.has(jobId)) return Promise.resolve();
     return runTrackedSyncJob(jobId, trigger).catch(error => console.error(`[sync-jobs] ${jobId} failed:`, error));
   };
-  const pruneSyncJobHistoryInBackground = () => pruneSyncJobHistory().catch(error => console.error("Sync job history prune failed:", error));
+  // Opens the ip2region databases now, so the first subscription pull doesn't wait for it.
+  void ipRegionReady();
+  const pruneSyncJobHistoryInBackground = () => {
+    pruneSyncJobHistory().catch(error => console.error("Sync job history prune failed:", error));
+    pruneSubscriptionAccessHistory().catch(error => console.error("Subscription access prune failed:", error));
+  };
   pruneSyncJobHistoryInBackground();
   setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000);
 
@@ -9625,6 +9771,8 @@ module.exports = Object.assign(requestHandler, {
   runTrackedSyncJob,
   recoverInterruptedSyncJobRuns,
   pruneSyncJobHistory,
+  runSubscriptionShareCheck,
+  subscriptionShareAlertText,
   listSyncJobRuns,
   withXuiUserMigrationLock,
   xuiTrafficPayload,
