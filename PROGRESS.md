@@ -1,12 +1,12 @@
 # Current State
 
-- Last Updated: 2026-11-12
-- Current Objective: 代客下单已上线（main 95c3da7 / production 669645c）
+- Last Updated: 2026-11-13
+- Current Objective: 大陆 IPv6 订阅拉取跳转到 IPv4 中转 sub.webprovider.top（代码已暂存未提交；hncloud nginx+证书已就绪）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
-- Active feature: none
+- Active feature: subscription-ipv4-relay
 - Blockers: none
 
 ## Verification Evidence
@@ -614,8 +614,12 @@
 
 - 2026-11-12: npm run verify 通过；Deploy run 43166657538 成功；线上 /api/health 全部正常，新接口未登录返回 403
 
+- 2026-11-13: test-subscription-access.js、verify:fast、verify:harness、git diff --check 通过；生产数据只读复算可疑用户 8→2
+
+- 2026-11-13: npm run verify、test-subscription-access.js、本地隔离服务端到端、hncloud 中转 404 透传均通过
+
 ## Next Session
 
-- Files: none
+- Files: `.env.example`, `PROGRESS.md`, `feature_list.json`, `server.js`, `subscription-access.js`, `test-subscription-access.js`
 - Known risks: none
-- Recommended Next Step: 生产后台试一单代客下单，确认富通在真实 IP 下能建单；本地 ::1 时富通返回 系统异常 EP3996AS
+- Recommended Next Step: 用户确认后：提交 main → 生产 .env 加 SUBSCRIPTION_IPV4_URL=https://sub.webprovider.top 与 SUBSCRIPTION_RELAY_IPS=191.223.40.89（先备份）→ 合并 production 部署 → 实测 IPv6 跳转与 ipv4-relay 日志 → feature subscription-ipv4-relay 标 passing

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-12",
+  "updated_at": "2026-11-13",
   "required_fields": [
     "id",
     "name",
@@ -5962,6 +5962,49 @@
         "page_errors": [],
         "checked_at": "2026-11-12"
       }
+    },
+    {
+      "id": "subscription-share-ipv6-beijing",
+      "name": "订阅分享判定忽略运营商 IPv6 的北京注册地",
+      "description": "ip2region locates China Telecom IPv6 and China Unicom mobile IPv6 (and IPv6 with no ISP) at Beijing, the carriers' registration, regardless of where the user is. mainlandLocation now returns null for an IPv6 pull placed in 北京市 with ISP 电信, 联通 or empty, so a dual-stack user (IPv4 in their city + IPv6 \"Beijing\") no longer counts as two cities, gets no city switch and no Telegram alert. China Mobile IPv6 and every IPv4 Beijing pull still count; the pull is still listed in the per-IP table.",
+      "status": "passing",
+      "ui": false,
+      "dependencies": [
+        "subscription-access-log"
+      ],
+      "done_criteria": [
+        "Telecom/Unicom/no-ISP IPv6 located at 北京市 is not a mainland place",
+        "China Mobile IPv6 Beijing and IPv4 Beijing still count",
+        "A dual-stack Shanghai user is not suspicious and triggers no alert"
+      ],
+      "verification": [
+        "2026-11-13: production logs (2026-11-12 06:26 to 11-13 03:33 UTC, 280 pulls) showed all 18 Telecom IPv6 and 10 Unicom IPv6 Beijing rows came from users whose IPv4 was elsewhere; 6 of 8 subscriptionShareAlerts were IPv4 city + IPv6 Beijing",
+        "2026-11-13: node test-subscription-access.js, npm run verify:fast and git diff --check pass",
+        "2026-11-13: re-ran the share summary on the production rows with the new module (read-only): suspicious users 8 -> 2 (成都/广州 and 威海/上海, both genuine cross-city pulls)"
+      ]
+    },
+    {
+      "id": "subscription-ipv4-relay",
+      "name": "大陆 IPv6 订阅拉取跳转到 IPv4 中转（sub.webprovider.top）",
+      "description": "IPv6 places mainland users poorly, so a mainland IPv6 pull of /sub/<token> or /api/sub/<token> for a known user gets a 302 to the same path and query on SUBSCRIPTION_IPV4_URL (sub.webprovider.top: hncloud 191.223.40.89, Cloudflare DNS only, A record only). hncloud nginx forwards only /sub/ and /api/sub/ to https://webprovider.top through Cloudflare with X-Sub-Client-IP = the IPv4 it saw (client-sent X-Forwarded-For/X-Real-IP/CF-Connecting-IP dropped); the app takes X-Sub-Client-IP only when the request comes from SUBSCRIPTION_RELAY_IPS and records ip_source ipv4-relay. The IPv6 half is logged with result ipv4-redirect and left out of city counts and alerts (countedPulls). IPv4, abroad, HK/Macau/Taiwan, unknown places and relayed pulls are served directly. Subscription links stay unchanged; empty SUBSCRIPTION_IPV4_URL turns the redirect off.",
+      "status": "in_progress",
+      "ui": false,
+      "dependencies": [
+        "subscription-access-log",
+        "subscription-share-ipv6-beijing"
+      ],
+      "done_criteria": [
+        "Mainland IPv6 pulls get a 302 to the IPv4 host with path and query kept",
+        "Only requests from the relay IP may set the client IP",
+        "Redirect rows do not count as a city",
+        "Abroad, HK and IPv4 pulls are served directly",
+        "Live: a pull through sub.webprovider.top is logged with the client IPv4 and source ipv4-relay"
+      ],
+      "verification": [
+        "2026-11-13: node test-subscription-access.js (relay trust, forged header, redirect conditions, redirect rows excluded), npm run verify and git diff --check pass",
+        "2026-11-13: isolated local server on test schema subrelay_verify: mainland IPv6 /sub and /api/sub -> 302 to https://sub.webprovider.top with query kept; IPv4, abroad IPv6 and relayed -> 200; relayed row ip 101.87.5.104 source ipv4-relay; forged X-Sub-Client-IP from a non-relay IPv6 still redirected; unknown token 404; no server errors; schema dropped",
+        "2026-11-13: hncloud nginx site sub.webprovider.top with Let's Encrypt cert (webroot /var/www/sub-acme, renew hook reload nginx); https://sub.webprovider.top/sub/nosuchtoken returns the app 404 text through Cloudflare, / returns nginx 404"
+      ]
     }
   ]
 }

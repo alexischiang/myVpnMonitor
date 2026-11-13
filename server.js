@@ -51,6 +51,10 @@ const XUI_TRAFFIC_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 // line backend. Unset means self-hosted lines are not configured.
 const NODE_HUB_URL = (process.env.NODE_HUB_URL || "").replace(/\/+$/, "");
 const NODE_HUB_INTERNAL_TOKEN = String(process.env.NODE_HUB_INTERNAL_TOKEN || "").trim();
+// IPv4-only subscription relay (subscription-access.js ipv4RedirectLocation): mainland IPv6 pulls get a
+// 302 to SUBSCRIPTION_IPV4_URL; requests from SUBSCRIPTION_RELAY_IPS carry the client IP the relay saw.
+const SUBSCRIPTION_IPV4_URL = String(process.env.SUBSCRIPTION_IPV4_URL || "").trim().replace(/\/+$/, "");
+const SUBSCRIPTION_RELAY_IPS = String(process.env.SUBSCRIPTION_RELAY_IPS || "").split(",").map(item => item.trim()).filter(Boolean);
 const NODE_HUB_SYNC_INTERVAL_MS = Math.max(15000, Number(process.env.NODE_HUB_SYNC_INTERVAL_MS || 60000));
 const NODE_HUB_TIMEOUT_MS = Math.max(1000, Number(process.env.NODE_HUB_TIMEOUT_MS || 10000));
 const TRAFFIC_PACK_BYTES = 100 * 1024 ** 3;
@@ -6224,6 +6228,15 @@ async function handleRelaySubscription(req, res, token) {
     return;
   }
 
+  const ipv4Location = await subscriptionIpv4RedirectLocation(req);
+  if (ipv4Location) {
+    relayLog("redirect-ipv4", { relayRequestId, userId: user.id });
+    res.subscriptionAccessResult = subscriptionAccess.IPV4_REDIRECT_RESULT;
+    res.writeHead(302, { location: ipv4Location, "cache-control": "no-store, max-age=0" });
+    res.end();
+    return;
+  }
+
   if (isUserAccountDisabled(user)) {
     relayLog("response-placeholder-account-disabled", {
       relayRequestId,
@@ -6284,10 +6297,19 @@ async function handleRelaySubscription(req, res, token) {
   await handleSelfHostedRelay(req, res, user, relayRequestId);
 }
 
+// Where to send a mainland IPv6 pull so it comes back over IPv4; "" serves it here.
+async function subscriptionIpv4RedirectLocation(req) {
+  if (!SUBSCRIPTION_IPV4_URL) return "";
+  const { ip, source } = subscriptionAccess.subscriptionClientIp(req, { relayIps: SUBSCRIPTION_RELAY_IPS });
+  if (source === "ipv4-relay" || !net.isIPv6(ip)) return "";
+  const region = await lookupIpRegion(ip).catch(() => null);
+  return subscriptionAccess.ipv4RedirectLocation({ baseUrl: SUBSCRIPTION_IPV4_URL, path: req.url, ip, ipSource: source, region });
+}
+
 // Records the pull once the response is over, so the row carries the status the client got.
 // Fire and forget: a failed insert never affects the subscription itself.
 function recordSubscriptionAccessOnClose(req, res, user) {
-  const { ip, source } = subscriptionAccess.subscriptionClientIp(req);
+  const { ip, source } = subscriptionAccess.subscriptionClientIp(req, { relayIps: SUBSCRIPTION_RELAY_IPS });
   const query = new URL(req.url || "/", "http://localhost").search.slice(1);
   res.once("close", () => {
     const statusCode = res.headersSent ? res.statusCode : null;
@@ -6311,7 +6333,7 @@ function recordSubscriptionAccessOnClose(req, res, user) {
         headers: subscriptionAccess.headersForAccessLog(req.headers)
       };
       await dataStore.recordSubscriptionAccess(row);
-      if (subscriptionAccess.mainlandLocation(row)) await checkSubscriptionShareAlert(user);
+      if (result !== subscriptionAccess.IPV4_REDIRECT_RESULT && subscriptionAccess.mainlandLocation(row)) await checkSubscriptionShareAlert(user);
     })().catch(error => console.error(`[subscription-access] record failed for ${user.id}:`, error.message));
   });
 }
@@ -6334,7 +6356,7 @@ async function runSubscriptionShareCheck(user, now = Date.now()) {
     ownNodeIps(),
     dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id)
   ]);
-  const counted = rows.filter(row => !nodeIps.has(row.ip));
+  const counted = subscriptionAccess.countedPulls(rows, nodeIps);
   const { send, cities } = subscriptionAccess.crossCityAlert(counted, lastAlert, now);
   if (!send) return null;
   const alert = { at: new Date(now).toISOString(), cities };
