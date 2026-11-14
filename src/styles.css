@@ -193,6 +193,12 @@
   }
 }
 
+/* iOS Safari zooms the page into any text field under 16px when it gets focus and does not zoom back, which leaves phone pages
+   scrolled sideways. Only iOS WebKit matches -webkit-touch-callout, so other browsers keep the type scale above. */
+@supports (-webkit-touch-callout: none) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), textarea, select { font-size: max(16px, 1em) !important; }
+}
+
 /* Product palette, overriding Arc's defaults (foundation.css loads first): a light grey page with white cards, and in dark mode a
    mid-grey page with near-black cards. */
 :root {

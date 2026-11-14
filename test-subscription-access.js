@@ -10,6 +10,7 @@ const {
   crossCityAlert,
   ipv4RedirectLocation,
   countedPulls,
+  commonPlace,
   IPV4_REDIRECT_RESULT
 } = require("./subscription-access");
 const { parseRegion } = require("./ip-region");
@@ -167,5 +168,27 @@ assert.deepStrictEqual(crossCityAlert([sz, hz], null, now), { send: true, cities
 assert.strictEqual(crossCityAlert([sz, hz], { at: at(2), cities: ["杭州市", "深圳市"] }, now).send, false, "same cities within 24 hours stay quiet");
 assert.strictEqual(crossCityAlert([sz, hz], { at: at(25), cities: ["杭州市", "深圳市"] }, now).send, true, "the same cities alert again after 24 hours");
 assert.strictEqual(crossCityAlert([sz, hz, sc], { at: at(2), cities: ["杭州市", "深圳市"] }, now).send, true, "a new city alerts at once");
+
+// Common place: the city of the most counted pulls, with its most frequent carrier; node and redirect
+// pulls, unknown places and carrier-registered IPv6 Beijing do not count.
+const place = (ip, province, city, isp, extra = {}) => ({ ip, geoCountry: "中国", province, city, isp, at: "2026-11-10T00:00:00.000Z", ...extra });
+assert.deepStrictEqual(commonPlace([
+  place("1.1.1.1", "广东省", "深圳市", "电信"),
+  place("1.1.1.2", "广东省", "深圳市", "移动"),
+  place("1.1.1.3", "广东省", "深圳市", "电信"),
+  place("2.2.2.2", "浙江省", "杭州市", "联通"),
+  place("240e::1", "北京市", "北京市", "电信"),
+  place("240e::2", "北京市", "北京市", "电信"),
+  place("240e::3", "北京市", "北京市", "电信"),
+  place("240e::4", "北京市", "北京市", "电信"),
+  place("9.9.9.9", "北京市", "北京市", "联通"),
+  place("9.9.9.9", "北京市", "北京市", "联通"),
+  place("9.9.9.9", "北京市", "北京市", "联通"),
+  place("2408::5", "上海市", "上海市", "", { result: IPV4_REDIRECT_RESULT }),
+  { ip: "3.3.3.3", geoCountry: "", province: "", city: "", isp: "", at: "2026-11-10T00:00:00.000Z" }
+], new Set(["9.9.9.9"])), { geoCountry: "中国", province: "广东省", city: "深圳市", isp: "电信", count: 3, total: 4 });
+assert.deepStrictEqual(commonPlace([place("1.1.1.1", "浙江省", "杭州市", ""), place("2.2.2.2", "广东省", "深圳市", "电信")]).city, "杭州市", "a tie goes to the newest place");
+assert.strictEqual(commonPlace([]), null);
+assert.strictEqual(commonPlace([place("240e::1", "北京市", "北京市", "电信")]), null);
 
 console.log("subscription access tests passed");

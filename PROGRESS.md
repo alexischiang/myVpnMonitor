@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-13
-- Current Objective: 大陆 IPv6 订阅拉取跳转到 IPv4 中转 sub.webprovider.top（代码已暂存未提交；hncloud nginx+证书已就绪）
+- Last Updated: 2026-11-14
+- Current Objective: 用户详情邀请人/常用城市/已删除节点合并、移动端导航与 Safari 修复、表格操作列固定、node-hub 机器用户流量子页（已实现并验证，未提交）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -618,8 +618,10 @@
 
 - 2026-11-13: npm run verify、test-subscription-access.js、本地隔离服务端到端、hncloud 中转 404 透传均通过
 
+- 2026-11-14: npm run check、verify:fast、test:hub、verify:harness、git diff --check 通过；隔离服务器（开发库副本 + 模拟 node-hub + 3 秒慢速代理）浏览器验证 6 项功能，console/page errors 为空
+
 ## Next Session
 
-- Files: `.env.example`, `PROGRESS.md`, `feature_list.json`, `server.js`, `subscription-access.js`, `test-subscription-access.js`
+- Files: `database.js`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/api.ts`, `src/components/arc/sortable-data-table/sortable-data-table.module.css`, `src/components/arc/sortable-data-table/sortable-data-table.tsx`, `src/components/features/app-sidebar.tsx`, `src/components/features/arc-data-table.tsx`, `src/components/features/details.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/node-traffic-list.tsx`, `src/components/features/simple-table.tsx`, `src/components/features/user-subscription-access.tsx`, `src/main.tsx`, `src/styles.css`, `src/types.ts`, `subscription-access.js`, `test-subscription-access.js`, `src/components/features/node-hub-machine-traffic.tsx`, `src/components/features/subscription-place.ts`, `src/lib/lazy-page.ts`
 - Known risks: none
-- Recommended Next Step: 用户确认后：提交 main → 生产 .env 加 SUBSCRIPTION_IPV4_URL=https://sub.webprovider.top 与 SUBSCRIPTION_RELAY_IPS=191.223.40.89（先备份）→ 合并 production 部署 → 实测 IPv6 跳转与 ipv4-relay 日志 → feature subscription-ipv4-relay 标 passing
+- Recommended Next Step: 用户确认后提交；部署后在真机 iOS Safari 上复查侧边栏跳转和输入框不再缩放；subscription-ipv4-relay 仍待线上验证

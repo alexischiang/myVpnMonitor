@@ -39,6 +39,11 @@ function trackRequest<T>(run: () => Promise<T>, background?: boolean): Promise<T
   return run().finally(() => setRequestActivity({ ...requestActivity, pending: requestActivity.pending - 1 }))
 }
 
+/** Shows a non-request load the user waits on (a route chunk download) on the page progress bar. */
+export function trackLoading<T>(run: () => Promise<T>): Promise<T> {
+  return trackRequest(run)
+}
+
 export function apiFetch(path: string, { background, ...options }: ApiRequestOptions = {}) {
   return trackRequest(() => sendRequest(path, options), background)
 }

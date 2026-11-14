@@ -15,6 +15,9 @@
 .table td { height: 52px; padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border-subtle); color: var(--foreground); font-weight: 400; vertical-align: middle; overflow-wrap: anywhere; }
 .table tbody tr:last-child td { border-bottom: 0; }
 .table [data-numeric] { text-align: right; font-variant-numeric: tabular-nums; }
+/* XELA extension: a pinned column (row actions) stays at the right edge while the table scrolls sideways; its cells keep their own fill so rows slide beneath it, and a rule marks the edge only while the table overflows. */
+.table [data-pinned] { position: sticky; right: 0; z-index: 2; }
+.scroller[data-overflow] .table [data-pinned] { box-shadow: inset 1px 0 0 var(--border), -8px 0 12px -10px color-mix(in oklab, var(--foreground) 35%, transparent); }
 .table[data-selectable] tbody tr { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .table[data-selectable] tbody tr[data-selected] td { --cell-fill: color-mix(in oklab, var(--accent) 8%, var(--cell-base)); }
 .table[data-selectable] [data-primary]:not([data-sortable]), .table[data-selectable] th[data-primary] .sortButton { padding-left: var(--space-2); }
@@ -81,7 +84,12 @@
   .table th.selectCell { position: sticky; left: calc(-1 * var(--space-2)); z-index: 1; width: 40px; margin-left: calc(-1 * var(--space-2)); padding: 0 0 0 var(--space-3); background: var(--surface); }
   .table th.selectCell .selectHit { height: 32px; }
   /* Once the strip scrolls, a fade off the pinned cell hides the word sliding under it. */
-  .table th.selectCell::after { position: absolute; top: 0; bottom: 0; left: 100%; width: 36px; background: linear-gradient(to right, var(--surface) 45%, transparent); content: ""; opacity: 0; pointer-events: none; animation: stripFade linear both; animation-timeline: scroll(nearest inline); animation-range: 0 24px; }
+  .table th.selectCell::after { position: absolute; top: 0; bottom: 0; left: 100%; width: 36px; background: linear-gradient(to right, var(--surface) 45%, transparent); content: ""; opacity: 0; pointer-events: none; }
+  /* XELA extension: without scroll timelines (Safari) the zero-length animation would jump straight to its end and leave the fade
+     covering the first sort control, so the fade only runs where the timeline exists. */
+  @supports (animation-timeline: scroll()) {
+    .table th.selectCell::after { animation: stripFade linear both; animation-timeline: scroll(nearest inline); animation-range: 0 24px; }
+  }
   .table th .sortButton, .table[data-selectable] th[data-primary] .sortButton { width: auto; height: 32px; border-radius: var(--radius-control); padding: 0 10px; transition: background-color var(--duration-standard) var(--ease-standard), color var(--duration-standard) var(--ease-standard); }
   .table th[data-sorted] .sortButton { background: var(--surface-muted); }
   .table th[data-numeric] .sortInner { flex-direction: row; }
@@ -93,6 +101,7 @@
   .table[data-selectable] tbody tr { padding-left: 44px; }
   .table[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in oklab, var(--accent) 8%, var(--surface)); }
   .table tbody tr:last-child { border-bottom: 0; }
+  .table [data-pinned] { position: static; box-shadow: none !important; }
   .table td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--text-secondary); font-size: var(--text-xs); text-align: left; }
   .table[data-selectable] td[data-primary]:not([data-sortable]) { padding-left: 0; }
   .table td[data-primary] { order: 0; flex: 1 1 0; color: var(--foreground); font-size: var(--text-sm); font-weight: 500; }

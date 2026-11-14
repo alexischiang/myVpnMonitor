@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { lazy, Suspense, useEffect, type ReactNode } from "react"
+import { Suspense, useEffect, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { ThemeProvider } from "next-themes"
@@ -12,6 +12,7 @@ import { AppToasts } from "@/components/features/toast"
 import { DataProvider } from "@/components/features/data-provider"
 import { AppShell } from "@/components/features/app-shell"
 import { RequestProgress } from "@/components/features/request-progress"
+import { lazyPage, prefetchPages } from "@/lib/lazy-page"
 import { isWechatBrowser, OPEN_IN_BROWSER_PATH } from "@/utils"
 import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill"
 import twemojiCountryFlagsUrl from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url"
@@ -25,59 +26,63 @@ window.addEventListener("vite:preloadError", event => {
   window.location.reload()
 })
 
-const DashboardPage = lazy(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
-const SalesAnalyticsPage = lazy(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesAnalyticsPage })))
-const SalesProfitabilityPage = lazy(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesProfitabilityPage })))
-const SyncJobsPage = lazy(() => import("@/components/features/sync-jobs").then(module => ({ default: module.SyncJobsPage })))
-const NodeHubPage = lazy(() => import("@/components/features/node-hub").then(module => ({ default: module.NodeHubPage })))
-const UsersPage = lazy(() => import("@/components/features/users").then(module => ({ default: module.UsersPage })))
-const OrdersPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrdersPage })))
-const OrderDetailPage = lazy(() => import("@/components/features/bills").then(module => ({ default: module.OrderDetailPage })))
-const UserDetailPage = lazy(() => import("@/components/features/details").then(module => ({ default: module.UserDetailPage })))
-const EmbyPage = lazy(() => import("@/components/features/emby").then(module => ({ default: module.EmbyPage })))
-const PricingSettingsPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingSettingsPage })))
-const PricingDetailPage = lazy(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingDetailPage })))
-const ServiceDeliveriesPage = lazy(() => import("@/components/features/service-delivery").then(module => ({ default: module.ServiceDeliveriesPage })))
-const CatalogV2ProductsPage = lazy(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2ProductsPage })))
-const CatalogV2ProductDetailPage = lazy(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2ProductDetailPage })))
-const SalesSettingsPage = lazy(() => import("@/components/features/sales-settings").then(module => ({ default: module.SalesSettingsPage })))
-const GeneralSettingsPage = lazy(() => import("@/components/features/general-settings").then(module => ({ default: module.GeneralSettingsPage })))
-const PaymentSettingsPage = lazy(() => import("@/components/features/payment-settings").then(module => ({ default: module.PaymentSettingsPage })))
-const StatusPage = lazy(() => import("@/components/features/status-page").then(module => ({ default: module.StatusPage })))
-const SubconverterPage = lazy(() => import("@/components/features/subconverter").then(module => ({ default: module.SubconverterPage })))
-const CashierPage = lazy(() => import("@/components/features/cashier-page").then(module => ({ default: module.CashierPage })))
-const CheckoutPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.CheckoutPage })))
-const DeliveryPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.DeliveryPage })))
-const PricingPage = lazy(() => import("@/components/features/public-pages").then(module => ({ default: module.PricingPage })))
-const RecurringPlanComparePage = lazy(() => import("@/components/features/plan-compare-page").then(module => ({ default: module.RecurringPlanComparePage })))
-const ForgotPasswordPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.ForgotPasswordPage })))
-const LoginPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.LoginPage })))
-const RegisterPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.RegisterPage })))
-const ResetPasswordPage = lazy(() => import("@/components/features/auth-pages").then(module => ({ default: module.ResetPasswordPage })))
-const AccountShell = lazy(() => import("@/components/features/account-shell").then(module => ({ default: module.AccountShell })))
-const AccountOnboardingPage = lazy(() => import("@/components/features/account-onboarding").then(module => ({ default: module.AccountOnboardingPage })))
-const AccountNodeStatusPage = lazy(() => import("@/components/features/account-node-status").then(module => ({ default: module.AccountNodeStatusPage })))
-const OrangeButtonShowcasePage = lazy(() => import("@/components/features/orange-button-showcase").then(module => ({ default: module.OrangeButtonShowcasePage })))
-const ChangelogAdminPage = lazy(() => import("@/components/features/changelog-admin").then(module => ({ default: module.ChangelogAdminPage })))
-const AccountChangelogPage = lazy(() => import("@/components/features/changelog").then(module => ({ default: module.AccountChangelogPage })))
-const AccountDocsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountDocsPage })))
-const AccountOrderDetailPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrderDetailPage })))
-const AccountOrdersPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrdersPage })))
-const AccountOverviewPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOverviewPage })))
-const AccountReferralPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountReferralPage })))
-const AccountSettingsPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountSettingsPage })))
-const AccountWalletPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountWalletPage })))
-const PaymentResultPage = lazy(() => import("@/components/features/account-pages").then(module => ({ default: module.PaymentResultPage })))
-const AccountTicketsPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketsPage })))
-const AccountTicketCreatePage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketCreatePage })))
-const AccountTicketDetailPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketDetailPage })))
-const AdminTicketsPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AdminTicketsPage })))
-const AdminTicketDetailPage = lazy(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AdminTicketDetailPage })))
-const OpenInBrowserPage = lazy(() => import("@/components/features/open-in-browser").then(module => ({ default: module.OpenInBrowserPage })))
+const DashboardPage = lazyPage(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
+const SalesAnalyticsPage = lazyPage(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesAnalyticsPage })))
+const SalesProfitabilityPage = lazyPage(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesProfitabilityPage })))
+const SyncJobsPage = lazyPage(() => import("@/components/features/sync-jobs").then(module => ({ default: module.SyncJobsPage })))
+const NodeHubPage = lazyPage(() => import("@/components/features/node-hub").then(module => ({ default: module.NodeHubPage })))
+const UsersPage = lazyPage(() => import("@/components/features/users").then(module => ({ default: module.UsersPage })))
+const OrdersPage = lazyPage(() => import("@/components/features/bills").then(module => ({ default: module.OrdersPage })))
+const OrderDetailPage = lazyPage(() => import("@/components/features/bills").then(module => ({ default: module.OrderDetailPage })))
+const UserDetailPage = lazyPage(() => import("@/components/features/details").then(module => ({ default: module.UserDetailPage })))
+const EmbyPage = lazyPage(() => import("@/components/features/emby").then(module => ({ default: module.EmbyPage })))
+const PricingSettingsPage = lazyPage(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingSettingsPage })))
+const PricingDetailPage = lazyPage(() => import("@/components/features/pricing-settings").then(module => ({ default: module.PricingDetailPage })))
+const ServiceDeliveriesPage = lazyPage(() => import("@/components/features/service-delivery").then(module => ({ default: module.ServiceDeliveriesPage })))
+const CatalogV2ProductsPage = lazyPage(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2ProductsPage })))
+const CatalogV2ProductDetailPage = lazyPage(() => import("@/components/features/catalog-v2").then(module => ({ default: module.CatalogV2ProductDetailPage })))
+const SalesSettingsPage = lazyPage(() => import("@/components/features/sales-settings").then(module => ({ default: module.SalesSettingsPage })))
+const GeneralSettingsPage = lazyPage(() => import("@/components/features/general-settings").then(module => ({ default: module.GeneralSettingsPage })))
+const PaymentSettingsPage = lazyPage(() => import("@/components/features/payment-settings").then(module => ({ default: module.PaymentSettingsPage })))
+const StatusPage = lazyPage(() => import("@/components/features/status-page").then(module => ({ default: module.StatusPage })))
+const SubconverterPage = lazyPage(() => import("@/components/features/subconverter").then(module => ({ default: module.SubconverterPage })))
+const CashierPage = lazyPage(() => import("@/components/features/cashier-page").then(module => ({ default: module.CashierPage })))
+const CheckoutPage = lazyPage(() => import("@/components/features/public-pages").then(module => ({ default: module.CheckoutPage })))
+const DeliveryPage = lazyPage(() => import("@/components/features/public-pages").then(module => ({ default: module.DeliveryPage })))
+const PricingPage = lazyPage(() => import("@/components/features/public-pages").then(module => ({ default: module.PricingPage })))
+const RecurringPlanComparePage = lazyPage(() => import("@/components/features/plan-compare-page").then(module => ({ default: module.RecurringPlanComparePage })))
+const ForgotPasswordPage = lazyPage(() => import("@/components/features/auth-pages").then(module => ({ default: module.ForgotPasswordPage })))
+const LoginPage = lazyPage(() => import("@/components/features/auth-pages").then(module => ({ default: module.LoginPage })))
+const RegisterPage = lazyPage(() => import("@/components/features/auth-pages").then(module => ({ default: module.RegisterPage })))
+const ResetPasswordPage = lazyPage(() => import("@/components/features/auth-pages").then(module => ({ default: module.ResetPasswordPage })))
+const AccountShell = lazyPage(() => import("@/components/features/account-shell").then(module => ({ default: module.AccountShell })))
+const AccountOnboardingPage = lazyPage(() => import("@/components/features/account-onboarding").then(module => ({ default: module.AccountOnboardingPage })))
+const AccountNodeStatusPage = lazyPage(() => import("@/components/features/account-node-status").then(module => ({ default: module.AccountNodeStatusPage })))
+const OrangeButtonShowcasePage = lazyPage(() => import("@/components/features/orange-button-showcase").then(module => ({ default: module.OrangeButtonShowcasePage })))
+const ChangelogAdminPage = lazyPage(() => import("@/components/features/changelog-admin").then(module => ({ default: module.ChangelogAdminPage })))
+const AccountChangelogPage = lazyPage(() => import("@/components/features/changelog").then(module => ({ default: module.AccountChangelogPage })))
+const AccountDocsPage = lazyPage(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountDocsPage })))
+const AccountOrderDetailPage = lazyPage(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrderDetailPage })))
+const AccountOrdersPage = lazyPage(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOrdersPage })))
+const AccountOverviewPage = lazyPage(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountOverviewPage })))
+const AccountReferralPage = lazyPage(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountReferralPage })))
+const AccountSettingsPage = lazyPage(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountSettingsPage })))
+const AccountWalletPage = lazyPage(() => import("@/components/features/account-pages").then(module => ({ default: module.AccountWalletPage })))
+const PaymentResultPage = lazyPage(() => import("@/components/features/account-pages").then(module => ({ default: module.PaymentResultPage })))
+const AccountTicketsPage = lazyPage(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketsPage })))
+const AccountTicketCreatePage = lazyPage(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketCreatePage })))
+const AccountTicketDetailPage = lazyPage(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AccountTicketDetailPage })))
+const AdminTicketsPage = lazyPage(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AdminTicketsPage })))
+const AdminTicketDetailPage = lazyPage(() => import("@/components/features/ticket-pages").then(module => ({ default: module.AdminTicketDetailPage })))
+const OpenInBrowserPage = lazyPage(() => import("@/components/features/open-in-browser").then(module => ({ default: module.OpenInBrowserPage })))
 
 if (import.meta.env.DEV) document.title = `[LOCAL] ${document.title}`
 
+// The admin pages, fetched while idle once the admin shell is up so the sidebar never waits on a download.
+const ADMIN_PAGES = [DashboardPage, SalesAnalyticsPage, SalesProfitabilityPage, SyncJobsPage, NodeHubPage, UsersPage, UserDetailPage, OrdersPage, OrderDetailPage, AdminTicketsPage, AdminTicketDetailPage, ChangelogAdminPage, ServiceDeliveriesPage, PricingSettingsPage, PricingDetailPage, CatalogV2ProductsPage, CatalogV2ProductDetailPage, SalesSettingsPage, GeneralSettingsPage, PaymentSettingsPage, EmbyPage, SubconverterPage]
+
 function ProtectedApp() {
+  useEffect(() => prefetchPages(ADMIN_PAGES), [])
   return (
     <DataProvider>
       <AppShell />

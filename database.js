@@ -878,6 +878,24 @@ class PostgresDataStore {
     return result.rows.map(row => ({ date: row.date, hour: Number(row.hour), nodeGuid: row.node_guid, nodeName: row.node_name, up: Number(row.up_bytes), down: Number(row.down_bytes) }));
   }
 
+  // One machine's traffic per user and node over a date range: rows billed under the machine key
+  // (hub-m<id>) or one of its nodes (hub-m<id>-n<node>), with each node's latest name.
+  async xuiMachineUserTraffic(machineGuid, fromDateKey, toDateKey) {
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT email, node_guid, SUM(up_bytes)::bigint AS up, SUM(down_bytes)::bigint AS down,
+                (ARRAY_AGG(node_name ORDER BY date DESC) FILTER (WHERE node_name <> ''))[1] AS node_name,
+                (ARRAY_AGG(user_id ORDER BY date DESC) FILTER (WHERE user_id <> ''))[1] AS user_id
+         FROM xui_daily_traffic
+         WHERE date BETWEEN $2 AND $3 AND (node_guid = $1 OR node_guid LIKE $1 || '-n%')
+         GROUP BY email, node_guid`,
+        [String(machineGuid), fromDateKey, toDateKey]
+      ),
+      `xui machine user traffic ${machineGuid}`
+    );
+    return result.rows.map(row => ({ email: row.email, nodeGuid: row.node_guid, nodeName: row.node_name || "", userId: row.user_id || "", up: Number(row.up), down: Number(row.down) }));
+  }
+
   // Directional application traffic rows used by sales profitability reports.
   async xuiTrafficRange(fromDateKey, toDateKey) {
     const result = await withPgRetry(

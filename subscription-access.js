@@ -209,6 +209,36 @@ function summarizeSubscriptionAccess(rows = [], { now = Date.now(), nodeIps = ne
   };
 }
 
+// Where a user usually pulls from: the place (country, province, city) of the most counted pulls and,
+// within it, the carrier seen most. Pulls with no known place and carrier-registered IPv6 (placed at
+// Beijing whatever the real city) are left out. Ties go to the place pulled most recently (rows are
+// newest first). Returns { geoCountry, province, city, isp, count, total } or null.
+function commonPlace(rows = [], nodeIps = new Set()) {
+  const nodes = nodeIps instanceof Set ? nodeIps : new Set(nodeIps || []);
+  const places = new Map();
+  let total = 0;
+  for (const row of countedPulls(rows, nodes)) {
+    const geoCountry = String(row.geoCountry || "");
+    if (!geoCountry || geoCountry === "0" || carrierRegisteredIpv6(row)) continue;
+    total += 1;
+    const province = String(row.province || "");
+    const city = String(row.city || "");
+    const key = `${geoCountry}|${province}|${city}`;
+    const entry = places.get(key) || { geoCountry, province, city, count: 0, isps: new Map() };
+    entry.count += 1;
+    const isp = String(row.isp || "");
+    if (isp) entry.isps.set(isp, (entry.isps.get(isp) || 0) + 1);
+    places.set(key, entry);
+  }
+  let best = null;
+  for (const entry of places.values()) if (!best || entry.count > best.count) best = entry;
+  if (!best) return null;
+  let isp = "";
+  let ispCount = 0;
+  for (const [name, count] of best.isps) if (count > ispCount) { isp = name; ispCount = count; }
+  return { geoCountry: best.geoCountry, province: best.province, city: best.city, isp, count: best.count, total };
+}
+
 // Whether the last 24 hours of pulls (node IPs already removed) warrant a Telegram alert: two or more
 // mainland cities, and either no alert in the last 24 hours or a city the last alert did not name.
 function crossCityAlert(rows, lastAlert, now = Date.now()) {
@@ -232,5 +262,6 @@ module.exports = {
   distinctCities,
   cityChanges,
   summarizeSubscriptionAccess,
+  commonPlace,
   crossCityAlert
 };

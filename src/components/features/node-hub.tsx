@@ -12,6 +12,7 @@ import { toast } from "@/components/features/toast"
 import { advancedSettingsText, applyAdvancedSettings, emptyNodeDraft, NODE_HUB_NETWORK_LEVELS, NODE_HUB_PROTOCOLS, NodeHubNodeForm, nodeDraftFrom, nodeSecurityLabel, protocolLabel, type NodeHubNodeDraft } from "@/components/features/node-hub-node-form"
 import { NodeHubRelaysTab } from "@/components/features/node-hub-relays"
 import { NodeHubLineGroupsTab } from "@/components/features/node-hub-line-groups"
+import { NodeHubMachineTraffic } from "@/components/features/node-hub-machine-traffic"
 import { MachineCostSection, MachineCostSummary, useMachineCosts } from "@/components/features/node-hub-machine-cost"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ActionButton } from "@/components/arc/action-button/action-button"
@@ -37,7 +38,7 @@ import { formatBytes, formatDateTime } from "@/utils"
 // A user's own speed limit is set on the user details page.
 // Everything goes through the app's /api/node-hub/* proxy.
 
-const TABS = ["overview", "machines", "relays", "nodes", "groups"] as const
+const TABS = ["overview", "machines", "relays", "nodes", "groups", "traffic"] as const
 type TabId = typeof TABS[number]
 type MachineDraft = { name: string; host: string; notes: string; isActive: boolean }
 const emptyMachineDraft = (): MachineDraft => ({ name: "", host: "", notes: "", isActive: true })
@@ -396,6 +397,7 @@ export function NodeHubPage() {
             <TabsTrigger value="relays">中转机</TabsTrigger>
             <TabsTrigger value="nodes">节点</TabsTrigger>
             <TabsTrigger value="groups">权限组</TabsTrigger>
+            <TabsTrigger value="traffic">用户流量</TabsTrigger>
           </TabsList>
           <div className="flex flex-wrap items-center gap-2">
             <ActionButton variant="secondary" icon={<RefreshCw />} collapse onClick={() => { void refresh(); void reloadMachineCosts(true); setRefreshKey(key => key + 1) }} disabled={loading} pending={loading} label="刷新" />
@@ -440,6 +442,10 @@ export function NodeHubPage() {
 
         <TabsContent value="groups">
           <NodeHubLineGroupsTab refreshKey={refreshKey} />
+        </TabsContent>
+
+        <TabsContent value="traffic">
+          <NodeHubMachineTraffic machines={machines} machineId={searchParams.get("trafficMachine") || ""} onMachineChange={value => updateParam("trafficMachine", value, "")} refreshKey={refreshKey} />
         </TabsContent>
 
       </Tabs>

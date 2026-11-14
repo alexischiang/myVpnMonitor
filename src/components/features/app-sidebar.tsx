@@ -139,9 +139,12 @@ type NavState = {
 }
 
 function ItemLink({ item, compact, pathname }: { item: SidebarNavItem; compact?: boolean; pathname: string }) {
+  const { isMobile, setMobileOpen } = useAdminSidebar()
   const link = (
     <Button asChild variant="nav" size={compact ? "icon-sm" : "sm"}>
-      <NavLink to={item.href ?? item.url} aria-label={compact ? item.title : undefined} target={item.external ? "_blank" : undefined} rel={item.external ? "noopener noreferrer" : undefined}>
+      {/* The phone drawer closes on the tap itself: the route only changes once the next page has loaded, and a link to the
+          current page (or one that only changes the query) changes no path at all, so waiting for the path left the drawer up. */}
+      <NavLink to={item.href ?? item.url} onClick={isMobile ? () => setMobileOpen(false) : undefined} aria-label={compact ? item.title : undefined} target={item.external ? "_blank" : undefined} rel={item.external ? "noopener noreferrer" : undefined}>
         <item.icon className="size-4 shrink-0" />
         {compact ? null : <span className="min-w-0 flex-1 truncate">{item.title}</span>}
         {!compact && item.external ? <IconExternalLink className="size-4 text-muted-foreground" /> : null}

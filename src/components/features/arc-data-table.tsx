@@ -190,6 +190,8 @@ export function DataTable<TData, TValue>({
     key: column.id,
     label: columnLabel(column as { id: string; columnDef: ColumnDef<TData, unknown> }),
     sortable: column.getCanSort() && typeof column.accessorFn !== "undefined",
+    // Row actions stay in view while a wide table scrolls sideways.
+    pinned: column.id === "actions" ? "end" : undefined,
     render: (_value, arcRow) => {
       const cell = rowsById.get(arcRow.__id)?.getVisibleCells().find(item => item.column.id === column.id)
       return cell ? flexRender(cell.column.columnDef.cell, cell.getContext()) : null

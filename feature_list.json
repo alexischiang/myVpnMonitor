@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-13",
+  "updated_at": "2026-11-14",
   "required_fields": [
     "id",
     "name",
@@ -6005,6 +6005,181 @@
         "2026-11-13: isolated local server on test schema subrelay_verify: mainland IPv6 /sub and /api/sub -> 302 to https://sub.webprovider.top with query kept; IPv4, abroad IPv6 and relayed -> 200; relayed row ip 101.87.5.104 source ipv4-relay; forged X-Sub-Client-IP from a non-relay IPv6 still redirected; unknown token 404; no server errors; schema dropped",
         "2026-11-13: hncloud nginx site sub.webprovider.top with Let's Encrypt cert (webroot /var/www/sub-acme, renew hook reload nginx); https://sub.webprovider.top/sub/nosuchtoken returns the app 404 text through Cloudflare, / returns nginx 404"
       ]
+    },
+    {
+      "id": "user-detail-inviter",
+      "name": "用户详情侧边栏显示邀请人",
+      "description": "The user detail endpoint returns inviter { accountId, email, userId } from the account's referredByAccountId (userId is the inviter's linked subscription user, otherwise its account:<id> row). The profile sidebar shows 邀请人 under 邮箱 as a link to the inviter's detail page, or - when the account registered without a referral code.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Detail API returns the inviter of referred accounts and null otherwise",
+        "Sidebar shows 邀请人 under 邮箱, linking to the inviter's detail page"
+      ],
+      "verification": [
+        "2026-11-14: node --check server.js, npm run verify:fast, npm run test:hub and git diff --check pass"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/<referred self-hosted user>",
+          "/users/detail/<inviter>"
+        ],
+        "interactions": [
+          "isolated server.js on a copy of the dev DB (test DB schema, outside services blanked) with a stub node-hub serving two machines and three nodes: sidebar shows 邀请人 (inviter email) under 邮箱 at desktop and 375px; tapping it opened the inviter's page, which shows 邀请人 -"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-14"
+      }
+    },
+    {
+      "id": "user-detail-deleted-nodes-merged",
+      "name": "用户详情倍率流量：已删除节点合并显示在最底部",
+      "description": "The traffic sync marks per-node rows whose node no longer exists (no live name) with deleted: true. NodeTrafficList ranks live nodes as before and folds every deleted node (flag, or the old （已删除节点） name suffix for rows synced before the flag) into one unranked 已删除节点（N 个） row at the bottom, spanning both columns, with its summed weighted bytes and share.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Sync output flags nodes missing from the hub overview as deleted",
+        "Deleted nodes appear as one merged row at the bottom of 倍率流量"
+      ],
+      "verification": [
+        "2026-11-14: npm run verify:fast and git diff --check pass; re-ran the node-hub-billing job on the isolated server with cycle rows on two live hub nodes, a removed hub node and an old 3x-ui guid: the API returned the two removed ones with deleted: true"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/<self-hosted user>"
+        ],
+        "interactions": [
+          "isolated server.js on a copy of the dev DB (test DB schema, outside services blanked) with a stub node-hub serving two machines and three nodes: 倍率流量 shows 1 日本 AWS · JP-Reality 63%, 2 JP-Hy2 19%, then – 已删除节点（2 个） 2.8 GB 19% as the last row"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-14"
+      }
+    },
+    {
+      "id": "admin-mobile-nav-and-safari",
+      "name": "移动端管理侧边栏点击不跳转修复与 Safari 兼容检查",
+      "description": "Cause: React Router 7's BrowserRouter wraps every navigation in startTransition, so tapping a page whose lazy chunk is not loaded kept the old page, and the drawer (closed only when the pathname changed) stayed open until the download finished; a link to the current page or a query-only change never closed it. Fix: nav links close the phone drawer on tap; route pages use lazyPage (src/lib/lazy-page.ts), which shows chunk downloads on the request progress bar; the admin shell prefetches the admin page chunks one by one while idle. Safari: requestIdleCallback is missing (setTimeout fallback in lazy-page); sortable-data-table's scroll-timeline fade is now behind @supports (Safari left it covering the first sort control); iOS text fields get at least 16px so focusing one no longer zooms the page. The baseline is already Safari 16.4 (Tailwind v4), so toSorted, :has, color-mix and container queries are fine; relative colors already have fallbacks.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Reproduce the stuck navigation on a slow network at phone width",
+        "Drawer closes on tap and progress shows while a chunk loads",
+        "Admin page chunks are prefetched while idle",
+        "Safari-specific issues found are fixed"
+      ],
+      "verification": [
+        "2026-11-14: reproduced through a proxy that holds JS chunks 3 s: after tapping 同步任务 -> Subconverter the old page stayed for 3+ s (URL already changed); with the fix the drawer was gone at 600 ms with the progress bar showing, and the page arrived when the chunk did",
+        "2026-11-14: after ~10 s idle the dashboard, sales-analytics, node-hub, users, details and bills chunks were already fetched; tapping Node Hub switched pages within 400 ms",
+        "2026-11-14: npm run check, npm run verify:fast and git diff --check pass; Safari itself was not available, the Safari items are from the code audit"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/sync-jobs",
+          "/subconverter",
+          "/node-hub (375x812, slow proxy)"
+        ],
+        "interactions": [
+          "Open drawer, tap Subconverter before its chunk loaded: drawer closed immediately, progress bar shown, page arrived after the download",
+          "Tap Node Hub after idle prefetch: page switched in under 400 ms, drawer closed"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-14"
+      }
+    },
+    {
+      "id": "user-detail-common-place",
+      "name": "用户详情侧边栏显示常用城市和运营商",
+      "description": "subscription-access.js commonPlace(rows, nodeIps): over the retained 90 days of counted pulls (no node IPs, no IPv4-redirect halves), the place (country/province/city) pulled most, with its most frequent carrier; unknown places and carrier-registered IPv6 Beijing are skipped; ties go to the newest place. The detail endpoint returns it as commonPlace and the sidebar shows 常用城市 (广东省 深圳市 · 电信, n/total 次拉取) for subscription users.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "subscription-access-log",
+        "subscription-share-ipv6-beijing"
+      ],
+      "done_criteria": [
+        "commonPlace picks the most-pulled city and its main carrier, ignoring node, redirect, unknown and carrier IPv6 Beijing pulls",
+        "Sidebar shows 常用城市 with the pull count"
+      ],
+      "verification": [
+        "2026-11-14: node test-subscription-access.js (Shenzhen 3 of 4 counted with Telecom over 4 carrier-IPv6 Beijing and 3 node-IP pulls; tie -> newest; empty -> null), npm run verify:fast and git diff --check pass"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/<self-hosted user with 17 seeded pulls>"
+        ],
+        "interactions": [
+          "isolated server.js on a copy of the dev DB (test DB schema, outside services blanked) with a stub node-hub serving two machines and three nodes: 6 Shenzhen (4 电信, 2 移动), 3 Hangzhou and 8 Telecom IPv6 Beijing pulls -> 常用城市 广东省 深圳市 · 电信, 6/9 次拉取; a user with no pulls shows -"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-14"
+      }
+    },
+    {
+      "id": "table-pinned-actions",
+      "name": "带操作列的表格固定操作列",
+      "description": "sortable-data-table gains a column pinned: \"end\" option: on the desktop table layout the column sticks to the right edge while the table scrolls sideways, cells keep their own fill, and an edge rule and shadow appear only while the table overflows (data-overflow on the scroller). The phone folded layout is unchanged. DataTable pins its actions column and SimpleTable pins any column titled 操作, which covers every table with an 操作 column.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Actions column stays visible while a wide table scrolls",
+        "Applies to DataTable actions and SimpleTable 操作 columns"
+      ],
+      "verification": [
+        "2026-11-14: npm run check, npm run verify:fast and git diff --check pass"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=nodes",
+          "/users",
+          "/orders",
+          "/sync-jobs",
+          "/payment-settings"
+        ],
+        "interactions": [
+          "node-hub nodes table (688px in a 544px scroller): scrolled to the end, the 线路 column slid under the pinned 操作 column with the edge shadow",
+          "users 30, orders 30, sync-jobs 6, payment-settings 3 pinned action cells, all position sticky"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-14"
+      }
+    },
+    {
+      "id": "node-hub-machine-user-traffic",
+      "name": "node-hub 用户流量子页：按机器统计用户流量",
+      "description": "GET /api/node-hub/machine-user-traffic?machine=<id>&days=1|7|30 sums xui_daily_traffic rows billed to the machine (hub-m<id>) or its nodes (hub-m<id>-n<node>) per user and node in raw bytes (no multipliers). Users are matched by line email (or the row's user id), heaviest first, at most 100; nodes are named from the live hub overview, removed nodes keep their last logged name and are flagged. The node-hub page has a 用户流量 tab: machine select (URL trafficMachine), 今天/7 天/30 天, node legend, and a ranked list of users with a stacked bar per node (scaled to the top user), per-node bytes, up/down, share and a link to the user's detail.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "Endpoint returns per-user, per-node traffic for one machine over the range",
+        "Tab lists the machine's heaviest users first with the nodes they used",
+        "Machine and range can be switched"
+      ],
+      "verification": [
+        "2026-11-14: node --check server.js, npm run verify:fast, npm run test:hub and git diff --check pass",
+        "2026-11-14: API on seeded rows: machine 1 returned 10 users (one unlinked email flagged) and nodes JP-Reality, JP-Hy2 and the removed JP-Old (deleted: true); machine 2 returned only HK-Reality traffic"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=traffic",
+          "/node-hub?tab=traffic&trafficMachine=2"
+        ],
+        "interactions": [
+          "isolated server.js on a copy of the dev DB (test DB schema, outside services blanked) with a stub node-hub serving two machines and three nodes: 日本 AWS 7 天 lists 10 users with stacked node bars; switched to 30 天 (range 10-16 to 11-14) and to 香港 GoMami (URL trafficMachine=2); 375px: no horizontal scroll"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-14"
+      }
     }
   ]
 }
