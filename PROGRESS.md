@@ -1,12 +1,12 @@
 # Current State
 
-- Last Updated: 2026-11-12
-- Current Objective: 订阅访问日志：境内跨地级市拉取判定疑似分享并 Telegram 提醒
+- Last Updated: 2026-11-14
+- Current Objective: 用户详情邀请人/常用城市/已删除节点合并、移动端导航与 Safari 修复、表格操作列固定、node-hub 机器用户流量子页（已实现并验证，未提交）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
 - Full verification: `npm run verify`
-- Active feature: none
+- Active feature: subscription-ipv4-relay
 - Blockers: none
 
 ## Verification Evidence
@@ -612,8 +612,16 @@
 
 - 2026-11-08: npm run verify、verify:harness、git diff --check 通过；/xui-inbounds 桌面与手机验证无控制台错误
 
+- 2026-11-12: npm run verify 通过；Deploy run 43166657538 成功；线上 /api/health 全部正常，新接口未登录返回 403
+
+- 2026-11-13: test-subscription-access.js、verify:fast、verify:harness、git diff --check 通过；生产数据只读复算可疑用户 8→2
+
+- 2026-11-13: npm run verify、test-subscription-access.js、本地隔离服务端到端、hncloud 中转 404 透传均通过
+
+- 2026-11-14: npm run check、verify:fast、test:hub、verify:harness、git diff --check 通过；隔离服务器（开发库副本 + 模拟 node-hub + 3 秒慢速代理）浏览器验证 6 项功能，console/page errors 为空
+
 ## Next Session
 
-- Files: `.claude/launch.json`, `.github/workflows/deploy.yml`, `PROGRESS.md`, `commerce/gateway.js`, `commerce/payments.js`, `database.js`, `feature_list.json`, `package-lock.json`, `package.json`, `server.js`, `src/components/features/bills.tsx`, `src/components/features/details.tsx`, `src/components/features/general-settings.tsx`, `src/types.ts`, `test-payment.js`, `test.js`, `ip-region.js`, `scripts/fetch-ip2region.js`, `src/components/features/admin-payment-link-dialog.tsx`, `src/components/features/user-subscription-access.tsx`, `subscription-access.js`, `test-subscription-access.js`
+- Files: `database.js`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/api.ts`, `src/components/arc/sortable-data-table/sortable-data-table.module.css`, `src/components/arc/sortable-data-table/sortable-data-table.tsx`, `src/components/features/app-sidebar.tsx`, `src/components/features/arc-data-table.tsx`, `src/components/features/details.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/node-traffic-list.tsx`, `src/components/features/simple-table.tsx`, `src/components/features/user-subscription-access.tsx`, `src/main.tsx`, `src/styles.css`, `src/types.ts`, `subscription-access.js`, `test-subscription-access.js`, `src/components/features/node-hub-machine-traffic.tsx`, `src/components/features/subscription-place.ts`, `src/lib/lazy-page.ts`
 - Known risks: none
-- Recommended Next Step: 部署前确认生产机能访问 raw.githubusercontent.com（deploy 会下载 data/ip2region）；部署后检查 subscription_access_logs 的 city 字段有值、IP 来源为 cf-connecting-ip；本地演示数据在测试库 schema subaccess_demo，用完删除；另：用户确认后提交并部署，再把生产 super 组打开包含全部节点；节点 19 届时会进入 super
+- Recommended Next Step: 用户确认后提交；部署后在真机 iOS Safari 上复查侧边栏跳转和输入框不再缩放；subscription-ipv4-relay 仍待线上验证

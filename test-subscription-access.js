@@ -7,7 +7,11 @@ const {
   distinctCities,
   cityChanges,
   summarizeSubscriptionAccess,
-  crossCityAlert
+  crossCityAlert,
+  ipv4RedirectLocation,
+  countedPulls,
+  commonPlace,
+  IPV4_REDIRECT_RESULT
 } = require("./subscription-access");
 const { parseRegion } = require("./ip-region");
 
@@ -22,6 +26,51 @@ assert.deepStrictEqual(
   "a forged first X-Forwarded-For hop is ignored"
 );
 assert.deepStrictEqual(subscriptionClientIp({ headers: { "cf-connecting-ip": "not-an-ip" }, socket: { remoteAddress: "::ffff:10.0.0.2" } }), { ip: "10.0.0.2", source: "socket" });
+
+// IPv4 relay: X-Sub-Client-IP is taken only from a request that comes from the relay's own address.
+const relayIps = ["191.223.40.89"];
+assert.deepStrictEqual(
+  subscriptionClientIp({ headers: { "cf-connecting-ip": "191.223.40.89", "x-sub-client-ip": "101.87.5.103" } }, { relayIps }),
+  { ip: "101.87.5.103", source: "ipv4-relay" }
+);
+assert.deepStrictEqual(
+  subscriptionClientIp({ headers: { "cf-connecting-ip": "203.0.113.9", "x-sub-client-ip": "101.87.5.103" } }, { relayIps }),
+  { ip: "203.0.113.9", source: "cf-connecting-ip" },
+  "anyone else setting X-Sub-Client-IP is ignored"
+);
+assert.deepStrictEqual(
+  subscriptionClientIp({ headers: { "cf-connecting-ip": "191.223.40.89", "x-sub-client-ip": "bogus" } }, { relayIps }),
+  { ip: "191.223.40.89", source: "cf-connecting-ip" }
+);
+assert.deepStrictEqual(
+  subscriptionClientIp({ headers: { "cf-connecting-ip": "191.223.40.89", "x-sub-client-ip": "101.87.5.103" } }),
+  { ip: "191.223.40.89", source: "cf-connecting-ip" },
+  "no relay configured, no trust"
+);
+
+// IPv4 redirect: mainland IPv6 pulls go to the IPv4-only host on the same path and query.
+const redirectBase = { baseUrl: "https://sub.webprovider.top/", path: "/sub/abc123?target=clash", ipSource: "cf-connecting-ip" };
+const telecomBj = { country: "中国", province: "北京市", city: "北京市", isp: "电信" };
+assert.strictEqual(ipv4RedirectLocation({ ...redirectBase, ip: "240e:b8f:3b5e:5801::1", region: telecomBj }), "https://sub.webprovider.top/sub/abc123?target=clash");
+assert.strictEqual(ipv4RedirectLocation({ ...redirectBase, path: "/api/sub/abc123", ip: "2409:8963::1", region: { country: "中国", province: "广东省", city: "广州市" } }), "https://sub.webprovider.top/api/sub/abc123");
+assert.strictEqual(ipv4RedirectLocation({ ...redirectBase, ip: "101.87.5.103", region: telecomBj }), "", "IPv4 is served here");
+assert.strictEqual(ipv4RedirectLocation({ ...redirectBase, ip: "240e::1", ipSource: "ipv4-relay", region: telecomBj }), "", "never redirect a relayed pull");
+assert.strictEqual(ipv4RedirectLocation({ ...redirectBase, ip: "2a02:6ea0::11", region: { country: "United States", province: "Florida", city: "Miami" } }), "", "abroad is served here");
+assert.strictEqual(ipv4RedirectLocation({ ...redirectBase, ip: "2404:c800::1", region: { country: "中国", province: "香港特别行政区", city: "" } }), "", "Hong Kong is served here");
+assert.strictEqual(ipv4RedirectLocation({ ...redirectBase, ip: "240e::1", region: null }), "", "unknown place is served here");
+assert.strictEqual(ipv4RedirectLocation({ ...redirectBase, baseUrl: "", ip: "240e::1", region: telecomBj }), "", "off without a base URL");
+assert.strictEqual(ipv4RedirectLocation({ ...redirectBase, path: "/account", ip: "240e::1", region: telecomBj }), "", "only subscription paths");
+
+// The IPv6 half of a redirect doesn't count as a place.
+const redirectRows = [
+  { at: "2026-11-12T10:00:05.000Z", ip: "101.87.5.103", geoCountry: "中国", province: "上海市", city: "上海市", isp: "电信", result: "ok", userAgent: "clash-verge/v2" },
+  { at: "2026-11-12T10:00:04.000Z", ip: "2409:8963::1", geoCountry: "中国", province: "广东省", city: "广州市", isp: "移动", result: IPV4_REDIRECT_RESULT, userAgent: "clash-verge/v2" }
+];
+assert.strictEqual(countedPulls(redirectRows).length, 1);
+const redirectSummary = summarizeSubscriptionAccess(redirectRows, { now: Date.parse("2026-11-12T12:00:00Z") });
+assert.deepStrictEqual(redirectSummary.windows.all.cities, ["上海市"]);
+assert.strictEqual(redirectSummary.ipv4Redirects, 1);
+assert.strictEqual(redirectSummary.ips.length, 2, "the redirected IPv6 is still listed");
 
 // Headers: credentials redacted, long values capped, the rest kept as-is.
 const logged = headersForAccessLog({ "user-agent": "clash-verge/v2.0", cookie: "session=abc", authorization: "Bearer x", "x-long": "a".repeat(600) });
@@ -51,6 +100,25 @@ assert.deepStrictEqual(mainlandLocation({ geoCountry: "中国", province: "广�
 assert.strictEqual(mainlandLocation({ geoCountry: "中国", province: "香港特别行政区", city: "" }), null);
 assert.strictEqual(mainlandLocation({ geoCountry: "中国", province: "台湾省", city: "" }), null);
 assert.strictEqual(mainlandLocation({ geoCountry: "United States", province: "California", city: "Los Angeles" }), null);
+
+// Telecom / Unicom IPv6 located at Beijing is only the carrier's registration and doesn't count;
+// the same in IPv4, or China Mobile IPv6, is a real place.
+const bjV6 = { geoCountry: "中国", province: "北京市", city: "北京市" };
+assert.strictEqual(mainlandLocation({ ...bjV6, ip: "240e:b8f:3b5e:5801::1", isp: "电信" }), null);
+assert.strictEqual(mainlandLocation({ ...bjV6, ip: "2408:840d:8f50:86e3::1", isp: "联通" }), null);
+assert.strictEqual(mainlandLocation({ ...bjV6, ip: "2408:840d:8f50:86e3::2", isp: "" }), null);
+assert.deepStrictEqual(mainlandLocation({ ...bjV6, ip: "2409:8a00:3291:6cc0::1", isp: "移动" }), { province: "北京市", city: "北京市" });
+assert.deepStrictEqual(mainlandLocation({ ...bjV6, ip: "114.246.238.59", isp: "联通" }), { province: "北京市", city: "北京市" });
+assert.deepStrictEqual(mainlandLocation({ geoCountry: "中国", province: "山东省", city: "威海市", ip: "2408:8214:d1d:3de0::1", isp: "联通" }), { province: "山东省", city: "威海市" });
+const dualStack = [
+  { at: "2026-11-12T11:00:00.000Z", ip: "101.87.5.103", geoCountry: "中国", province: "上海市", city: "上海市", isp: "电信", userAgent: "clash-verge/v2" },
+  { at: "2026-11-12T10:00:00.000Z", ip: "240e:b8f:3b5e:5801::1", ...bjV6, isp: "电信", userAgent: "clash-verge/v2" },
+  { at: "2026-11-12T09:00:00.000Z", ip: "101.87.5.103", geoCountry: "中国", province: "上海市", city: "上海市", isp: "电信", userAgent: "clash-verge/v2" }
+];
+const dualSummary = summarizeSubscriptionAccess(dualStack, { now: Date.parse("2026-11-12T12:00:00Z") });
+assert.strictEqual(dualSummary.suspicious, false, "a dual-stack Shanghai user is one city");
+assert.deepStrictEqual(dualSummary.cityChanges, []);
+assert.strictEqual(crossCityAlert(dualStack, null, Date.parse("2026-11-12T12:00:00Z")).send, false);
 
 // Cities: a province-only pull counts only when no known city lies in that province.
 const sz = { geoCountry: "中国", province: "广东省", city: "深圳市" };
@@ -100,5 +168,27 @@ assert.deepStrictEqual(crossCityAlert([sz, hz], null, now), { send: true, cities
 assert.strictEqual(crossCityAlert([sz, hz], { at: at(2), cities: ["杭州市", "深圳市"] }, now).send, false, "same cities within 24 hours stay quiet");
 assert.strictEqual(crossCityAlert([sz, hz], { at: at(25), cities: ["杭州市", "深圳市"] }, now).send, true, "the same cities alert again after 24 hours");
 assert.strictEqual(crossCityAlert([sz, hz, sc], { at: at(2), cities: ["杭州市", "深圳市"] }, now).send, true, "a new city alerts at once");
+
+// Common place: the city of the most counted pulls, with its most frequent carrier; node and redirect
+// pulls, unknown places and carrier-registered IPv6 Beijing do not count.
+const place = (ip, province, city, isp, extra = {}) => ({ ip, geoCountry: "中国", province, city, isp, at: "2026-11-10T00:00:00.000Z", ...extra });
+assert.deepStrictEqual(commonPlace([
+  place("1.1.1.1", "广东省", "深圳市", "电信"),
+  place("1.1.1.2", "广东省", "深圳市", "移动"),
+  place("1.1.1.3", "广东省", "深圳市", "电信"),
+  place("2.2.2.2", "浙江省", "杭州市", "联通"),
+  place("240e::1", "北京市", "北京市", "电信"),
+  place("240e::2", "北京市", "北京市", "电信"),
+  place("240e::3", "北京市", "北京市", "电信"),
+  place("240e::4", "北京市", "北京市", "电信"),
+  place("9.9.9.9", "北京市", "北京市", "联通"),
+  place("9.9.9.9", "北京市", "北京市", "联通"),
+  place("9.9.9.9", "北京市", "北京市", "联通"),
+  place("2408::5", "上海市", "上海市", "", { result: IPV4_REDIRECT_RESULT }),
+  { ip: "3.3.3.3", geoCountry: "", province: "", city: "", isp: "", at: "2026-11-10T00:00:00.000Z" }
+], new Set(["9.9.9.9"])), { geoCountry: "中国", province: "广东省", city: "深圳市", isp: "电信", count: 3, total: 4 });
+assert.deepStrictEqual(commonPlace([place("1.1.1.1", "浙江省", "杭州市", ""), place("2.2.2.2", "广东省", "深圳市", "电信")]).city, "杭州市", "a tie goes to the newest place");
+assert.strictEqual(commonPlace([]), null);
+assert.strictEqual(commonPlace([place("240e::1", "北京市", "北京市", "电信")]), null);
 
 console.log("subscription access tests passed");

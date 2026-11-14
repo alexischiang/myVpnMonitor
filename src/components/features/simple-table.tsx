@@ -32,6 +32,8 @@ export function SimpleTable<T>({ caption, columns, rows, rowKey, cells, emptyMes
     label: typeof column === "string" ? column : column.label,
     header: typeof column === "string" ? undefined : column.header,
     sortable: false,
+    // An 操作 column (row actions) stays in view while a wide table scrolls sideways.
+    pinned: (typeof column === "string" ? column : column.label) === "操作" ? "end" : undefined,
     render: (_value, row) => cellsById.get(row.__id)?.[index] ?? null,
   }))
   return <SortableDataTable rows={arcRows} columns={arcColumns} rowKey="__id" caption={caption} emptyMessage={emptyMessage} minWidth={minWidth} />

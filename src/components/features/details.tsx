@@ -13,6 +13,7 @@ import { useData } from "@/components/features/data-provider"
 import { EmptyState, TrafficProgress, UrlCell, UserStatusBadge } from "@/components/features/shared"
 import { UserBillsCard } from "@/components/features/user-bills-card"
 import { NodeTrafficList } from "@/components/features/node-traffic-list"
+import { placeLabel } from "@/components/features/subscription-place"
 import { OnlineIpList } from "@/components/features/online-ip-list"
 import { BackButton } from "@/components/features/back-button"
 import { UserNodeSpeedLimitDialog } from "@/components/features/user-node-speed-limit"
@@ -772,9 +773,11 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
             <div className="grid gap-3 [&>div]:grid-cols-[5rem_minmax(0,1fr)] [&>div]:items-start [&>div]:gap-3 [&>div>div]:text-right [&>div>div]:text-sm [&>div>div]:font-normal [&>div>p]:text-sm">
               <Info label="ID" value={user.customerID || "-"} />
               <Info label="邮箱" value={user.email || "-"} />
+              <Info label="邀请人" value={user.inviter ? <Link to={`/users/detail/${encodeURIComponent(user.inviter.userId)}`} className="underline-offset-4 hover:underline">{user.inviter.email || "-"}</Link> : "-"} />
               <Info label="账户" value={user.accountStatus === "active" ? "已认领" : user.accountStatus === "disabled" ? "已停用" : user.accountStatus === "invited" ? "等待认领" : "未认领"} />
               <Info label="用户类型" value={userTypeLabels[userType(user)]} />
               <Info label="钱包余额" value={walletBalance === null ? "-" : formatMoney(walletBalance)} />
+              {showSubscriptionAccess ? <Info label="常用城市" value={user.commonPlace ? <span className="grid"><span>{placeLabel(user.commonPlace)}</span><span className="text-xs text-muted-foreground tabular-nums">{user.commonPlace.count}/{user.commonPlace.total} 次拉取</span></span> : "-"} /> : null}
             </div>
           </div>{user.registeredOnly && !["active", "disabled", "invited"].includes(user.accountStatus || "") ? null : <ProfileActions items={[
             ...(["active", "invited"].includes(user.accountStatus || "") && user.accountId ? [{ label: "人工收款", icon: <Banknote />, onSelect: openManualPaymentDialog }, { label: "代客下单", icon: <QrCode />, onSelect: () => setPaymentLinkOpen(true) }] : []),

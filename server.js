@@ -51,6 +51,10 @@ const XUI_TRAFFIC_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 // line backend. Unset means self-hosted lines are not configured.
 const NODE_HUB_URL = (process.env.NODE_HUB_URL || "").replace(/\/+$/, "");
 const NODE_HUB_INTERNAL_TOKEN = String(process.env.NODE_HUB_INTERNAL_TOKEN || "").trim();
+// IPv4-only subscription relay (subscription-access.js ipv4RedirectLocation): mainland IPv6 pulls get a
+// 302 to SUBSCRIPTION_IPV4_URL; requests from SUBSCRIPTION_RELAY_IPS carry the client IP the relay saw.
+const SUBSCRIPTION_IPV4_URL = String(process.env.SUBSCRIPTION_IPV4_URL || "").trim().replace(/\/+$/, "");
+const SUBSCRIPTION_RELAY_IPS = String(process.env.SUBSCRIPTION_RELAY_IPS || "").split(",").map(item => item.trim()).filter(Boolean);
 const NODE_HUB_SYNC_INTERVAL_MS = Math.max(15000, Number(process.env.NODE_HUB_SYNC_INTERVAL_MS || 60000));
 const NODE_HUB_TIMEOUT_MS = Math.max(1000, Number(process.env.NODE_HUB_TIMEOUT_MS || 10000));
 const TRAFFIC_PACK_BYTES = 100 * 1024 ** 3;
@@ -4579,7 +4583,7 @@ async function runXuiWeightedTrafficSync() {
       depleted,
       nodes: [
         ...(ledger.carriedRawBytes || ledger.carriedWeightedBytes ? [{ key: "legacy", name: "历史节点统计结转", multiplier: 1, rawBytes: ledger.carriedRawBytes, weightedBytes: ledger.carriedWeightedBytes }] : []),
-        ...Object.entries(ledger.nodes).map(([key, item]) => ({ key, name: nodeNames[key] || (item.name ? `${item.name}（已删除节点）` : "（已删除节点）"), multiplier: xuiMultiplier(nodeMultipliers[key]), rawBytes: item.rawBytes, weightedBytes: item.weightedBytes }))
+        ...Object.entries(ledger.nodes).map(([key, item]) => ({ key, name: nodeNames[key] || (item.name ? `${item.name}（已删除节点）` : "（已删除节点）"), multiplier: xuiMultiplier(nodeMultipliers[key]), rawBytes: item.rawBytes, weightedBytes: item.weightedBytes, ...(nodeNames[key] ? {} : { deleted: true }) }))
       ],
       lastSyncedAt: ledger.updatedAt
     };
@@ -5330,6 +5334,72 @@ function publicRegisteredAccount(account) {
     expiresAt: null,
     userLogs: publicUserLogs(account)
   };
+}
+
+// Rows of xuiMachineUserTraffic grouped by user (heaviest first, at most 100), each with its nodes on the
+// machine. Nodes are named from the live hub overview; a node no longer there keeps its last logged name
+// and is flagged deleted. Traffic billed to the bare machine key predates per-node billing.
+const MACHINE_USER_TRAFFIC_LIMIT = 100;
+function machineUserTraffic({ machine, machineGuid, rows = [], hubNodes = [], from, to, days }) {
+  const liveNames = new Map(hubNodes.filter(node => node.billingKey).map(node => [node.billingKey, node.name]));
+  const usersByEmail = new Map();
+  for (const user of users) {
+    const email = String(user.xuiClientEmail || "").trim().toLowerCase();
+    if (email) usersByEmail.set(email, user);
+  }
+  const usersById = new Map(users.map(user => [user.id, user]));
+  const nodeTotals = new Map();
+  const byUser = new Map();
+  for (const row of rows) {
+    const bytes = Math.max(0, row.up) + Math.max(0, row.down);
+    if (!bytes) continue;
+    const email = String(row.email || "").trim().toLowerCase();
+    const user = usersByEmail.get(email) || usersById.get(row.userId) || null;
+    const key = user?.id || `email:${email}`;
+    const entry = byUser.get(key) || { key, userId: user?.id || "", label: user ? billUserLabel(user) : email, email, upBytes: 0, downBytes: 0, totalBytes: 0, nodes: new Map() };
+    entry.upBytes += Math.max(0, row.up);
+    entry.downBytes += Math.max(0, row.down);
+    entry.totalBytes += bytes;
+    entry.nodes.set(row.nodeGuid, (entry.nodes.get(row.nodeGuid) || 0) + bytes);
+    byUser.set(key, entry);
+    const node = nodeTotals.get(row.nodeGuid) || { guid: row.nodeGuid, name: "", deleted: false, bytes: 0 };
+    node.bytes += bytes;
+    if (row.nodeGuid === machineGuid) node.name = "机器级（按节点计费前）";
+    else if (liveNames.has(row.nodeGuid)) node.name = liveNames.get(row.nodeGuid);
+    else { node.name = node.name || row.nodeName || row.nodeGuid; node.deleted = true; }
+    nodeTotals.set(row.nodeGuid, node);
+  }
+  const nodes = [...nodeTotals.values()].sort((a, b) => b.bytes - a.bytes);
+  const ranked = [...byUser.values()].sort((a, b) => b.totalBytes - a.totalBytes);
+  return {
+    machine: { id: machine.id, guid: machineGuid, name: machine.name },
+    from, to, days,
+    totalBytes: ranked.reduce((sum, entry) => sum + entry.totalBytes, 0),
+    userCount: ranked.length,
+    nodes,
+    users: ranked.slice(0, MACHINE_USER_TRAFFIC_LIMIT).map(entry => ({
+      ...entry,
+      nodes: [...entry.nodes].map(([guid, bytes]) => ({ guid, bytes })).sort((a, b) => b.bytes - a.bytes)
+    }))
+  };
+}
+
+// The account that invited `account` (its referral code at registration), with the admin detail id to link to:
+// the inviter's linked subscription user when it exists, otherwise its registered-only account row.
+function publicInviter(account) {
+  const inviterId = account?.referredByAccountId;
+  if (!inviterId) return null;
+  const inviter = accounts.find(item => item.id === inviterId);
+  if (!inviter) return null;
+  const linked = inviter.linkedUserId && users.some(user => user.id === inviter.linkedUserId);
+  return { accountId: inviter.id, email: inviter.email || "", userId: linked ? inviter.linkedUserId : `account:${inviter.id}` };
+}
+
+// The place a user's subscription link is pulled from most over the retained log (see subscriptionAccess.commonPlace).
+async function userCommonPlace(userId) {
+  const days = subscriptionAccess.SUBSCRIPTION_ACCESS_RETENTION_DAYS;
+  const [rows, nodeIps] = await Promise.all([dataStore.listSubscriptionAccess(userId, { since: new Date(Date.now() - days * 86400000) }), ownNodeIps()]);
+  return subscriptionAccess.commonPlace(rows, nodeIps);
 }
 
 function publicUserLogs(user) {
@@ -6224,6 +6294,15 @@ async function handleRelaySubscription(req, res, token) {
     return;
   }
 
+  const ipv4Location = await subscriptionIpv4RedirectLocation(req);
+  if (ipv4Location) {
+    relayLog("redirect-ipv4", { relayRequestId, userId: user.id });
+    res.subscriptionAccessResult = subscriptionAccess.IPV4_REDIRECT_RESULT;
+    res.writeHead(302, { location: ipv4Location, "cache-control": "no-store, max-age=0" });
+    res.end();
+    return;
+  }
+
   if (isUserAccountDisabled(user)) {
     relayLog("response-placeholder-account-disabled", {
       relayRequestId,
@@ -6284,10 +6363,19 @@ async function handleRelaySubscription(req, res, token) {
   await handleSelfHostedRelay(req, res, user, relayRequestId);
 }
 
+// Where to send a mainland IPv6 pull so it comes back over IPv4; "" serves it here.
+async function subscriptionIpv4RedirectLocation(req) {
+  if (!SUBSCRIPTION_IPV4_URL) return "";
+  const { ip, source } = subscriptionAccess.subscriptionClientIp(req, { relayIps: SUBSCRIPTION_RELAY_IPS });
+  if (source === "ipv4-relay" || !net.isIPv6(ip)) return "";
+  const region = await lookupIpRegion(ip).catch(() => null);
+  return subscriptionAccess.ipv4RedirectLocation({ baseUrl: SUBSCRIPTION_IPV4_URL, path: req.url, ip, ipSource: source, region });
+}
+
 // Records the pull once the response is over, so the row carries the status the client got.
 // Fire and forget: a failed insert never affects the subscription itself.
 function recordSubscriptionAccessOnClose(req, res, user) {
-  const { ip, source } = subscriptionAccess.subscriptionClientIp(req);
+  const { ip, source } = subscriptionAccess.subscriptionClientIp(req, { relayIps: SUBSCRIPTION_RELAY_IPS });
   const query = new URL(req.url || "/", "http://localhost").search.slice(1);
   res.once("close", () => {
     const statusCode = res.headersSent ? res.statusCode : null;
@@ -6311,7 +6399,7 @@ function recordSubscriptionAccessOnClose(req, res, user) {
         headers: subscriptionAccess.headersForAccessLog(req.headers)
       };
       await dataStore.recordSubscriptionAccess(row);
-      if (subscriptionAccess.mainlandLocation(row)) await checkSubscriptionShareAlert(user);
+      if (result !== subscriptionAccess.IPV4_REDIRECT_RESULT && subscriptionAccess.mainlandLocation(row)) await checkSubscriptionShareAlert(user);
     })().catch(error => console.error(`[subscription-access] record failed for ${user.id}:`, error.message));
   });
 }
@@ -6334,7 +6422,7 @@ async function runSubscriptionShareCheck(user, now = Date.now()) {
     ownNodeIps(),
     dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id)
   ]);
-  const counted = rows.filter(row => !nodeIps.has(row.ip));
+  const counted = subscriptionAccess.countedPulls(rows, nodeIps);
   const { send, cities } = subscriptionAccess.crossCityAlert(counted, lastAlert, now);
   if (!send) return null;
   const alert = { at: new Date(now).toISOString(), cities };
@@ -7640,6 +7728,34 @@ async function handleApi(req, res, pathname) {
     }
     if (!hubConfigured()) {
       sendJson(res, 503, { error: "node-hub 尚未配置，请设置 NODE_HUB_URL 和 NODE_HUB_INTERNAL_TOKEN。" });
+      return;
+    }
+    // One machine's traffic by user over the last 1, 7 or 30 China days (raw bytes, no multipliers: what
+    // the machine itself carried), heaviest user first, each split by the machine's nodes.
+    if (pathname === "/api/node-hub/machine-user-traffic" && req.method === "GET") {
+      const params = new URL(req.url, "http://localhost").searchParams;
+      const machineId = Number(params.get("machine"));
+      const requestedDays = Number(params.get("days"));
+      const days = [1, 7, 30].includes(requestedDays) ? requestedDays : 7;
+      if (!Number.isSafeInteger(machineId) || machineId <= 0) {
+        sendJson(res, 400, { error: "请选择机器。" });
+        return;
+      }
+      try {
+        const overview = await getHubOverview();
+        const machine = (overview?.machines || []).find(item => Number(item.id) === machineId);
+        if (!machine) {
+          sendJson(res, 404, { error: "没有找到这台机器。" });
+          return;
+        }
+        const machineGuid = machine.guid || `hub-m${machine.id}`;
+        const to = chinaDateKey();
+        const from = chinaDateKey(Date.parse(`${to}T12:00:00+08:00`) - (days - 1) * 86400000);
+        const rows = await dataStore.xuiMachineUserTraffic(machineGuid, from, to);
+        sendJson(res, 200, machineUserTraffic({ machine, machineGuid, rows, hubNodes: overview?.nodes || [], from, to, days }));
+      } catch (error) {
+        sendJson(res, 502, { error: `读取机器流量失败：${error.message}` });
+      }
       return;
     }
     const hubPath = pathname.slice("/api/node-hub".length);
@@ -9014,9 +9130,15 @@ async function handleApi(req, res, pathname) {
 
     if (!action && req.method === "GET") {
       const billing = userBillingSummary(registeredAccount ? `account:${registeredAccount.id}` : item.id);
+      const account = registeredAccount || accounts.find(entry => entry.linkedUserId === item.id);
+      // Detail-page extras: who invited the account, and where the user's subscription is usually pulled from.
+      const extras = {
+        inviter: publicInviter(account),
+        commonPlace: item ? await userCommonPlace(item.id).catch(error => { console.warn(`[subscription-access] common place failed for ${item.id}:`, error.message); return null; }) : null
+      };
       sendJson(res, 200, registeredAccount
-        ? { ...publicRegisteredAccount(registeredAccount), ...billing }
-        : { ...publicUser(item), ...billing });
+        ? { ...publicRegisteredAccount(registeredAccount), ...billing, ...extras }
+        : { ...publicUser(item), ...billing, ...extras });
       return;
     }
 

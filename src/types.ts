@@ -32,6 +32,10 @@ export type BillingRecord = {
 
 export type User = {
   billingRecords?: BillingRecord[]
+  /** Detail endpoint only: the account whose referral code this account registered with; userId is the admin detail id. */
+  inviter?: { accountId: string; email: string; userId: string } | null
+  /** Detail endpoint only: the place the subscription link is pulled from most (retained log), with pull counts. */
+  commonPlace?: { geoCountry: string; province: string; city: string; isp: string; count: number; total: number } | null
   cashSpent?: number
   id: string
   customerID: number
@@ -76,7 +80,7 @@ export type User = {
     usagePercent: number | null
     depleted: boolean
     lastSyncedAt?: string
-    nodes: Array<{ key: string; name: string; multiplier: number; rawBytes: number; weightedBytes: number }>
+    nodes: Array<{ key: string; name: string; multiplier: number; rawBytes: number; weightedBytes: number; deleted?: boolean }>
   }
   /** Online IPs per node-hub node from the last traffic sync. */
   xuiOnlineIps?: {

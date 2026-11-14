@@ -305,6 +305,8 @@ Arc 的输入类组件 `label` 必填，并内置 `description` 和 `error`，�
 | `number-field` | `md` 的步进按钮尺寸改为由控件高度推导（`--nf-height - 2 × --nf-inset - 2px`，原为固定 34px），整体高度与同尺寸 `Input` 一致（鼠标设备 36px）；`sm`/`lg` 不变。占满网格单元用 `--number-field-width: 100%`（`features/node-hub-node-form.tsx` 的 `WideNumberField`） |
 | `blocks/empty-states` | 手动安装（只复制 block 的 tsx、css 和 `empty-states-art.ts`，`button`、`lib/motion-tokens` 沿用已有版本）；新增 `EmptyScene` 导出：单个场景插画加标题、说明和操作，不带标签页和演示动作，`scene`（`search` 无结果 / `inbox` 已处理完 / `map` 未找到 / `offline` 加载失败）、`phase`（`idle`/`done`）、`compact`（卡片和表格内的小尺寸插画）变化时插画按原动画形变；对应样式 `.scene*`；场景无障碍标签和演示文案改中文。业务里通过 `features/shared` 的 `EmptyState` 的 `scene` 属性使用 |
 | `activity-heatmap` | 新安装；`hourly`：每格一小时，横轴是 24 小时（每 3 小时一个列标签）、纵轴是日期（每天一行），格子为正方形，边长按 24 列撑满容器（9px 至 32px，容器太窄时横向滚动）；超过 10 天且容器窄于 440px 时日期标签只保留从最新一天往前每 7 天一个；网格可能高于屏幕，所以进入视口任意部分即开始显现动画（原为 35%）；数据项可带 `hour`，`selectedDate`/`onSelectDate` 在该模式下用 `YYYY-MM-DD HH`；`formatCount`：带单位的计数格式（如字节），替换全部「数字 + `unit`」文案，档位说明改为区间；`describe`：提示气泡的第三行（如上下行和节点）；总数滚动数字里的空格改为不换行空格（否则在 flex 里被吞掉）；修复提示气泡首次打开时按 0.96 缩放后的尺寸测量宽度、文字被裁的问题（改用 `offsetWidth`）；默认 `locale` 改为 `zh-CN`，内置文案改中文。业务用法见 `features/user-hourly-traffic.tsx` |
+| `sortable-data-table`（补充） | 列的 `pinned: "end"`：桌面表格横向滚动时该列（行操作）用 `position: sticky` 固定在右边缘，单元格保留自己的底色；表格宽于滚动容器时滚动容器带 `data-overflow`，固定列才显示左侧分隔线和阴影；手机折叠布局（≤620px）不固定。`DataTable` 的 `actions` 列、`SimpleTable` 标题为「操作」的列自动固定 |
+| `sortable-data-table`（补充） | 手机表头条带的渐隐遮罩只在支持 `animation-timeline: scroll()` 时运行（`@supports`）；Safari 没有滚动时间线，零时长动画会直接停在终点，把遮罩永久盖在第一个排序按钮上 |
 
 ## 7. 进度
 

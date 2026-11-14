@@ -16,7 +16,19 @@ function cleanIp(value) {
 // The site sits behind Cloudflare, then nginx, then this app on loopback. Cloudflare's
 // CF-Connecting-IP is the visitor; without it, the last X-Forwarded-For hop is the address the
 // nearest proxy saw (earlier hops come from the client and can be forged).
-function subscriptionClientIp(req) {
+// relayIps: our IPv4-only subscription relay (sub.webprovider.top on hncloud). It reaches us through
+// Cloudflare like any visitor and passes the client it saw in X-Sub-Client-IP; only a request that
+// really comes from the relay's address may set it.
+function subscriptionClientIp(req, { relayIps = [] } = {}) {
+  const direct = directClientIp(req);
+  if (direct.ip && relayIps.includes(direct.ip)) {
+    const relayed = cleanIp(req?.headers?.["x-sub-client-ip"]);
+    if (relayed) return { ip: relayed, source: "ipv4-relay" };
+  }
+  return direct;
+}
+
+function directClientIp(req) {
   const headers = req?.headers || {};
   const cf = cleanIp(headers["cf-connecting-ip"]);
   if (cf) return { ip: cf, source: "cf-connecting-ip" };
@@ -76,12 +88,43 @@ function subscriptionClientLabel(userAgent) {
 const NON_MAINLAND_PROVINCES = new Set(["香港特别行政区", "澳门特别行政区", "台湾省", "香港", "澳门", "台湾"]);
 const ALERT_REPEAT_MS = 24 * 3600000;
 
-// A mainland pull's place: { province, city }; null outside mainland China or when the IP is unknown.
+// ip2region places China Telecom IPv6 and China Unicom mobile IPv6 (and some with no ISP) at the
+// carriers' registration in Beijing, wherever the user is: in production every Telecom IPv6 pull read
+// 北京市, so a dual-stack phone in Chengdu looked like Chengdu + Beijing. China Mobile IPv6 resolves
+// to real cities and is kept.
+const CARRIER_REGISTERED_IPV6_ISPS = new Set(["电信", "联通", ""]);
+function carrierRegisteredIpv6(row) {
+  return net.isIPv6(String(row?.ip || "")) && row.province === "北京市" && CARRIER_REGISTERED_IPV6_ISPS.has(String(row.isp || ""));
+}
+
+// A mainland pull's place: { province, city }; null outside mainland China, when the IP is unknown,
+// or when the place is only the carrier's IPv6 registration (see above).
 function mainlandLocation(row) {
   if (row?.geoCountry !== "中国") return null;
   const province = String(row.province || "");
   if (!province || NON_MAINLAND_PROVINCES.has(province)) return null;
+  if (carrierRegisteredIpv6(row)) return null;
   return { province, city: String(row.city || "") };
+}
+
+// IPv6 places mainland users poorly, so a mainland IPv6 pull is sent to the same path on the
+// IPv4-only relay host (no AAAA record): the client follows the 302 and arrives over IPv4, which
+// ip2region places by city. Returns the Location, or "" to serve the pull here. Pulls already relayed,
+// abroad, Hong Kong/Macau/Taiwan and IPv4 are served as before.
+const IPV4_REDIRECT_RESULT = "ipv4-redirect";
+function ipv4RedirectLocation({ baseUrl, path, ip, ipSource, region }) {
+  const base = String(baseUrl || "").replace(/\/+$/, "");
+  if (!base || ipSource === "ipv4-relay" || !net.isIPv6(String(ip || ""))) return "";
+  if (region?.country !== "中国" || !region.province || NON_MAINLAND_PROVINCES.has(region.province)) return "";
+  const target = String(path || "");
+  if (!/^\/(api\/)?sub\//.test(target)) return "";
+  return `${base}${target}`;
+}
+
+// Pulls that say where a client is: not through our own nodes, and not the IPv6 half of a redirect
+// (the client's IPv4 pull right after it is the one that counts).
+function countedPulls(rows, nodeIps = new Set()) {
+  return rows.filter(row => !nodeIps.has(row.ip) && row.result !== IPV4_REDIRECT_RESULT);
 }
 
 function locationLabel(location) {
@@ -147,7 +190,7 @@ function summarizeSubscriptionAccess(rows = [], { now = Date.now(), nodeIps = ne
     entry.clients.add(subscriptionClientLabel(row.userAgent));
     byIp.set(key, entry);
   }
-  const counted = rows.filter(row => !nodes.has(row.ip));
+  const counted = countedPulls(rows, nodes);
   const since = hours => counted.filter(row => now - new Date(row.at).getTime() <= hours * 3600000);
   const windows = { "24h": summarizeWindow(since(24)), all: summarizeWindow(counted) };
   const hints = [];
@@ -158,11 +201,42 @@ function summarizeSubscriptionAccess(rows = [], { now = Date.now(), nodeIps = ne
     windows,
     hints,
     cityChanges: cityChanges(counted).slice(0, 50),
-    viaNodeRequests: rows.length - counted.length,
+    viaNodeRequests: rows.filter(row => nodes.has(row.ip)).length,
+    ipv4Redirects: rows.filter(row => row.result === IPV4_REDIRECT_RESULT).length,
     ips: [...byIp.values()]
       .map(entry => ({ ...entry, clients: [...entry.clients].sort() }))
       .sort((a, b) => b.lastAt.localeCompare(a.lastAt))
   };
+}
+
+// Where a user usually pulls from: the place (country, province, city) of the most counted pulls and,
+// within it, the carrier seen most. Pulls with no known place and carrier-registered IPv6 (placed at
+// Beijing whatever the real city) are left out. Ties go to the place pulled most recently (rows are
+// newest first). Returns { geoCountry, province, city, isp, count, total } or null.
+function commonPlace(rows = [], nodeIps = new Set()) {
+  const nodes = nodeIps instanceof Set ? nodeIps : new Set(nodeIps || []);
+  const places = new Map();
+  let total = 0;
+  for (const row of countedPulls(rows, nodes)) {
+    const geoCountry = String(row.geoCountry || "");
+    if (!geoCountry || geoCountry === "0" || carrierRegisteredIpv6(row)) continue;
+    total += 1;
+    const province = String(row.province || "");
+    const city = String(row.city || "");
+    const key = `${geoCountry}|${province}|${city}`;
+    const entry = places.get(key) || { geoCountry, province, city, count: 0, isps: new Map() };
+    entry.count += 1;
+    const isp = String(row.isp || "");
+    if (isp) entry.isps.set(isp, (entry.isps.get(isp) || 0) + 1);
+    places.set(key, entry);
+  }
+  let best = null;
+  for (const entry of places.values()) if (!best || entry.count > best.count) best = entry;
+  if (!best) return null;
+  let isp = "";
+  let ispCount = 0;
+  for (const [name, count] of best.isps) if (count > ispCount) { isp = name; ispCount = count; }
+  return { geoCountry: best.geoCountry, province: best.province, city: best.city, isp, count: best.count, total };
 }
 
 // Whether the last 24 hours of pulls (node IPs already removed) warrant a Telegram alert: two or more
@@ -178,12 +252,16 @@ function crossCityAlert(rows, lastAlert, now = Date.now()) {
 
 module.exports = {
   SUBSCRIPTION_ACCESS_RETENTION_DAYS,
+  IPV4_REDIRECT_RESULT,
   subscriptionClientIp,
+  ipv4RedirectLocation,
+  countedPulls,
   headersForAccessLog,
   subscriptionClientLabel,
   mainlandLocation,
   distinctCities,
   cityChanges,
   summarizeSubscriptionAccess,
+  commonPlace,
   crossCityAlert
 };

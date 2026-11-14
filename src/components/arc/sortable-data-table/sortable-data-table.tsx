@@ -21,6 +21,8 @@ export type DataColumn<T> = {
   header?: ReactNode;
   /** Fixed width such as 120 or "20%". Other columns are measured once and held, so sorting never reflows them. */
   width?: number | string;
+  /** XELA extension: "end" keeps the column stuck to the right edge while a wide table scrolls sideways (row actions). */
+  pinned?: "end";
 };
 
 export type SortableDataTableProps<T extends Record<string, unknown>> = {
@@ -170,13 +172,19 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
   const widths = locked?.signature === signature ? locked.widths : null;
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [available, setAvailable] = useState(0);
+  // XELA extension: whether the table is wider than its scroller, so a pinned column draws its edge only when rows slide beneath it.
+  const [overflowing, setOverflowing] = useState(false);
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const update = () => setAvailable(scroller.clientWidth);
+    const update = () => {
+      setAvailable(scroller.clientWidth);
+      setOverflowing(scroller.scrollWidth > scroller.clientWidth + 1);
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(scroller);
+    if (tableRef.current) observer.observe(tableRef.current);
     return () => observer.disconnect();
   }, []);
   const fitted = useMemo(() => {
@@ -308,7 +316,7 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
   }
 
   return <div className={styles.wrapper} onKeyDown={onKeyDown}>
-    <div ref={scrollerRef} className={styles.scroller}>
+    <div ref={scrollerRef} className={styles.scroller} data-overflow={overflowing || undefined}>
       {band ? <span className={styles.band} style={{ left: band.left, width: band.width }} aria-hidden="true" /> : null}
       <table ref={tableRef} role="table" className={styles.table} style={fitted ? { minWidth: fitted.target } : minWidth ? { minWidth } : undefined} data-fixed={widths ? "" : undefined} data-selectable={selectable || undefined} data-unsortable={!selectable && columns.every(column => column.sortable === false) || undefined}>
         <caption>{caption}</caption>
@@ -321,7 +329,7 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
           {columns.map((column, index) => {
             const active = sort?.key === column.key;
             const sortable = column.sortable !== false;
-            return <th key={column.key} scope="col" role="columnheader" data-key={column.key} data-primary={index === 0 || undefined} data-sorted={active || undefined} data-numeric={numeric.has(column.key) || undefined} data-sortable={sortable || undefined} aria-sort={!sortable ? undefined : active ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>
+            return <th key={column.key} scope="col" role="columnheader" data-key={column.key} data-primary={index === 0 || undefined} data-pinned={column.pinned} data-sorted={active || undefined} data-numeric={numeric.has(column.key) || undefined} data-sortable={sortable || undefined} aria-sort={!sortable ? undefined : active ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>
               {sortable ? <button className={styles.sortButton} type="button" data-nav="head" onClick={() => sortBy(column)} aria-label={`按${column.label}排序${active ? `，当前为${sort.direction === "asc" ? "升序" : "降序"}` : ""}`}>
                 <span className={styles.sortInner}><span>{column.label}</span><SortGlyph active={active} descending={active && sort.direction === "desc"} reduced={reduced} /></span>
               </button> : column.header ?? column.label}
@@ -333,7 +341,7 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
           const selected = selectable && selection.has(key);
           return <motion.tr key={key} role="row" layout={reduced ? false : "position"} layoutDependency={order} transition={motionTokens.spring.smooth} data-selected={selected || undefined} onClick={event => onRowClick(event, key)} onMouseDown={event => { if (selectable && event.shiftKey) event.preventDefault(); }}>
             {selectable ? <td role="cell" className={styles.selectCell}><SelectBox checked={selected} label={`Select ${String(row[columns[0]?.key as string] ?? key)}`} nav="row" reduced={reduced} onToggle={extend => toggleRow(key, extend)} /></td> : null}
-            {columns.map((column, columnIndex) => <td key={column.key} role="cell" data-label={column.label} data-primary={columnIndex === 0 || undefined} data-sorted={sort?.key === column.key || undefined} data-numeric={numeric.has(column.key) || undefined}>{column.render ? column.render(row[column.key], row) : String(row[column.key] ?? "–")}</td>)}
+            {columns.map((column, columnIndex) => <td key={column.key} role="cell" data-label={column.label} data-primary={columnIndex === 0 || undefined} data-pinned={column.pinned} data-sorted={sort?.key === column.key || undefined} data-numeric={numeric.has(column.key) || undefined}>{column.render ? column.render(row[column.key], row) : String(row[column.key] ?? "–")}</td>)}
           </motion.tr>;
         }) : <tr role="row"><td role="cell" className={styles.empty} colSpan={columns.length + (selectable ? 1 : 0)}>{emptyMessage}</td></tr>}</tbody>
       </table>

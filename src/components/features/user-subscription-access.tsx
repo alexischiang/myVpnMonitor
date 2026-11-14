@@ -11,10 +11,10 @@ import SegmentedControl from "@/components/arc/segmented-control/segmented-contr
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
 import { EmptyState } from "@/components/features/shared"
 import { SimpleTable } from "@/components/features/simple-table"
+import { type SubscriptionPlace as Place, placeLabel } from "@/components/features/subscription-place"
 import { formatDateTime } from "@/utils"
 
 type AccessWindow = { requests: number; ips: number; cities: string[]; clients: string[] }
-type Place = { geoCountry: string; province: string; city: string; isp: string }
 type AccessIp = Place & { ip: string; count: number; firstAt: string; lastAt: string; clients: string[]; viaNode: boolean }
 type CityChange = { at: string; from: string; to: string; fromIp: string; ip: string; minutes: number }
 type AccessRow = Place & {
@@ -53,15 +53,6 @@ const RESULT_LABELS: Record<string, { label: string; tone: "success" | "warning"
 function ResultBadge({ row }: { row: AccessRow }) {
   const result = RESULT_LABELS[row.result] || { label: row.result || "-", tone: "neutral" as const }
   return <Badge tone={result.tone}>{result.label}{row.statusCode && row.result !== "ok" ? ` ${row.statusCode}` : ""}</Badge>
-}
-
-/** 广东省 深圳市 · 电信; abroad: the country (and region) ip2region gives. */
-function placeLabel(place: Place) {
-  if (!place.geoCountry) return "-"
-  const where = place.geoCountry === "中国"
-    ? [place.province, place.city && place.city !== place.province ? place.city : ""].filter(Boolean).join(" ")
-    : [place.geoCountry, place.province, place.city].filter(Boolean).join(" ")
-  return [where || place.geoCountry, place.isp].filter(Boolean).join(" · ")
 }
 
 function formatGap(minutes: number) {
