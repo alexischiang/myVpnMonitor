@@ -6180,6 +6180,80 @@
         "page_errors": [],
         "checked_at": "2026-11-14"
       }
+    },
+    {
+      "id": "subscription-share-province-review",
+      "name": "订阅分享报警改为跨省，同省跨市进入人工复核",
+      "description": "Neighbouring prefecture cities often share carrier address pools (14.24.227.160 reads 广州 in ip2region, 东莞 in IPinfo/IPLark, 中山 in MaxMind), so the Telegram/mail 订阅疑似分享 alert now fires only when the last 24 hours of counted mainland pulls cover two or more provinces (crossProvinceAlert; repeats after 24 hours or for a new province; alerts saved under the old city rule name no province). Two or more cities inside one province write a review record (app_records subscriptionShareReviews: status pending/normal/shared, province, cities, firstAt, lastAt, reviewer, note) instead: new cities merge in, lastAt refreshes at most hourly, and a reviewed case reopens as pending only when a city the review did not cover appears (previousReview kept). New admin page /subscription-reviews (运营 > 订阅复核): 待复核/已复核/全部 filter with counts, user link opening the user detail 订阅访问 tab (?tab=subscription-access), dialog with note and 判定为分享/标记为正常 (GET /api/subscription-reviews, POST /api/subscription-reviews/:userId). User detail 订阅访问 shows 疑似分享：境内跨省拉取 or 同省跨市拉取, the review status and province-level last alert; the alert setting text describes the new rule.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "subscription-access-log"
+      ],
+      "done_criteria": [
+        "Cross-province pulls within 24 hours alert; same-province cross-city pulls do not",
+        "Same-province cross-city pulls create a pending review; a reviewed case reopens only on a new city",
+        "Admin can list reviews and mark them normal or shared with a note",
+        "User detail shows the province/city banner and review status"
+      ],
+      "verification": [
+        "2026-11-16: node test-subscription-access.js (province alert, old city-only alert record, review create/merge/hourly touch/reopen, decision validation), npm run check, npm run verify:fast and git diff --check pass",
+        "2026-11-16: isolated server.js on test DB schema subreview_verify (outside services blanked): real /sub pulls with CF-Connecting-IP 14.24.227.160 (广州) + 223.104.64.1 (东莞) logged queued for review with no alert; 14.24.227.160 + 202.106.0.20 (北京) logged alerting; after marking the first user normal, a pull from 14.116.0.1 (珠海) reopened it as pending with previousReview normal; schema dropped"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/subscription-reviews",
+          "/users/detail/verify-gz-dg?tab=subscription-access",
+          "/users/detail/verify-gz-bj?tab=subscription-access",
+          "/general-settings?section=alerts"
+        ],
+        "interactions": [
+          "订阅复核 lists only the 广州+东莞 user (待复核 1, 已复核 1 seeded); 复核 dialog: typed a note, 标记为正常 -> 待复核 0, 已复核 shows 正常, reviewer and note",
+          "After the 珠海 pull the row is 待复核 again with 曾判定为正常（东莞市、广州市），出现新城市后重新待复核",
+          "User link opens the detail page on the 订阅访问 tab with 同省跨市拉取 and 前往订阅复核; the 广州+北京 user shows 疑似分享：境内跨省拉取 and 最近一次 Telegram 提醒（北京市、广东省）",
+          "提醒设置 text reads 两个以上省份 … 同省跨市拉取不提醒，进入订阅复核列表",
+          "375px: rows render as cards, scrollWidth 375 = clientWidth; 判定为分享 in the dialog saved status shared"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-16"
+      }
+    },
+    {
+      "id": "subscription-share-concurrent-presence",
+      "name": "同时异地在线检测：节点在线 IP 同一时刻分布在多个地点",
+      "description": "Every 2 minutes (node-hub configured) server.js reads node-hub /internal/presence (live source IPs per user and node, reported by xboard-node about every minute), drops our own machine/relay IPs (ownNodeIps), places each IP with ip2region and evaluates it with the subscription rules (mainland only; HK/Macau/Taiwan, abroad and carrier-registered IPv6 Beijing excluded). concurrent-location.js keeps an in-memory episode per user; an episode counts after 2 consecutive samples (so a Wi-Fi/4G switch does not), accumulates IPs and nodes, and is stored in the new concurrent_location_events table (kind province/city, started_at, last_seen_at, samples, provinces, cities, locations; refreshed each sample; pruned after 90 days). Cross-province episodes alert through 订阅疑似分享提醒 (state app_records concurrentLocationAlerts, once per 24 hours unless a new province), a city episode upgraded to cross-province alerts then; same-province episodes join the review queue with source presence (review records now carry sources pull/presence, shown as 来源 on /subscription-reviews). User detail 订阅访问 shows a 同时异地在线 card (start, duration, scope badge, IPs with place and nodes, 进行中 for a running episode, warning when cross-province).",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "subscription-share-province-review"
+      ],
+      "done_criteria": [
+        "Users online from two provinces at once in two consecutive samples are recorded and alerted",
+        "Same-province concurrent presence goes to the review queue marked 同时在线",
+        "A single overlapping sample and our own relay IPs do not count",
+        "User detail lists the episodes"
+      ],
+      "verification": [
+        "2026-11-16: node test-subscription-access.js (presence to places, own IP dropped, IPv6/HK excluded, two-sample threshold, end, update, city->province upgrade, review sources), npm run check, npm run verify:fast and git diff --check pass",
+        "2026-11-16: isolated server.js on test DB schema concurrent_verify with a stub node-hub on :3198 and the real 2-minute timer: verify-gz-bj (广州 14.24.227.160 + 北京 202.106.0.20 + relay 141.11.77.154) -> one province episode, relay IP not in locations, samples 2 -> 3 on the next sample, concurrentLocationAlerts written; verify-gz-dg (广州 + 东莞 223.104.64.1) -> city episode and pending review with sources [presence]; verify-switch (dual for one sample only) -> nothing; schema dropped"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users/detail/verify-gz-bj?tab=subscription-access",
+          "/users/detail/verify-switch?tab=subscription-access",
+          "/subscription-reviews"
+        ],
+        "interactions": [
+          "verify-gz-bj: 同时异地在线 card with 疑似分享：同时跨省在线, 进行中 badge, 4 分钟, 跨省 · 北京市、广东省, IPs with 日本 AWS · Reality / Hy2",
+          "verify-switch: no 同时异地在线 card",
+          "订阅复核: gz-dg row with 来源 同时在线, 广东省 东莞市、广州市, 待复核",
+          "375px: scrollWidth 375 = clientWidth on the detail page"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-16"
+      }
     }
   ]
 }

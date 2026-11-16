@@ -149,11 +149,23 @@ function distinctCities(rows) {
   ];
 }
 
+// Distinct mainland provinces. Neighbouring prefecture cities often share carrier address pools
+// (a phone in Dongguan may surface in Guangzhou), so only a province change is solid enough to alert on.
+function distinctProvinces(rows) {
+  const provinces = new Set();
+  for (const row of rows) {
+    const location = mainlandLocation(row);
+    if (location) provinces.add(location.province);
+  }
+  return [...provinces].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+}
+
 function summarizeWindow(rows) {
   return {
     requests: rows.length,
     ips: new Set(rows.map(row => row.ip).filter(Boolean)).size,
     cities: distinctCities(rows),
+    provinces: distinctProvinces(rows),
     clients: [...new Set(rows.map(row => subscriptionClientLabel(row.userAgent)))].sort()
   };
 }
@@ -177,7 +189,8 @@ function cityChanges(rows) {
 
 // rows: newest first, each { at, ip, geoCountry, province, city, isp, userAgent }. nodeIps: our own
 // machines' addresses; clients that refresh the subscription through the proxy arrive from those, so
-// they are listed but left out of the counts. Suspicious: mainland pulls from two or more cities.
+// they are listed but left out of the counts. Suspicious: mainland pulls from two or more provinces;
+// two or more cities inside one province only need a manual review (crossCity).
 function summarizeSubscriptionAccess(rows = [], { now = Date.now(), nodeIps = new Set() } = {}) {
   const nodes = nodeIps instanceof Set ? nodeIps : new Set(nodeIps || []);
   const byIp = new Map();
@@ -194,10 +207,15 @@ function summarizeSubscriptionAccess(rows = [], { now = Date.now(), nodeIps = ne
   const since = hours => counted.filter(row => now - new Date(row.at).getTime() <= hours * 3600000);
   const windows = { "24h": summarizeWindow(since(24)), all: summarizeWindow(counted) };
   const hints = [];
-  if (windows["24h"].cities.length >= 2) hints.push(`24 小时内从 ${windows["24h"].cities.length} 个城市拉取：${windows["24h"].cities.join("、")}`);
-  if (windows.all.cities.length >= 2 && windows.all.cities.length !== windows["24h"].cities.length) hints.push(`所选范围内从 ${windows.all.cities.length} 个城市拉取：${windows.all.cities.join("、")}`);
+  for (const [key, label] of [["24h", "24 小时内"], ["all", "所选范围内"]]) {
+    const window = windows[key];
+    if (key === "all" && window.cities.length === windows["24h"].cities.length && window.provinces.length === windows["24h"].provinces.length) continue;
+    if (window.provinces.length >= 2) hints.push(`${label}从 ${window.provinces.length} 个省份拉取：${window.provinces.join("、")}（城市：${window.cities.join("、")}）`);
+    else if (window.cities.length >= 2) hints.push(`${label}从同省 ${window.cities.length} 个城市拉取：${window.cities.join("、")}`);
+  }
   return {
-    suspicious: windows.all.cities.length >= 2,
+    suspicious: windows.all.provinces.length >= 2,
+    crossCity: windows.all.provinces.length < 2 && windows.all.cities.length >= 2,
     windows,
     hints,
     cityChanges: cityChanges(counted).slice(0, 50),
@@ -240,14 +258,62 @@ function commonPlace(rows = [], nodeIps = new Set()) {
 }
 
 // Whether the last 24 hours of pulls (node IPs already removed) warrant a Telegram alert: two or more
-// mainland cities, and either no alert in the last 24 hours or a city the last alert did not name.
-function crossCityAlert(rows, lastAlert, now = Date.now()) {
+// mainland provinces, and either no alert in the last 24 hours or a province the last alert did not name.
+// Alerts saved before the province rule carry only cities; they count as naming no province.
+function crossProvinceAlert(rows, lastAlert, now = Date.now()) {
+  const provinces = distinctProvinces(rows);
   const cities = distinctCities(rows);
-  if (cities.length < 2) return { send: false, cities };
+  if (provinces.length < 2) return { send: false, provinces, cities };
   const lastAt = lastAlert?.at ? new Date(lastAlert.at).getTime() : NaN;
-  const known = new Set(lastAlert?.cities || []);
-  const send = !Number.isFinite(lastAt) || now - lastAt >= ALERT_REPEAT_MS || cities.some(city => !known.has(city));
-  return { send, cities };
+  const known = new Set(lastAlert?.provinces || []);
+  const send = !Number.isFinite(lastAt) || now - lastAt >= ALERT_REPEAT_MS || provinces.some(province => !known.has(province));
+  return { send, provinces, cities };
+}
+
+// Cross-city pulls inside one province are not alerted; they wait in a queue for an admin to judge.
+// A review record: { status: "pending" | "normal" | "shared", province, cities, firstAt, lastAt,
+// reviewedAt, reviewedBy, note, previousReview }. Returns the record to save, or null when nothing changed:
+//   - the 24-hour pulls cross cities in one province and there is no record -> pending
+//   - pending -> new cities merged in; lastAt refreshed at most hourly so not every pull writes
+//   - reviewed -> pending again only when a city the review did not cover shows up
+// Cross-province pulls are crossProvinceAlert's job. source: what found it, "pull" (subscription pulls)
+// or "presence" (concurrent live connections, concurrent-location.js); a record lists every source seen
+// (records written before sources existed came from pulls).
+const REVIEW_TOUCH_MS = 3600000;
+const REVIEW_SOURCES = ["pull", "presence"];
+function crossCityReview(rows, previous, now = Date.now(), { source = "pull" } = {}) {
+  const provinces = distinctProvinces(rows);
+  const cities = distinctCities(rows);
+  if (provinces.length !== 1 || cities.length < 2) return null;
+  const at = new Date(now).toISOString();
+  if (!previous) return { status: "pending", province: provinces[0], cities, sources: [source], firstAt: at, lastAt: at };
+  const known = new Set(previous.cities || []);
+  const added = cities.filter(city => !known.has(city));
+  const merged = [...known, ...added].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+  const knownSources = previous.sources || ["pull"];
+  const sources = REVIEW_SOURCES.filter(item => knownSources.includes(item) || item === source);
+  if (previous.status === "pending") {
+    if (!added.length && sources.length === knownSources.length && now - new Date(previous.lastAt || 0).getTime() < REVIEW_TOUCH_MS) return null;
+    return { ...previous, province: provinces[0], cities: merged, sources, lastAt: at };
+  }
+  if (!added.length) return null;
+  return {
+    status: "pending",
+    province: provinces[0],
+    cities: merged,
+    sources: [source],
+    firstAt: at,
+    lastAt: at,
+    previousReview: { status: previous.status, reviewedAt: previous.reviewedAt || "", reviewedBy: previous.reviewedBy || "", note: previous.note || "", cities: previous.cities || [] }
+  };
+}
+
+// An admin's verdict on a review: normal (one person, e.g. carrier pools or travel) or shared.
+const REVIEW_DECISIONS = new Set(["normal", "shared"]);
+function reviewDecision(previous, { decision, note = "", reviewer = "", now = Date.now() } = {}) {
+  if (!previous) throw new Error("复核记录不存在。");
+  if (!REVIEW_DECISIONS.has(decision)) throw new Error("复核结论无效。");
+  return { ...previous, status: decision, note: String(note || "").trim().slice(0, 500), reviewedBy: String(reviewer || ""), reviewedAt: new Date(now).toISOString() };
 }
 
 module.exports = {
@@ -260,8 +326,11 @@ module.exports = {
   subscriptionClientLabel,
   mainlandLocation,
   distinctCities,
+  distinctProvinces,
   cityChanges,
   summarizeSubscriptionAccess,
   commonPlace,
-  crossCityAlert
+  crossProvinceAlert,
+  crossCityReview,
+  reviewDecision
 };

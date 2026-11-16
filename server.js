@@ -12,6 +12,7 @@ const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const { loadLocalEnv } = require("./env");
 const xuiTraffic = require("./xui-traffic");
 const subscriptionAccess = require("./subscription-access");
+const concurrentLocation = require("./concurrent-location");
 const { lookupIpRegion, ipRegionReady } = require("./ip-region");
 const nodeHub = require("./node-hub/bridge");
 const yaml = require("js-yaml");
@@ -6404,42 +6405,170 @@ function recordSubscriptionAccessOnClose(req, res, user) {
   });
 }
 
-// One check at a time per user, so a burst of pulls from two cities sends one alert, not several.
+// One share check at a time per user (pull checks and concurrent-presence updates share it), so a
+// burst of pulls sends one alert and both never write the same review record at once.
 const subscriptionShareChecks = new Map();
-function checkSubscriptionShareAlert(user) {
-  const previous = subscriptionShareChecks.get(user.id) || Promise.resolve();
-  const next = previous.catch(() => {}).then(() => runSubscriptionShareCheck(user));
-  subscriptionShareChecks.set(user.id, next);
-  next.finally(() => { if (subscriptionShareChecks.get(user.id) === next) subscriptionShareChecks.delete(user.id); }).catch(() => {});
+function queueSubscriptionShareTask(userId, task) {
+  const previous = subscriptionShareChecks.get(userId) || Promise.resolve();
+  const next = previous.catch(() => {}).then(task);
+  subscriptionShareChecks.set(userId, next);
+  next.finally(() => { if (subscriptionShareChecks.get(userId) === next) subscriptionShareChecks.delete(userId); }).catch(() => {});
   return next;
+}
+function checkSubscriptionShareAlert(user) {
+  return queueSubscriptionShareTask(user.id, () => runSubscriptionShareCheck(user));
+}
+
+// Concurrent multi-location presence (concurrent-location.js): every CONCURRENT_SAMPLE_INTERVAL_MS the
+// node-hub presence snapshot (live source IPs per user and node) is placed with ip2region. An episode
+// seen in two consecutive samples is stored in concurrent_location_events; across provinces it alerts
+// through 订阅疑似分享提醒 (once per 24 hours unless a new province appears), inside one province it
+// joins the review queue with source "presence". Episode state lives in memory; a restart only means
+// the next episode needs two fresh samples.
+const concurrentEpisodes = new Map();
+const CONCURRENT_ALERT_COLLECTION = "concurrentLocationAlerts";
+let concurrentSampleRunning = false;
+
+async function runConcurrentLocationSample(now = Date.now()) {
+  if (concurrentSampleRunning) return { skipped: true };
+  concurrentSampleRunning = true;
+  try {
+    const [presence, overview, ownIps] = await Promise.all([
+      requestNodeHub("/internal/presence"),
+      getHubOverview().catch(() => null),
+      ownNodeIps().catch(() => new Set())
+    ]);
+    const nodeNames = Object.fromEntries((overview?.nodes || []).map(node => [String(node.id), node.machineName ? `${node.machineName} · ${node.name}` : node.name]));
+    const regions = new Map();
+    const seen = new Set();
+    let episodes = 0;
+    for (const [userId, entry] of Object.entries(presence?.users || {})) {
+      const ips = new Set(Object.values(entry?.ipsByNode || {}).flat().map(String).filter(Boolean));
+      if (ips.size < 2 && !concurrentEpisodes.has(userId)) continue;
+      for (const ip of ips) if (!regions.has(ip)) regions.set(ip, await lookupIpRegion(ip).catch(() => null));
+      const observation = concurrentLocation.observeConcurrent(concurrentLocation.presenceLocations(entry, { regions, ownIps, nodeNames }));
+      seen.add(userId);
+      if (await advanceConcurrentEpisode(userId, observation, now)) episodes += 1;
+    }
+    for (const userId of [...concurrentEpisodes.keys()]) if (!seen.has(userId)) await advanceConcurrentEpisode(userId, null, now);
+    return { users: Object.keys(presence?.users || {}).length, episodes };
+  } finally {
+    concurrentSampleRunning = false;
+  }
+}
+
+// Moves one user's episode on by a sample; returns whether an episode is running. Failures are logged
+// per user so one bad row doesn't stop the sample.
+async function advanceConcurrentEpisode(userId, observation, now) {
+  try {
+    const { state, action } = concurrentLocation.advanceConcurrent(concurrentEpisodes.get(userId) || null, observation, now);
+    if (!state) {
+      concurrentEpisodes.delete(userId);
+      return false;
+    }
+    concurrentEpisodes.set(userId, state);
+    if (!action) return true;
+    const row = { userId, kind: state.kind, startedAt: state.firstAt, lastSeenAt: state.lastAt, samples: state.samples, provinces: state.provinces, cities: state.cities, locations: state.locations };
+    if (action === "start") state.eventId = await dataStore.insertConcurrentLocationEvent(row);
+    else await dataStore.updateConcurrentLocationEvent(state.eventId, row);
+    const user = users.find(item => item.id === userId);
+    if (!user) return true;
+    if (state.kind === "province" && action !== "update") {
+      await queueSubscriptionShareTask(userId, () => alertConcurrentLocation(user, state, now));
+    } else if (state.kind === "city") {
+      await queueSubscriptionShareTask(userId, async () => {
+        const review = await dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, userId);
+        const nextReview = subscriptionAccess.crossCityReview(state.locations, review, now, { source: "presence" });
+        if (nextReview) await dataStore.setRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, userId, nextReview);
+      });
+    }
+    if (action === "start") console.log(`[concurrent-location] ${userId} online from ${(state.kind === "province" ? state.provinces : state.cities).join(", ")} at once.`);
+    return true;
+  } catch (error) {
+    console.error(`[concurrent-location] ${userId} failed:`, error.message);
+    return concurrentEpisodes.has(userId);
+  }
+}
+
+async function alertConcurrentLocation(user, state, now) {
+  const lastAlert = await dataStore.getRecord(CONCURRENT_ALERT_COLLECTION, user.id);
+  const { send, provinces, cities } = subscriptionAccess.crossProvinceAlert(state.locations, lastAlert, now);
+  if (!send) return null;
+  await dataStore.setRecord(CONCURRENT_ALERT_COLLECTION, user.id, { at: new Date(now).toISOString(), provinces, cities });
+  const text = concurrentLocationAlertText(user, state);
+  await sendAdminAlert("subscriptionShare", { subject: `疑似分享：同时异地在线：${subscriptionUserLabel(user)}`, text, parseMode: "" });
+  return text;
+}
+
+function concurrentLocationAlertText(user, state) {
+  const base = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  return [
+    "⚠️ 疑似分享：同时异地在线",
+    `用户：${subscriptionUserLabel(user)}`,
+    `同时从 ${state.provinces.length} 个省份在线：${state.provinces.join("、")}`,
+    `开始：${formatChinaTime(state.firstAt)}，已持续 ${concurrentLocation.minutesBetween(state.firstAt, state.lastAt)} 分钟`,
+    "",
+    "在线 IP：",
+    ...state.locations.map(row => `${row.ip} ${row.province} ${row.city} ${row.isp}（${row.nodes.join("、")}）`.replace(/\s+/g, " ")),
+    ...(base ? ["", `${base}/users/detail/${encodeURIComponent(user.id)}?tab=subscription-access`] : [])
+  ].join("\n");
 }
 
 // Telegram (and mail, per the alert settings) when the last 24 hours of a user's pulls come from two or
-// more mainland cities. Repeats only after 24 hours or when a new city shows up.
+// more mainland provinces. Repeats only after 24 hours or when a new province shows up.
+// Cross-city pulls inside one province go to the manual review queue instead (subscriptionShareReviews).
 async function runSubscriptionShareCheck(user, now = Date.now()) {
-  const [rows, nodeIps, lastAlert] = await Promise.all([
+  const [rows, nodeIps, lastAlert, review] = await Promise.all([
     dataStore.listSubscriptionAccess(user.id, { since: new Date(now - 24 * 3600000) }),
     ownNodeIps(),
-    dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id)
+    dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id),
+    dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, user.id)
   ]);
   const counted = subscriptionAccess.countedPulls(rows, nodeIps);
-  const { send, cities } = subscriptionAccess.crossCityAlert(counted, lastAlert, now);
-  if (!send) return null;
-  const alert = { at: new Date(now).toISOString(), cities };
+  const nextReview = subscriptionAccess.crossCityReview(counted, review, now);
+  if (nextReview) {
+    await dataStore.setRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, user.id, nextReview);
+    if (nextReview.status === "pending" && (!review || review.status !== "pending" || nextReview.cities.length !== review.cities?.length)) {
+      console.log(`[subscription-share] ${user.id} pulled from ${nextReview.cities.join(", ")} (${nextReview.province}) in 24h; queued for review.`);
+    }
+  }
+  const { send, provinces, cities } = subscriptionAccess.crossProvinceAlert(counted, lastAlert, now);
+  if (!send) return nextReview ? { review: nextReview } : null;
+  const alert = { at: new Date(now).toISOString(), provinces, cities };
   await dataStore.setRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id, alert);
-  const text = subscriptionShareAlertText(user, counted, cities);
-  console.log(`[subscription-share] ${user.id} pulled from ${cities.join(", ")} in 24h; alerting.`);
+  const text = subscriptionShareAlertText(user, counted, { provinces, cities });
+  console.log(`[subscription-share] ${user.id} pulled from ${provinces.join(", ")} in 24h; alerting.`);
   await sendAdminAlert("subscriptionShare", { subject: `订阅疑似分享：${subscriptionUserLabel(user)}`, text, parseMode: "" });
   return { ...alert, text };
 }
 
 const SUBSCRIPTION_SHARE_ALERT_COLLECTION = "subscriptionShareAlerts";
+const SUBSCRIPTION_SHARE_REVIEW_COLLECTION = "subscriptionShareReviews";
+
+// The review queue for the admin page, newest activity first, each with the user's label.
+async function subscriptionShareReviewsPayload() {
+  const records = await dataStore.listRecords(SUBSCRIPTION_SHARE_REVIEW_COLLECTION);
+  const byId = new Map(users.map(user => [user.id, user]));
+  const reviews = records
+    .map(({ id, data }) => {
+      const user = byId.get(id);
+      return { userId: id, userLabel: user ? subscriptionUserLabel(user) : id, userMissing: !user, ...data };
+    })
+    .sort((a, b) => String(b.lastAt || "").localeCompare(String(a.lastAt || "")));
+  return {
+    reviews,
+    counts: {
+      pending: reviews.filter(review => review.status === "pending").length,
+      reviewed: reviews.filter(review => review.status !== "pending").length
+    }
+  };
+}
 
 function subscriptionUserLabel(user) {
   return user.email || user.userId || user.wechatName || user.xuiClientEmail || user.id;
 }
 
-function subscriptionShareAlertText(user, rows, cities) {
+function subscriptionShareAlertText(user, rows, { provinces, cities }) {
   const base = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
   const recent = rows
     .filter(row => subscriptionAccess.mainlandLocation(row))
@@ -6448,7 +6577,8 @@ function subscriptionShareAlertText(user, rows, cities) {
   return [
     "⚠️ 订阅疑似分享",
     `用户：${subscriptionUserLabel(user)}`,
-    `24 小时内从 ${cities.length} 个城市拉取订阅：${cities.join("、")}`,
+    `24 小时内从 ${provinces.length} 个省份拉取订阅：${provinces.join("、")}`,
+    `城市：${cities.join("、")}`,
     "",
     "最近拉取：",
     ...recent,
@@ -7648,6 +7778,28 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/sync-jobs" && req.method === "GET") {
     sendJson(res, 200, await syncJobsPayload());
+    return;
+  }
+
+  // Manual review queue for cross-city subscription pulls inside one province.
+  if (pathname === "/api/subscription-reviews" && req.method === "GET") {
+    sendJson(res, 200, await subscriptionShareReviewsPayload());
+    return;
+  }
+
+  const subscriptionReviewMatch = pathname.match(/^\/api\/subscription-reviews\/([^/]+)$/);
+  if (subscriptionReviewMatch && req.method === "POST") {
+    const userId = decodeURIComponent(subscriptionReviewMatch[1]);
+    const payload = await readJson(req);
+    const session = currentSession(req);
+    try {
+      const previous = await dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, userId);
+      const review = subscriptionAccess.reviewDecision(previous, { decision: payload.decision, note: payload.note, reviewer: session?.account || session?.username || "admin" });
+      await dataStore.setRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, userId, review);
+      sendJson(res, 200, { review: { userId, ...review } });
+    } catch (error) {
+      sendJson(res, error.message === "复核记录不存在。" ? 404 : 400, { error: error.message });
+    }
     return;
   }
 
@@ -9158,13 +9310,17 @@ async function handleApi(req, res, pathname) {
       const requested = Number(new URL(req.url, "http://localhost").searchParams.get("days"));
       const days = [7, 30, 90].includes(requested) ? requested : 7;
       const now = Date.now();
-      const [rows, nodeIps, lastAlert] = item
-        ? await Promise.all([dataStore.listSubscriptionAccess(item.id, { since: new Date(now - days * 86400000) }), ownNodeIps(), dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, item.id)])
-        : [[], new Set(), null];
+      const since = new Date(now - days * 86400000);
+      const [rows, nodeIps, lastAlert, review, concurrent] = item
+        ? await Promise.all([dataStore.listSubscriptionAccess(item.id, { since }), ownNodeIps(), dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, item.id), dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, item.id), dataStore.listConcurrentLocationEvents(item.id, { since })])
+        : [[], new Set(), null, null, []];
       sendJson(res, 200, {
         days,
         retentionDays: subscriptionAccess.SUBSCRIPTION_ACCESS_RETENTION_DAYS,
-        lastAlert: lastAlert ? { at: lastAlert.at, cities: lastAlert.cities || [] } : null,
+        lastAlert: lastAlert ? { at: lastAlert.at, provinces: lastAlert.provinces || [], cities: lastAlert.cities || [] } : null,
+        review: review || null,
+        // Running episodes are flagged so the page can say 进行中 (their row updates every sample).
+        concurrent: concurrent.map(event => ({ ...event, ongoing: concurrentEpisodes.get(item.id)?.eventId === event.id })),
         summary: subscriptionAccess.summarizeSubscriptionAccess(rows, { now, nodeIps }),
         rows: rows.slice(0, 200).map(row => ({ ...row, client: subscriptionAccess.subscriptionClientLabel(row.userAgent), viaNode: nodeIps.has(row.ip) }))
       });
@@ -9874,6 +10030,7 @@ async function main() {
   const pruneSyncJobHistoryInBackground = () => {
     pruneSyncJobHistory().catch(error => console.error("Sync job history prune failed:", error));
     pruneSubscriptionAccessHistory().catch(error => console.error("Subscription access prune failed:", error));
+    dataStore.pruneConcurrentLocationEvents(new Date(Date.now() - concurrentLocation.CONCURRENT_RETENTION_DAYS * 86400000)).catch(error => console.error("Concurrent location prune failed:", error));
   };
   pruneSyncJobHistoryInBackground();
   setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000);
@@ -9886,6 +10043,8 @@ async function main() {
     setInterval(() => scheduleSyncJob("node-hub-sync"), NODE_HUB_SYNC_INTERVAL_MS);
     scheduleSyncJob("node-hub-billing", "startup");
     setInterval(() => scheduleSyncJob("node-hub-billing"), XUI_TRAFFIC_SYNC_INTERVAL_MS);
+    const sampleConcurrentLocations = () => runConcurrentLocationSample().catch(error => console.warn(`[concurrent-location] sample failed: ${error.message}`));
+    setInterval(sampleConcurrentLocations, concurrentLocation.CONCURRENT_SAMPLE_INTERVAL_MS);
     setInterval(() => scheduleSyncJob("addon-service-expiry"), 10 * 60 * 1000);
     scheduleSyncJob("xui-traffic-prune", "startup");
     setInterval(() => scheduleSyncJob("xui-traffic-prune"), 24 * 60 * 60 * 1000);
@@ -9987,6 +10146,7 @@ module.exports = Object.assign(requestHandler, {
   pruneSyncJobHistory,
   runSubscriptionShareCheck,
   subscriptionShareAlertText,
+  runConcurrentLocationSample,
   listSyncJobRuns,
   withXuiUserMigrationLock,
   xuiTrafficPayload,

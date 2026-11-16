@@ -207,6 +207,22 @@ class PostgresDataStore {
       CREATE INDEX IF NOT EXISTS subscription_access_logs_user_at_idx ON subscription_access_logs (user_id, at DESC);
       CREATE INDEX IF NOT EXISTS subscription_access_logs_at_idx ON subscription_access_logs (at)
       `), "subscription access logs init");
+      // One row per concurrent multi-location episode (concurrent-location.js), updated while it lasts.
+      await withPgRetry(() => pool.query(`
+      CREATE TABLE IF NOT EXISTS concurrent_location_events (
+        id BIGSERIAL PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL,
+        last_seen_at TIMESTAMPTZ NOT NULL,
+        samples INTEGER NOT NULL DEFAULT 0,
+        provinces JSONB NOT NULL DEFAULT '[]',
+        cities JSONB NOT NULL DEFAULT '[]',
+        locations JSONB NOT NULL DEFAULT '[]'
+      );
+      CREATE INDEX IF NOT EXISTS concurrent_location_events_user_idx ON concurrent_location_events (user_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS concurrent_location_events_seen_idx ON concurrent_location_events (last_seen_at)
+      `), "concurrent location events init");
       await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS catalog_v2_line_groups (
         id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9-]{1,63}$'),
@@ -730,6 +746,15 @@ class PostgresDataStore {
       ),
       `save ${collection}/${id}`
     );
+  }
+
+  // Every record of one collection, most recently written first: [{ id, data }].
+  async listRecords(collection) {
+    const result = await withPgRetry(
+      () => this.pool.query("SELECT id, data FROM app_records WHERE collection = $1 ORDER BY updated_at DESC", [collection]),
+      `list ${collection}`
+    );
+    return result.rows.map(row => ({ id: row.id, data: row.data }));
   }
 
   async deleteRecord(collection, id) {
@@ -1336,6 +1361,38 @@ class PostgresDataStore {
 
   async pruneSubscriptionAccess(cutoff) {
     const result = await withPgRetry(() => this.pool.query("DELETE FROM subscription_access_logs WHERE at < $1", [cutoff]), "prune subscription access");
+    return result.rowCount || 0;
+  }
+
+  // Concurrent multi-location episodes (concurrent-location.js): inserted once confirmed, then refreshed.
+  async insertConcurrentLocationEvent({ userId, kind, startedAt, lastSeenAt, samples, provinces = [], cities = [], locations = [] }) {
+    const result = await withPgRetry(() => this.pool.query(
+      `INSERT INTO concurrent_location_events (user_id, kind, started_at, last_seen_at, samples, provinces, cities, locations)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb) RETURNING id`,
+      [String(userId), String(kind), startedAt, lastSeenAt, Number(samples) || 0, JSON.stringify(provinces), JSON.stringify(cities), JSON.stringify(locations)]
+    ), "insert concurrent location event");
+    return String(result.rows[0].id);
+  }
+
+  async updateConcurrentLocationEvent(id, { kind, lastSeenAt, samples, provinces = [], cities = [], locations = [] }) {
+    await withPgRetry(() => this.pool.query(
+      `UPDATE concurrent_location_events SET kind = $2, last_seen_at = $3, samples = $4, provinces = $5::jsonb, cities = $6::jsonb, locations = $7::jsonb WHERE id = $1`,
+      [id, String(kind), lastSeenAt, Number(samples) || 0, JSON.stringify(provinces), JSON.stringify(cities), JSON.stringify(locations)]
+    ), "update concurrent location event");
+  }
+
+  async listConcurrentLocationEvents(userId, { since, limit = 200 } = {}) {
+    const result = await withPgRetry(() => this.pool.query(
+      `SELECT id, kind, started_at, last_seen_at, samples, provinces, cities, locations
+       FROM concurrent_location_events WHERE user_id = $1 AND last_seen_at >= $2 ORDER BY started_at DESC, id DESC LIMIT $3`,
+      [String(userId), since, Math.min(1000, Math.max(1, Number(limit) || 200))]
+    ), "list concurrent location events");
+    const iso = value => value instanceof Date ? value.toISOString() : String(value);
+    return result.rows.map(row => ({ id: String(row.id), kind: row.kind, startedAt: iso(row.started_at), lastSeenAt: iso(row.last_seen_at), samples: row.samples, provinces: row.provinces || [], cities: row.cities || [], locations: row.locations || [] }));
+  }
+
+  async pruneConcurrentLocationEvents(cutoff) {
+    const result = await withPgRetry(() => this.pool.query("DELETE FROM concurrent_location_events WHERE last_seen_at < $1", [cutoff]), "prune concurrent location events");
     return result.rowCount || 0;
   }
 }

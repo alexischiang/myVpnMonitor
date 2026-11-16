@@ -7,7 +7,10 @@ const {
   distinctCities,
   cityChanges,
   summarizeSubscriptionAccess,
-  crossCityAlert,
+  crossProvinceAlert,
+  crossCityReview,
+  reviewDecision,
+  distinctProvinces,
   ipv4RedirectLocation,
   countedPulls,
   commonPlace,
@@ -118,7 +121,8 @@ const dualStack = [
 const dualSummary = summarizeSubscriptionAccess(dualStack, { now: Date.parse("2026-11-12T12:00:00Z") });
 assert.strictEqual(dualSummary.suspicious, false, "a dual-stack Shanghai user is one city");
 assert.deepStrictEqual(dualSummary.cityChanges, []);
-assert.strictEqual(crossCityAlert(dualStack, null, Date.parse("2026-11-12T12:00:00Z")).send, false);
+assert.strictEqual(crossProvinceAlert(dualStack, null, Date.parse("2026-11-12T12:00:00Z")).send, false);
+assert.strictEqual(crossCityReview(dualStack, null, Date.parse("2026-11-12T12:00:00Z")), null);
 
 // Cities: a province-only pull counts only when no known city lies in that province.
 const sz = { geoCountry: "中国", province: "广东省", city: "深圳市" };
@@ -129,7 +133,7 @@ assert.deepStrictEqual(distinctCities([sz, gd]), ["深圳市"]);
 assert.deepStrictEqual(distinctCities([sz, hz, gd, sc]), ["杭州市", "深圳市", "四川省（城市未知）"]);
 assert.deepStrictEqual(distinctCities([sz, { geoCountry: "中国", province: "香港特别行政区", city: "" }]), ["深圳市"]);
 
-// Summary: node IPs listed but not counted; two mainland cities are suspicious.
+// Summary: node IPs listed but not counted; two mainland provinces are suspicious.
 const now = Date.parse("2026-11-12T12:00:00Z");
 const at = hoursAgo => new Date(now - hoursAgo * 3600000).toISOString();
 const rows = [
@@ -145,7 +149,8 @@ assert.strictEqual(summary.suspicious, true);
 assert.strictEqual(summary.viaNodeRequests, 1);
 assert.deepStrictEqual(summary.windows["24h"].cities, ["北京市", "深圳市"]);
 assert.deepStrictEqual(summary.windows.all.cities, ["北京市", "杭州市", "深圳市"]);
-assert.deepStrictEqual(summary.hints, ["24 小时内从 2 个城市拉取：北京市、深圳市", "所选范围内从 3 个城市拉取：北京市、杭州市、深圳市"]);
+assert.deepStrictEqual(summary.windows.all.provinces, ["北京市", "广东省", "浙江省"]);
+assert.deepStrictEqual(summary.hints, ["24 小时内从 2 个省份拉取：北京市、广东省（城市：北京市、深圳市）", "所选范围内从 3 个省份拉取：北京市、广东省、浙江省（城市：北京市、杭州市、深圳市）"]);
 assert.strictEqual(summary.ips.length, 6);
 assert.strictEqual(summary.ips.find(entry => entry.ip === "141.11.77.154").viaNode, true);
 
@@ -162,12 +167,45 @@ assert.strictEqual(oneCity.suspicious, false);
 assert.deepStrictEqual(oneCity.hints, []);
 assert.strictEqual(summarizeSubscriptionAccess([], { now }).windows.all.requests, 0);
 
-// Alerts: two cities alert; repeated only after 24 hours or when a new city appears.
-assert.deepStrictEqual(crossCityAlert([sz, sz], null, now), { send: false, cities: ["深圳市"] });
-assert.deepStrictEqual(crossCityAlert([sz, hz], null, now), { send: true, cities: ["杭州市", "深圳市"] });
-assert.strictEqual(crossCityAlert([sz, hz], { at: at(2), cities: ["杭州市", "深圳市"] }, now).send, false, "same cities within 24 hours stay quiet");
-assert.strictEqual(crossCityAlert([sz, hz], { at: at(25), cities: ["杭州市", "深圳市"] }, now).send, true, "the same cities alert again after 24 hours");
-assert.strictEqual(crossCityAlert([sz, hz, sc], { at: at(2), cities: ["杭州市", "深圳市"] }, now).send, true, "a new city alerts at once");
+// Same province, two cities (Guangzhou + Dongguan): not suspicious, flagged for review only.
+const gz = { geoCountry: "中国", province: "广东省", city: "广州市" };
+const dg = { geoCountry: "中国", province: "广东省", city: "东莞市" };
+const sameProvince = summarizeSubscriptionAccess([{ ...gz, at: at(1), ip: "14.24.227.160" }, { ...dg, at: at(2), ip: "14.24.227.161" }], { now });
+assert.strictEqual(sameProvince.suspicious, false);
+assert.strictEqual(sameProvince.crossCity, true);
+assert.deepStrictEqual(sameProvince.hints, ["24 小时内从同省 2 个城市拉取：东莞市、广州市"]);
+assert.strictEqual(summary.crossCity, false, "cross-province is suspicious, not a review case");
+
+// Alerts: two provinces alert; repeated only after 24 hours or when a new province appears.
+assert.deepStrictEqual(distinctProvinces([sz, gz, hz, gd]), ["广东省", "浙江省"]);
+assert.deepStrictEqual(crossProvinceAlert([sz, sz], null, now), { send: false, provinces: ["广东省"], cities: ["深圳市"] });
+assert.strictEqual(crossProvinceAlert([sz, gz, dg], null, now).send, false, "cities inside one province do not alert");
+assert.deepStrictEqual(crossProvinceAlert([sz, hz], null, now), { send: true, provinces: ["广东省", "浙江省"], cities: ["杭州市", "深圳市"] });
+assert.strictEqual(crossProvinceAlert([sz, hz], { at: at(2), provinces: ["广东省", "浙江省"] }, now).send, false, "same provinces within 24 hours stay quiet");
+assert.strictEqual(crossProvinceAlert([sz, gz, hz], { at: at(2), provinces: ["广东省", "浙江省"] }, now).send, false, "a new city in a known province stays quiet");
+assert.strictEqual(crossProvinceAlert([sz, hz], { at: at(25), provinces: ["广东省", "浙江省"] }, now).send, true, "the same provinces alert again after 24 hours");
+assert.strictEqual(crossProvinceAlert([sz, hz, sc], { at: at(2), provinces: ["广东省", "浙江省"] }, now).send, true, "a new province alerts at once");
+assert.strictEqual(crossProvinceAlert([sz, hz], { at: at(2), cities: ["杭州市", "深圳市"] }, now).send, true, "an alert saved under the city rule names no province");
+
+// Review queue: same-province cross-city pulls become pending; merged, refreshed hourly, reopened on a new city.
+assert.strictEqual(crossCityReview([sz, sz], null, now), null);
+assert.strictEqual(crossCityReview([sz, hz], null, now), null, "cross-province is left to the alert");
+const pending = crossCityReview([gz, dg], null, now);
+assert.deepStrictEqual(pending, { status: "pending", province: "广东省", cities: ["东莞市", "广州市"], sources: ["pull"], firstAt: at(0), lastAt: at(0) });
+assert.deepStrictEqual(crossCityReview([gz, dg], pending, now + 600000, { source: "presence" }).sources, ["pull", "presence"], "a second source is written at once");
+assert.deepStrictEqual(crossCityReview([gz, dg], { ...pending, sources: undefined }, now + 600000, { source: "presence" }).sources, ["pull", "presence"], "records without sources came from pulls");
+assert.strictEqual(crossCityReview([gz, dg], pending, now + 600000), null, "no write within the hour when nothing changed");
+assert.strictEqual(crossCityReview([gz, dg], pending, now + 2 * 3600000).lastAt, new Date(now + 2 * 3600000).toISOString());
+assert.deepStrictEqual(crossCityReview([gz, sz], pending, now + 600000).cities, ["东莞市", "广州市", "深圳市"], "a new city is merged at once");
+const normal = reviewDecision(pending, { decision: "normal", note: " 移动网络 ", reviewer: "admin", now });
+assert.deepStrictEqual([normal.status, normal.note, normal.reviewedBy, normal.reviewedAt], ["normal", "移动网络", "admin", at(0)]);
+assert.strictEqual(crossCityReview([gz, dg], normal, now + 5 * 3600000), null, "a reviewed case stays closed for the same cities");
+const reopened = crossCityReview([gz, sz], normal, now + 5 * 3600000);
+assert.strictEqual(reopened.status, "pending");
+assert.deepStrictEqual(reopened.cities, ["东莞市", "广州市", "深圳市"]);
+assert.deepStrictEqual([reopened.previousReview.status, reopened.previousReview.note], ["normal", "移动网络"]);
+assert.throws(() => reviewDecision(pending, { decision: "maybe" }), /复核结论无效/);
+assert.throws(() => reviewDecision(null, { decision: "normal" }), /复核记录不存在/);
 
 // Common place: the city of the most counted pulls, with its most frequent carrier; node and redirect
 // pulls, unknown places and carrier-registered IPv6 Beijing do not count.
@@ -190,5 +228,38 @@ assert.deepStrictEqual(commonPlace([
 assert.deepStrictEqual(commonPlace([place("1.1.1.1", "浙江省", "杭州市", ""), place("2.2.2.2", "广东省", "深圳市", "电信")]).city, "杭州市", "a tie goes to the newest place");
 assert.strictEqual(commonPlace([]), null);
 assert.strictEqual(commonPlace([place("240e::1", "北京市", "北京市", "电信")]), null);
+
+// Concurrent presence: live connection IPs per node become places; two consecutive samples make an episode.
+const { presenceLocations, observeConcurrent, advanceConcurrent, CONCURRENT_MIN_SAMPLES } = require("./concurrent-location");
+const regions = new Map([
+  ["14.24.227.160", { country: "中国", province: "广东省", city: "广州市", isp: "电信" }],
+  ["223.104.64.1", { country: "中国", province: "广东省", city: "东莞市", isp: "移动" }],
+  ["202.106.0.20", { country: "中国", province: "北京市", city: "北京市", isp: "联通" }],
+  ["240e:b8f::1", { country: "中国", province: "北京市", city: "北京市", isp: "电信" }],
+  ["202.181.0.1", { country: "中国", province: "香港特别行政区", city: "", isp: "电讯盈科" }]
+]);
+const nodeNames = { 1: "日本 · Reality", 2: "香港 · Hy2" };
+const presenceOf = ipsByNode => presenceLocations({ ipsByNode }, { regions, ownIps: new Set(["141.11.77.154"]), nodeNames });
+const gzBj = presenceOf({ 1: ["14.24.227.160", "202.106.0.20", "141.11.77.154"], 2: ["14.24.227.160"] });
+assert.deepStrictEqual(gzBj.map(row => [row.ip, row.city, row.nodes]), [["14.24.227.160", "广州市", ["日本 · Reality", "香港 · Hy2"]], ["202.106.0.20", "北京市", ["日本 · Reality"]]], "one row per IP with its nodes; our own relay IP is dropped");
+assert.strictEqual(observeConcurrent(presenceOf({ 1: ["14.24.227.160"], 2: ["14.24.227.160"] })), null, "one IP on two nodes is one place");
+assert.strictEqual(observeConcurrent(presenceOf({ 1: ["14.24.227.160", "240e:b8f::1", "202.181.0.1"] })), null, "carrier IPv6 Beijing and Hong Kong don't count");
+assert.strictEqual(observeConcurrent(gzBj).kind, "province");
+const gzDg = observeConcurrent(presenceOf({ 1: ["14.24.227.160", "223.104.64.1"] }));
+assert.deepStrictEqual([gzDg.kind, gzDg.provinces, gzDg.cities], ["city", ["广东省"], ["东莞市", "广州市"]]);
+
+assert.strictEqual(CONCURRENT_MIN_SAMPLES, 2);
+const first = advanceConcurrent(null, observeConcurrent(gzBj), now);
+assert.deepStrictEqual([first.action, first.state.samples, first.state.eventId], [null, 1, null], "one sample is not enough (network switch)");
+assert.deepStrictEqual(advanceConcurrent(first.state, null, now + 120000), { state: null, action: null }, "the episode ends when the places stop overlapping");
+const second = advanceConcurrent(first.state, observeConcurrent(gzBj), now + 120000);
+assert.deepStrictEqual([second.action, second.state.kind, second.state.firstAt, second.state.provinces], ["start", "province", at(0), ["北京市", "广东省"]]);
+const recorded = { ...second.state, eventId: 7 };
+assert.strictEqual(advanceConcurrent(recorded, observeConcurrent(gzBj), now + 240000).action, "update");
+const cityEpisode = advanceConcurrent(advanceConcurrent(null, gzDg, now).state, gzDg, now + 120000);
+assert.deepStrictEqual([cityEpisode.action, cityEpisode.state.kind], ["start", "city"]);
+const upgraded = advanceConcurrent({ ...cityEpisode.state, eventId: 8 }, observeConcurrent(presenceOf({ 1: ["223.104.64.1", "202.106.0.20"] })), now + 240000);
+assert.deepStrictEqual([upgraded.action, upgraded.state.kind, upgraded.state.cities], ["upgrade", "province", ["东莞市", "广州市", "北京市"].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"))], "a city episode that reaches another province is upgraded once, places accumulate");
+assert.strictEqual(advanceConcurrent(upgraded.state, gzDg, now + 360000).state.kind, "province", "an upgraded episode stays cross-province");
 
 console.log("subscription access tests passed");

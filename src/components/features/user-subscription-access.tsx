@@ -1,5 +1,6 @@
 import * as React from "react"
 import { FileText } from "lucide-react"
+import { Link } from "react-router-dom"
 
 import { fetchJson } from "@/api"
 import { Alert } from "@/components/arc/alert/alert"
@@ -12,9 +13,10 @@ import { Skeleton } from "@/components/arc/skeleton/skeleton"
 import { EmptyState } from "@/components/features/shared"
 import { SimpleTable } from "@/components/features/simple-table"
 import { type SubscriptionPlace as Place, placeLabel } from "@/components/features/subscription-place"
+import { ReviewStatusBadge } from "@/components/features/subscription-reviews"
 import { formatDateTime } from "@/utils"
 
-type AccessWindow = { requests: number; ips: number; cities: string[]; clients: string[] }
+type AccessWindow = { requests: number; ips: number; cities: string[]; provinces: string[]; clients: string[] }
 type AccessIp = Place & { ip: string; count: number; firstAt: string; lastAt: string; clients: string[]; viaNode: boolean }
 type CityChange = { at: string; from: string; to: string; fromIp: string; ip: string; minutes: number }
 type AccessRow = Place & {
@@ -34,9 +36,43 @@ type AccessRow = Place & {
 type SubscriptionAccess = {
   days: number
   retentionDays: number
-  lastAlert: { at: string; cities: string[] } | null
-  summary: { suspicious: boolean; windows: Record<"24h" | "all", AccessWindow>; hints: string[]; cityChanges: CityChange[]; viaNodeRequests: number; ips: AccessIp[] }
+  lastAlert: { at: string; provinces: string[]; cities: string[] } | null
+  review: { status: "pending" | "normal" | "shared"; province: string; cities: string[]; reviewedAt?: string; reviewedBy?: string; note?: string } | null
+  summary: { suspicious: boolean; crossCity: boolean; windows: Record<"24h" | "all", AccessWindow>; hints: string[]; cityChanges: CityChange[]; viaNodeRequests: number; ips: AccessIp[] }
   rows: AccessRow[]
+  concurrent: ConcurrentEvent[]
+}
+type ConcurrentEvent = {
+  id: string
+  kind: "province" | "city"
+  startedAt: string
+  lastSeenAt: string
+  samples: number
+  provinces: string[]
+  cities: string[]
+  locations: Array<Place & { ip: string; nodes: string[] }>
+  ongoing: boolean
+}
+
+function minutesBetween(from: string, to: string) {
+  return Math.max(0, Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60000))
+}
+
+/** Episodes of live connections from two or more places at the same moment (node-hub presence, sampled every 2 minutes). */
+function ConcurrentLocations({ events, range }: { events: ConcurrentEvent[]; range: string }) {
+  const crossProvince = events.filter(event => event.kind === "province")
+  return <Card className="gap-0 overflow-hidden py-0" title="同时异地在线" description={`节点上同一时刻的在线 IP 分布在多个地点 · ${range} 天 ${events.length} 次`}>
+    <div className="grid gap-4">
+      {crossProvince.length ? <Alert tone="warning" title="疑似分享：同时跨省在线">{`${crossProvince.length} 次，涉及 ${[...new Set(crossProvince.flatMap(event => event.provinces))].join("、")}`}</Alert> : null}
+      <SimpleTable caption="同时异地在线列表" minWidth={760} columns={["开始", "持续", "范围", "在线 IP"]} rows={events} rowKey={event => event.id}
+        cells={event => [
+          <span className="grid text-muted-foreground tabular-nums"><span>{formatDateTime(event.startedAt)}</span>{event.ongoing ? <Badge size="sm" tone="info">进行中</Badge> : null}</span>,
+          <span className="tabular-nums">{formatGap(minutesBetween(event.startedAt, event.lastSeenAt))}</span>,
+          <Badge tone={event.kind === "province" ? "warning" : "neutral"}>{event.kind === "province" ? `跨省 · ${event.provinces.join("、")}` : `同省跨市 · ${event.cities.join("、")}`}</Badge>,
+          <ul className="grid gap-1 whitespace-normal">{event.locations.map(location => <li key={location.ip}><span className="font-mono tabular-nums">{location.ip}</span> <span>{placeLabel(location)}</span> <span className="text-xs text-muted-foreground">{location.nodes.join("、")}</span></li>)}</ul>,
+        ]} />
+    </div>
+  </Card>
 }
 
 const RANGE_OPTIONS = [{ value: "7", label: "7 天" }, { value: "30", label: "30 天" }, { value: "90", label: "90 天" }]
@@ -85,7 +121,7 @@ export function UserSubscriptionAccess({ userId }: { userId: string }) {
   const windows = data?.summary.windows
   const stats = windows ? [
     { label: "24 小时请求", value: windows["24h"].requests },
-    { label: "24 小时城市", value: windows["24h"].cities.length },
+    { label: "24 小时省份 / 城市", value: `${windows["24h"].provinces.length} / ${windows["24h"].cities.length}` },
     { label: `${range} 天请求`, value: windows.all.requests },
     { label: `${range} 天 IP`, value: windows.all.ips },
     { label: `${range} 天境内城市`, value: windows.all.cities.join("、") || "-" },
@@ -98,14 +134,23 @@ export function UserSubscriptionAccess({ userId }: { userId: string }) {
         : !data ? <Skeleton lines={1} className="h-40" />
         : !data.rows.length ? <EmptyState title="暂无订阅访问记录" description="订阅访问从启用记录后开始积累，该用户在所选范围内还没有拉取过订阅。" />
         : <div className="grid gap-4">
-          {data.summary.suspicious ? <Alert tone="warning" title="疑似分享：境内跨城市拉取">{data.summary.hints.join("；")}</Alert> : null}
-          {data.lastAlert ? <p className="text-sm text-muted-foreground">最近一次 Telegram 提醒：{formatDateTime(data.lastAlert.at)}（{data.lastAlert.cities.join("、")}）</p> : null}
+          {data.summary.suspicious ? <Alert tone="warning" title="疑似分享：境内跨省拉取">{data.summary.hints.join("；")}</Alert>
+            : data.summary.crossCity ? <Alert title="同省跨市拉取">{data.summary.hints.join("；")}。相邻城市常共用运营商地址池，不发送提醒，需人工复核。</Alert> : null}
+          {data.review ? <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <span>订阅复核：</span><ReviewStatusBadge status={data.review.status} />
+            <span>{data.review.province}：{data.review.cities.join("、")}</span>
+            {data.review.status !== "pending" && data.review.reviewedAt ? <span className="tabular-nums">{data.review.reviewedBy} · {formatDateTime(data.review.reviewedAt)}{data.review.note ? ` · ${data.review.note}` : ""}</span> : null}
+            <Link className="text-foreground underline underline-offset-4" to="/subscription-reviews">前往订阅复核</Link>
+          </p> : null}
+          {data.lastAlert ? <p className="text-sm text-muted-foreground">最近一次 Telegram 提醒：{formatDateTime(data.lastAlert.at)}（{(data.lastAlert.provinces.length ? data.lastAlert.provinces : data.lastAlert.cities).join("、")}）</p> : null}
           <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
             {stats.map(stat => <div key={stat.label} className="min-w-0"><dt className="text-muted-foreground">{stat.label}</dt><dd className="font-medium tabular-nums break-words">{stat.value}</dd></div>)}
           </dl>
           {data.summary.viaNodeRequests ? <p className="text-sm text-muted-foreground">另有 {data.summary.viaNodeRequests} 次请求来自自家节点（客户端经代理更新订阅），未计入以上统计。</p> : null}
         </div>}
     </Card>
+
+    {data?.concurrent?.length ? <ConcurrentLocations events={data.concurrent} range={range} /> : null}
 
     {data?.summary.cityChanges.length ? <Card className="gap-0 overflow-hidden py-0" title="城市切换" description={`共 ${data.summary.cityChanges.length} 次 · 相邻两次境内拉取所在城市不同`}>
       <SimpleTable caption="城市切换列表" minWidth={680} columns={["时间", "间隔", "从", "到"]} rows={data.summary.cityChanges} rowKey={(item, index) => `${item.at}-${index}`}
