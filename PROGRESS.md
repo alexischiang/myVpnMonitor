@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-14
-- Current Objective: 用户详情邀请人/常用城市/已删除节点合并、移动端导航与 Safari 修复、表格操作列固定、node-hub 机器用户流量子页（已实现并验证，未提交）
+- Last Updated: 2026-11-16
+- Current Objective: 订阅分享：跨省报警 + 同省跨市人工复核 + 同时异地在线检测（已实现并验证，未提交）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -620,8 +620,12 @@
 
 - 2026-11-14: npm run check、verify:fast、test:hub、verify:harness、git diff --check 通过；隔离服务器（开发库副本 + 模拟 node-hub + 3 秒慢速代理）浏览器验证 6 项功能，console/page errors 为空
 
+- 2026-11-16: 2026-11-16: test-subscription-access、npm run check、verify:fast、verify:harness、git diff --check 通过；隔离服务器真实 /sub 拉取：广州+东莞进入复核无报警，广州+北京报警，复核后新城市重新待复核；浏览器 console/page errors 为空
+
+- 2026-11-16: 2026-11-16: test-subscription-access、npm run check、verify:fast、verify:harness、git diff --check 通过；隔离服务器+stub node-hub 真实 2 分钟采样：广州+北京跨省事件并报警、广州+东莞进入复核（同时在线）、单次重叠不计、中转 IP 排除；浏览器 console/page errors 为空
+
 ## Next Session
 
-- Files: `database.js`, `docs/agent/arc-migration.md`, `feature_list.json`, `server.js`, `src/api.ts`, `src/components/arc/sortable-data-table/sortable-data-table.module.css`, `src/components/arc/sortable-data-table/sortable-data-table.tsx`, `src/components/features/app-sidebar.tsx`, `src/components/features/arc-data-table.tsx`, `src/components/features/details.tsx`, `src/components/features/node-hub.tsx`, `src/components/features/node-traffic-list.tsx`, `src/components/features/simple-table.tsx`, `src/components/features/user-subscription-access.tsx`, `src/main.tsx`, `src/styles.css`, `src/types.ts`, `subscription-access.js`, `test-subscription-access.js`, `src/components/features/node-hub-machine-traffic.tsx`, `src/components/features/subscription-place.ts`, `src/lib/lazy-page.ts`
+- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/general-settings.tsx`, `src/components/features/navigation.ts`, `src/components/features/user-subscription-access.tsx`, `src/main.tsx`, `subscription-access.js`, `test-subscription-access.js`, `concurrent-location.js`, `src/components/features/subscription-reviews.tsx`
 - Known risks: none
-- Recommended Next Step: 用户确认后提交；部署后在真机 iOS Safari 上复查侧边栏跳转和输入框不再缩放；subscription-ipv4-relay 仍待线上验证
+- Recommended Next Step: 用户确认后提交并部署；上线后用生产 nh_presence 确认中转节点上报的是用户真实 IP，观察 concurrent_location_events 数量

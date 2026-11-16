@@ -29,6 +29,7 @@ window.addEventListener("vite:preloadError", event => {
 const DashboardPage = lazyPage(() => import("@/components/features/dashboard").then(module => ({ default: module.DashboardPage })))
 const SalesAnalyticsPage = lazyPage(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesAnalyticsPage })))
 const SalesProfitabilityPage = lazyPage(() => import("@/components/features/sales-analytics").then(module => ({ default: module.SalesProfitabilityPage })))
+const SubscriptionReviewsPage = lazyPage(() => import("@/components/features/subscription-reviews").then(module => ({ default: module.SubscriptionReviewsPage })))
 const SyncJobsPage = lazyPage(() => import("@/components/features/sync-jobs").then(module => ({ default: module.SyncJobsPage })))
 const NodeHubPage = lazyPage(() => import("@/components/features/node-hub").then(module => ({ default: module.NodeHubPage })))
 const UsersPage = lazyPage(() => import("@/components/features/users").then(module => ({ default: module.UsersPage })))
@@ -183,6 +184,7 @@ function App() {
               <Route path="node-hub" element={<NodeHubPage />} />
               <Route path="users" element={<UsersPage />} />
               <Route path="users/detail/:id" element={<UserDetailPage />} />
+              <Route path="subscription-reviews" element={<SubscriptionReviewsPage />} />
               <Route path="orders" element={<OrdersPage />} />
               <Route path="orders/:id" element={<OrderDetailPage />} />
               <Route path="tickets" element={<AdminTicketsPage />} />

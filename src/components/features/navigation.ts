@@ -8,6 +8,7 @@ import {
   IconReceiptDollar,
   IconReportAnalytics,
   IconServer2,
+  IconShieldCheck,
   IconShoppingBag,
   IconRefresh,
   IconSettings,
@@ -48,6 +49,7 @@ export const navEntries: NavEntry[] = [
     items: [
       { title: "销售统计", url: "/sales-analytics", icon: IconReportAnalytics },
       { title: "Users", url: "/users", icon: IconUsers },
+      { title: "订阅复核", url: "/subscription-reviews", icon: IconShieldCheck },
       { title: "Orders", url: "/orders", icon: IconCreditCard },
       { title: "工单管理", url: "/tickets", icon: IconTicket },
       { title: "服务交付", url: "/deliveries", icon: IconTruckDelivery },

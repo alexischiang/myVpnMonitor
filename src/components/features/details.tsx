@@ -804,7 +804,7 @@ return [<Checkbox checked={selected ? true : inherited ? "indeterminate" : false
             ]),
           ]} />}</Card>
 
-        <Tabs defaultValue="overview" className="@container min-w-0 gap-4">
+        <Tabs defaultValue={showSubscriptionAccess && new URLSearchParams(location.search).get("tab") === "subscription-access" ? "subscription-access" : "overview"} className="@container min-w-0 gap-4">
           <TabsList className={`grid w-full group-data-[orientation=horizontal]/tabs:h-auto ${tabListColumns}`}>
             <TabsTrigger value="overview" className="h-9">基本信息</TabsTrigger>
             <TabsTrigger value="catalog-v2" className="h-9">V2 商品</TabsTrigger>
