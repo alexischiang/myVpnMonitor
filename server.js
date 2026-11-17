@@ -5341,8 +5341,36 @@ function publicRegisteredAccount(account) {
 // machine. Nodes are named from the live hub overview; a node no longer there keeps its last logged name
 // and is flagged deleted. Traffic billed to the bare machine key predates per-node billing.
 const MACHINE_USER_TRAFFIC_LIMIT = 100;
-function machineUserTraffic({ machine, machineGuid, rows = [], hubNodes = [], from, to, days }) {
+
+// The hub does not tie a relay to a machine, so a relay runs on a machine when its address is the
+// machine's address or one of the machine's own nodes' addresses.
+function machineRelayIds(machine, hubNodes = [], relays = []) {
+  const normalize = value => String(value || "").trim().replace(/^\[|\]$/g, "").toLowerCase();
+  const hosts = new Set([machine?.host, ...hubNodes.filter(node => Number(node.machineId) === Number(machine?.id)).map(node => node.host)].map(normalize).filter(Boolean));
+  return new Set(relays.filter(relay => hosts.has(normalize(relay.host))).map(relay => Number(relay.id)));
+}
+
+// Other machines' nodes this machine relays: each node's billing key with the first China day it went
+// through one of the machine's relays (no earlier than `from`). Traffic before that day went another way.
+// A node behind several relays has one traffic count for all of them, so it carries `relayCount` and the
+// whole count is shown here as an upper bound.
+function machineRelayedNodes({ machine, hubNodes = [], relays = [], from }) {
+  const relayIds = machineRelayIds(machine, hubNodes, relays);
+  if (!relayIds.size) return [];
+  const result = [];
+  for (const node of hubNodes) {
+    if (!node.billingKey || Number(node.machineId) === Number(machine.id)) continue;
+    const entries = (node.relays || []).filter(entry => relayIds.has(Number(entry.relayId)));
+    if (!entries.length) continue;
+    const firstDay = entries.map(entry => (entry.createdAt ? chinaDateKey(Date.parse(entry.createdAt)) : "")).filter(Boolean).sort()[0] || from;
+    result.push({ guid: node.billingKey, name: node.name, since: firstDay > from ? firstDay : from, relayCount: (node.relays || []).length });
+  }
+  return result;
+}
+
+function machineUserTraffic({ machine, machineGuid, rows = [], relayedRows = [], relayedNodes = [], hubNodes = [], from, to, days }) {
   const liveNames = new Map(hubNodes.filter(node => node.billingKey).map(node => [node.billingKey, node.name]));
+  const relayedByGuid = new Map(relayedNodes.map(node => [node.guid, node]));
   const usersByEmail = new Map();
   for (const user of users) {
     const email = String(user.xuiClientEmail || "").trim().toLowerCase();
@@ -5351,31 +5379,43 @@ function machineUserTraffic({ machine, machineGuid, rows = [], hubNodes = [], fr
   const usersById = new Map(users.map(user => [user.id, user]));
   const nodeTotals = new Map();
   const byUser = new Map();
-  for (const row of rows) {
+  const add = (row, relayed) => {
     const bytes = Math.max(0, row.up) + Math.max(0, row.down);
-    if (!bytes) continue;
+    if (!bytes) return;
     const email = String(row.email || "").trim().toLowerCase();
     const user = usersByEmail.get(email) || usersById.get(row.userId) || null;
     const key = user?.id || `email:${email}`;
-    const entry = byUser.get(key) || { key, userId: user?.id || "", label: user ? billUserLabel(user) : email, email, upBytes: 0, downBytes: 0, totalBytes: 0, nodes: new Map() };
+    const entry = byUser.get(key) || { key, userId: user?.id || "", label: user ? billUserLabel(user) : email, email, upBytes: 0, downBytes: 0, totalBytes: 0, relayedBytes: 0, nodes: new Map() };
     entry.upBytes += Math.max(0, row.up);
     entry.downBytes += Math.max(0, row.down);
     entry.totalBytes += bytes;
+    if (relayed) entry.relayedBytes += bytes;
     entry.nodes.set(row.nodeGuid, (entry.nodes.get(row.nodeGuid) || 0) + bytes);
     byUser.set(key, entry);
-    const node = nodeTotals.get(row.nodeGuid) || { guid: row.nodeGuid, name: "", deleted: false, bytes: 0 };
+    const node = nodeTotals.get(row.nodeGuid) || { guid: row.nodeGuid, name: "", deleted: false, relayed, bytes: 0 };
     node.bytes += bytes;
-    if (row.nodeGuid === machineGuid) node.name = "机器级（按节点计费前）";
+    if (relayed) {
+      const relayedNode = relayedByGuid.get(row.nodeGuid);
+      node.name = relayedNode?.name || row.nodeName || row.nodeGuid;
+      node.since = relayedNode?.since || from;
+      node.sharedRelays = Math.max(1, Number(relayedNode?.relayCount) || 1);
+    } else if (row.nodeGuid === machineGuid) node.name = "机器级（按节点计费前）";
     else if (liveNames.has(row.nodeGuid)) node.name = liveNames.get(row.nodeGuid);
     else { node.name = node.name || row.nodeName || row.nodeGuid; node.deleted = true; }
     nodeTotals.set(row.nodeGuid, node);
-  }
+  };
+  for (const row of rows) add(row, false);
+  for (const row of relayedRows) add(row, true);
   const nodes = [...nodeTotals.values()].sort((a, b) => b.bytes - a.bytes);
   const ranked = [...byUser.values()].sort((a, b) => b.totalBytes - a.totalBytes);
+  const totalBytes = ranked.reduce((sum, entry) => sum + entry.totalBytes, 0);
+  const relayedBytes = ranked.reduce((sum, entry) => sum + entry.relayedBytes, 0);
   return {
     machine: { id: machine.id, guid: machineGuid, name: machine.name },
     from, to, days,
-    totalBytes: ranked.reduce((sum, entry) => sum + entry.totalBytes, 0),
+    totalBytes,
+    localBytes: totalBytes - relayedBytes,
+    relayedBytes,
     userCount: ranked.length,
     nodes,
     users: ranked.slice(0, MACHINE_USER_TRAFFIC_LIMIT).map(entry => ({
@@ -7903,8 +7943,13 @@ async function handleApi(req, res, pathname) {
         const machineGuid = machine.guid || `hub-m${machine.id}`;
         const to = chinaDateKey();
         const from = chinaDateKey(Date.parse(`${to}T12:00:00+08:00`) - (days - 1) * 86400000);
-        const rows = await dataStore.xuiMachineUserTraffic(machineGuid, from, to);
-        sendJson(res, 200, machineUserTraffic({ machine, machineGuid, rows, hubNodes: overview?.nodes || [], from, to, days }));
+        const hubNodes = overview?.nodes || [];
+        const relayedNodes = machineRelayedNodes({ machine, hubNodes, relays: overview?.relays || [], from });
+        const [rows, relayedRows] = await Promise.all([
+          dataStore.xuiMachineUserTraffic(machineGuid, from, to),
+          dataStore.xuiNodesUserTraffic(relayedNodes, to)
+        ]);
+        sendJson(res, 200, machineUserTraffic({ machine, machineGuid, rows, relayedRows, relayedNodes, hubNodes, from, to, days }));
       } catch (error) {
         sendJson(res, 502, { error: `读取机器流量失败：${error.message}` });
       }
@@ -10114,6 +10159,7 @@ module.exports = Object.assign(requestHandler, {
   customerIDFromUUID,
   publicRegisteredAccount,
   sendSubconverterSubscription,
+  machineRelayedNodes,
   normalizeXuiInboundIdList,
   effectiveXuiInboundIds,
   normalizeXuiInboundSettings,

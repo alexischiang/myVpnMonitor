@@ -921,6 +921,26 @@ class PostgresDataStore {
     return result.rows.map(row => ({ email: row.email, nodeGuid: row.node_guid, nodeName: row.node_name || "", userId: row.user_id || "", up: Number(row.up), down: Number(row.down) }));
   }
 
+  // Per user and node traffic of the given nodes, each counted from its own `since` day through toDateKey
+  // (the nodes another machine relays, from the day they went behind its relay).
+  async xuiNodesUserTraffic(nodes, toDateKey) {
+    if (!nodes.length) return [];
+    const result = await withPgRetry(
+      () => this.pool.query(
+        `SELECT t.email, t.node_guid, SUM(t.up_bytes)::bigint AS up, SUM(t.down_bytes)::bigint AS down,
+                (ARRAY_AGG(t.node_name ORDER BY t.date DESC) FILTER (WHERE t.node_name <> ''))[1] AS node_name,
+                (ARRAY_AGG(t.user_id ORDER BY t.date DESC) FILTER (WHERE t.user_id <> ''))[1] AS user_id
+         FROM xui_daily_traffic t
+         JOIN UNNEST($1::text[], $2::text[]) AS n(guid, since) ON t.node_guid = n.guid AND t.date >= n.since
+         WHERE t.date <= $3
+         GROUP BY t.email, t.node_guid`,
+        [nodes.map(node => String(node.guid)), nodes.map(node => String(node.since)), toDateKey]
+      ),
+      `xui nodes user traffic ${nodes.length}`
+    );
+    return result.rows.map(row => ({ email: row.email, nodeGuid: row.node_guid, nodeName: row.node_name || "", userId: row.user_id || "", up: Number(row.up), down: Number(row.down) }));
+  }
+
   // Directional application traffic rows used by sales profitability reports.
   async xuiTrafficRange(fromDateKey, toDateKey) {
     const result = await withPgRetry(

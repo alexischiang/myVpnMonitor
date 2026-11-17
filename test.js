@@ -74,8 +74,27 @@ const {
   ticketTelegramText,
   ticketReplyMessage,
   toggleTicketReaction,
-  planRenewalOffer
+  planRenewalOffer,
+  machineRelayedNodes
 } = require("./server");
+
+// A machine relays the other machines' nodes whose relay sits on its address (its own or one of its nodes'),
+// each counted from the China day it went behind that relay, never earlier than the window start.
+{
+  const machine = { id: 20, host: "" };
+  const hubNodes = [
+    { id: 24, machineId: 20, host: "23.129.140.5", billingKey: "hub-m20-n24", name: "JP S01", relays: [] },
+    { id: 11, machineId: 3, host: "185.241.40.165", billingKey: "hub-m3-n11", name: "HK", relays: [{ relayId: 6, createdAt: "2026-11-13T17:30:00.000Z" }] },
+    { id: 17, machineId: 16, host: "85.155.177.63", billingKey: "hub-m16-n17", name: "KR", relays: [{ relayId: 6, createdAt: "2026-10-01T00:00:00.000Z" }, { relayId: 1, createdAt: "2026-10-01T00:00:00.000Z" }] },
+    { id: 26, machineId: 3, host: "185.241.40.165", billingKey: "hub-m3-n26", name: "HK via GoMami", relays: [{ relayId: 1, createdAt: "2026-11-14T00:00:00.000Z" }] }
+  ];
+  const relays = [{ id: 6, host: "23.129.140.5" }, { id: 1, host: "141.11.77.154" }];
+  assert.deepStrictEqual(machineRelayedNodes({ machine, hubNodes, relays, from: "2026-11-11" }), [
+    { guid: "hub-m3-n11", name: "HK", since: "2026-11-14", relayCount: 1 },
+    { guid: "hub-m16-n17", name: "KR", since: "2026-11-11", relayCount: 2 }
+  ]);
+  assert.deepStrictEqual(machineRelayedNodes({ machine: { id: 3, host: "185.241.40.165" }, hubNodes, relays, from: "2026-11-11" }), [], "a landing machine relays nothing");
+}
 
 assert.strictEqual(requestIp({ headers: { "x-forwarded-for": "203.0.113.8, 172.64.0.1" }, socket: { remoteAddress: "127.0.0.1" } }), "203.0.113.8");
 const ipInfoPromise = lookupIpInfo("203.0.113.8", {

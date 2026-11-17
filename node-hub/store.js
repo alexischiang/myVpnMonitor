@@ -506,15 +506,15 @@ class NodeHubStore {
     await this.pool.query("UPDATE nh_relays SET last_seen_at = NOW(), status = $2::jsonb WHERE id = $1", [Number(id), JSON.stringify(status)]);
   }
 
-  /** Relay entries of every node (or one node), with the relay's name and address. */
+  /** Relay entries of every node (or one node), with the relay's name and address and when the node was put behind it. */
   async listNodeRelays(nodeId = null) {
     const result = await this.pool.query(
-      `SELECT nr.node_id, nr.relay_id, nr.listen_port, r.name, r.host, r.is_active
+      `SELECT nr.node_id, nr.relay_id, nr.listen_port, nr.created_at, r.name, r.host, r.is_active
        FROM nh_node_relays nr JOIN nh_relays r ON r.id = nr.relay_id
        ${nodeId === null ? "" : "WHERE nr.node_id = $1"} ORDER BY nr.node_id, r.id`,
       nodeId === null ? [] : [Number(nodeId)]
     );
-    return result.rows.map(row => ({ nodeId: row.node_id, relayId: row.relay_id, relayName: row.name, relayHost: row.host, relayActive: row.is_active, listenPort: row.listen_port }));
+    return result.rows.map(row => ({ nodeId: row.node_id, relayId: row.relay_id, relayName: row.name, relayHost: row.host, relayActive: row.is_active, listenPort: row.listen_port, createdAt: iso(row.created_at) }));
   }
 
   // Makes a node's relay entries exactly relayIds. Kept relays keep their port; a new entry takes
