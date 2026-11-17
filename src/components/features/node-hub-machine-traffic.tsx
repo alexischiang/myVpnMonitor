@@ -12,14 +12,17 @@ import { EmptyState } from "@/components/features/shared"
 import type { NodeHubMachine } from "@/types"
 import { formatBytes } from "@/utils"
 
-type MachineNode = { guid: string; name: string; deleted: boolean; bytes: number }
-type MachineUser = { key: string; userId: string; label: string; email: string; upBytes: number; downBytes: number; totalBytes: number; nodes: Array<{ guid: string; bytes: number }> }
+/** A relayed node lands on another machine and only passes through this one's relay (from `since`). */
+type MachineNode = { guid: string; name: string; deleted: boolean; relayed: boolean; since?: string; sharedRelays?: number; bytes: number }
+type MachineUser = { key: string; userId: string; label: string; email: string; upBytes: number; downBytes: number; totalBytes: number; relayedBytes: number; nodes: Array<{ guid: string; bytes: number }> }
 type MachineUserTraffic = {
   machine: { id: number; guid: string; name: string }
   from: string
   to: string
   days: number
   totalBytes: number
+  localBytes: number
+  relayedBytes: number
   userCount: number
   nodes: MachineNode[]
   users: MachineUser[]
@@ -29,10 +32,11 @@ const RANGE_OPTIONS = [{ value: "1", label: "今天" }, { value: "7", label: "7 
 // The machine's nodes take the chart series in order of traffic; beyond five they share the neutral "other" color.
 const SERIES = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)"]
 const seriesColor = (index: number) => SERIES[index] ?? "var(--series-other)"
+const nodeLabel = (node: MachineNode | undefined, guid: string) => node ? `${node.relayed ? "中转 · " : ""}${node.name}${node.deleted ? "（已删除）" : ""}` : guid
 
 /**
- * One machine's traffic by user: the heaviest users first, each bar split by the machine's nodes they used. Raw bytes (no node
- * multipliers), since this is what the machine itself carried.
+ * One machine's traffic by user: the heaviest users first, each bar split by the nodes they used, both the machine's own and
+ * other machines' nodes it relays. Raw bytes (no node multipliers), since this is what the machine itself carried.
  */
 export function NodeHubMachineTraffic({ machines, machineId, onMachineChange, refreshKey }: {
   machines: NodeHubMachine[]
@@ -66,11 +70,14 @@ export function NodeHubMachineTraffic({ machines, machineId, onMachineChange, re
   const nodeIndex = new Map(current?.nodes.map((node, index) => [node.guid, index]) ?? [])
   const nodeByGuid = new Map(current?.nodes.map(node => [node.guid, node]) ?? [])
   const top = current?.users[0]?.totalBytes ?? 0
+  const relayedNodes = current?.nodes.filter(node => node.relayed) ?? []
+  const lateNodes = relayedNodes.filter(node => node.since && node.since > current!.from)
+  const sharedNodes = relayedNodes.filter(node => (node.sharedRelays ?? 1) > 1)
 
   return (
     <Card
       title="机器用户流量"
-      description={current ? `${current.from === current.to ? current.to : `${current.from} 至 ${current.to}`} · ${current.userCount} 个用户 · 共 ${formatBytes(current.totalBytes)}（原始流量，不计倍率）` : "按用户统计这台机器承载的流量"}
+      description={current ? `${current.from === current.to ? current.to : `${current.from} 至 ${current.to}`} · ${current.userCount} 个用户 · 共 ${formatBytes(current.totalBytes)}${current.relayedBytes ? `（本机节点 ${formatBytes(current.localBytes)} · 中转 ${formatBytes(current.relayedBytes)}）` : ""} · 原始流量，不计倍率` : "按用户统计这台机器承载的流量"}
     >
       <div className="grid gap-4">
         <div className="flex flex-wrap items-end gap-3">
@@ -86,11 +93,18 @@ export function NodeHubMachineTraffic({ machines, machineId, onMachineChange, re
             {current.nodes.map((node, index) => (
               <li key={node.guid} className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <span className="size-2.5 shrink-0 rounded-sm" style={{ background: seriesColor(index) }} aria-hidden="true" />
-                <span className="truncate">{node.name}{node.deleted ? "（已删除）" : ""}</span>
+                <span className="truncate">{nodeLabel(node, node.guid)}</span>
                 <span className="tabular-nums">{formatBytes(node.bytes)}</span>
               </li>
             ))}
           </ul>
+          {relayedNodes.length ? (
+            <p className="text-xs text-muted-foreground">
+              中转流量落地在其他机器，经过本机时进、出网卡各算一次，落地机器上也会再算一次。
+              {lateNodes.length ? ` ${lateNodes.map(node => `${node.name} 从 ${node.since}`).join("、")} 起经本机中转。` : ""}
+              {sharedNodes.length ? ` ${sharedNodes.map(node => node.name).join("、")} 同时挂在多台中转上，这里是全部中转的合计。` : ""}
+            </p>
+          ) : null}
           <ol className={`grid gap-4 ${loading ? "opacity-60" : ""}`} aria-label={`${current.machine.name} 的用户流量，从高到低`}>
             {current.users.map((user, rank) => (
               <li key={user.key} className="grid min-w-0 gap-1.5">
@@ -104,7 +118,7 @@ export function NodeHubMachineTraffic({ machines, machineId, onMachineChange, re
                   <span className="w-10 shrink-0 text-right text-xs text-muted-foreground tabular-nums">{current.totalBytes ? Math.round(user.totalBytes / current.totalBytes * 100) : 0}%</span>
                 </div>
                 {/* Bars scale to the heaviest user so lengths compare down the list. */}
-                <div className="ml-8 flex h-2.5 overflow-hidden rounded-full bg-muted" role="img" aria-label={user.nodes.map(node => `${nodeByGuid.get(node.guid)?.name || node.guid} ${formatBytes(node.bytes)}`).join("，")}>
+                <div className="ml-8 flex h-2.5 overflow-hidden rounded-full bg-muted" role="img" aria-label={user.nodes.map(node => `${nodeLabel(nodeByGuid.get(node.guid), node.guid)} ${formatBytes(node.bytes)}`).join("，")}>
                   <div className="flex h-full" style={{ width: `${top ? Math.max(1, user.totalBytes / top * 100) : 0}%` }}>
                     {user.nodes.map(node => <span key={node.guid} className="h-full" style={{ width: `${node.bytes / user.totalBytes * 100}%`, background: seriesColor(nodeIndex.get(node.guid) ?? SERIES.length) }} />)}
                   </div>
@@ -113,7 +127,7 @@ export function NodeHubMachineTraffic({ machines, machineId, onMachineChange, re
                   {user.nodes.map(node => (
                     <span key={node.guid} className="inline-flex items-center gap-1">
                       <span className="size-2 shrink-0 rounded-sm" style={{ background: seriesColor(nodeIndex.get(node.guid) ?? SERIES.length) }} aria-hidden="true" />
-                      {nodeByGuid.get(node.guid)?.name || node.guid}<span className="tabular-nums">{formatBytes(node.bytes)}</span>
+                      {nodeLabel(nodeByGuid.get(node.guid), node.guid)}<span className="tabular-nums">{formatBytes(node.bytes)}</span>
                     </span>
                   ))}
                   <span className="tabular-nums">↑ {formatBytes(user.upBytes)} ↓ {formatBytes(user.downBytes)}</span>

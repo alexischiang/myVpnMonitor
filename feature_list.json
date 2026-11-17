@@ -6254,6 +6254,37 @@
         "page_errors": [],
         "checked_at": "2026-11-16"
       }
+    },
+    {
+      "id": "node-hub-machine-relayed-traffic",
+      "name": "机器用户流量计入本机中转的流量",
+      "description": "The 用户流量 tab of a machine also counts other machines' nodes it relays (realm). A relay is on a machine when its host is the machine's host or one of the machine's own nodes' hosts. Each relayed node counts from the China day it was put behind that relay (nh_node_relays.created_at, now in the hub overview) and never before the window start; a node behind several relays is counted in full and flagged. The API returns localBytes/relayedBytes and relayed/since/sharedRelays per node; the tab shows 本机节点 vs 中转 totals, prefixes relayed nodes with 中转 · and notes that relayed bytes cross the NIC both ways and are counted again on the landing machine. Motivated by Neburst JP: NIC 245 GB each way vs 32 GB shown, the rest being relay 6.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [
+        "node-hub-machine-user-traffic"
+      ],
+      "done_criteria": [
+        "A machine's traffic includes the nodes its relays forward, from the day they went behind the relay",
+        "Landing machines are unchanged",
+        "The tab separates local and relayed traffic"
+      ],
+      "verification": [
+        "2026-11-17: node test.js (machineRelayedNodes: host match via a node's address, since clamped to the window, multi-relay count, landing machine gets none), npm run test:hub, npm run verify:fast, npm run check pass",
+        "2026-11-17: API on seeded test-DB rows with a stub hub: Neburst-like machine 20 7 天 = 204 GB (local 69 + relayed 135; HK node counted only from its relay day, 3 days x 25 GB), bage-hk landing machine shows only its own 140 GB"
+      ],
+      "browser_verification": {
+        "routes": [
+          "/node-hub?tab=traffic&trafficMachine=20",
+          "/node-hub?tab=traffic&trafficMachine=3"
+        ],
+        "interactions": [
+          "isolated server.js on the test DB with a stub node-hub (relay 6 on machine 20's node address): totals split 本机节点 64 GB · 中转 126 GB, legend and user rows prefix 中转 ·, note lists the late and multi-relay nodes; switched to 30 天 and to bage-hk (no relayed traffic); 375px: no horizontal scroll. All API/resource requests 200; the only console line was a stale 403 from a production URL opened earlier in the same tab before the local server"
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-17"
+      }
     }
   ]
 }

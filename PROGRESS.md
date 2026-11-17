@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-16
-- Current Objective: 订阅分享：跨省报警 + 同省跨市人工复核 + 同时异地在线检测（已实现并验证，未提交）
+- Last Updated: 2026-11-17
+- Current Objective: 机器用户流量计入本机中转（realm）的流量（已实现并验证，未提交、未部署）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -624,8 +624,10 @@
 
 - 2026-11-16: 2026-11-16: test-subscription-access、npm run check、verify:fast、verify:harness、git diff --check 通过；隔离服务器+stub node-hub 真实 2 分钟采样：广州+北京跨省事件并报警、广州+东莞进入复核（同时在线）、单次重叠不计、中转 IP 排除；浏览器 console/page errors 为空
 
+- 2026-11-17: node test.js、test:hub、verify:fast、check、verify:harness 通过；隔离服务器+假 hub 浏览器验证桌面与 375px
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/details.tsx`, `src/components/features/general-settings.tsx`, `src/components/features/navigation.ts`, `src/components/features/user-subscription-access.tsx`, `src/main.tsx`, `subscription-access.js`, `test-subscription-access.js`, `concurrent-location.js`, `src/components/features/subscription-reviews.tsx`
+- Files: `database.js`, `feature_list.json`, `node-hub/store.js`, `server.js`, `src/components/features/node-hub-machine-traffic.tsx`, `src/types.ts`, `test.js`
 - Known risks: none
-- Recommended Next Step: 用户确认后提交并部署；上线后用生产 nh_presence 确认中转节点上报的是用户真实 IP，观察 concurrent_location_events 数量
+- Recommended Next Step: 提交并部署后，在线上 Node Hub 用户流量页核对 Neburst JP：中转应约占 210+ GB

@@ -577,7 +577,7 @@ export type NodeHubNode = {
 }
 
 /** One (node, relay) entry: the relay forwards listenPort to the node's machine. */
-export type NodeHubRelayEntry = { nodeId: number; relayId: number; relayName: string; relayHost: string; relayActive: boolean; listenPort: number }
+export type NodeHubRelayEntry = { nodeId: number; relayId: number; relayName: string; relayHost: string; relayActive: boolean; listenPort: number; createdAt?: string | null }
 
 /** A relay machine running realm; it pulls its forwarding rules from node-hub every 30 seconds. */
 export type NodeHubRelay = {
