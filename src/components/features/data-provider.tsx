@@ -67,6 +67,14 @@ let cachedState: Omit<DataState, "reload" | "runAsync"> | null = null
 let accountRequest: Promise<{ account?: string; role?: string }> | null = null
 let lastLoadedAt = 0
 
+export function resetDataProviderCache() {
+  cachedState = null
+  accountRequest = null
+  lastLoadedAt = 0
+  loadedCollections.clear()
+  collectionRequests.clear()
+}
+
 function fetchCollection(key: Collection) {
   const existing = collectionRequests.get(key)
   if (existing) return existing
@@ -136,7 +144,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [commitState])
 
   React.useEffect(() => {
-    accountRequest = accountRequest || fetchJson<{ account?: string; role?: string }>("/api/auth/me")
+    accountRequest = accountRequest || fetchJson<{ account?: string; role?: string }>("/api/auth/me").catch(error => {
+      accountRequest = null
+      throw error
+    })
     const requiredCollections = pageCollections.find(([path]) => location.pathname.startsWith(path))?.[1] || []
     const missingCollections = requiredCollections.filter(key => !loadedCollections.has(key))
     const initialRequest = missingCollections.length ? reload(missingCollections, { loading: true }) : Promise.resolve()

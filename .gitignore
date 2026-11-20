@@ -7,3 +7,5 @@ build-meta.json
 design-template/
 data/
 tmp-dbsync/
+tmp-*.png
+tmp-*.html

@@ -30,6 +30,9 @@ jobs:
             sleep "$delay"
           done
 
+      - name: Run verification tests
+        run: npm run verify:fast
+
       - name: Build application
         run: npm run build
 

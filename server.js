@@ -7,6 +7,19 @@ const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const zlib = require("zlib");
+const {
+  SECURITY_HEADERS,
+  safeEqual,
+  parseCookies,
+  isSecureRequest,
+  signSession: signSessionWithSecret,
+  makeSessionToken: makeSessionTokenWithSecret,
+  buildAuthCookie,
+  hashAccountPassword,
+  verifyAccountPassword,
+  createAuthRateLimiter,
+  checkSecretStrength
+} = require("./auth-security");
 const { createDataStore } = require("./database");
 const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const { loadLocalEnv } = require("./env");
@@ -847,6 +860,11 @@ async function saveAccounts() {
   await dataStore.saveCollection("accounts", accounts);
 }
 
+async function saveAccount(account) {
+  _markWritten();
+  await dataStore.setRecord("accounts", account.id, account);
+}
+
 async function saveBills() {
   _markWritten();
   await dataStore.saveCollection("bills", bills);
@@ -938,6 +956,26 @@ function createStepProgress(req, res) {
   };
 }
 
+const authRateLimiter = createAuthRateLimiter();
+
+function enforceAuthRateLimit(req, res, { action, subject = "", ipLimit, subjectLimit = 0, windowMs = 15 * 60 * 1000 }) {
+  if (process.env.NODE_ENV === "test" || process.env.AUTH_RATE_LIMIT_DISABLED === "true") return true;
+  const ip = requestIp(req) || "unknown";
+  const ipCheck = authRateLimiter.consume(`${action}:ip:${ip}`, { limit: ipLimit, windowMs });
+  if (!ipCheck.allowed) {
+    sendJson(res, 429, { error: "请求过于频繁，请稍后再试。" }, { "retry-after": String(ipCheck.retryAfterSeconds) });
+    return false;
+  }
+  if (subject && subjectLimit > 0) {
+    const subjectCheck = authRateLimiter.consume(`${action}:sub:${String(subject).toLowerCase()}`, { limit: subjectLimit, windowMs });
+    if (!subjectCheck.allowed) {
+      sendJson(res, 429, { error: "尝试次数过多，请稍后再试。" }, { "retry-after": String(subjectCheck.retryAfterSeconds) });
+      return false;
+    }
+  }
+  return true;
+}
+
 function sendJson(res, status, payload, headers = {}) {
   let body = Buffer.from(JSON.stringify(payload));
   if (body.length >= 1024 && /\bgzip\b/.test(String(res.req?.headers?.["accept-encoding"] || ""))) {
@@ -945,6 +983,7 @@ function sendJson(res, status, payload, headers = {}) {
     headers = { ...headers, "content-encoding": "gzip", "vary": "Accept-Encoding" };
   }
   res.writeHead(status, {
+    ...SECURITY_HEADERS,
     "content-type": "application/json; charset=utf-8",
     "content-length": body.length,
     "cache-control": "no-store, max-age=0",
@@ -1005,34 +1044,12 @@ function appMeta() {
   return cachedAppMeta;
 }
 
-function parseCookies(req) {
-  return Object.fromEntries(String(req.headers.cookie || "")
-    .split(";")
-    .map(part => part.trim())
-    .filter(Boolean)
-    .map(part => {
-      const index = part.indexOf("=");
-      if (index === -1) return [part, ""];
-      return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
-    }));
-}
-
-function safeEqual(a, b) {
-  const left = Buffer.from(String(a));
-  const right = Buffer.from(String(b));
-  return left.length === right.length && crypto.timingSafeEqual(left, right);
-}
-
 function signSession(payload) {
-  return crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  return signSessionWithSecret(payload, SESSION_SECRET);
 }
 
 function makeSessionToken(session, maxAgeSeconds) {
-  const payload = Buffer.from(JSON.stringify({
-    ...session,
-    exp: Date.now() + maxAgeSeconds * 1000
-  })).toString("base64url");
-  return `${payload}.${signSession(payload)}`;
+  return makeSessionTokenWithSecret(session, maxAgeSeconds, SESSION_SECRET);
 }
 
 function verifySessionToken(token) {
@@ -1051,20 +1068,8 @@ function verifySessionToken(token) {
   }
 }
 
-function isSecureRequest(req) {
-  return req.headers["x-forwarded-proto"] === "https" || req.socket?.encrypted;
-}
-
 function authCookie(req, token, maxAgeSeconds = null) {
-  const parts = [
-    `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax"
-  ];
-  if (isSecureRequest(req)) parts.push("Secure");
-  if (maxAgeSeconds !== null) parts.push(`Max-Age=${maxAgeSeconds}`);
-  return parts.join("; ");
+  return buildAuthCookie(req, AUTH_COOKIE_NAME, token, maxAgeSeconds);
 }
 
 function clearAuthCookie(req) {
@@ -1106,19 +1111,6 @@ function validateAccountPassword(value) {
   if (password.length < 8) throw new Error("密码至少需要 8 位。");
   if (password.length > 128) throw new Error("密码不能超过 128 位。");
   return password;
-}
-
-function hashAccountPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `scrypt$${salt}$${hash}`;
-}
-
-function verifyAccountPassword(password, stored) {
-  const [method, salt, expected] = String(stored || "").split("$");
-  if (method !== "scrypt" || !salt || !expected) return false;
-  const actual = crypto.scryptSync(String(password || ""), salt, 64).toString("hex");
-  return safeEqual(actual, expected);
 }
 
 function accountBySession(session) {
@@ -6841,6 +6833,7 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/auth/register" && req.method === "POST") {
     try {
+      if (!enforceAuthRateLimit(req, res, { action: "register", ipLimit: 10, windowMs: 15 * 60 * 1000 })) return;
       await loadLatestData();
       const payload = await readJson(req);
       const email = normalizeAccountEmail(payload.email);
@@ -6864,10 +6857,10 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 400, { error: "邀请码无效" });
         return;
       }
-      const account = { id: crypto.randomUUID(), email, passwordHash: hashAccountPassword(password), status: "active", linkedUserId: "", referralCode: randomReferralCode(), referredByAccountId: inviter?.id || "", referralRate: 10, recurringReferral: false, referralBoundAt: inviter ? now : "", createdAt: now, updatedAt: now };
+      const account = { id: crypto.randomUUID(), email, passwordHash: await hashAccountPassword(password), status: "active", linkedUserId: "", referralCode: randomReferralCode(), referredByAccountId: inviter?.id || "", referralRate: 10, recurringReferral: false, referralBoundAt: inviter ? now : "", createdAt: now, updatedAt: now };
       account.customerID = nextCustomerID(account.id, [...users, ...accounts]);
       accounts.unshift(account);
-      await saveAccounts();
+      await saveAccount(account);
       // Out of stock, limits or a failed grant never block the registration itself.
       await grantRegistrationTrial(account.id, inviter?.id, req).catch(error => console.error(`Registration trial failed for ${email}:`, error.message));
       const token = makeSessionToken({ role: "user", accountId: account.id, email }, REMEMBER_MAX_AGE_SECONDS);
@@ -6883,10 +6876,12 @@ async function handleApi(req, res, pathname) {
       const payload = await readJson(req);
       const account = String(payload.account || payload.email || "").trim();
       const password = String(payload.password || "");
+      if (!enforceAuthRateLimit(req, res, { action: "login", subject: account, ipLimit: 30, subjectLimit: 12, windowMs: 15 * 60 * 1000 })) return;
       const remember = Boolean(payload.remember);
       const maxAgeSeconds = remember ? REMEMBER_MAX_AGE_SECONDS : SESSION_MAX_AGE_SECONDS;
       const cookieMaxAge = remember ? maxAgeSeconds : null;
       if (safeEqual(account, ADMIN_USERNAME) && safeEqual(password, ADMIN_PASSWORD)) {
+        authRateLimiter.reset(`login:sub:${account.toLowerCase()}`);
         const token = makeSessionToken({ role: "admin", account: ADMIN_USERNAME }, maxAgeSeconds);
         sendJson(res, 200, { ok: true, role: "admin", account: ADMIN_USERNAME }, { "set-cookie": authCookie(req, token, cookieMaxAge) });
         return;
@@ -6894,7 +6889,7 @@ async function handleApi(req, res, pathname) {
       void loadLatestData();
       const email = normalizeAccountEmail(account);
       const userAccount = accounts.find(item => item.email === email);
-      if (!userAccount || !verifyAccountPassword(password, userAccount.passwordHash)) {
+      if (!userAccount || !(await verifyAccountPassword(password, userAccount.passwordHash))) {
         sendJson(res, 401, { error: "邮箱或密码不正确。" });
         return;
       }
@@ -6906,6 +6901,7 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 401, { error: "邮箱或密码不正确。" });
         return;
       }
+      authRateLimiter.reset(`login:sub:${account.toLowerCase()}`);
       const token = makeSessionToken({ role: "user", accountId: userAccount.id, email }, maxAgeSeconds);
       sendJson(res, 200, { ok: true, role: "user", email }, { "set-cookie": authCookie(req, token, cookieMaxAge) });
     } catch (error) {
@@ -6919,6 +6915,7 @@ async function handleApi(req, res, pathname) {
       await loadLatestData();
       const payload = await readJson(req);
       const email = normalizeAccountEmail(payload.email);
+      if (!enforceAuthRateLimit(req, res, { action: "forgot-password", subject: email, ipLimit: 10, subjectLimit: 5, windowMs: 15 * 60 * 1000 })) return;
       let account = accounts.find(item => item.email === email && item.status === "active");
       if (!account) {
         const user = users.find(item => item.email === email);
@@ -6926,7 +6923,7 @@ async function handleApi(req, res, pathname) {
         if (account) {
           account.email = email;
           account.updatedAt = new Date().toISOString();
-          await saveAccounts();
+          await saveAccount(account);
         }
       }
       if (account) {
@@ -6934,7 +6931,7 @@ async function handleApi(req, res, pathname) {
         account.resetTokenHash = tokenHash(token);
         account.resetTokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
         account.updatedAt = new Date().toISOString();
-        await saveAccounts();
+        await saveAccount(account);
         try {
           await sendAccountActionMail({ to: email, subject: "重置账户密码", title: "请点击下面的链接重置密码", url: accountActionUrl(req, "/reset-password", token) });
         } catch (error) {
@@ -6959,14 +6956,14 @@ async function handleApi(req, res, pathname) {
         return;
       }
       const { account } = match;
-      account.passwordHash = hashAccountPassword(password);
+      account.passwordHash = await hashAccountPassword(password);
       account.status = "active";
       delete account.resetTokenHash;
       delete account.resetTokenExpiresAt;
       delete account.claimTokenHash;
       delete account.claimTokenExpiresAt;
       account.updatedAt = new Date().toISOString();
-      await saveAccounts();
+      await saveAccount(account);
       sendJson(res, 200, { ok: true });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -7045,13 +7042,13 @@ async function handleApi(req, res, pathname) {
     try {
       const account = accountBySession(session);
       const payload = await readJson(req);
-      if (!account || !verifyAccountPassword(payload.currentPassword, account.passwordHash)) {
+      if (!account || !(await verifyAccountPassword(payload.currentPassword, account.passwordHash))) {
         sendJson(res, 400, { error: "当前密码不正确。" });
         return;
       }
-      account.passwordHash = hashAccountPassword(validateAccountPassword(payload.password));
+      account.passwordHash = await hashAccountPassword(validateAccountPassword(payload.password));
       account.updatedAt = new Date().toISOString();
-      await saveAccounts();
+      await saveAccount(account);
       sendJson(res, 200, { ok: true }, { "set-cookie": clearAuthCookie(req) });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -8573,7 +8570,7 @@ async function handleApi(req, res, pathname) {
       const actor = currentSession(req)?.account || "admin";
       account.userLogs = [createUserLog({ event: "user-action", status: "recorded", reason: "user-created", req, message: `${userActionMessage("user-created")}（未分配套餐，操作人 ${actor}）`, details: { actor, email } })];
       accounts.unshift(account);
-      await saveAccounts();
+      await saveAccount(account);
       let claimMailSent = false;
       if (notifier.isMailConfigured()) {
         try {
@@ -9923,11 +9920,11 @@ async function serveStatic(req, res, pathname) {
   }
 
   const staticPath = isAppRoute ? "/index.html" : requestedPath;
-  const baseDir = markdownImageMatch ? MARKDOWN_UPLOAD_DIR : PUBLIC_DIR;
-  const filePath = markdownImageMatch ? path.join(baseDir, markdownImageMatch[1]) : path.normalize(path.join(baseDir, staticPath));
+  const baseDir = path.resolve(markdownImageMatch ? MARKDOWN_UPLOAD_DIR : PUBLIC_DIR);
+  const filePath = markdownImageMatch ? path.resolve(baseDir, markdownImageMatch[1]) : path.resolve(baseDir, "." + path.posix.normalize("/" + staticPath));
 
-  if (!filePath.startsWith(baseDir)) {
-    res.writeHead(403);
+  if (filePath !== baseDir && !filePath.startsWith(baseDir + path.sep)) {
+    res.writeHead(403, SECURITY_HEADERS);
     res.end("Forbidden");
     return;
   }
@@ -9937,7 +9934,7 @@ async function serveStatic(req, res, pathname) {
     const contentType = mimeTypes[ext] || "application/octet-stream";
     const acceptEncoding = (req.headers["accept-encoding"] || "");
     const cacheControl = markdownImageMatch ? "private, max-age=31536000, immutable" : requestedPath.includes("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
-    const responseHeaders = { "content-type": contentType, "cache-control": cacheControl };
+    const responseHeaders = { ...SECURITY_HEADERS, "content-type": contentType, "cache-control": cacheControl };
 
     // 对可压缩类型优先尝试预压缩文件（.br / .gz）
     if (COMPRESSIBLE_EXTS.has(ext)) {
@@ -9995,12 +9992,12 @@ async function serveStatic(req, res, pathname) {
     if (!path.extname(requestedPath)) {
       try {
         const content = await fs.readFile(path.join(PUBLIC_DIR, "index.html"));
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.writeHead(200, { ...SECURITY_HEADERS, "content-type": "text/html; charset=utf-8" });
         res.end(content);
         return;
       } catch {}
     }
-    res.writeHead(404);
+    res.writeHead(404, SECURITY_HEADERS);
     res.end("Not found");
   }
 }
@@ -10050,9 +10047,16 @@ async function requestHandler(req, res) {
 }
 
 async function main() {
+  const secretWarnings = checkSecretStrength();
+  for (const warning of secretWarnings) console.warn(`[security] ${warning}`);
+  if (process.env.REQUIRE_STRONG_SECRETS === "true" && secretWarnings.length) {
+    throw new Error(`Startup aborted due to weak secret configuration: ${secretWarnings.join(" ")}`);
+  }
+
   await ensureDataFile();
   initialized = true;
   const server = http.createServer(requestHandler);
+  const intervals = [];
 
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`VPN subscription monitor is running at http://localhost:${PORT}`);
@@ -10078,22 +10082,46 @@ async function main() {
     dataStore.pruneConcurrentLocationEvents(new Date(Date.now() - concurrentLocation.CONCURRENT_RETENTION_DAYS * 86400000)).catch(error => console.error("Concurrent location prune failed:", error));
   };
   pruneSyncJobHistoryInBackground();
-  setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000);
+  intervals.push(setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000));
 
-  setInterval(() => scheduleSyncJob("referral-settlement"), 60 * 1000);
+  intervals.push(setInterval(() => scheduleSyncJob("referral-settlement"), 60 * 1000));
   scheduleSyncJob("order-fulfillment-retry", "startup");
-  setInterval(() => scheduleSyncJob("order-fulfillment-retry"), 5 * 60 * 1000);
+  intervals.push(setInterval(() => scheduleSyncJob("order-fulfillment-retry"), 5 * 60 * 1000));
   if (hubConfigured()) {
     scheduleSyncJob("node-hub-sync", "startup");
-    setInterval(() => scheduleSyncJob("node-hub-sync"), NODE_HUB_SYNC_INTERVAL_MS);
+    intervals.push(setInterval(() => scheduleSyncJob("node-hub-sync"), NODE_HUB_SYNC_INTERVAL_MS));
     scheduleSyncJob("node-hub-billing", "startup");
-    setInterval(() => scheduleSyncJob("node-hub-billing"), XUI_TRAFFIC_SYNC_INTERVAL_MS);
+    intervals.push(setInterval(() => scheduleSyncJob("node-hub-billing"), XUI_TRAFFIC_SYNC_INTERVAL_MS));
     const sampleConcurrentLocations = () => runConcurrentLocationSample().catch(error => console.warn(`[concurrent-location] sample failed: ${error.message}`));
-    setInterval(sampleConcurrentLocations, concurrentLocation.CONCURRENT_SAMPLE_INTERVAL_MS);
-    setInterval(() => scheduleSyncJob("addon-service-expiry"), 10 * 60 * 1000);
+    intervals.push(setInterval(sampleConcurrentLocations, concurrentLocation.CONCURRENT_SAMPLE_INTERVAL_MS));
+    intervals.push(setInterval(() => scheduleSyncJob("addon-service-expiry"), 10 * 60 * 1000));
     scheduleSyncJob("xui-traffic-prune", "startup");
-    setInterval(() => scheduleSyncJob("xui-traffic-prune"), 24 * 60 * 60 * 1000);
+    intervals.push(setInterval(() => scheduleSyncJob("xui-traffic-prune"), 24 * 60 * 60 * 1000));
   }
+
+  let shuttingDown = false;
+  const shutdown = signal => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[server] Received ${signal}; shutting down gracefully...`);
+    for (const timer of intervals) clearInterval(timer);
+    const forceTimer = setTimeout(() => {
+      console.error("[server] Graceful shutdown timed out; forcing exit.");
+      process.exit(1);
+    }, 10_000);
+    forceTimer.unref();
+    server.close(async () => {
+      try {
+        await dataStore.close();
+      } catch (error) {
+        console.error("[server] Error closing database pool:", error);
+      }
+      clearTimeout(forceTimer);
+      process.exit(0);
+    });
+  };
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  process.once("SIGINT", () => shutdown("SIGINT"));
 }
 
 if (require.main === module) {
@@ -10203,10 +10231,14 @@ module.exports = Object.assign(requestHandler, {
   grantTrafficPack,
   expireUserTrafficPacks,
   restoreUpstreamClashConfig,
-  injectPlaceholderNodes,
   postSubconverter,
   disabledAccountPlaceholderSubscription,
   buildUserInfoNodes,
   selfHostedUserinfo,
-  nodeSpeedLimitParts
+  nodeSpeedLimitParts,
+  SECURITY_HEADERS,
+  createAuthRateLimiter,
+  checkSecretStrength,
+  hashAccountPassword,
+  verifyAccountPassword
 });

@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-17
-- Current Objective: 机器用户流量计入本机中转（realm）的流量（已实现并验证，未提交、未部署）
+- Last Updated: 2026-11-20
+- Current Objective: 完成项目安全加固、数据库写入优化、前端拆包与仓库清理（已变基同步远程 main 并验证通过）
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -626,8 +626,10 @@
 
 - 2026-11-17: node test.js、test:hub、verify:fast、check、verify:harness 通过；隔离服务器+假 hub 浏览器验证桌面与 375px
 
+- 2026-11-20: npm run verify:fast、npm run build、test-notifier/test-customer-id/test-api-cache/test-checkout 与 git diff --check 均通过；浏览器实测 /users（按需加载 vendor-pinyin 且管理端无 Crisp）、/sales-settings（懒加载 MarkdownEditor）与登出跳转 /login，console_errors/page_errors 均为空
+
 ## Next Session
 
-- Files: `database.js`, `feature_list.json`, `node-hub/store.js`, `server.js`, `src/components/features/node-hub-machine-traffic.tsx`, `src/types.ts`, `test.js`
+- Files: `PROGRESS.md`, `auth-security.js`, `database.js`, `feature_list.json`, `package.json`, `server.js`, `src/api.ts`, `src/main.tsx`, `test.js`, `vite.config.js`
 - Known risks: none
-- Recommended Next Step: 提交并部署后，在线上 Node Hub 用户流量页核对 Neburst JP：中转应约占 210+ GB
+- Recommended Next Step: 按需推进 TypeScript 接入与 server.js 剩余路由拆分；或按需合并到 production 部署

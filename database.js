@@ -66,7 +66,8 @@ class PostgresDataStore {
       ssl: this.ssl ? { rejectUnauthorized: false } : undefined,
       idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS || 10000),
       connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 10000),
-      max: Number(process.env.DATABASE_POOL_MAX || 5)
+      statement_timeout: Number(process.env.DATABASE_STATEMENT_TIMEOUT_MS || 30000),
+      max: Number(process.env.DATABASE_POOL_MAX || 12)
     });
     pool.on("error", error => {
       console.error("[data] Unexpected idle PostgreSQL client error:", error);
@@ -806,8 +807,9 @@ class PostgresDataStore {
           seenIds.add(id);
           uniqueRows.push({ id, row });
         });
-        await client.query("DELETE FROM app_records WHERE collection = $1", [collection]);
-        if (uniqueRows.length) {
+        if (!uniqueRows.length) {
+          await client.query("DELETE FROM app_records WHERE collection = $1", [collection]);
+        } else {
           const ids = [];
           const positions = [];
           const datas = [];
@@ -817,9 +819,19 @@ class PostgresDataStore {
             datas.push(JSON.stringify(row));
           });
           await client.query(
+            "DELETE FROM app_records WHERE collection = $1 AND NOT (id = ANY($2::text[]))",
+            [collection, ids]
+          );
+          await client.query(
             `INSERT INTO app_records (collection, id, position, data, updated_at)
              SELECT $1, u.id, u.position, u.data::jsonb, NOW()
-             FROM UNNEST($2::text[], $3::int[], $4::text[]) AS u(id, position, data)`,
+             FROM UNNEST($2::text[], $3::int[], $4::text[]) AS u(id, position, data)
+             ON CONFLICT (collection, id) DO UPDATE
+               SET position = EXCLUDED.position,
+                   data = EXCLUDED.data,
+                   updated_at = NOW()
+               WHERE app_records.position IS DISTINCT FROM EXCLUDED.position
+                  OR app_records.data IS DISTINCT FROM EXCLUDED.data`,
             [collection, ids, positions, datas]
           );
         }

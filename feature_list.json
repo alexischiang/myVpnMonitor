@@ -6285,6 +6285,42 @@
         "page_errors": [],
         "checked_at": "2026-11-17"
       }
+    },
+    {
+      "id": "project-security-perf-hygiene",
+      "name": "Security hardening, backend/DB scaling, frontend bundle splitting, and repo hygiene",
+      "description": "Remove public autologin.html, add auth rate limiting and async scrypt, extract auth-security.js, add security headers and graceful shutdown, upgrade saveCollection to differential upsert and tune PG pool, lazy-load MarkdownEditor and pinyin-pro, configure Vite vendor manualChunks, restrict Crisp to customer/public routes, clear DataProvider cache on logout, prune unused deps, add CI test gate, and remove tracked temporary/legacy cache files.",
+      "status": "passing",
+      "ui": true,
+      "dependencies": [],
+      "done_criteria": [
+        "public/autologin.html is removed and no longer copied to dist/.",
+        "Auth routes apply bounded rate limiting and async scrypt password hashing/verification; responses include standard security headers; server handles SIGTERM/SIGINT gracefully.",
+        "database.js uses differential UPSERT in saveCollection and tuned pool defaults; auth-security.js is extracted from server.js; single-account auth mutations use setRecord.",
+        "MarkdownEditor and pinyin-pro load lazily, Vite splits stable vendor chunks, Crisp does not mount on admin routes, and admin/account logout clears frontend caches.",
+        "Unused dependencies are removed, frontend build packages are in devDependencies, deploy workflow runs verify:fast before build, and tracked tmp-* and legacy docs-site cache are removed."
+      ],
+      "verification": [
+        "2026-11-20: npm run verify:fast (node --check server.js, verify:harness, test.js, test-xui-traffic.js, test-subscription-access.js), test-notifier.js, test-customer-id.js, test-api-cache.js, test-checkout.js, npm run build, and git diff --check all passed.",
+        "2026-11-20: Production bundle reduced sales-settings 910KB -> 26KB, arc-data-table 390KB -> 63KB, index 615KB -> 148KB with separate vendor chunks.",
+        "2026-11-20: Browser verified /users (lazy vendor-pinyin search + no Crisp on admin route), /sales-settings (lazy MarkdownEditor in announcement dialog), and logout -> /login with empty console_errors and page_errors."
+      ],
+      "browser_verification": {
+        "routes": [
+          "/users",
+          "/sales-settings",
+          "/login"
+        ],
+        "interactions": [
+          "Opened /users: confirmed both Chinese user rows rendered and zero Crisp script or UI requests occurred on admin routes.",
+          "Typed zhangsan into /users table search: confirmed vendor-pinyin chunk loaded lazily (HTTP 200) and filtered table down to 测试用户张三.",
+          "Opened /sales-settings, switched to 网站公告, clicked 添加公告: confirmed vendor-md-editor CSS/chunk loaded lazily and MarkdownEditor rendered cleanly; closed dialog.",
+          "Clicked 退出登录: confirmed clean redirect to /login with login form rendered."
+        ],
+        "console_errors": [],
+        "page_errors": [],
+        "checked_at": "2026-11-20"
+      }
     }
   ]
 }

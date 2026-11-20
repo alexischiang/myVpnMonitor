@@ -110,31 +110,45 @@ function WechatGuard({ children }: { children: ReactNode }) {
   return children
 }
 
+const CRISP_WEBSITE_ID = String(import.meta.env.VITE_CRISP_WEBSITE_ID ?? "149a15d1-aa5b-471e-9da6-fa37c8b17f68").trim()
+
+function isCustomerFacingRoute(pathname: string) {
+  return pathname === OPEN_IN_BROWSER_PATH
+    || /^\/(?:login|register|forgot-password|reset-password|pricing|buy|onboarding)(?:\/|$)/.test(pathname)
+    || /^\/(?:account|cashier|delivery)(?:\/|$)/.test(pathname)
+}
+
 function CrispChat() {
+  const { pathname } = useLocation()
+  const enabled = Boolean(CRISP_WEBSITE_ID) && isCustomerFacingRoute(pathname)
   useEffect(() => {
-    const crispWindow = window as typeof window & { $crisp?: { push(command: ["do", "chat:show" | "session:reset"]): number }; CRISP_WEBSITE_ID?: string }
+    const crispWindow = window as typeof window & { $crisp?: { push(command: ["do", "chat:show" | "chat:hide" | "session:reset"]): number }; CRISP_WEBSITE_ID?: string }
+    if (!enabled) {
+      crispWindow.$crisp?.push(["do", "chat:hide"])
+      return
+    }
     crispWindow.$crisp ||= []
-    crispWindow.CRISP_WEBSITE_ID = "149a15d1-aa5b-471e-9da6-fa37c8b17f68"
-    crispWindow.$crisp.push(["do", "session:reset"])
-    crispWindow.$crisp.push(["do", "chat:show"])
+    crispWindow.CRISP_WEBSITE_ID = CRISP_WEBSITE_ID
     if (!document.querySelector('script[src="https://client.crisp.chat/l.js"]')) {
+      crispWindow.$crisp.push(["do", "session:reset"])
       const script = document.createElement("script")
       script.src = "https://client.crisp.chat/l.js"
       script.async = true
       document.head.appendChild(script)
     }
-  }, [])
+    crispWindow.$crisp.push(["do", "chat:show"])
+  }, [enabled])
   return null
 }
 
 function App() {
   return (
     <ThemeProvider attribute={["class", "data-theme"]} defaultTheme="light" enableSystem={false} storageKey="themeMode">
-      <CrispChat />
       <RequestProgress />
       <TooltipProvider>
         <AppToasts>
         <BrowserRouter>
+          <CrispChat />
           <ScrollToTop />
           <Suspense fallback={<Skeleton lines={3} className="m-6" />}>
           <WechatGuard>
