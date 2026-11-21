@@ -1,5 +1,12 @@
 const assert = require("assert");
 const fs = require("fs");
+// Pure-function tests import server.js without connecting to Postgres; provide placeholder URLs in CI when .env is absent.
+if (!process.env.DATABASE_URL && !process.env.LOCAL_DATABASE_URL) {
+  process.env.DATABASE_URL = "postgres://test:test@127.0.0.1:5432/test";
+}
+if (!process.env.SUB_CONVERTER_URL) {
+  process.env.SUB_CONVERTER_URL = "http://127.0.0.1:25500";
+}
 const { salesAmount, salesDateKey, salesDateRange, salesMonthRange, unlinkedSalesBills } = require("./src/components/features/sales-analytics-logic.ts");
 const { orderProductLabel, orderPlanName, planSnapshotName, planSnapshotOptionId } = require("./src/utils.ts");
 assert.strictEqual(orderProductLabel({ planName: "ChatGPT PLUS 直充1个月", optionLabel: "ChatGPT PLUS 直充1个月" }), "ChatGPT PLUS 直充1个月", "add-ons use the product name as option label");
