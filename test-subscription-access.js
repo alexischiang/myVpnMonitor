@@ -262,4 +262,187 @@ const upgraded = advanceConcurrent({ ...cityEpisode.state, eventId: 8 }, observe
 assert.deepStrictEqual([upgraded.action, upgraded.state.kind, upgraded.state.cities], ["upgrade", "province", ["东莞市", "广州市", "北京市"].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"))], "a city episode that reaches another province is upgraded once, places accumulate");
 assert.strictEqual(advanceConcurrent(upgraded.state, gzDg, now + 360000).state.kind, "province", "an upgraded episode stays cross-province");
 
+// --- Share risk scoring & per-user IP whitelist (share-risk-score.js) ---
+const {
+  normalizeWhitelistEntry,
+  ipMatchesWhitelist,
+  addWhitelistEntry,
+  removeWhitelistEntry,
+  areAdjacentProvinces,
+  clientDeviceType,
+  distinctMobileFingerprints,
+  scoreSubscriptionShare,
+  shouldSendShareAlert,
+  shareReviewRecord
+} = require("./share-risk-score");
+
+// Whitelist normalization & matching (exact IP + IPv4 /24 CIDR)
+assert.strictEqual(normalizeWhitelistEntry(" 113.108.12.34 "), "113.108.12.34");
+assert.strictEqual(normalizeWhitelistEntry("113.108.12.99/24"), "113.108.12.0/24");
+assert.strictEqual(normalizeWhitelistEntry("2409:8963::1"), "2409:8963::1");
+assert.throws(() => normalizeWhitelistEntry("not-an-ip"), /有效/);
+assert.throws(() => normalizeWhitelistEntry("113.108.0.0/16"), /\/24/);
+assert.strictEqual(ipMatchesWhitelist("113.108.12.34", [{ ip: "113.108.12.34" }]), true);
+assert.strictEqual(ipMatchesWhitelist("113.108.12.88", [{ ip: "113.108.12.0/24" }]), true);
+assert.strictEqual(ipMatchesWhitelist("113.108.13.88", [{ ip: "113.108.12.0/24" }]), false);
+
+const added1 = addWhitelistEntry([], { ip: "113.108.12.55/24", note: "家里宽带", addedBy: "admin", now });
+assert.strictEqual(added1.items.length, 1);
+assert.strictEqual(added1.items[0].ip, "113.108.12.0/24");
+const removed1 = removeWhitelistEntry(added1.items, "113.108.12.0/24");
+assert.strictEqual(removed1.items.length, 0);
+assert.strictEqual(removed1.removed, true);
+
+// Whitelist excludes IP from presenceLocations and summarizeSubscriptionAccess
+assert.strictEqual(
+  presenceLocations({ ipsByNode: { 1: ["14.24.227.160", "202.106.0.20"] } }, { regions, whitelist: [{ ip: "202.106.0.20" }], nodeNames }).length,
+  1
+);
+
+// Geographic province adjacency
+assert.strictEqual(areAdjacentProvinces("上海市", "江苏省"), true);
+assert.strictEqual(areAdjacentProvinces("北京市", "河北省"), true);
+assert.strictEqual(areAdjacentProvinces("广东省", "广西壮族自治区"), true);
+assert.strictEqual(areAdjacentProvinces("北京市", "广东省"), false);
+assert.strictEqual(areAdjacentProvinces("辽宁省", "四川省"), false);
+assert.strictEqual(areAdjacentProvinces("福建省", "山东省"), false);
+
+// Device classification: iPad is tablet (not second phone)
+assert.strictEqual(clientDeviceType("Shadowrocket/3378 CFNetwork/3896 Darwin/27.2.0 iPhone17,2"), "mobile");
+assert.strictEqual(clientDeviceType("Shadowrocket/3008 CFNetwork/3896 Darwin/25.6.0 iPad8,5"), "tablet");
+assert.strictEqual(clientDeviceType("clash-verge/v2.2.3"), "desktop");
+
+// Mobile fingerprint dedup folds missing model suffix
+assert.deepStrictEqual(
+  distinctMobileFingerprints([
+    { userAgent: "Shadowrocket/3488 CFNetwork/3896 Darwin/27.2.0" },
+    { userAgent: "Shadowrocket/3488 CFNetwork/3896 Darwin/27.2.0 iPhone18,3" }
+  ]),
+  ["Shadowrocket|3488|Darwin:27.2|iPhone18,3"]
+);
+
+// Score test 1: Same iPhone switching Wi-Fi/5G for 2 minutes on same node -> 0 (normal)
+const switchScore = scoreSubscriptionShare({
+  now,
+  rows7d: [
+    { at: at(-10), ip: "39.77.154.123", geoCountry: "中国", province: "山东省", city: "青岛市", userAgent: "Shadowrocket/3378 CFNetwork/3896 Darwin/27.2.0 iPhone17,2", result: "ok" },
+    { at: at(-12), ip: "153.119.38.20", geoCountry: "中国", province: "山东省", city: "济南市", userAgent: "Shadowrocket/3378 CFNetwork/3896 Darwin/27.2.0 iPhone17,2", result: "ok" }
+  ],
+  concurrent24h: [
+    {
+      startedAt: at(-4),
+      lastSeenAt: at(-2),
+      locations: [
+        { ip: "39.77.154.123", geoCountry: "中国", province: "山东省", city: "青岛市", nodes: ["US-01"] },
+        { ip: "153.119.38.20", geoCountry: "中国", province: "山东省", city: "济南市", nodes: ["US-01"] }
+      ]
+    }
+  ]
+});
+assert.strictEqual(switchScore.score, 10, "only same-province cross-city pull (+10), no false dual-mobile or short cross-city online");
+assert.strictEqual(switchScore.level, "normal");
+
+// Score test 2: Adjacent 2 provinces concurrent online -> +40 (review)
+const adjScore = scoreSubscriptionShare({
+  now,
+  concurrent24h: [{
+    startedAt: at(-20),
+    lastSeenAt: at(-2),
+    locations: [
+      { ip: "101.87.1.1", geoCountry: "中国", province: "上海市", city: "上海市", nodes: ["HK-1"] },
+      { ip: "114.222.1.1", geoCountry: "中国", province: "江苏省", city: "南京市", nodes: ["HK-1"] }
+    ]
+  }]
+});
+assert.strictEqual(adjScore.score, 40);
+assert.strictEqual(adjScore.level, "review");
+
+// Score test 3: Non-adjacent 2 provinces (+50) + multi-end solo online (+10) + dual mobile (+10) -> 70 (alert)
+const nonAdjAlert = scoreSubscriptionShare({
+  now,
+  rows7d: [
+    { at: at(-180), ip: "202.106.0.20", geoCountry: "中国", province: "北京市", city: "北京市", userAgent: "Shadowrocket/3378 Darwin/25.3 iPhone14,2", result: "ok" },
+    { at: at(-160), ip: "14.24.227.160", geoCountry: "中国", province: "广东省", city: "广州市", userAgent: "Shadowrocket/3488 Darwin/27.2 iPhone19,7", result: "ok" }
+  ],
+  presenceActivity: [
+    { ip: "202.106.0.20", province: "北京市", soloSamples: 3, soloLastAt: at(-600) },
+    { ip: "14.24.227.160", province: "广东省", soloSamples: 2, soloLastAt: at(-500) }
+  ],
+  concurrent24h: [{
+    startedAt: at(-30),
+    lastSeenAt: at(-2),
+    locations: [
+      { ip: "202.106.0.20", geoCountry: "中国", province: "北京市", city: "北京市", nodes: ["HK-1"] },
+      { ip: "14.24.227.160", geoCountry: "中国", province: "广东省", city: "广州市", nodes: ["JP-1"] }
+    ]
+  }]
+});
+// 50 (non-adj) + 10 (solo) + 10 (dual mobile) + 20 (mobile multi-fp) + 10 (cross-prov pull <=2h) = 100 (critical)
+assert.strictEqual(nonAdjAlert.score, 100);
+assert.strictEqual(nonAdjAlert.level, "critical");
+
+// Whitelisting one of the two IPs drops the score to 0
+const whitelistedScore = scoreSubscriptionShare({
+  now,
+  rows7d: [
+    { at: at(-180), ip: "202.106.0.20", geoCountry: "中国", province: "北京市", city: "北京市", userAgent: "Shadowrocket/3378 Darwin/25.3 iPhone14,2", result: "ok" },
+    { at: at(-160), ip: "14.24.227.160", geoCountry: "中国", province: "广东省", city: "广州市", userAgent: "Shadowrocket/3488 Darwin/27.2 iPhone19,7", result: "ok" }
+  ],
+  presenceActivity: [
+    { ip: "202.106.0.20", province: "北京市", soloSamples: 3, soloLastAt: at(-600) },
+    { ip: "14.24.227.160", province: "广东省", soloSamples: 2, soloLastAt: at(-500) }
+  ],
+  concurrent24h: [{
+    startedAt: at(-30),
+    lastSeenAt: at(-2),
+    locations: [
+      { ip: "202.106.0.20", geoCountry: "中国", province: "北京市", city: "北京市", nodes: ["HK-1"] },
+      { ip: "14.24.227.160", geoCountry: "中国", province: "广东省", city: "广州市", nodes: ["JP-1"] }
+    ]
+  }],
+  whitelist: [{ ip: "202.106.0.20" }]
+});
+assert.strictEqual(whitelistedScore.score, 0);
+assert.strictEqual(whitelistedScore.level, "normal");
+
+// Score test 4: >= 3 provinces concurrent online -> +80 (+10 multi-ip = 90 critical)
+const threeProvScore = scoreSubscriptionShare({
+  now,
+  concurrent24h: [{
+    startedAt: at(-10),
+    lastSeenAt: at(-2),
+    locations: [
+      { ip: "202.106.0.20", geoCountry: "中国", province: "北京市", city: "北京市", nodes: ["HK-1"] },
+      { ip: "101.87.1.1", geoCountry: "中国", province: "上海市", city: "上海市", nodes: ["HK-1"] },
+      { ip: "114.222.1.1", geoCountry: "中国", province: "江苏省", city: "南京市", nodes: ["JP-1"] }
+    ]
+  }]
+});
+assert.strictEqual(threeProvScore.score, 90);
+assert.strictEqual(threeProvScore.level, "critical");
+
+// Alert repeat suppression & escalation
+assert.strictEqual(shouldSendShareAlert({ score: 65, level: "review", provinces: ["北京市", "广东省"], cities: [] }, null, now).send, false);
+assert.strictEqual(shouldSendShareAlert({ score: 75, level: "alert", provinces: ["北京市", "广东省"], cities: [] }, null, now).send, true);
+assert.strictEqual(
+  shouldSendShareAlert({ score: 80, level: "alert", provinces: ["北京市", "广东省"], cities: [] }, { at: at(-60), score: 75, level: "alert", provinces: ["北京市", "广东省"] }, now).send,
+  false,
+  "suppressed within 24h when score bump < 15 and no escalation/new province"
+);
+assert.strictEqual(
+  shouldSendShareAlert({ score: 90, level: "critical", provinces: ["北京市", "广东省"], cities: [] }, { at: at(-60), score: 75, level: "alert", provinces: ["北京市", "广东省"] }, now).send,
+  true,
+  "re-alerts on escalation to critical / +15 jump"
+);
+
+// Review queue lifecycle
+const rev1 = shareReviewRecord(adjScore, null, now);
+assert.strictEqual(rev1.status, "pending");
+assert.strictEqual(rev1.score, 40);
+const revNormal = { ...rev1, status: "normal", reviewedAt: at(-10), reviewedBy: "admin", note: "出差" };
+assert.strictEqual(shareReviewRecord(adjScore, revNormal, now + 60000), null, "same provinces/score stays reviewed");
+const revReopened = shareReviewRecord(threeProvScore, revNormal, now + 120000);
+assert.strictEqual(revReopened.status, "pending");
+assert.strictEqual(revReopened.previousReview.status, "normal");
+
 console.log("subscription access tests passed");

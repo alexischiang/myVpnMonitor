@@ -7,12 +7,26 @@ const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const zlib = require("zlib");
+const {
+  SECURITY_HEADERS,
+  safeEqual,
+  parseCookies,
+  isSecureRequest,
+  signSession: signSessionWithSecret,
+  makeSessionToken: makeSessionTokenWithSecret,
+  buildAuthCookie,
+  hashAccountPassword,
+  verifyAccountPassword,
+  createAuthRateLimiter,
+  checkSecretStrength
+} = require("./auth-security");
 const { createDataStore } = require("./database");
 const { customerIDFromUUID, nextCustomerID } = require("./customer-id");
 const { loadLocalEnv } = require("./env");
 const xuiTraffic = require("./xui-traffic");
 const subscriptionAccess = require("./subscription-access");
 const concurrentLocation = require("./concurrent-location");
+const shareRiskScore = require("./share-risk-score");
 const { lookupIpRegion, ipRegionReady } = require("./ip-region");
 const nodeHub = require("./node-hub/bridge");
 const yaml = require("js-yaml");
@@ -847,6 +861,11 @@ async function saveAccounts() {
   await dataStore.saveCollection("accounts", accounts);
 }
 
+async function saveAccount(account) {
+  _markWritten();
+  await dataStore.setRecord("accounts", account.id, account);
+}
+
 async function saveBills() {
   _markWritten();
   await dataStore.saveCollection("bills", bills);
@@ -938,6 +957,26 @@ function createStepProgress(req, res) {
   };
 }
 
+const authRateLimiter = createAuthRateLimiter();
+
+function enforceAuthRateLimit(req, res, { action, subject = "", ipLimit, subjectLimit = 0, windowMs = 15 * 60 * 1000 }) {
+  if (process.env.NODE_ENV === "test" || process.env.AUTH_RATE_LIMIT_DISABLED === "true") return true;
+  const ip = requestIp(req) || "unknown";
+  const ipCheck = authRateLimiter.consume(`${action}:ip:${ip}`, { limit: ipLimit, windowMs });
+  if (!ipCheck.allowed) {
+    sendJson(res, 429, { error: "请求过于频繁，请稍后再试。" }, { "retry-after": String(ipCheck.retryAfterSeconds) });
+    return false;
+  }
+  if (subject && subjectLimit > 0) {
+    const subjectCheck = authRateLimiter.consume(`${action}:sub:${String(subject).toLowerCase()}`, { limit: subjectLimit, windowMs });
+    if (!subjectCheck.allowed) {
+      sendJson(res, 429, { error: "尝试次数过多，请稍后再试。" }, { "retry-after": String(subjectCheck.retryAfterSeconds) });
+      return false;
+    }
+  }
+  return true;
+}
+
 function sendJson(res, status, payload, headers = {}) {
   let body = Buffer.from(JSON.stringify(payload));
   if (body.length >= 1024 && /\bgzip\b/.test(String(res.req?.headers?.["accept-encoding"] || ""))) {
@@ -945,6 +984,7 @@ function sendJson(res, status, payload, headers = {}) {
     headers = { ...headers, "content-encoding": "gzip", "vary": "Accept-Encoding" };
   }
   res.writeHead(status, {
+    ...SECURITY_HEADERS,
     "content-type": "application/json; charset=utf-8",
     "content-length": body.length,
     "cache-control": "no-store, max-age=0",
@@ -1005,34 +1045,12 @@ function appMeta() {
   return cachedAppMeta;
 }
 
-function parseCookies(req) {
-  return Object.fromEntries(String(req.headers.cookie || "")
-    .split(";")
-    .map(part => part.trim())
-    .filter(Boolean)
-    .map(part => {
-      const index = part.indexOf("=");
-      if (index === -1) return [part, ""];
-      return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
-    }));
-}
-
-function safeEqual(a, b) {
-  const left = Buffer.from(String(a));
-  const right = Buffer.from(String(b));
-  return left.length === right.length && crypto.timingSafeEqual(left, right);
-}
-
 function signSession(payload) {
-  return crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  return signSessionWithSecret(payload, SESSION_SECRET);
 }
 
 function makeSessionToken(session, maxAgeSeconds) {
-  const payload = Buffer.from(JSON.stringify({
-    ...session,
-    exp: Date.now() + maxAgeSeconds * 1000
-  })).toString("base64url");
-  return `${payload}.${signSession(payload)}`;
+  return makeSessionTokenWithSecret(session, maxAgeSeconds, SESSION_SECRET);
 }
 
 function verifySessionToken(token) {
@@ -1051,20 +1069,8 @@ function verifySessionToken(token) {
   }
 }
 
-function isSecureRequest(req) {
-  return req.headers["x-forwarded-proto"] === "https" || req.socket?.encrypted;
-}
-
 function authCookie(req, token, maxAgeSeconds = null) {
-  const parts = [
-    `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax"
-  ];
-  if (isSecureRequest(req)) parts.push("Secure");
-  if (maxAgeSeconds !== null) parts.push(`Max-Age=${maxAgeSeconds}`);
-  return parts.join("; ");
+  return buildAuthCookie(req, AUTH_COOKIE_NAME, token, maxAgeSeconds);
 }
 
 function clearAuthCookie(req) {
@@ -1106,19 +1112,6 @@ function validateAccountPassword(value) {
   if (password.length < 8) throw new Error("密码至少需要 8 位。");
   if (password.length > 128) throw new Error("密码不能超过 128 位。");
   return password;
-}
-
-function hashAccountPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `scrypt$${salt}$${hash}`;
-}
-
-function verifyAccountPassword(password, stored) {
-  const [method, salt, expected] = String(stored || "").split("$");
-  if (method !== "scrypt" || !salt || !expected) return false;
-  const actual = crypto.scryptSync(String(password || ""), salt, 64).toString("hex");
-  return safeEqual(actual, expected);
 }
 
 function accountBySession(session) {
@@ -6459,34 +6452,77 @@ function checkSubscriptionShareAlert(user) {
   return queueSubscriptionShareTask(user.id, () => runSubscriptionShareCheck(user));
 }
 
-// Concurrent multi-location presence (concurrent-location.js): every CONCURRENT_SAMPLE_INTERVAL_MS the
-// node-hub presence snapshot (live source IPs per user and node) is placed with ip2region. An episode
-// seen in two consecutive samples is stored in concurrent_location_events; across provinces it alerts
-// through 订阅疑似分享提醒 (once per 24 hours unless a new province appears), inside one province it
-// joins the review queue with source "presence". Episode state lives in memory; a restart only means
-// the next episode needs two fresh samples.
+// Concurrent multi-location presence (concurrent-location.js) & unified share risk scoring (share-risk-score.js):
+// every CONCURRENT_SAMPLE_INTERVAL_MS the node-hub presence snapshot is placed with ip2region.
+// Single-IP online users update presence_ip_activity (solo_samples/solo_last_at, throttled 10m);
+// multi-IP online users update concurrent_samples and advance concurrent_location_events.
+// Both pulls and confirmed concurrent episodes evaluate the flat additive risk score:
+// >= 40 enters subscriptionShareReviews, >= 70 alerts through 订阅疑似分享提醒, >= 90 marks 极高风险.
 const concurrentEpisodes = new Map();
-const CONCURRENT_ALERT_COLLECTION = "concurrentLocationAlerts";
+const presenceActivityTouch = new Map();
+const PRESENCE_ACTIVITY_TOUCH_MS = 10 * 60 * 1000;
+const SUBSCRIPTION_SHARE_ALERT_COLLECTION = "subscriptionShareAlerts";
+const SUBSCRIPTION_SHARE_REVIEW_COLLECTION = "subscriptionShareReviews";
+const SUBSCRIPTION_WHITELIST_COLLECTION = "subscriptionShareWhitelists";
 let concurrentSampleRunning = false;
+
+async function getUserShareWhitelist(userId) {
+  const record = await dataStore.getRecord(SUBSCRIPTION_WHITELIST_COLLECTION, userId);
+  return Array.isArray(record?.items) ? record.items : [];
+}
+
+function shouldTouchPresenceActivity(key, now) {
+  const last = presenceActivityTouch.get(key) || 0;
+  if (now - last < PRESENCE_ACTIVITY_TOUCH_MS) return false;
+  presenceActivityTouch.set(key, now);
+  if (presenceActivityTouch.size > 10000) {
+    const cutoff = now - PRESENCE_ACTIVITY_TOUCH_MS;
+    for (const [entryKey, stamp] of presenceActivityTouch) if (stamp < cutoff) presenceActivityTouch.delete(entryKey);
+  }
+  return true;
+}
 
 async function runConcurrentLocationSample(now = Date.now()) {
   if (concurrentSampleRunning) return { skipped: true };
   concurrentSampleRunning = true;
   try {
-    const [presence, overview, ownIps] = await Promise.all([
+    const [presence, overview, ownIps, whitelistRecords] = await Promise.all([
       requestNodeHub("/internal/presence"),
       getHubOverview().catch(() => null),
-      ownNodeIps().catch(() => new Set())
+      ownNodeIps().catch(() => new Set()),
+      dataStore.listRecords(SUBSCRIPTION_WHITELIST_COLLECTION).catch(() => [])
     ]);
+    const whitelistByUser = new Map(whitelistRecords.map(({ id, data }) => [id, Array.isArray(data?.items) ? data.items : []]));
     const nodeNames = Object.fromEntries((overview?.nodes || []).map(node => [String(node.id), node.machineName ? `${node.machineName} · ${node.name}` : node.name]));
     const regions = new Map();
     const seen = new Set();
     let episodes = 0;
+    const atIso = new Date(now).toISOString();
     for (const [userId, entry] of Object.entries(presence?.users || {})) {
-      const ips = new Set(Object.values(entry?.ipsByNode || {}).flat().map(String).filter(Boolean));
-      if (ips.size < 2 && !concurrentEpisodes.has(userId)) continue;
-      for (const ip of ips) if (!regions.has(ip)) regions.set(ip, await lookupIpRegion(ip).catch(() => null));
-      const observation = concurrentLocation.observeConcurrent(concurrentLocation.presenceLocations(entry, { regions, ownIps, nodeNames }));
+      const whitelist = whitelistByUser.get(userId) || [];
+      const rawIps = new Set(Object.values(entry?.ipsByNode || {}).flat().map(item => String(item || "").trim()).filter(Boolean));
+      const validIps = [...rawIps].filter(ip => !ownIps.has(ip) && !shareRiskScore.ipMatchesWhitelist(ip, whitelist));
+      if (!validIps.length) continue;
+
+      for (const ip of validIps) if (!regions.has(ip)) regions.set(ip, await lookupIpRegion(ip).catch(() => null));
+      const isSolo = validIps.length === 1;
+      for (const ip of validIps) {
+        const touchKey = `${userId}|${ip}|${isSolo ? "s" : "c"}`;
+        if (shouldTouchPresenceActivity(touchKey, now)) {
+          const region = regions.get(ip);
+          await dataStore.recordPresenceIpActivity({
+            userId,
+            ip,
+            province: region?.province || "",
+            city: region?.city || "",
+            solo: isSolo,
+            at: atIso
+          }).catch(error => console.warn(`[presence-activity] ${userId} failed:`, error.message));
+        }
+      }
+
+      if (validIps.length < 2 && !concurrentEpisodes.has(userId)) continue;
+      const observation = concurrentLocation.observeConcurrent(concurrentLocation.presenceLocations(entry, { regions, ownIps, whitelist, nodeNames }));
       seen.add(userId);
       if (await advanceConcurrentEpisode(userId, observation, now)) episodes += 1;
     }
@@ -6513,14 +6549,8 @@ async function advanceConcurrentEpisode(userId, observation, now) {
     else await dataStore.updateConcurrentLocationEvent(state.eventId, row);
     const user = users.find(item => item.id === userId);
     if (!user) return true;
-    if (state.kind === "province" && action !== "update") {
-      await queueSubscriptionShareTask(userId, () => alertConcurrentLocation(user, state, now));
-    } else if (state.kind === "city") {
-      await queueSubscriptionShareTask(userId, async () => {
-        const review = await dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, userId);
-        const nextReview = subscriptionAccess.crossCityReview(state.locations, review, now, { source: "presence" });
-        if (nextReview) await dataStore.setRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, userId, nextReview);
-      });
+    if (action === "start" || action === "upgrade") {
+      await queueSubscriptionShareTask(userId, () => runSubscriptionShareCheck(user, now));
     }
     if (action === "start") console.log(`[concurrent-location] ${userId} online from ${(state.kind === "province" ? state.provinces : state.cities).join(", ")} at once.`);
     return true;
@@ -6530,62 +6560,65 @@ async function advanceConcurrentEpisode(userId, observation, now) {
   }
 }
 
-async function alertConcurrentLocation(user, state, now) {
-  const lastAlert = await dataStore.getRecord(CONCURRENT_ALERT_COLLECTION, user.id);
-  const { send, provinces, cities } = subscriptionAccess.crossProvinceAlert(state.locations, lastAlert, now);
-  if (!send) return null;
-  await dataStore.setRecord(CONCURRENT_ALERT_COLLECTION, user.id, { at: new Date(now).toISOString(), provinces, cities });
-  const text = concurrentLocationAlertText(user, state);
-  await sendAdminAlert("subscriptionShare", { subject: `疑似分享：同时异地在线：${subscriptionUserLabel(user)}`, text, parseMode: "" });
-  return text;
-}
-
-function concurrentLocationAlertText(user, state) {
-  const base = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
-  return [
-    "⚠️ 疑似分享：同时异地在线",
-    `用户：${subscriptionUserLabel(user)}`,
-    `同时从 ${state.provinces.length} 个省份在线：${state.provinces.join("、")}`,
-    `开始：${formatChinaTime(state.firstAt)}，已持续 ${concurrentLocation.minutesBetween(state.firstAt, state.lastAt)} 分钟`,
-    "",
-    "在线 IP：",
-    ...state.locations.map(row => `${row.ip} ${row.province} ${row.city} ${row.isp}（${row.nodes.join("、")}）`.replace(/\s+/g, " ")),
-    ...(base ? ["", `${base}/users/detail/${encodeURIComponent(user.id)}?tab=subscription-access`] : [])
-  ].join("\n");
-}
-
-// Telegram (and mail, per the alert settings) when the last 24 hours of a user's pulls come from two or
-// more mainland provinces. Repeats only after 24 hours or when a new province shows up.
-// Cross-city pulls inside one province go to the manual review queue instead (subscriptionShareReviews).
-async function runSubscriptionShareCheck(user, now = Date.now()) {
-  const [rows, nodeIps, lastAlert, review] = await Promise.all([
-    dataStore.listSubscriptionAccess(user.id, { since: new Date(now - 24 * 3600000) }),
+async function computeUserShareRisk(userId, now = Date.now()) {
+  const since7d = new Date(now - 7 * 86400000);
+  const since24h = new Date(now - 24 * 3600000);
+  const [rows7d, concurrent24h, presenceActivity, nodeIps, whitelist] = await Promise.all([
+    dataStore.listSubscriptionAccess(userId, { since: since7d }),
+    dataStore.listConcurrentLocationEvents(userId, { since: since24h }),
+    dataStore.listPresenceIpActivity(userId, { since: since7d }),
     ownNodeIps(),
+    getUserShareWhitelist(userId)
+  ]);
+  const scored = shareRiskScore.scoreSubscriptionShare({ rows7d, concurrent24h, presenceActivity, nodeIps, whitelist, now });
+  return { scored, whitelist, nodeIps, rows7d, concurrent24h };
+}
+
+// Unified share risk check: evaluates flat additive score, updates review queue (>= 40),
+// and sends admin alert (>= 70, with 24h cooldown unless score jumps >= 15, escalates, or new province).
+async function runSubscriptionShareCheck(user, now = Date.now()) {
+  const [{ scored }, lastAlert, review] = await Promise.all([
+    computeUserShareRisk(user.id, now),
     dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id),
     dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, user.id)
   ]);
-  const counted = subscriptionAccess.countedPulls(rows, nodeIps);
-  const nextReview = subscriptionAccess.crossCityReview(counted, review, now);
+  const nextReview = shareRiskScore.shareReviewRecord(scored, review, now);
   if (nextReview) {
     await dataStore.setRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, user.id, nextReview);
-    if (nextReview.status === "pending" && (!review || review.status !== "pending" || nextReview.cities.length !== review.cities?.length)) {
-      console.log(`[subscription-share] ${user.id} pulled from ${nextReview.cities.join(", ")} (${nextReview.province}) in 24h; queued for review.`);
+    if (nextReview.status === "pending" && (!review || review.status !== "pending" || nextReview.score !== review.score)) {
+      console.log(`[subscription-share] ${user.id} risk score ${scored.score} (${scored.level}); queued for review.`);
     }
   }
-  const { send, provinces, cities } = subscriptionAccess.crossProvinceAlert(counted, lastAlert, now);
-  if (!send) return nextReview ? { review: nextReview } : null;
-  const alert = { at: new Date(now).toISOString(), provinces, cities };
+  const decision = shareRiskScore.shouldSendShareAlert(scored, lastAlert, now);
+  if (!decision.send) return { scored, review: nextReview || review || null };
+  const alert = { at: new Date(now).toISOString(), score: scored.score, level: scored.level, provinces: scored.provinces, cities: scored.cities, factors: scored.factors };
   await dataStore.setRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id, alert);
-  const text = subscriptionShareAlertText(user, counted, { provinces, cities });
-  console.log(`[subscription-share] ${user.id} pulled from ${provinces.join(", ")} in 24h; alerting.`);
-  await sendAdminAlert("subscriptionShare", { subject: `订阅疑似分享：${subscriptionUserLabel(user)}`, text, parseMode: "" });
-  return { ...alert, text };
+  const text = subscriptionShareScoreAlertText(user, scored);
+  const prefix = scored.level === "critical" ? "🚨 极高风险疑似分享" : "⚠️ 疑似分享提醒";
+  console.log(`[subscription-share] ${user.id} score ${scored.score} (${scored.level}); alerting.`);
+  await sendAdminAlert("subscriptionShare", { subject: `${prefix}（${scored.score}分）：${subscriptionUserLabel(user)}`, text, parseMode: "" });
+  return { ...alert, scored, text };
 }
 
-const SUBSCRIPTION_SHARE_ALERT_COLLECTION = "subscriptionShareAlerts";
-const SUBSCRIPTION_SHARE_REVIEW_COLLECTION = "subscriptionShareReviews";
+function subscriptionShareScoreAlertText(user, scored) {
+  const base = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  const header = scored.level === "critical"
+    ? `🚨 极高风险疑似分享（${scored.score} 分）`
+    : `⚠️ 订阅疑似分享（${scored.score} 分）`;
+  const lines = [
+    header,
+    `用户：${subscriptionUserLabel(user)}`,
+    ...(scored.provinces.length ? [`涉及省份：${scored.provinces.join("、")}`] : []),
+    ...(scored.cities.length ? [`涉及城市：${scored.cities.join("、")}`] : []),
+    "",
+    "得分明细：",
+    ...scored.factors.map(item => `• ${item.label}（+${item.points} 分）：${item.detail}`),
+    ...(base ? ["", `${base}/users/detail/${encodeURIComponent(user.id)}?tab=subscription-access`] : [])
+  ];
+  return lines.join("\n");
+}
 
-// The review queue for the admin page, newest activity first, each with the user's label.
+// The review queue for the admin page, pending first, then highest risk score, then newest activity.
 async function subscriptionShareReviewsPayload() {
   const records = await dataStore.listRecords(SUBSCRIPTION_SHARE_REVIEW_COLLECTION);
   const byId = new Map(users.map(user => [user.id, user]));
@@ -6594,7 +6627,14 @@ async function subscriptionShareReviewsPayload() {
       const user = byId.get(id);
       return { userId: id, userLabel: user ? subscriptionUserLabel(user) : id, userMissing: !user, ...data };
     })
-    .sort((a, b) => String(b.lastAt || "").localeCompare(String(a.lastAt || "")));
+    .sort((a, b) => {
+      const aPending = a.status === "pending" ? 0 : 1;
+      const bPending = b.status === "pending" ? 0 : 1;
+      if (aPending !== bPending) return aPending - bPending;
+      const scoreDiff = (Number(b.score) || 0) - (Number(a.score) || 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      return String(b.lastAt || "").localeCompare(String(a.lastAt || ""));
+    });
   return {
     reviews,
     counts: {
@@ -6841,6 +6881,7 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/auth/register" && req.method === "POST") {
     try {
+      if (!enforceAuthRateLimit(req, res, { action: "register", ipLimit: 10, windowMs: 15 * 60 * 1000 })) return;
       await loadLatestData();
       const payload = await readJson(req);
       const email = normalizeAccountEmail(payload.email);
@@ -6864,10 +6905,10 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 400, { error: "邀请码无效" });
         return;
       }
-      const account = { id: crypto.randomUUID(), email, passwordHash: hashAccountPassword(password), status: "active", linkedUserId: "", referralCode: randomReferralCode(), referredByAccountId: inviter?.id || "", referralRate: 10, recurringReferral: false, referralBoundAt: inviter ? now : "", createdAt: now, updatedAt: now };
+      const account = { id: crypto.randomUUID(), email, passwordHash: await hashAccountPassword(password), status: "active", linkedUserId: "", referralCode: randomReferralCode(), referredByAccountId: inviter?.id || "", referralRate: 10, recurringReferral: false, referralBoundAt: inviter ? now : "", createdAt: now, updatedAt: now };
       account.customerID = nextCustomerID(account.id, [...users, ...accounts]);
       accounts.unshift(account);
-      await saveAccounts();
+      await saveAccount(account);
       // Out of stock, limits or a failed grant never block the registration itself.
       await grantRegistrationTrial(account.id, inviter?.id, req).catch(error => console.error(`Registration trial failed for ${email}:`, error.message));
       const token = makeSessionToken({ role: "user", accountId: account.id, email }, REMEMBER_MAX_AGE_SECONDS);
@@ -6883,10 +6924,12 @@ async function handleApi(req, res, pathname) {
       const payload = await readJson(req);
       const account = String(payload.account || payload.email || "").trim();
       const password = String(payload.password || "");
+      if (!enforceAuthRateLimit(req, res, { action: "login", subject: account, ipLimit: 30, subjectLimit: 12, windowMs: 15 * 60 * 1000 })) return;
       const remember = Boolean(payload.remember);
       const maxAgeSeconds = remember ? REMEMBER_MAX_AGE_SECONDS : SESSION_MAX_AGE_SECONDS;
       const cookieMaxAge = remember ? maxAgeSeconds : null;
       if (safeEqual(account, ADMIN_USERNAME) && safeEqual(password, ADMIN_PASSWORD)) {
+        authRateLimiter.reset(`login:sub:${account.toLowerCase()}`);
         const token = makeSessionToken({ role: "admin", account: ADMIN_USERNAME }, maxAgeSeconds);
         sendJson(res, 200, { ok: true, role: "admin", account: ADMIN_USERNAME }, { "set-cookie": authCookie(req, token, cookieMaxAge) });
         return;
@@ -6894,7 +6937,7 @@ async function handleApi(req, res, pathname) {
       void loadLatestData();
       const email = normalizeAccountEmail(account);
       const userAccount = accounts.find(item => item.email === email);
-      if (!userAccount || !verifyAccountPassword(password, userAccount.passwordHash)) {
+      if (!userAccount || !(await verifyAccountPassword(password, userAccount.passwordHash))) {
         sendJson(res, 401, { error: "邮箱或密码不正确。" });
         return;
       }
@@ -6906,6 +6949,7 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 401, { error: "邮箱或密码不正确。" });
         return;
       }
+      authRateLimiter.reset(`login:sub:${account.toLowerCase()}`);
       const token = makeSessionToken({ role: "user", accountId: userAccount.id, email }, maxAgeSeconds);
       sendJson(res, 200, { ok: true, role: "user", email }, { "set-cookie": authCookie(req, token, cookieMaxAge) });
     } catch (error) {
@@ -6919,6 +6963,7 @@ async function handleApi(req, res, pathname) {
       await loadLatestData();
       const payload = await readJson(req);
       const email = normalizeAccountEmail(payload.email);
+      if (!enforceAuthRateLimit(req, res, { action: "forgot-password", subject: email, ipLimit: 10, subjectLimit: 5, windowMs: 15 * 60 * 1000 })) return;
       let account = accounts.find(item => item.email === email && item.status === "active");
       if (!account) {
         const user = users.find(item => item.email === email);
@@ -6926,7 +6971,7 @@ async function handleApi(req, res, pathname) {
         if (account) {
           account.email = email;
           account.updatedAt = new Date().toISOString();
-          await saveAccounts();
+          await saveAccount(account);
         }
       }
       if (account) {
@@ -6934,7 +6979,7 @@ async function handleApi(req, res, pathname) {
         account.resetTokenHash = tokenHash(token);
         account.resetTokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
         account.updatedAt = new Date().toISOString();
-        await saveAccounts();
+        await saveAccount(account);
         try {
           await sendAccountActionMail({ to: email, subject: "重置账户密码", title: "请点击下面的链接重置密码", url: accountActionUrl(req, "/reset-password", token) });
         } catch (error) {
@@ -6959,14 +7004,14 @@ async function handleApi(req, res, pathname) {
         return;
       }
       const { account } = match;
-      account.passwordHash = hashAccountPassword(password);
+      account.passwordHash = await hashAccountPassword(password);
       account.status = "active";
       delete account.resetTokenHash;
       delete account.resetTokenExpiresAt;
       delete account.claimTokenHash;
       delete account.claimTokenExpiresAt;
       account.updatedAt = new Date().toISOString();
-      await saveAccounts();
+      await saveAccount(account);
       sendJson(res, 200, { ok: true });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -7045,13 +7090,13 @@ async function handleApi(req, res, pathname) {
     try {
       const account = accountBySession(session);
       const payload = await readJson(req);
-      if (!account || !verifyAccountPassword(payload.currentPassword, account.passwordHash)) {
+      if (!account || !(await verifyAccountPassword(payload.currentPassword, account.passwordHash))) {
         sendJson(res, 400, { error: "当前密码不正确。" });
         return;
       }
-      account.passwordHash = hashAccountPassword(validateAccountPassword(payload.password));
+      account.passwordHash = await hashAccountPassword(validateAccountPassword(payload.password));
       account.updatedAt = new Date().toISOString();
-      await saveAccounts();
+      await saveAccount(account);
       sendJson(res, 200, { ok: true }, { "set-cookie": clearAuthCookie(req) });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -8573,7 +8618,7 @@ async function handleApi(req, res, pathname) {
       const actor = currentSession(req)?.account || "admin";
       account.userLogs = [createUserLog({ event: "user-action", status: "recorded", reason: "user-created", req, message: `${userActionMessage("user-created")}（未分配套餐，操作人 ${actor}）`, details: { actor, email } })];
       accounts.unshift(account);
-      await saveAccounts();
+      await saveAccount(account);
       let claimMailSent = false;
       if (notifier.isMailConfigured()) {
         try {
@@ -9312,7 +9357,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic|subscription-access))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic|subscription-access|subscription-whitelist))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -9356,19 +9401,82 @@ async function handleApi(req, res, pathname) {
       const days = [7, 30, 90].includes(requested) ? requested : 7;
       const now = Date.now();
       const since = new Date(now - days * 86400000);
-      const [rows, nodeIps, lastAlert, review, concurrent] = item
-        ? await Promise.all([dataStore.listSubscriptionAccess(item.id, { since }), ownNodeIps(), dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, item.id), dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, item.id), dataStore.listConcurrentLocationEvents(item.id, { since })])
-        : [[], new Set(), null, null, []];
+      const [rows, nodeIps, lastAlert, review, concurrent, whitelist, presenceActivity] = item
+        ? await Promise.all([
+            dataStore.listSubscriptionAccess(item.id, { since }),
+            ownNodeIps(),
+            dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, item.id),
+            dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, item.id),
+            dataStore.listConcurrentLocationEvents(item.id, { since }),
+            getUserShareWhitelist(item.id),
+            dataStore.listPresenceIpActivity(item.id, { since: new Date(now - 7 * 86400000) })
+          ])
+        : [[], new Set(), null, null, [], [], []];
+      const rows7d = days === 7 ? rows : rows.filter(row => now - new Date(row.at).getTime() <= 7 * 86400000);
+      const concurrent24h = concurrent.filter(event => now - new Date(event.lastSeenAt).getTime() <= 24 * 3600000);
+      const risk = shareRiskScore.scoreSubscriptionShare({ rows7d, concurrent24h, presenceActivity, nodeIps, whitelist, now });
+      const clientsByIp = new Map();
+      for (const row of rows) {
+        if (!row.ip || row.result === subscriptionAccess.IPV4_REDIRECT_RESULT) continue;
+        const label = subscriptionAccess.subscriptionClientLabel(row.userAgent);
+        if (!label || label === "未知") continue;
+        const list = clientsByIp.get(row.ip) || [];
+        if (!list.includes(label)) list.push(label);
+        clientsByIp.set(row.ip, list);
+      }
       sendJson(res, 200, {
         days,
         retentionDays: subscriptionAccess.SUBSCRIPTION_ACCESS_RETENTION_DAYS,
-        lastAlert: lastAlert ? { at: lastAlert.at, provinces: lastAlert.provinces || [], cities: lastAlert.cities || [] } : null,
+        lastAlert: lastAlert ? { at: lastAlert.at, score: lastAlert.score || 0, level: lastAlert.level || "", provinces: lastAlert.provinces || [], cities: lastAlert.cities || [] } : null,
         review: review || null,
+        whitelist,
+        risk,
         // Running episodes are flagged so the page can say 进行中 (their row updates every sample).
-        concurrent: concurrent.map(event => ({ ...event, ongoing: concurrentEpisodes.get(item.id)?.eventId === event.id })),
-        summary: subscriptionAccess.summarizeSubscriptionAccess(rows, { now, nodeIps }),
-        rows: rows.slice(0, 200).map(row => ({ ...row, client: subscriptionAccess.subscriptionClientLabel(row.userAgent), viaNode: nodeIps.has(row.ip) }))
+        concurrent: concurrent.map(event => ({
+          ...event,
+          ongoing: concurrentEpisodes.get(item.id)?.eventId === event.id,
+          locations: (event.locations || []).map(loc => ({
+            ...loc,
+            clients: clientsByIp.get(loc.ip) || [],
+            whitelisted: shareRiskScore.ipMatchesWhitelist(loc.ip, whitelist)
+          }))
+        })),
+        summary: subscriptionAccess.summarizeSubscriptionAccess(rows, { now, nodeIps, whitelist }),
+        rows: rows.slice(0, 200).map(row => ({
+          ...row,
+          client: subscriptionAccess.subscriptionClientLabel(row.userAgent),
+          viaNode: nodeIps.has(row.ip),
+          whitelisted: shareRiskScore.ipMatchesWhitelist(row.ip, whitelist)
+        }))
       });
+      return;
+    }
+
+    // Per-user IP whitelist (exact IP or IPv4 /24) excluded from share risk detection.
+    if (action === "subscription-whitelist" && (req.method === "POST" || req.method === "DELETE")) {
+      if (!item) {
+        sendJson(res, 404, { error: "仅正式用户支持配置白名单 IP。" });
+        return;
+      }
+      const session = currentSession(req);
+      const actor = session?.account || session?.username || "admin";
+      try {
+        const existing = await getUserShareWhitelist(item.id);
+        let nextItems;
+        if (req.method === "POST") {
+          const payload = await readJson(req);
+          nextItems = shareRiskScore.addWhitelistEntry(existing, { ip: payload.ip, note: payload.note, addedBy: actor }).items;
+        } else {
+          const queryIp = new URL(req.url, "http://localhost").searchParams.get("ip");
+          const payload = queryIp ? { ip: queryIp } : await readJson(req).catch(() => ({}));
+          nextItems = shareRiskScore.removeWhitelistEntry(existing, payload.ip).items;
+        }
+        await dataStore.setRecord(SUBSCRIPTION_WHITELIST_COLLECTION, item.id, { items: nextItems });
+        const { scored } = await computeUserShareRisk(item.id);
+        sendJson(res, 200, { whitelist: nextItems, risk: scored });
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
       return;
     }
 
@@ -9923,11 +10031,11 @@ async function serveStatic(req, res, pathname) {
   }
 
   const staticPath = isAppRoute ? "/index.html" : requestedPath;
-  const baseDir = markdownImageMatch ? MARKDOWN_UPLOAD_DIR : PUBLIC_DIR;
-  const filePath = markdownImageMatch ? path.join(baseDir, markdownImageMatch[1]) : path.normalize(path.join(baseDir, staticPath));
+  const baseDir = path.resolve(markdownImageMatch ? MARKDOWN_UPLOAD_DIR : PUBLIC_DIR);
+  const filePath = markdownImageMatch ? path.resolve(baseDir, markdownImageMatch[1]) : path.resolve(baseDir, "." + path.posix.normalize("/" + staticPath));
 
-  if (!filePath.startsWith(baseDir)) {
-    res.writeHead(403);
+  if (filePath !== baseDir && !filePath.startsWith(baseDir + path.sep)) {
+    res.writeHead(403, SECURITY_HEADERS);
     res.end("Forbidden");
     return;
   }
@@ -9937,7 +10045,7 @@ async function serveStatic(req, res, pathname) {
     const contentType = mimeTypes[ext] || "application/octet-stream";
     const acceptEncoding = (req.headers["accept-encoding"] || "");
     const cacheControl = markdownImageMatch ? "private, max-age=31536000, immutable" : requestedPath.includes("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
-    const responseHeaders = { "content-type": contentType, "cache-control": cacheControl };
+    const responseHeaders = { ...SECURITY_HEADERS, "content-type": contentType, "cache-control": cacheControl };
 
     // 对可压缩类型优先尝试预压缩文件（.br / .gz）
     if (COMPRESSIBLE_EXTS.has(ext)) {
@@ -9995,12 +10103,12 @@ async function serveStatic(req, res, pathname) {
     if (!path.extname(requestedPath)) {
       try {
         const content = await fs.readFile(path.join(PUBLIC_DIR, "index.html"));
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.writeHead(200, { ...SECURITY_HEADERS, "content-type": "text/html; charset=utf-8" });
         res.end(content);
         return;
       } catch {}
     }
-    res.writeHead(404);
+    res.writeHead(404, SECURITY_HEADERS);
     res.end("Not found");
   }
 }
@@ -10050,9 +10158,16 @@ async function requestHandler(req, res) {
 }
 
 async function main() {
+  const secretWarnings = checkSecretStrength();
+  for (const warning of secretWarnings) console.warn(`[security] ${warning}`);
+  if (process.env.REQUIRE_STRONG_SECRETS === "true" && secretWarnings.length) {
+    throw new Error(`Startup aborted due to weak secret configuration: ${secretWarnings.join(" ")}`);
+  }
+
   await ensureDataFile();
   initialized = true;
   const server = http.createServer(requestHandler);
+  const intervals = [];
 
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`VPN subscription monitor is running at http://localhost:${PORT}`);
@@ -10076,24 +10191,49 @@ async function main() {
     pruneSyncJobHistory().catch(error => console.error("Sync job history prune failed:", error));
     pruneSubscriptionAccessHistory().catch(error => console.error("Subscription access prune failed:", error));
     dataStore.pruneConcurrentLocationEvents(new Date(Date.now() - concurrentLocation.CONCURRENT_RETENTION_DAYS * 86400000)).catch(error => console.error("Concurrent location prune failed:", error));
+    dataStore.prunePresenceIpActivity(new Date(Date.now() - shareRiskScore.PRESENCE_IP_RETENTION_DAYS * 86400000)).catch(error => console.error("Presence IP activity prune failed:", error));
   };
   pruneSyncJobHistoryInBackground();
-  setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000);
+  intervals.push(setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000));
 
-  setInterval(() => scheduleSyncJob("referral-settlement"), 60 * 1000);
+  intervals.push(setInterval(() => scheduleSyncJob("referral-settlement"), 60 * 1000));
   scheduleSyncJob("order-fulfillment-retry", "startup");
-  setInterval(() => scheduleSyncJob("order-fulfillment-retry"), 5 * 60 * 1000);
+  intervals.push(setInterval(() => scheduleSyncJob("order-fulfillment-retry"), 5 * 60 * 1000));
   if (hubConfigured()) {
     scheduleSyncJob("node-hub-sync", "startup");
-    setInterval(() => scheduleSyncJob("node-hub-sync"), NODE_HUB_SYNC_INTERVAL_MS);
+    intervals.push(setInterval(() => scheduleSyncJob("node-hub-sync"), NODE_HUB_SYNC_INTERVAL_MS));
     scheduleSyncJob("node-hub-billing", "startup");
-    setInterval(() => scheduleSyncJob("node-hub-billing"), XUI_TRAFFIC_SYNC_INTERVAL_MS);
+    intervals.push(setInterval(() => scheduleSyncJob("node-hub-billing"), XUI_TRAFFIC_SYNC_INTERVAL_MS));
     const sampleConcurrentLocations = () => runConcurrentLocationSample().catch(error => console.warn(`[concurrent-location] sample failed: ${error.message}`));
-    setInterval(sampleConcurrentLocations, concurrentLocation.CONCURRENT_SAMPLE_INTERVAL_MS);
-    setInterval(() => scheduleSyncJob("addon-service-expiry"), 10 * 60 * 1000);
+    intervals.push(setInterval(sampleConcurrentLocations, concurrentLocation.CONCURRENT_SAMPLE_INTERVAL_MS));
+    intervals.push(setInterval(() => scheduleSyncJob("addon-service-expiry"), 10 * 60 * 1000));
     scheduleSyncJob("xui-traffic-prune", "startup");
-    setInterval(() => scheduleSyncJob("xui-traffic-prune"), 24 * 60 * 60 * 1000);
+    intervals.push(setInterval(() => scheduleSyncJob("xui-traffic-prune"), 24 * 60 * 60 * 1000));
   }
+
+  let shuttingDown = false;
+  const shutdown = signal => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[server] Received ${signal}; shutting down gracefully...`);
+    for (const timer of intervals) clearInterval(timer);
+    const forceTimer = setTimeout(() => {
+      console.error("[server] Graceful shutdown timed out; forcing exit.");
+      process.exit(1);
+    }, 10_000);
+    forceTimer.unref();
+    server.close(async () => {
+      try {
+        await dataStore.close();
+      } catch (error) {
+        console.error("[server] Error closing database pool:", error);
+      }
+      clearTimeout(forceTimer);
+      process.exit(0);
+    });
+  };
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  process.once("SIGINT", () => shutdown("SIGINT"));
 }
 
 if (require.main === module) {
@@ -10203,10 +10343,14 @@ module.exports = Object.assign(requestHandler, {
   grantTrafficPack,
   expireUserTrafficPacks,
   restoreUpstreamClashConfig,
-  injectPlaceholderNodes,
   postSubconverter,
   disabledAccountPlaceholderSubscription,
   buildUserInfoNodes,
   selfHostedUserinfo,
-  nodeSpeedLimitParts
+  nodeSpeedLimitParts,
+  SECURITY_HEADERS,
+  createAuthRateLimiter,
+  checkSecretStrength,
+  hashAccountPassword,
+  verifyAccountPassword
 });

@@ -4,6 +4,7 @@ import { BookOpen, Gift, History, LifeBuoy, ReceiptText, UserRound, WalletCards 
 import { useTheme } from "next-themes"
 
 import { apiFetch, clearJsonCache, fetchJson, setCachedJson } from "@/api"
+import { resetDataProviderCache } from "@/components/features/data-provider"
 import { UserAlert } from "@/components/features/shared"
 import { DOCS_URL } from "@/lib/docs-site"
 import { cn } from "@/lib/utils"
@@ -82,10 +83,11 @@ export function AccountShell() {
   React.useEffect(() => { fetchJson<{ userAlerts: UserAlertSetting[] }>("/api/public/sales-settings").then(data => setUserAlerts(data.userAlerts || [])).catch(() => undefined) }, [])
 
   React.useEffect(() => {
-    if (!email) return
+    const websiteId = String(import.meta.env.VITE_CRISP_WEBSITE_ID ?? "149a15d1-aa5b-471e-9da6-fa37c8b17f68").trim()
+    if (!email || !websiteId) return
     const crispWindow = window as typeof window & { $crisp?: { push(command: ["do", "chat:show" | "chat:hide"] | ["set", "user:email", [string]]): number }; CRISP_WEBSITE_ID?: string }
     crispWindow.$crisp ||= []
-    crispWindow.CRISP_WEBSITE_ID = "149a15d1-aa5b-471e-9da6-fa37c8b17f68"
+    crispWindow.CRISP_WEBSITE_ID = websiteId
     crispWindow.$crisp.push(["set", "user:email", [email]])
     crispWindow.$crisp.push(["do", "chat:show"])
     if (!document.querySelector('script[src="https://client.crisp.chat/l.js"]')) {
@@ -122,6 +124,7 @@ export function AccountShell() {
 
   async function logout() {
     await apiFetch("/api/auth/logout", { method: "POST" })
+    resetDataProviderCache()
     clearJsonCache()
     navigate("/login", { replace: true })
   }

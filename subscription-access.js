@@ -13,6 +13,23 @@ function cleanIp(value) {
   return net.isIP(ip) ? ip : "";
 }
 
+function ipMatchesWhitelist(ip, entries = []) {
+  const cleaned = cleanIp(ip);
+  if (!cleaned || !Array.isArray(entries) || !entries.length) return false;
+  const isV4 = net.isIPv4(cleaned);
+  const v4Prefix = isV4 ? cleaned.split(".").slice(0, 3).join(".") : "";
+  for (const item of entries) {
+    const target = typeof item === "string" ? item : String(item?.ip || "");
+    if (!target) continue;
+    if (target.endsWith("/24")) {
+      if (isV4 && target.slice(0, -3).split(".").slice(0, 3).join(".") === v4Prefix) return true;
+    } else if (cleanIp(target) === cleaned) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // The site sits behind Cloudflare, then nginx, then this app on loopback. Cloudflare's
 // CF-Connecting-IP is the visitor; without it, the last X-Forwarded-For hop is the address the
 // nearest proxy saw (earlier hops come from the client and can be forged).
@@ -121,10 +138,10 @@ function ipv4RedirectLocation({ baseUrl, path, ip, ipSource, region }) {
   return `${base}${target}`;
 }
 
-// Pulls that say where a client is: not through our own nodes, and not the IPv6 half of a redirect
-// (the client's IPv4 pull right after it is the one that counts).
-function countedPulls(rows, nodeIps = new Set()) {
-  return rows.filter(row => !nodeIps.has(row.ip) && row.result !== IPV4_REDIRECT_RESULT);
+// Pulls that say where a client is: not through our own nodes, not whitelisted by an admin,
+// and not the IPv6 half of a redirect (the client's IPv4 pull right after it is the one that counts).
+function countedPulls(rows, nodeIps = new Set(), whitelist = []) {
+  return rows.filter(row => !nodeIps.has(row.ip) && !ipMatchesWhitelist(row.ip, whitelist) && row.result !== IPV4_REDIRECT_RESULT);
 }
 
 function locationLabel(location) {
@@ -191,19 +208,19 @@ function cityChanges(rows) {
 // machines' addresses; clients that refresh the subscription through the proxy arrive from those, so
 // they are listed but left out of the counts. Suspicious: mainland pulls from two or more provinces;
 // two or more cities inside one province only need a manual review (crossCity).
-function summarizeSubscriptionAccess(rows = [], { now = Date.now(), nodeIps = new Set() } = {}) {
+function summarizeSubscriptionAccess(rows = [], { now = Date.now(), nodeIps = new Set(), whitelist = [] } = {}) {
   const nodes = nodeIps instanceof Set ? nodeIps : new Set(nodeIps || []);
   const byIp = new Map();
   for (const row of rows) {
     const key = row.ip || "-";
-    const entry = byIp.get(key) || { ip: row.ip || "", geoCountry: row.geoCountry || "", province: row.province || "", city: row.city || "", isp: row.isp || "", count: 0, firstAt: row.at, lastAt: row.at, clients: new Set(), viaNode: nodes.has(row.ip) };
+    const entry = byIp.get(key) || { ip: row.ip || "", geoCountry: row.geoCountry || "", province: row.province || "", city: row.city || "", isp: row.isp || "", count: 0, firstAt: row.at, lastAt: row.at, clients: new Set(), viaNode: nodes.has(row.ip), whitelisted: ipMatchesWhitelist(row.ip, whitelist) };
     entry.count += 1;
     if (row.at < entry.firstAt) entry.firstAt = row.at;
     if (row.at > entry.lastAt) entry.lastAt = row.at;
     entry.clients.add(subscriptionClientLabel(row.userAgent));
     byIp.set(key, entry);
   }
-  const counted = countedPulls(rows, nodes);
+  const counted = countedPulls(rows, nodes, whitelist);
   const since = hours => counted.filter(row => now - new Date(row.at).getTime() <= hours * 3600000);
   const windows = { "24h": summarizeWindow(since(24)), all: summarizeWindow(counted) };
   const hints = [];
@@ -220,6 +237,7 @@ function summarizeSubscriptionAccess(rows = [], { now = Date.now(), nodeIps = ne
     hints,
     cityChanges: cityChanges(counted).slice(0, 50),
     viaNodeRequests: rows.filter(row => nodes.has(row.ip)).length,
+    whitelistedRequests: rows.filter(row => ipMatchesWhitelist(row.ip, whitelist)).length,
     ipv4Redirects: rows.filter(row => row.result === IPV4_REDIRECT_RESULT).length,
     ips: [...byIp.values()]
       .map(entry => ({ ...entry, clients: [...entry.clients].sort() }))
@@ -319,6 +337,7 @@ function reviewDecision(previous, { decision, note = "", reviewer = "", now = Da
 module.exports = {
   SUBSCRIPTION_ACCESS_RETENTION_DAYS,
   IPV4_REDIRECT_RESULT,
+  ipMatchesWhitelist,
   subscriptionClientIp,
   ipv4RedirectLocation,
   countedPulls,

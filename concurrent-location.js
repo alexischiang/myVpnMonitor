@@ -7,7 +7,7 @@
 // CONCURRENT_MIN_SAMPLES consecutive samples, so a Wi-Fi to 4G switch (old and new IP briefly both
 // alive) does not.
 
-const { distinctCities, distinctProvinces } = require("./subscription-access");
+const { distinctCities, distinctProvinces, ipMatchesWhitelist } = require("./subscription-access");
 
 const CONCURRENT_SAMPLE_INTERVAL_MS = 2 * 60 * 1000;
 const CONCURRENT_MIN_SAMPLES = 2;
@@ -16,12 +16,12 @@ const CONCURRENT_RETENTION_DAYS = 90;
 // One presence entry ({ ipsByNode: { nodeId: [ip] } }) as places: one row per distinct IP with the
 // nodes it is connected to. regions: Map ip -> ip2region result; ownIps: our machines and relays
 // (a relay without PROXY protocol shows its own address); nodeNames: { nodeId: name }.
-function presenceLocations(entry, { regions = new Map(), ownIps = new Set(), nodeNames = {} } = {}) {
+function presenceLocations(entry, { regions = new Map(), ownIps = new Set(), whitelist = [], nodeNames = {} } = {}) {
   const byIp = new Map();
   for (const [nodeId, ips] of Object.entries(entry?.ipsByNode || {})) {
     for (const raw of Array.isArray(ips) ? ips : []) {
       const ip = String(raw || "").trim();
-      if (!ip || ownIps.has(ip)) continue;
+      if (!ip || ownIps.has(ip) || ipMatchesWhitelist(ip, whitelist)) continue;
       const row = byIp.get(ip) || { ip, ...placeOf(regions.get(ip)), nodes: [] };
       const name = nodeNames[nodeId] || `节点 #${nodeId}`;
       if (!row.nodes.includes(name)) row.nodes.push(name);

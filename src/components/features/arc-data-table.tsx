@@ -14,7 +14,6 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
-import { pinyin } from "pinyin-pro"
 import { useSearchParams } from "react-router-dom"
 import { Columns3, EllipsisVertical } from "lucide-react"
 
@@ -37,13 +36,34 @@ import { cn } from "@/lib/utils"
 
 const normalizeSearchText = (value: unknown) => String(value ?? "").toLocaleLowerCase().replace(/\s+/g, "")
 const searchVariants = new Map<string, string[]>()
+type PinyinFn = typeof import("pinyin-pro").pinyin
+let pinyinFn: PinyinFn | null = null
+let pinyinLoading: Promise<void> | null = null
+const pinyinListeners = new Set<() => void>()
+
+function ensurePinyinLoaded() {
+  if (pinyinFn || pinyinLoading) return
+  pinyinLoading = import("pinyin-pro")
+    .then(mod => {
+      pinyinFn = mod.pinyin
+      searchVariants.clear()
+      pinyinListeners.forEach(listener => listener())
+    })
+    .catch(() => {
+      pinyinLoading = null
+    })
+}
 
 function searchableText(text: string) {
+  if (!pinyinFn) {
+    if (/[^\x00-\x7f]/.test(text)) ensurePinyinLoaded()
+    return [normalizeSearchText(text)]
+  }
   const cached = searchVariants.get(text)
   if (cached) return cached
   // ponytail: bounded whole-cache reset; use LRU only if search diversity grows substantially.
   if (searchVariants.size >= 2000) searchVariants.clear()
-  const variants = [text, pinyin(text, { toneType: "none", separator: "" }), pinyin(text, { toneType: "none", pattern: "first", separator: "" })]
+  const variants = [text, pinyinFn(text, { toneType: "none", separator: "" }), pinyinFn(text, { toneType: "none", pattern: "first", separator: "" })]
     .map(normalizeSearchText)
   searchVariants.set(text, variants)
   return variants
@@ -127,6 +147,12 @@ export function DataTable<TData, TValue>({
   })
   const tableTopRef = React.useRef<HTMLDivElement>(null)
   const previousPageIndex = React.useRef(0)
+
+  React.useEffect(() => {
+    const refresh = () => setColumnFilters(current => (current.length ? [...current] : current))
+    pinyinListeners.add(refresh)
+    return () => { pinyinListeners.delete(refresh) }
+  }, [])
 
   React.useEffect(() => {
     if (pagination.pageIndex === previousPageIndex.current) return

@@ -75,7 +75,12 @@ const {
   ticketReplyMessage,
   toggleTicketReaction,
   planRenewalOffer,
-  machineRelayedNodes
+  machineRelayedNodes,
+  SECURITY_HEADERS,
+  createAuthRateLimiter,
+  checkSecretStrength,
+  hashAccountPassword,
+  verifyAccountPassword
 } = require("./server");
 
 // A machine relays the other machines' nodes whose relay sits on its address (its own or one of its nodes'),
@@ -867,6 +872,27 @@ Promise.all([
     ]);
     assert.deepStrictEqual(results, ["done", "done"]);
     assert.strictEqual(migrationRuns, 1);
+  })(),
+  (async () => {
+    assert.strictEqual(fs.existsSync("public/autologin.html"), false, "autologin.html must not exist in public/");
+    const hashed = await hashAccountPassword("super-secret-123");
+    assert.ok(hashed.startsWith("scrypt$"));
+    assert.strictEqual(await verifyAccountPassword("super-secret-123", hashed), true);
+    assert.strictEqual(await verifyAccountPassword("wrong-pass", hashed), false);
+    const limiter = createAuthRateLimiter({ maxBuckets: 3 });
+    assert.strictEqual(limiter.consume("login:ip:1.2.3.4", { limit: 2, windowMs: 1000, now: 100 }).allowed, true);
+    assert.strictEqual(limiter.consume("login:ip:1.2.3.4", { limit: 2, windowMs: 1000, now: 200 }).allowed, true);
+    const blocked = limiter.consume("login:ip:1.2.3.4", { limit: 2, windowMs: 1000, now: 300 });
+    assert.strictEqual(blocked.allowed, false);
+    assert.strictEqual(blocked.retryAfterSeconds, 1);
+    assert.strictEqual(limiter.consume("login:ip:1.2.3.4", { limit: 2, windowMs: 1000, now: 1200 }).allowed, true);
+    assert.strictEqual(checkSecretStrength({ ADMIN_PASSWORD: "admin", SESSION_SECRET: "" }).length, 2);
+    assert.strictEqual(checkSecretStrength({ ADMIN_PASSWORD: "strong-password-99", SESSION_SECRET: "0123456789abcdef0123456789abcdef" }).length, 0);
+    let capturedHeaders = null;
+    sendJson({ writeHead(_status, headers) { capturedHeaders = headers; }, end() {} }, 200, { ok: true });
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+      assert.strictEqual(capturedHeaders[k], v);
+    }
   })()
 ]).then(resendMailChecks).then(() => {
   console.log("All checks passed.");

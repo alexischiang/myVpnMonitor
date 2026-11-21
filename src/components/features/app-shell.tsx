@@ -3,10 +3,10 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { AlertCircle, RefreshCw } from "lucide-react"
 import { useTheme } from "next-themes"
 
-import { apiFetch, fetchJson } from "@/api"
+import { apiFetch, clearJsonCache, fetchJson } from "@/api"
 import { AppLayout } from "@/components/features/app-layout"
 import { AppSidebar } from "@/components/features/app-sidebar"
-import { useData } from "@/components/features/data-provider"
+import { resetDataProviderCache, useData } from "@/components/features/data-provider"
 import { getPageTitle, navEntries } from "@/components/features/navigation"
 import { Alert } from "@/components/arc/alert/alert"
 import { Skeleton } from "@/components/arc/skeleton/skeleton"
@@ -71,6 +71,8 @@ export function AppShell() {
 
   async function logout() {
     await apiFetch("/api/auth/logout", { method: "POST" })
+    resetDataProviderCache()
+    clearJsonCache()
     navigate("/login", { replace: true })
   }
 

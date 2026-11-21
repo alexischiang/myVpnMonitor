@@ -24,7 +24,7 @@ const alertRows = [
   { key: "ticket", label: "工单待处理提醒", description: "用户创建工单或追加回复时提醒。" },
   { key: "delivery", label: "待交付提醒", description: "用户付款后有服务等待人工交付时提醒。" },
   { key: "traffic", label: "用户流量提醒", description: "用户流量达到设定阈值时提醒。" },
-  { key: "subscriptionShare", label: "订阅疑似分享提醒", description: "24 小时内同一订阅链接从境内两个以上省份拉取，或节点上同时从两个以上省份在线时提醒，同一用户 24 小时内只提醒一次（出现新省份除外）。同省跨市不提醒，进入订阅复核列表。" },
+  { key: "subscriptionShare", label: "订阅疑似分享提醒", description: "按同时异地在线、独立在线、双手机并发及订阅拉取特征综合评分：达到 40 分进入订阅复核，70 分触发报警，90 分标记为极高风险；同一用户 24 小时内只提醒一次（出现新省份、升级极高风险或涨分 ≥ 15 除外）。" },
 ] as const
 
 // The server grants the first enabled period of the trial product.

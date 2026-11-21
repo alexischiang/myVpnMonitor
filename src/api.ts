@@ -73,7 +73,13 @@ export function fetchJson<T = unknown>(path: string, { background, ...options }:
 
 /** A failed request keeps the HTTP status and the reply body, for callers that act on a specific rejection. */
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number, readonly body: Record<string, unknown>) { super(message) }
+  readonly status: number
+  readonly body: Record<string, unknown>
+  constructor(message: string, status: number, body: Record<string, unknown>) {
+    super(message)
+    this.status = status
+    this.body = body
+  }
 }
 
 async function requestJson<T>(path: string, options: RequestInit): Promise<T> {
