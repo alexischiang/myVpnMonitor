@@ -26,6 +26,7 @@ const { loadLocalEnv } = require("./env");
 const xuiTraffic = require("./xui-traffic");
 const subscriptionAccess = require("./subscription-access");
 const concurrentLocation = require("./concurrent-location");
+const shareRiskScore = require("./share-risk-score");
 const { lookupIpRegion, ipRegionReady } = require("./ip-region");
 const nodeHub = require("./node-hub/bridge");
 const yaml = require("js-yaml");
@@ -6451,34 +6452,77 @@ function checkSubscriptionShareAlert(user) {
   return queueSubscriptionShareTask(user.id, () => runSubscriptionShareCheck(user));
 }
 
-// Concurrent multi-location presence (concurrent-location.js): every CONCURRENT_SAMPLE_INTERVAL_MS the
-// node-hub presence snapshot (live source IPs per user and node) is placed with ip2region. An episode
-// seen in two consecutive samples is stored in concurrent_location_events; across provinces it alerts
-// through 订阅疑似分享提醒 (once per 24 hours unless a new province appears), inside one province it
-// joins the review queue with source "presence". Episode state lives in memory; a restart only means
-// the next episode needs two fresh samples.
+// Concurrent multi-location presence (concurrent-location.js) & unified share risk scoring (share-risk-score.js):
+// every CONCURRENT_SAMPLE_INTERVAL_MS the node-hub presence snapshot is placed with ip2region.
+// Single-IP online users update presence_ip_activity (solo_samples/solo_last_at, throttled 10m);
+// multi-IP online users update concurrent_samples and advance concurrent_location_events.
+// Both pulls and confirmed concurrent episodes evaluate the flat additive risk score:
+// >= 40 enters subscriptionShareReviews, >= 70 alerts through 订阅疑似分享提醒, >= 90 marks 极高风险.
 const concurrentEpisodes = new Map();
-const CONCURRENT_ALERT_COLLECTION = "concurrentLocationAlerts";
+const presenceActivityTouch = new Map();
+const PRESENCE_ACTIVITY_TOUCH_MS = 10 * 60 * 1000;
+const SUBSCRIPTION_SHARE_ALERT_COLLECTION = "subscriptionShareAlerts";
+const SUBSCRIPTION_SHARE_REVIEW_COLLECTION = "subscriptionShareReviews";
+const SUBSCRIPTION_WHITELIST_COLLECTION = "subscriptionShareWhitelists";
 let concurrentSampleRunning = false;
+
+async function getUserShareWhitelist(userId) {
+  const record = await dataStore.getRecord(SUBSCRIPTION_WHITELIST_COLLECTION, userId);
+  return Array.isArray(record?.items) ? record.items : [];
+}
+
+function shouldTouchPresenceActivity(key, now) {
+  const last = presenceActivityTouch.get(key) || 0;
+  if (now - last < PRESENCE_ACTIVITY_TOUCH_MS) return false;
+  presenceActivityTouch.set(key, now);
+  if (presenceActivityTouch.size > 10000) {
+    const cutoff = now - PRESENCE_ACTIVITY_TOUCH_MS;
+    for (const [entryKey, stamp] of presenceActivityTouch) if (stamp < cutoff) presenceActivityTouch.delete(entryKey);
+  }
+  return true;
+}
 
 async function runConcurrentLocationSample(now = Date.now()) {
   if (concurrentSampleRunning) return { skipped: true };
   concurrentSampleRunning = true;
   try {
-    const [presence, overview, ownIps] = await Promise.all([
+    const [presence, overview, ownIps, whitelistRecords] = await Promise.all([
       requestNodeHub("/internal/presence"),
       getHubOverview().catch(() => null),
-      ownNodeIps().catch(() => new Set())
+      ownNodeIps().catch(() => new Set()),
+      dataStore.listRecords(SUBSCRIPTION_WHITELIST_COLLECTION).catch(() => [])
     ]);
+    const whitelistByUser = new Map(whitelistRecords.map(({ id, data }) => [id, Array.isArray(data?.items) ? data.items : []]));
     const nodeNames = Object.fromEntries((overview?.nodes || []).map(node => [String(node.id), node.machineName ? `${node.machineName} · ${node.name}` : node.name]));
     const regions = new Map();
     const seen = new Set();
     let episodes = 0;
+    const atIso = new Date(now).toISOString();
     for (const [userId, entry] of Object.entries(presence?.users || {})) {
-      const ips = new Set(Object.values(entry?.ipsByNode || {}).flat().map(String).filter(Boolean));
-      if (ips.size < 2 && !concurrentEpisodes.has(userId)) continue;
-      for (const ip of ips) if (!regions.has(ip)) regions.set(ip, await lookupIpRegion(ip).catch(() => null));
-      const observation = concurrentLocation.observeConcurrent(concurrentLocation.presenceLocations(entry, { regions, ownIps, nodeNames }));
+      const whitelist = whitelistByUser.get(userId) || [];
+      const rawIps = new Set(Object.values(entry?.ipsByNode || {}).flat().map(item => String(item || "").trim()).filter(Boolean));
+      const validIps = [...rawIps].filter(ip => !ownIps.has(ip) && !shareRiskScore.ipMatchesWhitelist(ip, whitelist));
+      if (!validIps.length) continue;
+
+      for (const ip of validIps) if (!regions.has(ip)) regions.set(ip, await lookupIpRegion(ip).catch(() => null));
+      const isSolo = validIps.length === 1;
+      for (const ip of validIps) {
+        const touchKey = `${userId}|${ip}|${isSolo ? "s" : "c"}`;
+        if (shouldTouchPresenceActivity(touchKey, now)) {
+          const region = regions.get(ip);
+          await dataStore.recordPresenceIpActivity({
+            userId,
+            ip,
+            province: region?.province || "",
+            city: region?.city || "",
+            solo: isSolo,
+            at: atIso
+          }).catch(error => console.warn(`[presence-activity] ${userId} failed:`, error.message));
+        }
+      }
+
+      if (validIps.length < 2 && !concurrentEpisodes.has(userId)) continue;
+      const observation = concurrentLocation.observeConcurrent(concurrentLocation.presenceLocations(entry, { regions, ownIps, whitelist, nodeNames }));
       seen.add(userId);
       if (await advanceConcurrentEpisode(userId, observation, now)) episodes += 1;
     }
@@ -6505,14 +6549,8 @@ async function advanceConcurrentEpisode(userId, observation, now) {
     else await dataStore.updateConcurrentLocationEvent(state.eventId, row);
     const user = users.find(item => item.id === userId);
     if (!user) return true;
-    if (state.kind === "province" && action !== "update") {
-      await queueSubscriptionShareTask(userId, () => alertConcurrentLocation(user, state, now));
-    } else if (state.kind === "city") {
-      await queueSubscriptionShareTask(userId, async () => {
-        const review = await dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, userId);
-        const nextReview = subscriptionAccess.crossCityReview(state.locations, review, now, { source: "presence" });
-        if (nextReview) await dataStore.setRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, userId, nextReview);
-      });
+    if (action === "start" || action === "upgrade") {
+      await queueSubscriptionShareTask(userId, () => runSubscriptionShareCheck(user, now));
     }
     if (action === "start") console.log(`[concurrent-location] ${userId} online from ${(state.kind === "province" ? state.provinces : state.cities).join(", ")} at once.`);
     return true;
@@ -6522,62 +6560,65 @@ async function advanceConcurrentEpisode(userId, observation, now) {
   }
 }
 
-async function alertConcurrentLocation(user, state, now) {
-  const lastAlert = await dataStore.getRecord(CONCURRENT_ALERT_COLLECTION, user.id);
-  const { send, provinces, cities } = subscriptionAccess.crossProvinceAlert(state.locations, lastAlert, now);
-  if (!send) return null;
-  await dataStore.setRecord(CONCURRENT_ALERT_COLLECTION, user.id, { at: new Date(now).toISOString(), provinces, cities });
-  const text = concurrentLocationAlertText(user, state);
-  await sendAdminAlert("subscriptionShare", { subject: `疑似分享：同时异地在线：${subscriptionUserLabel(user)}`, text, parseMode: "" });
-  return text;
-}
-
-function concurrentLocationAlertText(user, state) {
-  const base = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
-  return [
-    "⚠️ 疑似分享：同时异地在线",
-    `用户：${subscriptionUserLabel(user)}`,
-    `同时从 ${state.provinces.length} 个省份在线：${state.provinces.join("、")}`,
-    `开始：${formatChinaTime(state.firstAt)}，已持续 ${concurrentLocation.minutesBetween(state.firstAt, state.lastAt)} 分钟`,
-    "",
-    "在线 IP：",
-    ...state.locations.map(row => `${row.ip} ${row.province} ${row.city} ${row.isp}（${row.nodes.join("、")}）`.replace(/\s+/g, " ")),
-    ...(base ? ["", `${base}/users/detail/${encodeURIComponent(user.id)}?tab=subscription-access`] : [])
-  ].join("\n");
-}
-
-// Telegram (and mail, per the alert settings) when the last 24 hours of a user's pulls come from two or
-// more mainland provinces. Repeats only after 24 hours or when a new province shows up.
-// Cross-city pulls inside one province go to the manual review queue instead (subscriptionShareReviews).
-async function runSubscriptionShareCheck(user, now = Date.now()) {
-  const [rows, nodeIps, lastAlert, review] = await Promise.all([
-    dataStore.listSubscriptionAccess(user.id, { since: new Date(now - 24 * 3600000) }),
+async function computeUserShareRisk(userId, now = Date.now()) {
+  const since7d = new Date(now - 7 * 86400000);
+  const since24h = new Date(now - 24 * 3600000);
+  const [rows7d, concurrent24h, presenceActivity, nodeIps, whitelist] = await Promise.all([
+    dataStore.listSubscriptionAccess(userId, { since: since7d }),
+    dataStore.listConcurrentLocationEvents(userId, { since: since24h }),
+    dataStore.listPresenceIpActivity(userId, { since: since7d }),
     ownNodeIps(),
+    getUserShareWhitelist(userId)
+  ]);
+  const scored = shareRiskScore.scoreSubscriptionShare({ rows7d, concurrent24h, presenceActivity, nodeIps, whitelist, now });
+  return { scored, whitelist, nodeIps, rows7d, concurrent24h };
+}
+
+// Unified share risk check: evaluates flat additive score, updates review queue (>= 40),
+// and sends admin alert (>= 70, with 24h cooldown unless score jumps >= 15, escalates, or new province).
+async function runSubscriptionShareCheck(user, now = Date.now()) {
+  const [{ scored }, lastAlert, review] = await Promise.all([
+    computeUserShareRisk(user.id, now),
     dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id),
     dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, user.id)
   ]);
-  const counted = subscriptionAccess.countedPulls(rows, nodeIps);
-  const nextReview = subscriptionAccess.crossCityReview(counted, review, now);
+  const nextReview = shareRiskScore.shareReviewRecord(scored, review, now);
   if (nextReview) {
     await dataStore.setRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, user.id, nextReview);
-    if (nextReview.status === "pending" && (!review || review.status !== "pending" || nextReview.cities.length !== review.cities?.length)) {
-      console.log(`[subscription-share] ${user.id} pulled from ${nextReview.cities.join(", ")} (${nextReview.province}) in 24h; queued for review.`);
+    if (nextReview.status === "pending" && (!review || review.status !== "pending" || nextReview.score !== review.score)) {
+      console.log(`[subscription-share] ${user.id} risk score ${scored.score} (${scored.level}); queued for review.`);
     }
   }
-  const { send, provinces, cities } = subscriptionAccess.crossProvinceAlert(counted, lastAlert, now);
-  if (!send) return nextReview ? { review: nextReview } : null;
-  const alert = { at: new Date(now).toISOString(), provinces, cities };
+  const decision = shareRiskScore.shouldSendShareAlert(scored, lastAlert, now);
+  if (!decision.send) return { scored, review: nextReview || review || null };
+  const alert = { at: new Date(now).toISOString(), score: scored.score, level: scored.level, provinces: scored.provinces, cities: scored.cities, factors: scored.factors };
   await dataStore.setRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, user.id, alert);
-  const text = subscriptionShareAlertText(user, counted, { provinces, cities });
-  console.log(`[subscription-share] ${user.id} pulled from ${provinces.join(", ")} in 24h; alerting.`);
-  await sendAdminAlert("subscriptionShare", { subject: `订阅疑似分享：${subscriptionUserLabel(user)}`, text, parseMode: "" });
-  return { ...alert, text };
+  const text = subscriptionShareScoreAlertText(user, scored);
+  const prefix = scored.level === "critical" ? "🚨 极高风险疑似分享" : "⚠️ 疑似分享提醒";
+  console.log(`[subscription-share] ${user.id} score ${scored.score} (${scored.level}); alerting.`);
+  await sendAdminAlert("subscriptionShare", { subject: `${prefix}（${scored.score}分）：${subscriptionUserLabel(user)}`, text, parseMode: "" });
+  return { ...alert, scored, text };
 }
 
-const SUBSCRIPTION_SHARE_ALERT_COLLECTION = "subscriptionShareAlerts";
-const SUBSCRIPTION_SHARE_REVIEW_COLLECTION = "subscriptionShareReviews";
+function subscriptionShareScoreAlertText(user, scored) {
+  const base = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  const header = scored.level === "critical"
+    ? `🚨 极高风险疑似分享（${scored.score} 分）`
+    : `⚠️ 订阅疑似分享（${scored.score} 分）`;
+  const lines = [
+    header,
+    `用户：${subscriptionUserLabel(user)}`,
+    ...(scored.provinces.length ? [`涉及省份：${scored.provinces.join("、")}`] : []),
+    ...(scored.cities.length ? [`涉及城市：${scored.cities.join("、")}`] : []),
+    "",
+    "得分明细：",
+    ...scored.factors.map(item => `• ${item.label}（+${item.points} 分）：${item.detail}`),
+    ...(base ? ["", `${base}/users/detail/${encodeURIComponent(user.id)}?tab=subscription-access`] : [])
+  ];
+  return lines.join("\n");
+}
 
-// The review queue for the admin page, newest activity first, each with the user's label.
+// The review queue for the admin page, pending first, then highest risk score, then newest activity.
 async function subscriptionShareReviewsPayload() {
   const records = await dataStore.listRecords(SUBSCRIPTION_SHARE_REVIEW_COLLECTION);
   const byId = new Map(users.map(user => [user.id, user]));
@@ -6586,7 +6627,14 @@ async function subscriptionShareReviewsPayload() {
       const user = byId.get(id);
       return { userId: id, userLabel: user ? subscriptionUserLabel(user) : id, userMissing: !user, ...data };
     })
-    .sort((a, b) => String(b.lastAt || "").localeCompare(String(a.lastAt || "")));
+    .sort((a, b) => {
+      const aPending = a.status === "pending" ? 0 : 1;
+      const bPending = b.status === "pending" ? 0 : 1;
+      if (aPending !== bPending) return aPending - bPending;
+      const scoreDiff = (Number(b.score) || 0) - (Number(a.score) || 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      return String(b.lastAt || "").localeCompare(String(a.lastAt || ""));
+    });
   return {
     reviews,
     counts: {
@@ -9309,7 +9357,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic|subscription-access))?$/);
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)(?:\/(renew|gift|wallet|wallet-gift|traffic-gift|account-status|type|line|xui-sync|traffic-reset|plan|plan-rollback|custom-inbounds|email|hourly-traffic|subscription-access|subscription-whitelist))?$/);
   if (userMatch) {
     const id = userMatch[1];
     const action = userMatch[2];
@@ -9353,19 +9401,82 @@ async function handleApi(req, res, pathname) {
       const days = [7, 30, 90].includes(requested) ? requested : 7;
       const now = Date.now();
       const since = new Date(now - days * 86400000);
-      const [rows, nodeIps, lastAlert, review, concurrent] = item
-        ? await Promise.all([dataStore.listSubscriptionAccess(item.id, { since }), ownNodeIps(), dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, item.id), dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, item.id), dataStore.listConcurrentLocationEvents(item.id, { since })])
-        : [[], new Set(), null, null, []];
+      const [rows, nodeIps, lastAlert, review, concurrent, whitelist, presenceActivity] = item
+        ? await Promise.all([
+            dataStore.listSubscriptionAccess(item.id, { since }),
+            ownNodeIps(),
+            dataStore.getRecord(SUBSCRIPTION_SHARE_ALERT_COLLECTION, item.id),
+            dataStore.getRecord(SUBSCRIPTION_SHARE_REVIEW_COLLECTION, item.id),
+            dataStore.listConcurrentLocationEvents(item.id, { since }),
+            getUserShareWhitelist(item.id),
+            dataStore.listPresenceIpActivity(item.id, { since: new Date(now - 7 * 86400000) })
+          ])
+        : [[], new Set(), null, null, [], [], []];
+      const rows7d = days === 7 ? rows : rows.filter(row => now - new Date(row.at).getTime() <= 7 * 86400000);
+      const concurrent24h = concurrent.filter(event => now - new Date(event.lastSeenAt).getTime() <= 24 * 3600000);
+      const risk = shareRiskScore.scoreSubscriptionShare({ rows7d, concurrent24h, presenceActivity, nodeIps, whitelist, now });
+      const clientsByIp = new Map();
+      for (const row of rows) {
+        if (!row.ip || row.result === subscriptionAccess.IPV4_REDIRECT_RESULT) continue;
+        const label = subscriptionAccess.subscriptionClientLabel(row.userAgent);
+        if (!label || label === "未知") continue;
+        const list = clientsByIp.get(row.ip) || [];
+        if (!list.includes(label)) list.push(label);
+        clientsByIp.set(row.ip, list);
+      }
       sendJson(res, 200, {
         days,
         retentionDays: subscriptionAccess.SUBSCRIPTION_ACCESS_RETENTION_DAYS,
-        lastAlert: lastAlert ? { at: lastAlert.at, provinces: lastAlert.provinces || [], cities: lastAlert.cities || [] } : null,
+        lastAlert: lastAlert ? { at: lastAlert.at, score: lastAlert.score || 0, level: lastAlert.level || "", provinces: lastAlert.provinces || [], cities: lastAlert.cities || [] } : null,
         review: review || null,
+        whitelist,
+        risk,
         // Running episodes are flagged so the page can say 进行中 (their row updates every sample).
-        concurrent: concurrent.map(event => ({ ...event, ongoing: concurrentEpisodes.get(item.id)?.eventId === event.id })),
-        summary: subscriptionAccess.summarizeSubscriptionAccess(rows, { now, nodeIps }),
-        rows: rows.slice(0, 200).map(row => ({ ...row, client: subscriptionAccess.subscriptionClientLabel(row.userAgent), viaNode: nodeIps.has(row.ip) }))
+        concurrent: concurrent.map(event => ({
+          ...event,
+          ongoing: concurrentEpisodes.get(item.id)?.eventId === event.id,
+          locations: (event.locations || []).map(loc => ({
+            ...loc,
+            clients: clientsByIp.get(loc.ip) || [],
+            whitelisted: shareRiskScore.ipMatchesWhitelist(loc.ip, whitelist)
+          }))
+        })),
+        summary: subscriptionAccess.summarizeSubscriptionAccess(rows, { now, nodeIps, whitelist }),
+        rows: rows.slice(0, 200).map(row => ({
+          ...row,
+          client: subscriptionAccess.subscriptionClientLabel(row.userAgent),
+          viaNode: nodeIps.has(row.ip),
+          whitelisted: shareRiskScore.ipMatchesWhitelist(row.ip, whitelist)
+        }))
       });
+      return;
+    }
+
+    // Per-user IP whitelist (exact IP or IPv4 /24) excluded from share risk detection.
+    if (action === "subscription-whitelist" && (req.method === "POST" || req.method === "DELETE")) {
+      if (!item) {
+        sendJson(res, 404, { error: "仅正式用户支持配置白名单 IP。" });
+        return;
+      }
+      const session = currentSession(req);
+      const actor = session?.account || session?.username || "admin";
+      try {
+        const existing = await getUserShareWhitelist(item.id);
+        let nextItems;
+        if (req.method === "POST") {
+          const payload = await readJson(req);
+          nextItems = shareRiskScore.addWhitelistEntry(existing, { ip: payload.ip, note: payload.note, addedBy: actor }).items;
+        } else {
+          const queryIp = new URL(req.url, "http://localhost").searchParams.get("ip");
+          const payload = queryIp ? { ip: queryIp } : await readJson(req).catch(() => ({}));
+          nextItems = shareRiskScore.removeWhitelistEntry(existing, payload.ip).items;
+        }
+        await dataStore.setRecord(SUBSCRIPTION_WHITELIST_COLLECTION, item.id, { items: nextItems });
+        const { scored } = await computeUserShareRisk(item.id);
+        sendJson(res, 200, { whitelist: nextItems, risk: scored });
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
       return;
     }
 
@@ -10080,6 +10191,7 @@ async function main() {
     pruneSyncJobHistory().catch(error => console.error("Sync job history prune failed:", error));
     pruneSubscriptionAccessHistory().catch(error => console.error("Subscription access prune failed:", error));
     dataStore.pruneConcurrentLocationEvents(new Date(Date.now() - concurrentLocation.CONCURRENT_RETENTION_DAYS * 86400000)).catch(error => console.error("Concurrent location prune failed:", error));
+    dataStore.prunePresenceIpActivity(new Date(Date.now() - shareRiskScore.PRESENCE_IP_RETENTION_DAYS * 86400000)).catch(error => console.error("Presence IP activity prune failed:", error));
   };
   pruneSyncJobHistoryInBackground();
   intervals.push(setInterval(pruneSyncJobHistoryInBackground, 24 * 60 * 60 * 1000));

@@ -1,7 +1,7 @@
 # Current State
 
-- Last Updated: 2026-11-20
-- Current Objective: 完成项目安全加固、数据库写入优化、前端拆包与仓库清理（已变基同步远程 main 并验证通过）
+- Last Updated: 2026-11-21
+- Current Objective: 实现订阅疑似分享评分系统、用户白名单 IP 及同时异地在线客户端展示与排版优化
 - Repository root: `C:\Users\admin\Documents\VPN monitor\myVpnMonitor`
 - Standard development command: `npm run dev:all`
 - Fast verification: `npm run verify:fast`
@@ -628,8 +628,12 @@
 
 - 2026-11-20: npm run verify:fast、npm run build、test-notifier/test-customer-id/test-api-cache/test-checkout 与 git diff --check 均通过；浏览器实测 /users（按需加载 vendor-pinyin 且管理端无 Crisp）、/sales-settings（懒加载 MarkdownEditor）与登出跳转 /login，console_errors/page_errors 均为空
 
+- 2026-11-21: npm run check、npm run verify:fast、npm run verify:harness、git diff --check 通过；浏览器验证 /subscription-reviews 与 /users/detail/u-demo?tab=subscription-access 交互正常，console_errors/page_errors 为空
+
+- 2026-11-21: npm run check、npm run verify:fast、git diff --check 通过；浏览器验证 /subscription-reviews 与 /users/detail/u-demo?tab=subscription-access 评分拆解、白名单增删、同时异地在线客户端展示及排版正常，console_errors/page_errors 为空
+
 ## Next Session
 
-- Files: `PROGRESS.md`, `auth-security.js`, `database.js`, `feature_list.json`, `package.json`, `server.js`, `src/api.ts`, `src/main.tsx`, `test.js`, `vite.config.js`
+- Files: `PROGRESS.md`, `concurrent-location.js`, `database.js`, `feature_list.json`, `server.js`, `src/components/features/general-settings.tsx`, `src/components/features/subscription-reviews.tsx`, `src/components/features/user-subscription-access.tsx`, `subscription-access.js`, `test-subscription-access.js`, `share-risk-score.js`
 - Known risks: none
-- Recommended Next Step: 按需推进 TypeScript 接入与 server.js 剩余路由拆分；或按需合并到 production 部署
+- Recommended Next Step: 按需提交并合并到 production 部署上线

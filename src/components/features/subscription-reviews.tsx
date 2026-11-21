@@ -19,12 +19,19 @@ import { formatDateTime } from "@/utils"
 
 type ReviewStatus = "pending" | "normal" | "shared"
 type Decision = Exclude<ReviewStatus, "pending">
+export type RiskLevel = "normal" | "review" | "alert" | "critical"
+export type RiskFactor = { key: string; label: string; points: number; detail: string }
+
 type ShareReview = {
   userId: string
   userLabel: string
   userMissing: boolean
   status: ReviewStatus
+  score?: number
+  level?: RiskLevel
+  factors?: RiskFactor[]
   province: string
+  provinces?: string[]
   cities: string[]
   sources?: Array<"pull" | "presence">
   firstAt: string
@@ -32,7 +39,7 @@ type ShareReview = {
   reviewedAt?: string
   reviewedBy?: string
   note?: string
-  previousReview?: { status: Decision; reviewedAt: string; note: string; cities: string[] }
+  previousReview?: { status: Decision; reviewedAt: string; note: string; cities: string[]; provinces?: string[]; score?: number }
 }
 type ReviewsResponse = { reviews: ShareReview[]; counts: { pending: number; reviewed: number } }
 
@@ -42,6 +49,13 @@ const STATUS_BADGES: Record<ReviewStatus, { label: string; tone: "warning" | "su
   shared: { label: "分享", tone: "danger" },
 }
 
+const RISK_LEVEL_BADGES: Record<RiskLevel, { label: string; tone: "neutral" | "warning" | "danger" }> = {
+  normal: { label: "正常", tone: "neutral" },
+  review: { label: "待复核", tone: "warning" },
+  alert: { label: "疑似分享", tone: "danger" },
+  critical: { label: "极高风险", tone: "danger" },
+}
+
 const SOURCE_LABELS = { pull: "订阅拉取", presence: "同时在线" } as const
 
 export function ReviewStatusBadge({ status }: { status: ReviewStatus }) {
@@ -49,7 +63,12 @@ export function ReviewStatusBadge({ status }: { status: ReviewStatus }) {
   return <Badge tone={badge.tone}>{badge.label}</Badge>
 }
 
-/** Same-province cross-city subscription pulls (no Telegram alert) waiting for an admin's verdict. */
+export function RiskLevelBadge({ level, score }: { level: RiskLevel; score?: number }) {
+  const badge = RISK_LEVEL_BADGES[level] || RISK_LEVEL_BADGES.normal
+  return <Badge tone={badge.tone}>{score !== undefined ? `${score} 分 · ${badge.label}` : badge.label}</Badge>
+}
+
+/** Share risk review queue: users reaching the review/alert score thresholds, ordered by risk score. */
 export function SubscriptionReviewsPage() {
   const [data, setData] = React.useState<ReviewsResponse | null>(null)
   const [error, setError] = React.useState("")
@@ -111,30 +130,43 @@ export function SubscriptionReviewsPage() {
     {error ? <div className="px-4 lg:px-6"><Alert tone="danger" title="无法读取订阅复核列表">{error}</Alert></div> : null}
 
     <div className="px-4 lg:px-6">
-      <Card className="gap-0 overflow-hidden py-0" title="同省跨市" description="同一省份的多个城市：24 小时内的订阅拉取，或节点上同一时刻的在线 IP。相邻城市常共用运营商地址池，不发送提醒，由管理员人工判断；跨省仍会直接提醒。">
-        {!reviews.length ? <EmptyState title={filter === "pending" ? "没有待复核的用户" : "暂无复核记录"} description={filter === "pending" ? "出现同省跨市的订阅拉取或同时在线时，用户会自动加入这里。" : "切换到其他状态查看记录。"} />
-          : <SimpleTable caption="订阅复核列表" minWidth={900} columns={["用户", "来源", "省份", "城市", "最近发现", "状态", "复核", "操作"]} rows={reviews} rowKey={review => review.userId}
-            cells={review => [
-              review.userMissing ? <span className="text-muted-foreground">{review.userLabel}（已删除）</span>
-                : <Link className="font-medium underline-offset-4 hover:underline" to={`/users/detail/${encodeURIComponent(review.userId)}?tab=subscription-access`}>{review.userLabel}</Link>,
-              <span className="flex flex-wrap gap-1">{(review.sources?.length ? review.sources : ["pull" as const]).map(source => <Badge key={source} size="sm" tone={source === "presence" ? "info" : "neutral"}>{SOURCE_LABELS[source]}</Badge>)}</span>,
-              <span>{review.province}</span>,
-              <span className="whitespace-normal">{review.cities.join("、")}</span>,
-              <span className="grid text-muted-foreground tabular-nums"><span>{formatDateTime(review.lastAt)}</span>{review.firstAt !== review.lastAt ? <span className="text-xs">首次 {formatDateTime(review.firstAt)}</span> : null}</span>,
-              <ReviewStatusBadge status={review.status} />,
-              review.status !== "pending" ? <span className="grid max-w-xs text-xs text-muted-foreground"><span className="tabular-nums">{review.reviewedBy || "-"} · {review.reviewedAt ? formatDateTime(review.reviewedAt) : "-"}</span>{review.note ? <span className="whitespace-normal text-foreground">{review.note}</span> : null}</span>
-                : review.previousReview ? <span className="max-w-xs whitespace-normal text-xs text-muted-foreground">曾判定为{STATUS_BADGES[review.previousReview.status]?.label}（{review.previousReview.cities.join("、")}），出现新城市后重新待复核</span>
-                : <span className="text-muted-foreground">-</span>,
-              <Button type="button" variant={review.status === "pending" ? "primary" : "secondary"} size="sm" onClick={() => openReview(review)} aria-label={`复核 ${review.userLabel}`}><ClipboardCheck />{review.status === "pending" ? "复核" : "修改"}</Button>,
-            ]} />}
+      <Card className="gap-0 overflow-hidden py-0" title="疑似分享复核" description="风险评分达到 40 分自动进入复核，70 分触发报警，90 分标记为极高风险；按风险分从高到低排列。">
+        {!reviews.length ? <EmptyState title={filter === "pending" ? "没有待复核的用户" : "暂无复核记录"} description={filter === "pending" ? "当用户的分享风险评分达到 40 分时，会自动加入这里。" : "切换到其他状态查看记录。"} />
+          : <SimpleTable caption="订阅复核列表" minWidth={1020} columns={["用户", "风险分", "命中规则", "省份 / 城市", "来源", "最近发现", "状态", "复核", "操作"]} rows={reviews} rowKey={review => review.userId}
+            cells={review => {
+              const provinceText = review.provinces?.length ? review.provinces.join("、") : review.province
+              const score = typeof review.score === "number" ? review.score : undefined
+              const level: RiskLevel = review.level || (score !== undefined ? (score >= 90 ? "critical" : score >= 70 ? "alert" : score >= 40 ? "review" : "normal") : "review")
+              return [
+                review.userMissing ? <span className="text-muted-foreground">{review.userLabel}（已删除）</span>
+                  : <Link className="font-medium underline-offset-4 hover:underline" to={`/users/detail/${encodeURIComponent(review.userId)}?tab=subscription-access`}>{review.userLabel}</Link>,
+                score !== undefined
+                  ? <span className="tabular-nums"><RiskLevelBadge level={level} score={score} /></span>
+                  : <span className="text-muted-foreground">-</span>,
+                review.factors?.length
+                  ? <ul className="grid max-w-xs gap-0.5 text-xs whitespace-normal">{review.factors.slice(0, 3).map(factor => <li key={factor.key}><span className="font-medium">{factor.label}</span> <span className="text-muted-foreground tabular-nums">+{factor.points}</span></li>)}{review.factors.length > 3 ? <li className="text-muted-foreground">等共 {review.factors.length} 项</li> : null}</ul>
+                  : <span className="text-muted-foreground">-</span>,
+                <span className="grid max-w-xs whitespace-normal text-sm"><span>{provinceText || "-"}</span>{review.cities?.length ? <span className="text-xs text-muted-foreground">{review.cities.join("、")}</span> : null}</span>,
+                <span className="flex flex-wrap gap-1">{(review.sources?.length ? review.sources : ["pull" as const]).map(source => <Badge key={source} size="sm" tone={source === "presence" ? "info" : "neutral"}>{SOURCE_LABELS[source]}</Badge>)}</span>,
+                <span className="grid text-muted-foreground tabular-nums"><span>{formatDateTime(review.lastAt)}</span>{review.firstAt !== review.lastAt ? <span className="text-xs">首次 {formatDateTime(review.firstAt)}</span> : null}</span>,
+                <ReviewStatusBadge status={review.status} />,
+                review.status !== "pending" ? <span className="grid max-w-xs text-xs text-muted-foreground"><span className="tabular-nums">{review.reviewedBy || "-"} · {review.reviewedAt ? formatDateTime(review.reviewedAt) : "-"}</span>{review.note ? <span className="whitespace-normal text-foreground">{review.note}</span> : null}</span>
+                  : review.previousReview ? <span className="max-w-xs whitespace-normal text-xs text-muted-foreground">曾判定为{STATUS_BADGES[review.previousReview.status]?.label}，出现新地点或风险升高后重新待复核</span>
+                  : <span className="text-muted-foreground">-</span>,
+                <Button type="button" variant={review.status === "pending" ? "primary" : "secondary"} size="sm" onClick={() => openReview(review)} aria-label={`复核 ${review.userLabel}`}><ClipboardCheck />{review.status === "pending" ? "复核" : "修改"}</Button>,
+              ]
+            }} />}
       </Card>
     </div>
 
     <Dialog open={Boolean(reviewing)} onOpenChange={open => { if (!open && !saving) setReviewing(null) }}>
-      <DialogContent title="复核订阅拉取" description={reviewing ? `${reviewing.userLabel} · ${reviewing.province}：${reviewing.cities.join("、")}` : ""}>
+      <DialogContent title="复核疑似分享" description={reviewing ? `${reviewing.userLabel}${typeof reviewing.score === "number" ? ` · ${reviewing.score} 分` : ""} · ${(reviewing.provinces?.length ? reviewing.provinces.join("、") : reviewing.province) || "-"}` : ""}>
         <div className="grid gap-4">
-          {reviewing && !reviewing.userMissing ? <p className="text-sm text-muted-foreground">先在 <Link className="text-foreground underline underline-offset-4" to={`/users/detail/${encodeURIComponent(reviewing.userId)}?tab=subscription-access`}>订阅访问</Link> 中查看拉取时间、IP 和客户端，再给出结论。</p> : null}
-          <Textarea label="备注" placeholder="例如：同一运营商移动网络，时间连续" value={note} onChange={event => setNote(event.target.value)} maxLength={500} rows={3} />
+          {reviewing && !reviewing.userMissing ? <p className="text-sm text-muted-foreground">先在 <Link className="text-foreground underline underline-offset-4" to={`/users/detail/${encodeURIComponent(reviewing.userId)}?tab=subscription-access`}>订阅访问</Link> 中查看得分明细、在线 IP、拉取记录或配置白名单 IP，再给出结论。</p> : null}
+          {reviewing?.factors?.length ? <ul className="grid gap-1 rounded-md border bg-muted/40 p-3 text-xs">
+            {reviewing.factors.map(factor => <li key={factor.key} className="flex items-baseline justify-between gap-2"><span><span className="font-medium">{factor.label}</span>：{factor.detail}</span><span className="shrink-0 font-mono tabular-nums">+{factor.points}</span></li>)}
+          </ul> : null}
+          <Textarea label="备注" placeholder="例如：本人出差 / 已将家里固定 IP 加入白名单" value={note} onChange={event => setNote(event.target.value)} maxLength={500} rows={3} />
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="danger" loading={saving === "shared"} disabled={Boolean(saving)} onClick={() => void decide("shared")}>判定为分享</Button>
             <Button type="button" variant="primary" loading={saving === "normal"} disabled={Boolean(saving)} onClick={() => void decide("normal")}>标记为正常</Button>

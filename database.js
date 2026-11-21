@@ -224,6 +224,23 @@ class PostgresDataStore {
       CREATE INDEX IF NOT EXISTS concurrent_location_events_user_idx ON concurrent_location_events (user_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS concurrent_location_events_seen_idx ON concurrent_location_events (last_seen_at)
       `), "concurrent location events init");
+      // Per-user per-IP solo vs concurrent online activity (share-risk-score.js).
+      await withPgRetry(() => pool.query(`
+      CREATE TABLE IF NOT EXISTS presence_ip_activity (
+        user_id TEXT NOT NULL,
+        ip TEXT NOT NULL,
+        province TEXT NOT NULL DEFAULT '',
+        city TEXT NOT NULL DEFAULT '',
+        solo_samples INTEGER NOT NULL DEFAULT 0,
+        solo_last_at TIMESTAMPTZ,
+        concurrent_samples INTEGER NOT NULL DEFAULT 0,
+        concurrent_last_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, ip)
+      );
+      CREATE INDEX IF NOT EXISTS presence_ip_activity_user_idx ON presence_ip_activity (user_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS presence_ip_activity_updated_idx ON presence_ip_activity (updated_at)
+      `), "presence ip activity init");
       await withPgRetry(() => pool.query(`
       CREATE TABLE IF NOT EXISTS catalog_v2_line_groups (
         id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9-]{1,63}$'),
@@ -1425,6 +1442,49 @@ class PostgresDataStore {
 
   async pruneConcurrentLocationEvents(cutoff) {
     const result = await withPgRetry(() => this.pool.query("DELETE FROM concurrent_location_events WHERE last_seen_at < $1", [cutoff]), "prune concurrent location events");
+    return result.rowCount || 0;
+  }
+
+  // Per-user per-IP solo vs concurrent presence activity (share-risk-score.js).
+  async recordPresenceIpActivity({ userId, ip, province = "", city = "", solo = false, at = null }) {
+    const soloInc = solo ? 1 : 0;
+    const concInc = solo ? 0 : 1;
+    await withPgRetry(() => this.pool.query(
+      `INSERT INTO presence_ip_activity (user_id, ip, province, city, solo_samples, solo_last_at, concurrent_samples, concurrent_last_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 > 0 THEN COALESCE($7::timestamptz, NOW()) ELSE NULL END, $6, CASE WHEN $6 > 0 THEN COALESCE($7::timestamptz, NOW()) ELSE NULL END, COALESCE($7::timestamptz, NOW()))
+       ON CONFLICT (user_id, ip) DO UPDATE SET
+         province = CASE WHEN EXCLUDED.province <> '' THEN EXCLUDED.province ELSE presence_ip_activity.province END,
+         city = CASE WHEN EXCLUDED.city <> '' THEN EXCLUDED.city ELSE presence_ip_activity.city END,
+         solo_samples = presence_ip_activity.solo_samples + EXCLUDED.solo_samples,
+         solo_last_at = COALESCE(EXCLUDED.solo_last_at, presence_ip_activity.solo_last_at),
+         concurrent_samples = presence_ip_activity.concurrent_samples + EXCLUDED.concurrent_samples,
+         concurrent_last_at = COALESCE(EXCLUDED.concurrent_last_at, presence_ip_activity.concurrent_last_at),
+         updated_at = GREATEST(presence_ip_activity.updated_at, EXCLUDED.updated_at)`,
+      [String(userId), String(ip), String(province || ""), String(city || ""), soloInc, concInc, at]
+    ), "record presence ip activity");
+  }
+
+  async listPresenceIpActivity(userId, { since, limit = 500 } = {}) {
+    const result = await withPgRetry(() => this.pool.query(
+      `SELECT ip, province, city, solo_samples, solo_last_at, concurrent_samples, concurrent_last_at, updated_at
+       FROM presence_ip_activity WHERE user_id = $1 AND updated_at >= $2 ORDER BY updated_at DESC LIMIT $3`,
+      [String(userId), since, Math.min(2000, Math.max(1, Number(limit) || 500))]
+    ), "list presence ip activity");
+    const iso = value => (value instanceof Date ? value.toISOString() : value ? String(value) : "");
+    return result.rows.map(row => ({
+      ip: row.ip,
+      province: row.province,
+      city: row.city,
+      soloSamples: Number(row.solo_samples) || 0,
+      soloLastAt: iso(row.solo_last_at),
+      concurrentSamples: Number(row.concurrent_samples) || 0,
+      concurrentLastAt: iso(row.concurrent_last_at),
+      updatedAt: iso(row.updated_at)
+    }));
+  }
+
+  async prunePresenceIpActivity(cutoff) {
+    const result = await withPgRetry(() => this.pool.query("DELETE FROM presence_ip_activity WHERE updated_at < $1", [cutoff]), "prune presence ip activity");
     return result.rowCount || 0;
   }
 }
